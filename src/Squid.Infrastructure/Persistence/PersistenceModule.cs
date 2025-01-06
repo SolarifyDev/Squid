@@ -1,29 +1,18 @@
 namespace Squid.Infrastructure.Persistence;
 
-public class PersistenceModule: Module
+public class PersistenceModule : Module
 {
-    private readonly string _connectionString;
+    private readonly SquidStoreSetting _squidStoreSetting;
 
-    public PersistenceModule(string connectionString)
+    public PersistenceModule(SquidStoreSetting squidStoreSetting)
     {
-        _connectionString = connectionString;
+        _squidStoreSetting = squidStoreSetting;
     }
-    
+
     protected override void Load(ContainerBuilder builder)
     {
-        builder.Register(c =>
-            {
-                if (!string.IsNullOrEmpty(_connectionString))
-                {
-                    //Select your database provider
-                }
-
-                var optionBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
-
-                optionBuilder.UseInMemoryDatabase("__squid_database");
-
-                return new ApplicationDbContext(optionBuilder.Options);
-            }).AsSelf().As<IApplicationDbContext>()
+        builder.Register(_ => new SquidDbContext(_squidStoreSetting))
+            .AsSelf().As<ISquidDbContext>()
             .InstancePerLifetimeScope();
     }
 }

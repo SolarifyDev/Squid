@@ -45,7 +45,7 @@ public class IntegrationTestBase : IAsyncLifetime
     public Task DisposeAsync()
     {
         //If have a real database, only need to clean the table after each test.
-        var context = _lifetimeScope.Resolve<ApplicationDbContext>();
+        var context = _lifetimeScope.Resolve<SquidDbContext>();
         return context.Database.EnsureDeletedAsync();
     }
 }

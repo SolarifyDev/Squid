@@ -1,4 +1,6 @@
-﻿namespace Squid.Api;
+﻿using Squid.Infrastructure.Persistence;
+
+namespace Squid.Api;
 
 public class Startup
 {
@@ -21,6 +23,7 @@ public class Startup
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
         services.AddHttpContextAccessor();
+        
 
         _serviceCollection = services;
     }
@@ -35,7 +38,9 @@ public class Startup
 
         var userContext = serviceProvider.GetRequiredService<IUserContext>();
 
-        ApplicationStartup.Initialize(builder, "", Log.Logger, userContext, Configuration);
+        var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
+
+        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, userContext, Configuration);
     }
 
     // Configure is where you add middleware. This is called after

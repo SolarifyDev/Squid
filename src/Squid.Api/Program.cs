@@ -32,6 +32,7 @@ public partial class Program
 
     private static IHostBuilder CreateWebHostBuilder(string[] args) =>
         Host.CreateDefaultBuilder(args)
+            .AddConfiguration()
             .ConfigureLogging(l => l.AddSerilog(Log.Logger))
             .UseServiceProviderFactory(new AutofacServiceProviderFactory())
             .ConfigureWebHostDefaults(builder => { builder.UseStartup<Startup>(); }).UseSerilog();
