@@ -4,7 +4,7 @@ using DbUp.ScriptProviders;
 
 namespace Squid.Infrastructure.Persistence.Postgres;
 
-public class PostgresDbUp
+public class PostgresDbUp: IStartable
 {
     private readonly string _connectionString;
     private readonly IUpgradeLog _logger;
@@ -15,10 +15,10 @@ public class PostgresDbUp
         _logger = logger;
     }
 
-    public void Run()
+    public void Start()
     {
         EnsureDatabase.For.PostgresqlDatabase(_connectionString);
-
+        
         var engineBuilder = DeployChanges.To
             .PostgresqlDatabase(_connectionString)
             .WithScriptsFromFileSystem(

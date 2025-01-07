@@ -22,18 +22,16 @@ public class ApplicationStartup
         builder.RegisterModule(new AuthenticationModule(userContext));
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
-        builder.RegisterModule(new PersistenceModule(storeSetting));
+        builder.RegisterModule(new PersistenceModule(storeSetting, logger));
         builder.RegisterAutoMapper(assemblies: assemblies);
-        
+
         RegisterDependency(builder);
-        
+
         builder.RegisterBuildCallback(container =>
         {
             var mapper = container.Resolve<IMapper>();
             AutoMapperConfiguration.Init(mapper.ConfigurationProvider);
         });
-
-        InitializeDatabase(logger, storeSetting);
     }
 
     private static void RegisterDependency(ContainerBuilder builder)
@@ -49,22 +47,6 @@ public class ApplicationStartup
                 builder.RegisterType(type).AsSelf().AsImplementedInterfaces().InstancePerDependency();
             else
                 builder.RegisterType(type).AsSelf().AsImplementedInterfaces();
-        }
-    }
-
-    private static void InitializeDatabase(ILogger logger, SquidStoreSetting storeSetting)
-    {
-        switch (storeSetting.Type)
-        {
-            case SquidStoreSetting.SquidStoreType.Postgres:
-                var postgresDbUp = new PostgresDbUp(storeSetting.Postgres!.ConnectionString,
-                    new DbUpLogger<PostgresDbUp>(logger));
-                postgresDbUp.Run();
-                break;
-            case SquidStoreSetting.SquidStoreType.Volatile:
-            case SquidStoreSetting.SquidStoreType.MySql:
-            default:
-                break;
         }
     }
 }

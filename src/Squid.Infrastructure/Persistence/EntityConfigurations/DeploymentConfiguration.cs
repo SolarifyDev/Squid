@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace Squid.Infrastructure.Persistence.Postgres.EntityConfigurations;
+namespace Squid.Infrastructure.Persistence.EntityConfigurations;
 
 public class DeploymentConfiguration: IEntityTypeConfiguration<Deployment>
 {
