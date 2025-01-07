@@ -2,9 +2,9 @@ namespace Squid.Core.Services.Customers;
 
 public class CustomerService : ICustomerService
 {
-    private readonly IApplicationDbContext _dbContext;
+    private readonly ISquidDbContext _dbContext;
 
-    public CustomerService(IApplicationDbContext dbContext)
+    public CustomerService(ISquidDbContext dbContext)
     {
         _dbContext = dbContext;
     }

@@ -9,7 +9,7 @@ public class CustomerTests : IntegrationTestBase
     [Fact]
     public async Task ShouldCreateNewCustomer()
     {
-        await Run<IMediator, IApplicationDbContext>(async (mediator, db) =>
+        await Run<IMediator, ISquidDbContext>(async (mediator, db) =>
         {
             var createCustomerCommand = new CreateCustomerCommand
             {
@@ -34,7 +34,7 @@ public class CustomerTests : IntegrationTestBase
     {
         var customerId = await CreateDefaultCustomer();
 
-        await Run<IMediator, IApplicationDbContext>(async (mediator, db) =>
+        await Run<IMediator, ISquidDbContext>(async (mediator, db) =>
         {
             var updateCustomerCommand = new UpdateCustomerCommand
             {
@@ -59,7 +59,7 @@ public class CustomerTests : IntegrationTestBase
     {
         var customerId = await CreateDefaultCustomer();
 
-        await Run<IMediator, IApplicationDbContext>(async (mediator, db) =>
+        await Run<IMediator, ISquidDbContext>(async (mediator, db) =>
         {
             await mediator.SendAsync(new DeleteCustomerCommand
             {

@@ -40,7 +40,7 @@ namespace Squid.Api.Controllers
                 Contact = model.Contact,
                 Address = model.Address
             });
-            
+
             return NoContent();
         }
 

@@ -21,7 +21,7 @@ public class IntegrationFixture : IAsyncLifetime
 
         ApplicationStartup.Initialize(
             containerBuilder, 
-            configuration.GetConnectionString("Default") ?? string.Empty,
+            configuration.GetSection("SquidStore").Get<SquidStoreSetting>(),
             logger.Object, new IntegrationTestUser(), 
             configuration);
         
@@ -35,7 +35,7 @@ public class IntegrationFixture : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        var context = LifetimeScope.Resolve<ApplicationDbContext>();
+        var context = LifetimeScope.Resolve<SquidDbContext>();
         return context.Database.EnsureDeletedAsync();
     }
 }

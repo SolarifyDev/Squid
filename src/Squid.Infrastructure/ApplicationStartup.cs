@@ -11,7 +11,7 @@ public class ApplicationStartup
 {
     public static void Initialize(
         ContainerBuilder builder,
-        string connectionString,
+        SquidStoreSetting storeSetting,
         ILogger logger,
         IUserContext userContext,
         IConfiguration configuration)
@@ -22,18 +22,18 @@ public class ApplicationStartup
         builder.RegisterModule(new AuthenticationModule(userContext));
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
-        builder.RegisterModule(new PersistenceModule(connectionString));
-        
+        builder.RegisterModule(new PersistenceModule(storeSetting, logger));
         builder.RegisterAutoMapper(assemblies: assemblies);
+
         RegisterDependency(builder);
-        
+
         builder.RegisterBuildCallback(container =>
         {
             var mapper = container.Resolve<IMapper>();
             AutoMapperConfiguration.Init(mapper.ConfigurationProvider);
         });
     }
-    
+
     private static void RegisterDependency(ContainerBuilder builder)
     {
         foreach (var type in typeof(IDependency).Assembly.GetTypes()

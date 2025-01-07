@@ -1,29 +1,67 @@
 namespace Squid.Infrastructure.Persistence;
 
-public class PersistenceModule: Module
+public class PersistenceModule : Module
 {
-    private readonly string _connectionString;
+    private readonly SquidStoreSetting _squidStoreSetting;
+    private readonly ILogger _logger;
 
-    public PersistenceModule(string connectionString)
+    public PersistenceModule(SquidStoreSetting squidStoreSetting, ILogger logger)
     {
-        _connectionString = connectionString;
+        _squidStoreSetting = squidStoreSetting;
+        _logger = logger;
     }
-    
+
     protected override void Load(ContainerBuilder builder)
     {
-        builder.Register(c =>
+        switch (_squidStoreSetting.Type)
+        {
+            case SquidStoreSetting.SquidStoreType.Volatile:
+                RegisterInMemoryDbContext(builder);
+                break;
+            case SquidStoreSetting.SquidStoreType.Postgres:
+                RegisterPostgresDbContext(builder);
+                break;
+            case SquidStoreSetting.SquidStoreType.MySql:
+                break;
+        }
+    }
+
+    private void RegisterInMemoryDbContext(ContainerBuilder builder)
+    {
+        builder.Register(_ =>
             {
-                if (!string.IsNullOrEmpty(_connectionString))
-                {
-                    //Select your database provider
-                }
+                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
 
-                var optionBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
+                dbContextBuilder.UseInMemoryDatabase("Squid");
 
-                optionBuilder.UseInMemoryDatabase("__squid_database");
-
-                return new ApplicationDbContext(optionBuilder.Options);
-            }).AsSelf().As<IApplicationDbContext>()
+                return new SquidDbContext(dbContextBuilder.Options);
+            })
+            .AsSelf()
+            .As<ISquidDbContext>()
             .InstancePerLifetimeScope();
+    }
+
+    private void RegisterPostgresDbContext(ContainerBuilder builder)
+    {
+        builder.Register(_ =>
+            {
+                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
+
+                dbContextBuilder
+                    .UseNpgsql(_squidStoreSetting.Postgres!.ConnectionString)
+                    .UseSnakeCaseNamingConvention();
+
+                return new SquidDbContext(dbContextBuilder.Options);
+            })
+            .AsSelf()
+            .As<ISquidDbContext>()
+            .InstancePerLifetimeScope();
+
+        builder
+            .Register(_ =>
+                new PostgresDbUp(_squidStoreSetting.Postgres!.ConnectionString,
+                    new DbUpLogger<PostgresDbUp>(_logger)))
+            .As<IStartable>()
+            .SingleInstance();
     }
 }
