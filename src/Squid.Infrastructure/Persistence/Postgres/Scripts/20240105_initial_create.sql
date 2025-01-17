@@ -52,8 +52,6 @@ CREATE TABLE IF NOT EXISTS "release"
     channel_id                             VARCHAR(50)  NOT NULL,
     data_version                           BYTEA        NOT NULL,
     space_id                               VARCHAR(50)  NOT NULL,
-    provisioning_runbook_process_id        VARCHAR(150),
-    deprovisioning_runbook_process_id      VARCHAR(150),
     last_modified                           TIMESTAMPTZ  NOT NULL
 );
 
