@@ -65,19 +65,6 @@ CREATE TABLE IF NOT EXISTS "deployment_process"
     space_id  VARCHAR(50)  NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "space"
-(
-    id                 VARCHAR(50)           PRIMARY KEY,
-    name               VARCHAR(20)           NOT NULL,
-    slug               VARCHAR(20)           NOT NULL,
-    is_default         BOOLEAN               NOT NULL,
-    json               TEXT                  NOT NULL,
-    task_queue_stopped BOOLEAN               NOT NULL,
-    data_version       BYTEA                 NOT NULL,
-    last_modified       TIMESTAMPTZ           NOT NULL,
-    is_private         BOOLEAN DEFAULT FALSE NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS "channel"
 (
     id            VARCHAR(50)  PRIMARY KEY,
@@ -135,24 +122,6 @@ CREATE TABLE IF NOT EXISTS "variable_set"
     space_id             VARCHAR(50)  NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "related_document"
-(
-    id                     VARCHAR(250) PRIMARY KEY,
-    table_name             VARCHAR(40)  NOT NULL,
-    related_document_id    VARCHAR(250) NOT NULL,
-    related_document_table VARCHAR(40)  NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS "lifecycle"
-(
-    id           VARCHAR(50)  PRIMARY KEY,
-    name         VARCHAR(200) NOT NULL,
-    json         TEXT         NOT NULL,
-    data_version BYTEA        NOT NULL,
-    space_id     VARCHAR(50)  NOT NULL,
-    slug         VARCHAR(210) NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS "machine"
 (
     id                     VARCHAR(50)                    PRIMARY KEY,
@@ -174,22 +143,53 @@ CREATE TABLE IF NOT EXISTS "machine"
     slug                   VARCHAR(210)                   NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "machine_policy"
+CREATE TABLE IF NOT EXISTS "deployment_completion"
 (
-    id           VARCHAR(50)  PRIMARY KEY,
-    name         VARCHAR(200) NOT NULL,
-    is_default   BOOLEAN      NOT NULL,
-    json         TEXT         NOT NULL,
-    data_version BYTEA        NOT NULL,
-    space_id     VARCHAR(50)  NOT NULL
+    Id             VARCHAR(50) PRIMARY KEY,
+    SequenceNumber BIGSERIAL,
+    DeploymentId   VARCHAR(50) NOT NULL,
+    State          VARCHAR(50) NOT NULL,
+    CompletedTime  TIMESTAMPTZ NOT NULL,
+    SpaceId        VARCHAR(50) NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "project_group"
+CREATE TABLE IF NOT EXISTS "server_task"
 (
-    id            VARCHAR(50)  PRIMARY KEY,
-    space_id      VARCHAR(50)  NOT NULL,
-    name          VARCHAR(200) NOT NULL,
-    description   TEXT,
-    data_version  BYTEA        NOT NULL,
-    last_modified  TIMESTAMPTZ  NOT NULL
+    Id                   VARCHAR(50)                                  NOT NULL PRIMARY KEY,
+    Name                 VARCHAR(50)                                  NOT NULL,
+    Description          TEXT                                         NOT NULL,
+    QueueTime            TIMESTAMPTZ                                  NOT NULL,
+    StartTime            TIMESTAMPTZ,
+    CompletedTime        TIMESTAMPTZ,
+    ErrorMessage         TEXT,
+    ConcurrencyTag       VARCHAR(100),
+    State                VARCHAR(50)                                  NOT NULL,
+    HasWarningsOrErrors  BOOLEAN                                      NOT NULL,
+    ServerNodeId         VARCHAR(250),
+    ProjectId            VARCHAR(50),
+    EnvironmentId        VARCHAR(50),
+    TenantId             VARCHAR(50),
+    DurationSeconds      INT                                          NOT NULL,
+    JSON                 TEXT                                         NOT NULL,
+    DataVersion          BYTEA                                        NOT NULL,
+    SpaceId              VARCHAR(50),
+    RunbookId            VARCHAR(50),
+    LastModified          TIMESTAMPTZ DEFAULT '0001-01-01 00:00:00+00' NOT NULL,
+    BusinessProcessState VARCHAR(10) DEFAULT 'InProgress'             NOT NULL,
+    ServerTaskType       VARCHAR(50) DEFAULT 'ServerTask'             NOT NULL,
+    ParentServerTaskId   VARCHAR(50),
+    PriorityTime         TIMESTAMPTZ,
+    StateOrder           INT         DEFAULT 9                        NOT NULL,
+    Weight               INT         DEFAULT 0                        NOT NULL,
+    BatchId              VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS "lifecycle"
+(
+    Id          varchar(50)  PRIMARY KEY,
+    Name        varchar(200) NOT NULL,
+    JSON        text         NOT NULL,
+    DataVersion bytea        NOT NULL,
+    SpaceId     varchar(50)  NOT NULL,
+    Slug        varchar(210) NOT NULL
 );
