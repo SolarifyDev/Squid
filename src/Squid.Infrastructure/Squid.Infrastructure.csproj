@@ -13,6 +13,7 @@
       <PackageReference Include="AutoMapper.Contrib.Autofac.DependencyInjection" Version="8.1.0" />
       <PackageReference Include="dbup-postgresql" Version="5.0.40" />
       <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
+      <PackageReference Include="Halibut" Version="8.1.1052" />
       <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.0" />
       <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
     </ItemGroup>
