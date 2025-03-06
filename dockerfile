@@ -18,23 +18,22 @@ FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/aspnet:9.0
 
 USER root
 
-# 使用 Octopus Deploy 的 Tentacle 镜像
-FROM docker.packages.octopushq.com/octopusdeploy/tentacle:${TENTACLE_VERSION}
+# 使用基础镜像
+FROM octopusdeploy/tentacle
 
 # 设置环境变量
-ENV ServerUsername="${OCTOPUS_ADMIN_USERNAME}"
-ENV ServerPassword="${OCTOPUS_ADMIN_PASSWORD}"
-ENV TargetEnvironment="Development"
+ENV ListeningPort="10931"
+ENV ServerApiKey="API-WZ27UDXXAPCKUPZSH1WTG8YC80G"
+ENV TargetEnvironment="Test"
 ENV TargetRole="app-server"
-ENV ServerUrl="http://octopus-server:8080"
+ENV ServerUrl="https://octopus.example.com"
+ENV PublicHostNameConfiguration="ComputerName"
+ENV ACCEPT_EULA="Y"
 
-# 创建挂载点
-RUN mkdir -p /Applications && mkdir -p /TentacleHome
+# 暴露端口
+EXPOSE 10931
 
-# 挂载卷（Dockerfile 不支持直接挂载卷，需要在运行容器时指定）
-VOLUME [ "/Applications", "/TentacleHome" ]
-
-# 保持容器运行
-CMD ["tail", "-f", "/dev/null"]
+# 设置容器启动时执行的命令
+CMD ["tentacle"]
 
 ENTRYPOINT ["dotnet", "Squid.Api.dll"]
