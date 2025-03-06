@@ -18,29 +18,23 @@ FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/aspnet:9.0
 
 USER root
 
-# 安装 Tentacle
-RUN apt-get update && \
-    apt-get install -y wget && \
-    wget https://download.octopusdeploy.com/linux-tentacle/tentacle-6.0.0-linux-x64.tar.gz -O tentacle.tar.gz && \
-    mkdir /opt/tentacle && \
-    tar -xvf tentacle.tar.gz -C /opt/tentacle && \
-    rm tentacle.tar.gz && \
-    ln -s /opt/tentacle/tentacle /usr/local/bin/tentacle
+# 使用 Octopus Deploy 的 Tentacle 镜像
+FROM docker.packages.octopushq.com/octopusdeploy/tentacle:${TENTACLE_VERSION}
 
-WORKDIR /app
+# 设置环境变量
+ENV ServerUsername="${OCTOPUS_ADMIN_USERNAME}"
+ENV ServerPassword="${OCTOPUS_ADMIN_PASSWORD}"
+ENV TargetEnvironment="Development"
+ENV TargetRole="app-server"
+ENV ServerUrl="http://octopus-server:8080"
 
-# 复制构建结果
-COPY --from=build-env /app/out .
+# 创建挂载点
+RUN mkdir -p /Applications && mkdir -p /TentacleHome
 
-# 设置 Tentacle 环境变量（根据需要调整）
-ENV OCTOPUS_SERVER_URL="http://localhost:8080"
-ENV OCTOPUS_API_KEY="your-api-key"
-ENV OCTOPUS_SPACE="Default"
-ENV OCTOPUS_ROLE="web-server"
-ENV OCTOPUS_ENVIRONMENT="Test"
+# 挂载卷（Dockerfile 不支持直接挂载卷，需要在运行容器时指定）
+VOLUME [ "/Applications", "/TentacleHome" ]
 
-# 启动 Tentacle 和应用程序
-CMD tentacle configure --instance "Tentacle" --server "$OCTOPUS_SERVER_URL" --apiKey "$OCTOPUS_API_KEY" --space "$OCTOPUS_SPACE" --role "$OCTOPUS_ROLE" --environment "$OCTOPUS_ENVIRONMENT" && \
-    tentacle service --instance "Tentacle" --install --start
+# 保持容器运行
+CMD ["tail", "-f", "/dev/null"]
 
 ENTRYPOINT ["dotnet", "Squid.Api.dll"]
