@@ -1,4 +1,4 @@
-FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/sdk:8.0 AS build-env
+FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/sdk:9.0 AS build-env
 
 USER root
 
@@ -14,7 +14,7 @@ COPY ./NuGet.Config ./build
 RUN dotnet publish build/Squid.Api -c Release -o out
 
 # 运行时阶段
-FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/aspnet:8.0
+FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/aspnet:9.0
 
 USER root
 
