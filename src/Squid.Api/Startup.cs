@@ -20,9 +20,9 @@ public class Startup
         services.AddControllers();
         services.AddOptions();
         services.AddCustomSwagger();
+        services.AddHttpContextAccessor();
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
-        services.AddHttpContextAccessor();
         
 
         _serviceCollection = services;

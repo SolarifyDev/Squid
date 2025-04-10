@@ -25,7 +25,7 @@ public class ApplicationStartup
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));
-        builder.RegisterModule(new HalibutModule(logger));
+        builder.RegisterModule(new HalibutModule());
         builder.RegisterModule(new HalibutServiceModule());
         builder.RegisterAutoMapper(assemblies: assemblies);
 

@@ -11,17 +11,8 @@ namespace Squid.Infrastructure.Halibut;
 
 public class HalibutModule : Module
 {
-    private readonly ILogger _logger;
-    
-    public HalibutModule(ILogger logger)
-    {
-        _logger = logger;
-    }
-
     protected override void Load(ContainerBuilder builder)
     {
-        builder.RegisterType<AutofacServiceFactory>().AsImplementedInterfaces().SingleInstance();
-        
         builder.Register(c =>
         {
             var services = c.Resolve<IServiceFactory>();
