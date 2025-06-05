@@ -25,7 +25,6 @@ public class Startup
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
         
-
         _serviceCollection = services;
     }
 

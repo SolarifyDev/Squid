@@ -1,6 +1,4 @@
 using Squid.Core.Commands.Tentacle;
-using Squid.Core.Models.Tentacle;
-using Squid.Core.Requests.Tentacle;
 
 namespace Squid.Core.Services.Tentacle;
 

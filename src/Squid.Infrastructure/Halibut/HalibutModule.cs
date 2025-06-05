@@ -5,8 +5,6 @@ using Halibut.ServiceModel;
 using Squid.Core.Attributes;
 using Squid.Core.Extensions;
 using Squid.Core.Settings.SelfCert;
-using Squid.Infrastructure.Communications;
-using Squid.Infrastructure.HalibutService;
 
 namespace Squid.Infrastructure.Halibut;
 

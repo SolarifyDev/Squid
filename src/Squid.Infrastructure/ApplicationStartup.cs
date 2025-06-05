@@ -3,7 +3,6 @@ using Squid.Core.Mappings;
 using Squid.Core.Settings.SelfCert;
 using Squid.Infrastructure.Authentication;
 using Squid.Infrastructure.Halibut;
-using Squid.Infrastructure.HalibutService;
 using Squid.Infrastructure.Logging;
 using Squid.Infrastructure.Mediation;
 using Squid.Infrastructure.Settings;
@@ -28,7 +27,6 @@ public class ApplicationStartup
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));
         builder.RegisterModule(new HalibutModule(selfCertSetting));
-        builder.RegisterModule(new HalibutServiceModule());
         builder.RegisterAutoMapper(assemblies: assemblies);
 
         RegisterDependency(builder);
