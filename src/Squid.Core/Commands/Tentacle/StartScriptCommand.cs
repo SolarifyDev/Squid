@@ -95,7 +95,6 @@ public enum ScriptIsolationLevel
     FullIsolation
 }
 
-
 public class ScriptTicket : IEquatable<ScriptTicket>
 {
     public ScriptTicket(string taskId)
@@ -109,8 +108,10 @@ public class ScriptTicket : IEquatable<ScriptTicket>
     {
         if (ReferenceEquals(null, other))
             return false;
+
         if (ReferenceEquals(this, other))
             return true;
+
         return string.Equals(TaskId, other.TaskId, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -118,10 +119,13 @@ public class ScriptTicket : IEquatable<ScriptTicket>
     {
         if (ReferenceEquals(null, obj))
             return false;
+
         if (ReferenceEquals(this, obj))
             return true;
+
         if (obj.GetType() != GetType())
             return false;
+
         return Equals((ScriptTicket)obj);
     }
 
@@ -159,7 +163,6 @@ public class ScriptFile
     public string? EncryptionPassword { get; }
 }
 
-
 public class ScriptStatusRequest
 {
     public ScriptStatusRequest(ScriptTicket ticket, long lastLogSequence)
@@ -172,7 +175,6 @@ public class ScriptStatusRequest
 
     public long LastLogSequence { get; }
 }
-
 
 public class ScriptStatusResponse
 {
@@ -203,7 +205,10 @@ public class ScriptStatusResponse
 // [DebuggerDisplay("{Occurred} | {Source} | {Text}")]
 public class ProcessOutput
 {
-    public ProcessOutput(){}
+    public ProcessOutput()
+    {
+    }
+
     public ProcessOutput(ProcessOutputSource source, string text) : this(source, text, DateTimeOffset.UtcNow)
     {
     }
@@ -236,6 +241,7 @@ public enum ProcessState
     Running,
     Complete
 }
+
 public class UploadResult
 {
     public UploadResult(string fullPath, string hash, long length)

@@ -1,5 +1,6 @@
 using AutoMapper;
 using Squid.Core.Mappings;
+using Squid.Core.Settings.SelfCert;
 using Squid.Infrastructure.Authentication;
 using Squid.Infrastructure.Halibut;
 using Squid.Infrastructure.HalibutService;
@@ -16,7 +17,8 @@ public class ApplicationStartup
         SquidStoreSetting storeSetting,
         ILogger logger,
         IUserContext userContext,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        SelfCertSetting selfCertSetting)
     {
         var assemblies = new[] { typeof(IUserContext).Assembly, typeof(ApplicationStartup).Assembly };
 
@@ -25,7 +27,7 @@ public class ApplicationStartup
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));
-        builder.RegisterModule(new HalibutModule());
+        builder.RegisterModule(new HalibutModule(selfCertSetting));
         builder.RegisterModule(new HalibutServiceModule());
         builder.RegisterAutoMapper(assemblies: assemblies);
 
