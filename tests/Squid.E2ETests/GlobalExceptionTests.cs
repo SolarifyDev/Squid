@@ -8,8 +8,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Newtonsoft.Json;
 using Shouldly;
 using Squid.Api;
-using Squid.Core.Domain.Customers.Exceptions;
-using Squid.Messages.Commands.Customers;
+using Squid.Core;
+using Squid.Core.Commands.Customers;
 using Xunit;
 
 namespace Squid.E2ETests
@@ -60,7 +60,7 @@ namespace Squid.E2ETests
 
             var problemDetails = JsonConvert.DeserializeObject<ProblemDetails>(content);
 
-            problemDetails.Type.ShouldBe(nameof(CustomerNameAlreadyExistsException));
+            problemDetails.Type.ShouldBe(nameof(SquidException));
             problemDetails.Title.ShouldBe("A business error occur.");
             problemDetails.Detail.ShouldBe("Customer with this name already exists.");
         }
