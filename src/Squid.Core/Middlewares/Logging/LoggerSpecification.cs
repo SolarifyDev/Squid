@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using Mediator.Net.Pipeline;
 using Serilog;
+using Squid.Core.Extensions;
 
 namespace Squid.Core.Middlewares.Logging;
 

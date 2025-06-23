@@ -1,3 +1,5 @@
+using Squid.Message.Requests;
+
 namespace Squid.Core.Extensions;
 
 public static class QueryableExtensions

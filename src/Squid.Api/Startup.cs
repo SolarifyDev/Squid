@@ -1,4 +1,4 @@
-﻿using Squid.Infrastructure.Persistence;
+﻿using Squid.Core.Persistence;
 
 namespace Squid.Api;
 

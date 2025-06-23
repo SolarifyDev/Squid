@@ -2,7 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using Moq;
 using Serilog;
-using Squid.Infrastructure;
+using Squid.Message;
 
 namespace Squid.IntegrationTests;
 
