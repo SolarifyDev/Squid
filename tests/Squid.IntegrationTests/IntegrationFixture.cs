@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Moq;
 using Serilog;
 using Squid.Message;
+using Squid.Core.Settings.SelfCert;
 
 namespace Squid.IntegrationTests;
 
@@ -23,7 +24,8 @@ public class IntegrationFixture : IAsyncLifetime
             containerBuilder, 
             configuration.GetSection("SquidStore").Get<SquidStoreSetting>(),
             logger.Object, new IntegrationTestUser(), 
-            configuration);
+            configuration,
+            new SelfCertSetting(configuration));
         
         LifetimeScope = containerBuilder.Build();
     }

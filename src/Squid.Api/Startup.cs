@@ -1,4 +1,5 @@
-﻿using Squid.Core.Persistence;
+using Squid.Core.Persistence;
+using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Api;
 
@@ -20,11 +21,10 @@ public class Startup
         services.AddControllers();
         services.AddOptions();
         services.AddCustomSwagger();
+        services.AddHttpContextAccessor();
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
-        services.AddHttpContextAccessor();
         
-
         _serviceCollection = services;
     }
 
@@ -37,10 +37,11 @@ public class Startup
         var serviceProvider = _serviceCollection.BuildServiceProvider();
 
         var userContext = serviceProvider.GetRequiredService<IUserContext>();
+        var selfCertSetting = serviceProvider.GetRequiredService<SelfCertSetting>();
 
         var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
 
-        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, userContext, Configuration);
+        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, userContext, Configuration, selfCertSetting);
     }
 
     // Configure is where you add middleware. This is called after

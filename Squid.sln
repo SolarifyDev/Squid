@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.IntegrationTests", "t
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Message", "src\Squid.Message\Squid.Message.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.E2ETests", "tests\Squid.E2ETests\Squid.E2ETests.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,6 +45,8 @@ Global
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7B557ED6-760C-4FF4-A720-E5D9D887F2C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7B557ED6-760C-4FF4-A720-E5D9D887F2C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -53,6 +57,7 @@ Global
 		{AF0CBC87-76A5-4592-8673-7F4E2DA589F9} = {39D26C72-1BD3-4793-A455-F651830208E7}
 		{1A1B03CC-0E42-46A0-9F7E-6DE18F05679B} = {39D26C72-1BD3-4793-A455-F651830208E7}
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C6} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
+		{7B557ED6-760C-4FF4-A720-E5D9D887F2C5} = {39D26C72-1BD3-4793-A455-F651830208E7}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {60CBA761-5D3C-4D33-B808-977512C7E6ED}

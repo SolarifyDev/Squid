@@ -1,4 +1,5 @@
 using Autofac;
+using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Core;
 
@@ -9,7 +10,8 @@ public class ApplicationStartup
         SquidStoreSetting storeSetting,
         ILogger logger,
         IUserContext userContext,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        SelfCertSetting selfCertSetting)
     {
         var assemblies = new[] { typeof(IUserContext).Assembly, typeof(ApplicationStartup).Assembly };
 
@@ -18,6 +20,7 @@ public class ApplicationStartup
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));
+        builder.RegisterModule(new HalibutModule(selfCertSetting));
         builder.RegisterAutoMapper(assemblies: assemblies);
 
         RegisterDependency(builder);
