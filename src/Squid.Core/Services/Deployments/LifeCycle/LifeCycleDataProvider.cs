@@ -17,7 +17,7 @@ public interface ILifeCycleDataProvider : IScopedDependency
     
     Task<Lifecycle> GetLifecycleByIdAsync(Guid id, CancellationToken cancellationToken);
     
-    Task<List<Lifecycle>> GetLifecycleByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
 
     Task AddPhaseAsync(Phase phase, bool forceSave = true, CancellationToken cancellationToken = default);
     
@@ -30,6 +30,16 @@ public interface ILifeCycleDataProvider : IScopedDependency
     Task DeletePhaseAsync(Phase phase, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task<List<Phase>> GetPhasesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
+    
+    Task AddRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task AddRetentionPoliciesAsync(List<RetentionPolicy> retentionPolicies, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task UpdateRetentionPoliciesAsync(List<RetentionPolicy> retentionPolicies, bool forceSave = true, CancellationToken cancellationToken = default);
+    
+    Task DeleteRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
 }
 
 public class LifeCycleDataProvider : ILifeCycleDataProvider
@@ -97,7 +107,7 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
         return await _repository.Query<Lifecycle>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Lifecycle>> GetLifecycleByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Lifecycle>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -140,5 +150,38 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
     public async Task<List<Phase>> GetPhasesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Phase>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    public async Task AddRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default)
+    {
+        await _repository.InsertAsync(retentionPolicy, cancellationToken).ConfigureAwait(false);
+        
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    public async Task AddRetentionPoliciesAsync(List<RetentionPolicy> retentionPolicies, bool forceSave = true, CancellationToken cancellationToken = default)
+    {
+        await _repository.InsertAllAsync(retentionPolicies, cancellationToken).ConfigureAwait(false);
+        
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    public async Task UpdateRetentionPoliciesAsync(List<RetentionPolicy> retentionPolicies, bool forceSave = true, CancellationToken cancellationToken = default)
+    {
+        await _repository.UpdateAllAsync(retentionPolicies, cancellationToken).ConfigureAwait(false);
+        
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default)
+    {
+        await _repository.DeleteAsync(retentionPolicy, cancellationToken).ConfigureAwait(false);
+        
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    public async Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
+    {
+        return await _repository.Query<RetentionPolicy>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }
