@@ -85,8 +85,8 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
     {
         var query = from lifecycle in _repository.Query<Lifecycle>()
             join phase in _repository.Query<Phase>() on lifecycle.Id equals phase.LifecycleId
-            group phase by lifecycle into grouped
-            select new { Lifecycle = grouped.Key, Phases = grouped };
+            group new { phase, lifecycle } by lifecycle into grouped
+            select new { Lifecycle = grouped.Key, Phases = grouped.Select(x=> x.phase) };
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
@@ -104,7 +104,7 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
 
     public async Task<Lifecycle> GetLifecycleByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        return await _repository.Query<Lifecycle>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        return await _repository.QueryNoTracking<Lifecycle>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
@@ -149,7 +149,7 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
 
     public async Task<List<Phase>> GetPhasesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
-        return await _repository.Query<Phase>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await _repository.QueryNoTracking<Phase>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
     
     public async Task AddRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default)

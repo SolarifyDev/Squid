@@ -1,6 +1,6 @@
 namespace Squid.Message.Models.Deployments.LifeCycle;
 
-public class LifeCycleDto
+public class LifeCycleDto : IHasDualRetentionPolicies
 {
     public Guid Id { get; set; }
 

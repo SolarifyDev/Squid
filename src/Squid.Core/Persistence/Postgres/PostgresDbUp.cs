@@ -22,9 +22,7 @@ public class PostgresDbUp: IStartable
         var engineBuilder = DeployChanges.To
             .PostgresqlDatabase(_connectionString)
             .WithScriptsFromFileSystem(
-                Path.Combine(
-                    Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ??
-                    throw new ArgumentNullException(), "Persistence/Postgres/Scripts"),
+                Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, "Persistence/Postgres/Scripts"),
                 new FileSystemScriptOptions
                 {
                     IncludeSubDirectories = true,

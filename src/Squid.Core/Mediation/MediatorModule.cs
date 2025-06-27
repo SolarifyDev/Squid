@@ -1,3 +1,5 @@
+using Squid.Core.Middlewares.UnitOfWork;
+
 namespace Squid.Core.Mediation;
 
 public class MediatorModule : Module
@@ -18,6 +20,7 @@ public class MediatorModule : Module
         mediatorBuilder.ConfigureGlobalReceivePipe(c =>
         {
             c.UseLogger();
+            c.UseUnitOfWork();
             c.UseMessageValidator();
         });
 

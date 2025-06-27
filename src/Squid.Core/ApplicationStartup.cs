@@ -14,7 +14,7 @@ public class ApplicationStartup
         IConfiguration configuration,
         SelfCertSetting selfCertSetting)
     {
-        var assemblies = new[] { typeof(IUserContext).Assembly, typeof(ApplicationStartup).Assembly };
+        var assemblies = new[] { typeof(ApplicationStartup).Assembly };
 
         builder.RegisterModule(new LoggingModule(logger));
         builder.RegisterModule(new AuthenticationModule(userContext));

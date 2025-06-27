@@ -24,6 +24,8 @@ public class PersistenceModule : Module
             case SquidStoreSetting.SquidStoreType.MySql:
                 break;
         }
+        
+        builder.RegisterType<EfRepository>().As<IRepository>().InstancePerLifetimeScope();
     }
 
     private void RegisterInMemoryDbContext(ContainerBuilder builder)
@@ -38,6 +40,7 @@ public class PersistenceModule : Module
             })
             .AsSelf()
             .As<DbContext>()
+            .AsImplementedInterfaces()
             .InstancePerLifetimeScope();
     }
 
@@ -55,6 +58,7 @@ public class PersistenceModule : Module
             })
             .AsSelf()
             .As<DbContext>()
+            .AsImplementedInterfaces()
             .InstancePerLifetimeScope();
 
         builder

@@ -1,16 +1,16 @@
 namespace Squid.Message.Models.Deployments.LifeCycle;
 
-public class PhaseDto
+public class PhaseDto : IHasDualRetentionPolicies
 {
     public Guid Id { get; set; }
     
     public Guid LifecycleId { get; set; }
     
     public string Name { get; set; }
-    
-    public List<string> AutomaticDeploymentTargets { get; set; }
-    
-    public List<string> OptionalDeploymentTargets { get; set; }
+
+    public List<string> AutomaticDeploymentTargets { get; set; } = new();
+
+    public List<string> OptionalDeploymentTargets { get; set; } = new();
     
     public int MinimumEnvironmentsBeforePromotion { get; set; }
     

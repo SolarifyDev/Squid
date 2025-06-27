@@ -8,9 +8,9 @@ public class Phase : IEntity<Guid>
     
     public string Name { get; set; }
 
-    public string AutomaticDeploymentTargets { get; set; }
+    public string AutomaticDeploymentTargets { get; set; } = string.Empty;
 
-    public string OptionalDeploymentTargets { get; set; }
+    public string OptionalDeploymentTargets { get; set; } = string.Empty;
 
     public int MinimumEnvironmentsBeforePromotion { get; set; }
 
