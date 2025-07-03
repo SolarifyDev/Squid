@@ -1,6 +1,7 @@
 using System.Linq;
 using Mediator.Net.Contracts;
 using Squid.Core.Extensions;
+using Squid.Message.Commands.Deployments.LifeCycle;
 using Squid.Core.Middlewares.FluentMessageValidator;
 
 namespace Squid.UnitTests.Mediators;
@@ -10,7 +11,7 @@ public class MessageChecker
     [Fact]
     public void ShouldAllMessageHaveValidators()
     {
-        var messageTypes = typeof(CreateCustomerCommand).Assembly.GetTypes()
+        var messageTypes = typeof(CreateLifeCycleCommand).Assembly.GetTypes()
             .Where(t => t.IsAssignableTo(typeof(IRequest)) || t.IsAssignableTo(typeof(ICommand)))
             .Where(t => !t.IsAbstract && !t.IsInterface)
             .ToList();

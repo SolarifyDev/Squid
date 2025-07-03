@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>Squid.Message</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Mediator.Net" Version="4.7.0" />
+        <PackageReference Include="Mediator.Net.Autofac" Version="4.7.0" />
+    </ItemGroup>
+
+</Project>

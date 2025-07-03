@@ -15,7 +15,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.UnitTests", "tests\Sq
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.IntegrationTests", "tests\Squid.IntegrationTests\Squid.IntegrationTests.csproj", "{1A1B03CC-0E42-46A0-9F7E-6DE18F05679B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Infrastructure", "src\Squid.Infrastructure\Squid.Infrastructure.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Message", "src\Squid.Message\Squid.Message.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.E2ETests", "tests\Squid.E2ETests\Squid.E2ETests.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C5}"
 EndProject

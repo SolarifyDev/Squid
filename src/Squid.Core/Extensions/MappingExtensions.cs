@@ -1,3 +1,6 @@
+using Squid.Message.Domain;
+using Squid.Message.Models;
+
 namespace Squid.Core.Extensions;
 
 public static class MappingExtensions

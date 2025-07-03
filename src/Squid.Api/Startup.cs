@@ -1,5 +1,5 @@
-﻿using Squid.Core.Settings.SelfCert;
-using Squid.Infrastructure.Persistence;
+using Squid.Core.Persistence;
+using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Api;
 
@@ -37,7 +37,7 @@ public class Startup
         var serviceProvider = _serviceCollection.BuildServiceProvider();
 
         var userContext = serviceProvider.GetRequiredService<IUserContext>();
-        var selfCertSetting = serviceProvider.GetRequiredService<SelfCertSetting>();
+        var selfCertSetting = Configuration.GetSection("SelfCert").Get<SelfCertSetting>();
 
         var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
 

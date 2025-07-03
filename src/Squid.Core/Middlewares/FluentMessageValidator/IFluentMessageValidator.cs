@@ -1,3 +1,4 @@
+using FluentValidation;
 using FluentValidation.Results;
 
 namespace Squid.Core.Middlewares.FluentMessageValidator;
