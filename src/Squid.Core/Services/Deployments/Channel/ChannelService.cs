@@ -29,21 +29,25 @@ public class ChannelService : IChannelService
     
     public async Task<CreateChannelEvent> CreateChannelAsync(CreateChannelCommand command, CancellationToken cancellationToken)
     {
-        await _channelDataProvider.AddChannelAsync(_mapper.Map<Message.Domain.Deployments.Channel>(command.Channel), cancellationToken: cancellationToken).ConfigureAwait(false);
+        var channel = _mapper.Map<Message.Domain.Deployments.Channel>(command.Channel);
+        
+        await _channelDataProvider.AddChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new CreateChannelEvent()
         {
-            Data = command.Channel
+            Data = _mapper.Map<ChannelDto>(channel)
         };
     }
 
     public async Task<UpdateChannelEvent> UpdateChannelAsync(UpdateChannelCommand command, CancellationToken cancellationToken)
     {
-        await _channelDataProvider.UpdateChannelAsync(_mapper.Map<Message.Domain.Deployments.Channel>(command.Channel), cancellationToken: cancellationToken).ConfigureAwait(false);
+        var channel = _mapper.Map<Message.Domain.Deployments.Channel>(command.Channel);
+        
+        await _channelDataProvider.UpdateChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new UpdateChannelEvent()
         {
-            Data = command.Channel
+            Data = _mapper.Map<ChannelDto>(channel)
         };
     }
 

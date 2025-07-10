@@ -3,6 +3,8 @@ using Squid.Message.Requests.Deployments.Channel;
 
 namespace Squid.Api.Controllers;
 
+[ApiController]
+[Route("api/[controller]")]
 public class ChannelController : ControllerBase
 {
     private readonly IMediator _mediator;

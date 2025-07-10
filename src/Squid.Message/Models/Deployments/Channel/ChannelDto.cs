@@ -12,7 +12,7 @@ public class ChannelDto
     
     public Guid LifecycleId { get; set; }
     
-    public byte[] DataVersion { get; set; }
+    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
     
     public Guid SpaceId { get; set; }
     

@@ -3,7 +3,6 @@ using Squid.Message.Requests.Deployments.LifeCycle;
 
 namespace Squid.Api.Controllers;
 
-
 [ApiController]
 [Route("api/[controller]")]
 public class LifeCycleController : ControllerBase
