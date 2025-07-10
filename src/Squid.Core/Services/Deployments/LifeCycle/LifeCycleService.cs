@@ -9,11 +9,11 @@ namespace Squid.Core.Services.Deployments.LifeCycle;
 
 public interface ILifeCycleService : IScopedDependency
 {
-    Task<CreateLifeCycleEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken);
+    Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken);
     
-    Task<UpdateLifeCycleEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken);
+    Task<LifeCycleUpdatedEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken);
     
-    Task<DeleteLifeCycleEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken);
+    Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken);
     
     Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken);
 }
@@ -29,7 +29,7 @@ public class LifeCycleService : ILifeCycleService
         _lifeCycleDataProvider = lifeCycleDataProvider;
     }
 
-    public async Task<CreateLifeCycleEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
+    public async Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
     {
         command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicyId = command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id = Guid.NewGuid();
         command.LifecyclePhase.Lifecycle.TentacleRetentionPolicyId = command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id = Guid.NewGuid();
@@ -52,7 +52,7 @@ public class LifeCycleService : ILifeCycleService
         phases.ForEach(x => x.LifecycleId = lifecycle.Id);
         await _lifeCycleDataProvider.AddPhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return new CreateLifeCycleEvent
+        return new LifeCycleCreateEvent
         {
             Data = new CreateLifeCycleResponseData
             {
@@ -61,7 +61,7 @@ public class LifeCycleService : ILifeCycleService
         };
     }
 
-    public async Task<UpdateLifeCycleEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken)
+    public async Task<LifeCycleUpdatedEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken)
     {
         var retentionPoliciesIds = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy.Id)
             .Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy.Id))
@@ -92,7 +92,7 @@ public class LifeCycleService : ILifeCycleService
         await _lifeCycleDataProvider.UpdatePhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
         await _lifeCycleDataProvider.UpdateRetentionPoliciesAsync(retentionPolicies, cancellationToken: cancellationToken).ConfigureAwait(false);
         
-        return new UpdateLifeCycleEvent
+        return new LifeCycleUpdatedEvent
         {
             Data = new UpdateLifeCycleResponseData
             {
@@ -101,7 +101,7 @@ public class LifeCycleService : ILifeCycleService
         };
     }
 
-    public async Task<DeleteLifeCycleEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken)
+    public async Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken)
     {
         var failIds = new List<Guid>();
         var lifecycles = await _lifeCycleDataProvider.GetLifecyclesByIdAsync(command.Ids, cancellationToken).ConfigureAwait(false);
@@ -110,7 +110,7 @@ public class LifeCycleService : ILifeCycleService
 
         await _lifeCycleDataProvider.DeleteLifecyclesAsync(lifecycles, cancellationToken: cancellationToken).ConfigureAwait(false);
         
-        return new DeleteLifeCycleEvent
+        return new LifeCycleDeletedEvent
         {
             Data = new DeleteLifeCyclesResponseData
             {

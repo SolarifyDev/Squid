@@ -14,7 +14,7 @@ public class LifeCycleController : ControllerBase
         _mediator = mediator;
     }
     
-    [Route("create"), HttpPost]
+    [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateLifeCycleResponse))]
     public async Task<IActionResult> CreateLifeCycleAsync([FromBody] CreateLifeCycleCommand command)
     {
@@ -23,7 +23,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [Route("update"), HttpPost]
+    [HttpPut]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateLifeCycleResponse))]
     public async Task<IActionResult> UpdateLifeCycleAsync([FromBody] UpdateLifeCycleCommand command)
     {
@@ -32,7 +32,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [Route("delete"), HttpPost]
+    [HttpDelete]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteLifeCyclesResponse))]
     public async Task<IActionResult> DeleteLifeCyclesAsync([FromBody] DeleteLifeCyclesCommand command)
     {
@@ -41,7 +41,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [Route("list"), HttpGet]
+    [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetLifeCycleResponse))]
     public async Task<IActionResult> GetLifeCyclesAsync([FromQuery] GetLifecycleRequest request)
     {

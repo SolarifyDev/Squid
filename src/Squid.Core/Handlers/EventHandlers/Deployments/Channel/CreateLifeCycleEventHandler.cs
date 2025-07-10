@@ -2,9 +2,9 @@ using Squid.Message.Events.Deployments.Channel;
 
 namespace Squid.Core.Handlers.EventHandlers.Deployments.Channel;
 
-public class CreateChannelEventHandler : IEventHandler<CreateChannelEvent>
+public class CreateChannelEventHandler : IEventHandler<ChannelCreatedEvent>
 {
-    public async Task Handle(IReceiveContext<CreateChannelEvent> context, CancellationToken cancellationToken)
+    public async Task Handle(IReceiveContext<ChannelCreatedEvent> context, CancellationToken cancellationToken)
     {
         return;
     }

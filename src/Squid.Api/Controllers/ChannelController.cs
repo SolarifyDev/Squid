@@ -14,7 +14,7 @@ public class ChannelController : ControllerBase
         _mediator = mediator;
     }
     
-    [Route("create"), HttpPost]
+    [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateChannelResponse))]
     public async Task<IActionResult> CreateChannelAsync([FromBody] CreateChannelCommand command)
     {
@@ -23,7 +23,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [Route("update"), HttpPost]
+    [HttpPut]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateChannelResponse))]
     public async Task<IActionResult> UpdateChannelAsync([FromBody] UpdateChannelCommand command)
     {
@@ -32,7 +32,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [Route("delete"), HttpPost]
+    [HttpDelete]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteChannelsResponse))]
     public async Task<IActionResult> DeleteChannelsAsync([FromBody] DeleteChannelsCommand command)
     {
@@ -41,7 +41,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [Route("list"), HttpGet]
+    [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetChannelsResponse))]
     public async Task<IActionResult> GetChannelsAsync([FromQuery] GetChannelsRequest request)
     {
