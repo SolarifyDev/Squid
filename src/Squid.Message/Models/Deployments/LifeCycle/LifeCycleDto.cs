@@ -6,7 +6,7 @@ public class LifeCycleDto : IHasDualRetentionPolicies
 
     public string Name { get; set; }
 
-    public byte[] DataVersion { get; set; }
+    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
 
     public Guid SpaceId { get; set; }
 

@@ -1,6 +1,6 @@
-namespace Squid.Message.Domain.Deployments;
+namespace Squid.Message.Models.Deployments.Channel;
 
-public class Channel : IEntity<Guid>
+public class ChannelDto
 {
     public Guid Id { get; set; }
     

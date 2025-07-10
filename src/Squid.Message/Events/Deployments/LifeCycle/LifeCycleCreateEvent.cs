@@ -2,7 +2,7 @@ using Squid.Message.Commands.Deployments.LifeCycle;
 
 namespace Squid.Message.Events.Deployments.LifeCycle;
 
-public class DeleteLifeCycleEvent : IEvent
+public class LifeCycleCreateEvent : IEvent
 {
-    public DeleteLifeCyclesResponseData Data { get; set; }
+    public CreateLifeCycleResponseData Data { get; set; }
 }
