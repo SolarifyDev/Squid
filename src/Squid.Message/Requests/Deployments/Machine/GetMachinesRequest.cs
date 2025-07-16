@@ -1,11 +1,20 @@
-namespace Squid.Message.Requests.Deployments.Machine
+using Squid.Message.Response;
+using Squid.Message.Models.Deployments.Machine;
+
+namespace Squid.Message.Requests.Deployments.Machine;
+
+public class GetMachinesRequest : IPaginatedRequest
 {
-    public class GetMachinesRequest : IPaginatedRequest
-    {
-        public string Name { get; set; }
+    public int PageIndex { get; set; }
+    public int PageSize { get; set; }
+}
 
-        public int PageIndex { get; set; }
+public class GetMachinesResponse : SquidResponse<GetMachinesResponseData>
+{
+}
 
-        public int PageSize { get; set; }
-    }
+public class GetMachinesResponseData
+{
+    public int Count { get; set; }
+    public List<MachineDto> Machines { get; set; }
 } 

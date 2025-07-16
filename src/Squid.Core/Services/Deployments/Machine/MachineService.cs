@@ -1,51 +1,94 @@
 using Squid.Message.Commands.Deployments.Machine;
+using Squid.Message.Events.Deployments.Machine;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Requests.Deployments.Machine;
 
-namespace Squid.Core.Services.Deployments.Machine
+namespace Squid.Core.Services.Deployments.Machine;
+
+public interface IMachineService : IScopedDependency
 {
-    public class MachineService : IMachineService
+    Task<MachineCreatedEvent> CreateMachineAsync(CreateMachineCommand command, CancellationToken cancellationToken);
+
+    Task<MachineUpdatedEvent> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken);
+
+    Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken);
+
+    Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken);
+}
+
+public class MachineService : IMachineService
+{
+    private readonly IMapper _mapper;
+
+    private readonly IMachineDataProvider _machineDataProvider;
+
+    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider)
     {
-        private readonly IMachineDataProvider _machineDataProvider; 
-        private readonly IMapper _mapper;
+        _mapper = mapper;
+        _machineDataProvider = machineDataProvider;
+    }
 
-        public MachineService(IMachineDataProvider machineDataProvider, IMapper mapper) 
+    public async Task<MachineCreatedEvent> CreateMachineAsync(CreateMachineCommand command, CancellationToken cancellationToken)
+    {
+        var machine = _mapper.Map<Squid.Message.Domain.Deployments.Machine>(command);
+
+        machine.Id = Guid.NewGuid();
+
+        await _machineDataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new MachineCreatedEvent
         {
-            _machineDataProvider = machineDataProvider; 
-            _mapper = mapper;
+            Data = _mapper.Map<MachineDto>(machine)
+        };
+    }
+
+    public async Task<MachineUpdatedEvent> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken)
+    {
+        var machine = await _machineDataProvider.GetMachinesByIdsAsync(new List<Guid> { command.Id }, cancellationToken).ConfigureAwait(false);
+
+        var entity = machine.FirstOrDefault();
+
+        if (entity == null)
+        {
+            throw new Exception("Machine not found");
         }
 
-        public async Task<Guid> CreateMachineAsync(CreateMachineCommand command)
-        {
-            var entity = _mapper.Map<Message.Domain.Deployments.Machine>(command);
-            entity.Id = Guid.NewGuid();
-            await _machineDataProvider.AddMachineAsync(entity); 
-            return entity.Id;
-        }
+        _mapper.Map(command, entity);
 
-        public async Task<bool> UpdateMachineAsync(UpdateMachineCommand command)
-        {
-            var entity = await _machineDataProvider.GetMachineByIdAsync(command.Id); 
-            if (entity == null) return false;
-            _mapper.Map(command, entity);
-            await _machineDataProvider.UpdateMachineAsync(entity); 
-            return true;
-        }
+        await _machineDataProvider.UpdateMachineAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        public async Task<bool> DeleteMachineAsync(Guid id)
+        return new MachineUpdatedEvent
         {
-            var entity = await _machineDataProvider.GetMachineByIdAsync(id); 
-            if (entity == null) return false;
-            await _machineDataProvider.DeleteMachineAsync(entity); 
-            return true;
-        }
+            Data = _mapper.Map<MachineDto>(entity)
+        };
+    }
 
-        public async Task<PaginatedResponse<MachineDto>> GetMachinesAsync(GetMachinesRequest request)
+    public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)
+    {
+        var machines = await _machineDataProvider.GetMachinesByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+
+        await _machineDataProvider.DeleteMachinesAsync(machines, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new MachineDeletedEvent
         {
-            var items = await _machineDataProvider.GetMachinesAsync(request.Name, request.PageIndex, request.PageSize); 
-            var total = await _machineDataProvider.GetMachinesCountAsync(request.Name); 
-            var dtos = _mapper.Map<List<MachineDto>>(items);
-            return new PaginatedResponse<MachineDto>(dtos, total);
-        }
+            Data = new DeleteMachinesResponseData
+            {
+                FailIds = command.Ids.Except(machines.Select(m => m.Id)).ToList()
+            }
+        };
+    }
+
+    public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
+    {
+        var (count, data) = await _machineDataProvider.GetMachinePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+
+        return new GetMachinesResponse
+        {
+            Data = new GetMachinesResponseData
+            {
+                Count = count,
+                Machines = _mapper.Map<List<MachineDto>>(data)
+            }
+        };
     }
 } 

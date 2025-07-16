@@ -1,27 +1,29 @@
+using Squid.Core.Services.Deployments.Machine;
 using Squid.Message.Commands.Deployments.Machine;
-using Squid.Message.Events.Deployments.Machine;
 
-namespace Squid.Core.Handlers.CommandHandlers.Deployments.Machine
+namespace Squid.Core.Handlers.CommandHandlers.Deployments.Machine;
+
+public class UpdateMachineCommandHandler : ICommandHandler<UpdateMachineCommand, UpdateMachineResponse>
 {
-    public class UpdateMachineCommandHandler : ICommandHandler<UpdateMachineCommand, UpdateMachineResponse>
+    private readonly IMachineService _machineService;
+
+    public UpdateMachineCommandHandler(IMachineService machineService)
     {
-        private readonly IMachineService _machineService;
-        private readonly IEventBus _eventBus;
+        _machineService = machineService;
+    }
 
-        public UpdateMachineCommandHandler(IMachineService machineService, IEventBus eventBus)
-        {
-            _machineService = machineService;
-            _eventBus = eventBus;
-        }
+    public async Task<UpdateMachineResponse> Handle(IReceiveContext<UpdateMachineCommand> context, CancellationToken cancellationToken)
+    {
+        var @event = await _machineService.UpdateMachineAsync(context.Message, cancellationToken).ConfigureAwait(false);
 
-        public async Task<UpdateMachineResponse> Handle(IReceiveContext<UpdateMachineCommand> context, CancellationToken cancellationToken)
+        await context.PublishAsync(@event, cancellationToken).ConfigureAwait(false);
+
+        return new UpdateMachineResponse
         {
-            var success = await _machineService.UpdateMachineAsync(context.Message);
-            if (success)
+            Data = new UpdateMachineResponseData
             {
-                await _eventBus.PublishAsync(new MachineUpdatedEvent { Id = context.Message.Id, Name = context.Message.Name });
+                Machine = @event.Data
             }
-            return new UpdateMachineResponse { Success = success };
-        }
+        };
     }
 } 

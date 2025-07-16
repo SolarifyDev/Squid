@@ -34,10 +34,10 @@ public class MachineController : ControllerBase
     }
 
     [HttpDelete]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachineResponse))]
-    public async Task<IActionResult> DeleteMachineAsync([FromBody] DeleteMachineCommand command)
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
+    public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command)
     {
-        var response = await _mediator.SendAsync<DeleteMachineCommand, DeleteMachineResponse>(command).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<DeleteMachinesCommand, DeleteMachinesResponse>(command).ConfigureAwait(false);
 
         return Ok(response);
     }

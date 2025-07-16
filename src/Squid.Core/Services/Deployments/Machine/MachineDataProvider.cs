@@ -3,10 +3,25 @@ using AutoMapper;
 
 namespace Squid.Core.Services.Deployments.Machine;
 
+public interface IMachineDataProvider : IScopedDependency
+{
+    Task AddMachineAsync(Squid.Message.Domain.Deployments.Machine machine, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task UpdateMachineAsync(Squid.Message.Domain.Deployments.Machine machine, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task DeleteMachinesAsync(List<Squid.Message.Domain.Deployments.Machine> machines, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task<(int count, List<Squid.Message.Domain.Deployments.Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+
+    Task<List<Squid.Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken);
+}
+
 public class MachineDataProvider : IMachineDataProvider
 {
     private readonly IUnitOfWork _unitOfWork;
+
     private readonly IRepository _repository;
+
     private readonly IMapper _mapper;
 
     public MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository, IMapper mapper)
@@ -16,38 +31,52 @@ public class MachineDataProvider : IMachineDataProvider
         _mapper = mapper;
     }
 
-    public async Task AddMachineAsync(Machine machine, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddMachineAsync(Squid.Message.Domain.Deployments.Machine machine, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(machine, cancellationToken).ConfigureAwait(false);
-        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (forceSave)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
-    public async Task UpdateMachineAsync(Machine machine, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task UpdateMachineAsync(Squid.Message.Domain.Deployments.Machine machine, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.UpdateAsync(machine, cancellationToken).ConfigureAwait(false);
-        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (forceSave)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
-    public async Task DeleteMachineAsync(Machine machine, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task DeleteMachinesAsync(List<Squid.Message.Domain.Deployments.Machine> machines, bool forceSave = true, CancellationToken cancellationToken = default)
     {
-        await _repository.DeleteAsync(machine, cancellationToken).ConfigureAwait(false);
-        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await _repository.DeleteAllAsync(machines, cancellationToken).ConfigureAwait(false);
+
+        if (forceSave)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
-    public async Task<Machine> GetMachineByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Squid.Message.Domain.Deployments.Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Machine>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var query = _repository.Query<Squid.Message.Domain.Deployments.Machine>();
+
+        var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+
+        if (pageIndex.HasValue && pageSize.HasValue)
+        {
+            query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
+        }
+
+        return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Machine>> GetMachinesAsync(string name, int pageIndex, int pageSize, CancellationToken cancellationToken = default)
+    public async Task<List<Squid.Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
-        var query = _repository.QueryNoTracking<Machine>(x => string.IsNullOrEmpty(name) || x.Name.Contains(name));
-        return await query.Skip(pageIndex * pageSize).Take(pageSize).ToListAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<int> GetMachinesCountAsync(string name, CancellationToken cancellationToken = default)
-    {
-        var query = _repository.QueryNoTracking<Machine>(x => string.IsNullOrEmpty(name) || x.Name.Contains(name));
-        return await query.CountAsync(cancellationToken).ConfigureAwait(false);
+        return await _repository.Query<Squid.Message.Domain.Deployments.Machine>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 } 

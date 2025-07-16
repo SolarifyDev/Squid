@@ -2,16 +2,16 @@ using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Machine;
 
-public class DeleteMachineCommand
+public class DeleteMachinesCommand : ICommand
 {
-    public Guid Id { get; set; }
+    public List<Guid> Ids { get; set; }
 }
 
-public class DeleteMachineResponse : SquidResponse<DeleteMachineResponseData>
+public class DeleteMachinesResponse : SquidResponse<DeleteMachinesResponseData>
 {
 }
 
-public class DeleteMachineResponseData
+public class DeleteMachinesResponseData
 {
-    public bool Success { get; set; }
+    public List<Guid> FailIds { get; set; }
 }

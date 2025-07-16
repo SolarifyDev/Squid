@@ -1,7 +1,9 @@
+using Squid.Message.Commands.Deployments.Machine;
+
 namespace Squid.Message.Events.Deployments.Machine
 {
     public class MachineDeletedEvent : IEvent
     {
-        public Guid Id { get; set; }
+        public DeleteMachinesResponseData Data { get; set; }
     }
 } 
