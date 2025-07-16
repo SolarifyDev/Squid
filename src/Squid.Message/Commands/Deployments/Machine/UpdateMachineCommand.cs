@@ -1,6 +1,9 @@
+using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Response;
+
 namespace Squid.Message.Commands.Deployments.Machine
 {
-    public class UpdateMachineCommand : ICommand<UpdateMachineResponse>
+    public class UpdateMachineCommand : ICommand
     {
         public Guid Id { get; set; }
         public string Name { get; set; }
@@ -20,8 +23,12 @@ namespace Squid.Message.Commands.Deployments.Machine
         public string Slug { get; set; }
     }
 
-    public class UpdateMachineResponse : IResponse
+    public class UpdateMachineResponse : SquidResponse<UpdateMachineResponseData>
     {
-        public bool Success { get; set; }
     }
-} 
+
+    public class UpdateMachineResponseData
+    {
+        public MachineDto Machine { get; set; }
+    }
+}

@@ -1,7 +1,7 @@
 namespace Squid.Message.Models.Deployments.Machine
 {
-    public class MachineDto : IBaseModel 
-    { 
+    public class MachineDto : IBaseModel
+    {
         public Guid Id { get; set; }
 
         public string Name { get; set; }
@@ -35,5 +35,5 @@ namespace Squid.Message.Models.Deployments.Machine
         public string LicenseHash { get; set; }
 
         public string Slug { get; set; }
-    } 
+    }
 } 

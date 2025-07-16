@@ -1,12 +1,17 @@
-namespace Squid.Message.Commands.Deployments.Machine
-{
-    public class DeleteMachineCommand : ICommand<DeleteMachineResponse> 
-    { 
-        public Guid Id { get; set; } 
-    } 
+using Squid.Message.Response;
 
-    public class DeleteMachineResponse : IResponse 
-    { 
-        public bool Success { get; set; } 
-    } 
-} 
+namespace Squid.Message.Commands.Deployments.Machine;
+
+public class DeleteMachineCommand
+{
+    public Guid Id { get; set; }
+}
+
+public class DeleteMachineResponse : SquidResponse<DeleteMachineResponseData>
+{
+}
+
+public class DeleteMachineResponseData
+{
+    public bool Success { get; set; }
+}
