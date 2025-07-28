@@ -21,7 +21,6 @@ global using Squid.Core.DependencyInjection;
 global using Squid.Core.Middlewares.Logging;
 global using Squid.Core.Persistence.Postgres;
 global using Squid.Message.Domain.Deployments;
-global using Squid.Message.Domain.Deployments;
 global using Microsoft.Extensions.Configuration;
 global using Squid.Core.Middlewares.FluentMessageValidator;
 global using AutoMapper.Contrib.Autofac.DependencyInjection;

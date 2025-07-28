@@ -1,4 +1,4 @@
-namespace Squid.Core.Infrastructure;
+namespace Squid.Core;
 
 public interface IClock : IScopedDependency
 {
