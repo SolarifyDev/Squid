@@ -1,6 +1,4 @@
-using Mediator.Net;
 using Mediator.Net.Pipeline;
-using Serilog;
 
 namespace Squid.Core.Middlewares.Logging;
 

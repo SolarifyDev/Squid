@@ -1,5 +1,5 @@
-using Squid.Message.Requests.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Message.Requests.Deployments.LifeCycle;
 
 namespace Squid.Core.Handlers.RequestHandlers.Deployments.LifeCycle;
 

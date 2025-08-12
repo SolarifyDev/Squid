@@ -1,4 +1,5 @@
 using Squid.Core.Commands.Tentacle;
+
 namespace Squid.Core.Services.Tentacle;
 
 public interface IScriptService

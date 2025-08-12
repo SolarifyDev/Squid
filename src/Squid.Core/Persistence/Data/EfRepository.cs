@@ -1,6 +1,6 @@
-using Squid.Message.Domain;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Squid.Message.Domain;
 
 namespace Squid.Core.Persistence.Data;
 
@@ -16,7 +16,7 @@ public class EfRepository : IRepository
     public ValueTask<TEntity> GetByIdAsync<TEntity>(object id,
         CancellationToken cancellationToken = default) where TEntity : class, IEntity
     {
-        return _dbContext.FindAsync<TEntity>(new object[] { id }, cancellationToken);
+        return _dbContext.FindAsync<TEntity>(new[] { id }, cancellationToken);
     }
 
     public Task<List<TEntity>> GetAllAsync<TEntity>(CancellationToken cancellationToken = default)

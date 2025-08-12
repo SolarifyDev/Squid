@@ -1,5 +1,4 @@
-﻿using Mediator.Net;
-using Mediator.Net.Pipeline;
+﻿using Mediator.Net.Pipeline;
 
 namespace Squid.Core.Middlewares.FluentMessageValidator;
 

@@ -1,20 +1,24 @@
+using Squid.Message.Enums;
+
 namespace Squid.Message.Domain.Deployments;
 
-public class VariableSet : IEntity<Guid>
+public class VariableSet : IEntity<int>
 {
-    public Guid Id { get; set; }
-    
-    public string OwnerType { get; set; }
-    
-    public Guid OwnerId { get; set; }
-    
-    public int Version { get; set; }
-    
+    public int Id { get; set; }
+
+    public int SpaceId { get; set; }
+
+    public VariableSetOwnerType OwnerType { get; set; }
+
+    public int OwnerId { get; set; }
+
+    public int Version { get; set; } = 1;
+
     public bool IsFrozen { get; set; }
-    
-    public string Json { get; set; }
-    
+
     public string RelatedDocumentIds { get; set; }
-    
-    public Guid SpaceId { get; set; }
+
+    public string ContentHash { get; set; }
+
+    public DateTimeOffset? LastModified { get; set; }
 }

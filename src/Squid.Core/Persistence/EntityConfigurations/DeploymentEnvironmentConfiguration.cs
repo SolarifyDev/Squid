@@ -1,5 +1,3 @@
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
-
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class DeploymentEnvironmentConfiguration: IEntityTypeConfiguration<DeploymentEnvironment>

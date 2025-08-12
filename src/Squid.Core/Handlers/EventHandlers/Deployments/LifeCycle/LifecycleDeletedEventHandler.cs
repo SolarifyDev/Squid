@@ -6,6 +6,5 @@ public class LifecycleDeletedEventHandler : IEventHandler<LifeCycleDeletedEvent>
 {
     public async Task Handle(IReceiveContext<LifeCycleDeletedEvent> context, CancellationToken cancellationToken)
     {
-        return;
     }
 }

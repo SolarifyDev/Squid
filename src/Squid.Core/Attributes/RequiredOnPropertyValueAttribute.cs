@@ -1,12 +1,11 @@
 using System.ComponentModel.DataAnnotations;
-using System.Reflection;
 
 namespace Squid.Core.Attributes;
 
 /// <summary>
 /// If the other property is set to the expected value, then this property is required.
 /// </summary>
-[AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Property)]
 public sealed class RequiredOnPropertyValueAttribute : ValidationAttribute
 {
     /// <summary>

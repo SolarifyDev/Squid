@@ -30,7 +30,7 @@ public class MachineService : IMachineService
 
     public async Task<MachineCreatedEvent> CreateMachineAsync(CreateMachineCommand command, CancellationToken cancellationToken)
     {
-        var machine = _mapper.Map<Squid.Message.Domain.Deployments.Machine>(command);
+        var machine = _mapper.Map<Message.Domain.Deployments.Machine>(command);
 
         machine.Id = Guid.NewGuid();
 

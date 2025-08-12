@@ -1,4 +1,3 @@
-using Autofac;
 using Squid.Core.Halibut;
 using Squid.Core.Settings.SelfCert;
 

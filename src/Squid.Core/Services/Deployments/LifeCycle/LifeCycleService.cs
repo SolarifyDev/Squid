@@ -1,5 +1,4 @@
 using Squid.Message.Commands.Deployments.LifeCycle;
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Events.Deployments.LifeCycle;
 using Squid.Message.Models.Deployments;
 using Squid.Message.Models.Deployments.LifeCycle;

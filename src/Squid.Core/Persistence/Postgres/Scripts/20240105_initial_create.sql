@@ -117,7 +117,6 @@ CREATE TABLE IF NOT EXISTS "variable_set"
     owner_id             UUID        NOT NULL,
     version              INT         NOT NULL,
     is_frozen            BOOLEAN     NOT NULL,
-    json                 TEXT        NOT NULL,
     related_document_ids TEXT        NOT NULL,
     space_id             UUID        NOT NULL
 );

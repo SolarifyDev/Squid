@@ -1,4 +1,3 @@
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Models.Deployments.LifeCycle;
 
 namespace Squid.Core.Services.Deployments.LifeCycle;

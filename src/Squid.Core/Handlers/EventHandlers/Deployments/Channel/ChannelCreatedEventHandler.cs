@@ -6,6 +6,5 @@ public class ChannelCreatedEventHandler : IEventHandler<ChannelCreatedEvent>
 {
     public async Task Handle(IReceiveContext<ChannelCreatedEvent> context, CancellationToken cancellationToken)
     {
-        return;
     }
 }

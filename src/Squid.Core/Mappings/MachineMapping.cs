@@ -1,6 +1,5 @@
-using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Commands.Deployments.Machine;
-using Squid.Message.Domain.Deployments;
+using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Mappings;
 

@@ -1,7 +1,5 @@
 using Squid.Core.Services.Deployments.Channel;
-using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Message.Commands.Deployments.Channel;
-using Squid.Message.Commands.Deployments.LifeCycle;
 
 namespace Squid.Core.Handlers.CommandHandlers.Deployments.Channel;
 
