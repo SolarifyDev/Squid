@@ -106,11 +106,9 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
 
     private bool IsVariableInScope(VariableSnapshotData variable, ScopeContext context)
     {
-        // 如果没有作用域限制，则适用于所有情况
         if (!variable.Scopes.Any())
             return true;
 
-        // 检查每个作用域类型
         var scopeGroups = variable.Scopes.GroupBy(s => s.ScopeType);
 
         foreach (var scopeGroup in scopeGroups)
@@ -139,15 +137,13 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
 
     private int GetScopePriority(VariableSnapshotData variable, ScopeContext context)
     {
-        // 作用域越具体，优先级越高（数字越小）
         if (!variable.Scopes.Any())
-            return 1000; // 无作用域限制的变量优先级最低
+            return 1000;
 
         var scopeCount = variable.Scopes.Count;
         var matchingScopes = variable.Scopes.Count(scope => 
             IsContextMatchingScope(context, scope.ScopeType, new List<string> { scope.ScopeValue }));
 
-        // 匹配的作用域越多，优先级越高
         return 1000 - (matchingScopes * 100) - scopeCount;
     }
 }

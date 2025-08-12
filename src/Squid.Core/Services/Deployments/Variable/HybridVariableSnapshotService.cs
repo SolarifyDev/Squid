@@ -149,7 +149,6 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         if (variableSet == null)
             throw new Exception($"VariableSet {variableSetId} not found");
 
-        // 这里只返回基本信息，实际快照数据应由外部聚合
         return new VariableSetSnapshotData
         {
             Id = variableSet.Id,
@@ -162,13 +161,11 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
 
     private Task EmbedScopeDefinitionsAsync(VariableSetSnapshotData snapshotData, CancellationToken cancellationToken)
     {
-        // 收集快照中使用的所有作用域值
         var usedScopes = snapshotData.Variables
             .SelectMany(v => v.Scopes)
             .GroupBy(s => s.ScopeType)
             .ToDictionary(g => g.Key.ToString(), g => g.Select(s => s.ScopeValue).Distinct().ToList());
 
-        // 简化版本：直接使用收集到的作用域值
         snapshotData.ScopeDefinitions = usedScopes;
 
         return Task.CompletedTask;
@@ -176,21 +173,15 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
 
     private void ValidateSnapshotIntegrity(VariableSetSnapshotData data, VariableSetSnapshot snapshot)
     {
-        // 验证版本号
         if (data.Version != snapshot.Version)
             throw new Exception("Snapshot version mismatch");
-        
-        // 验证变量数量合理性
-        if (data.Variables.Count > 10000) // 设置合理上限
-            throw new Exception("Suspicious variable count in snapshot");
-        
-        // 验证必要字段
+
+        if (data.Variables.Count > 10000) throw new Exception("Suspicious variable count in snapshot");
+
         foreach (var variable in data.Variables)
         {
             if (string.IsNullOrEmpty(variable.Name))
                 throw new Exception("Variable name cannot be empty");
         }
     }
-
-    // 已不再需要自定义字符串快照ID，主键自增
 }

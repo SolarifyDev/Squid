@@ -116,7 +116,6 @@ public class VariableDataProvider : IVariableDataProvider
     {
         var variables = await GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken);
 
-        // 创建用于哈希计算的对象，按名称排序确保一致性
         var hashData = variables
             .OrderBy(v => v.Name)
             .Select(v => new { v.Name, v.Value, v.Type, v.IsSensitive, v.SortOrder })
@@ -128,7 +127,6 @@ public class VariableDataProvider : IVariableDataProvider
 
     public async Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
-        // 先加密敏感变量
         var encryptedVariables = await _encryptionService.EncryptSensitiveVariablesAsync(variables, variableSetId);
 
         foreach (var variable in encryptedVariables)
@@ -142,10 +140,8 @@ public class VariableDataProvider : IVariableDataProvider
 
     public async Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
-        // 删除现有的Variables
         await DeleteVariablesByVariableSetIdAsync(variableSetId, cancellationToken);
 
-        // 添加新的Variables
         await AddVariablesAsync(variableSetId, variables, cancellationToken);
     }
 
@@ -157,7 +153,6 @@ public class VariableDataProvider : IVariableDataProvider
 
         foreach (var variable in variables)
         {
-            // 先删除相关的Scopes
             await DeleteVariableScopesByVariableIdAsync(variable.Id, cancellationToken);
             await _repository.DeleteAsync(variable, cancellationToken);
         }
@@ -172,7 +167,6 @@ public class VariableDataProvider : IVariableDataProvider
             .ThenBy(v => v.Name)
             .ToListAsync(cancellationToken);
 
-        // 解密敏感变量
         return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId);
     }
 
@@ -187,10 +181,8 @@ public class VariableDataProvider : IVariableDataProvider
 
     public async Task UpdateVariableScopesAsync(int variableId, List<VariableScope> scopes, CancellationToken cancellationToken = default)
     {
-        // 删除现有的Scopes
         await DeleteVariableScopesByVariableIdAsync(variableId, cancellationToken);
 
-        // 添加新的Scopes
         foreach (var scope in scopes)
         {
             scope.VariableId = variableId;
