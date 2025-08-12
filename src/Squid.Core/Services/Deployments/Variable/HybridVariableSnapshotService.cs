@@ -34,25 +34,25 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     {
         Log.Information("Creating snapshot for VariableSet {VariableSetId}", variableSetId);
 
-        using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken);
+        using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var currentHash = await _variableDataProvider.CalculateContentHashAsync(variableSetId, cancellationToken);
+            var currentHash = await _variableDataProvider.CalculateContentHashAsync(variableSetId, cancellationToken).ConfigureAwait(false);
             Log.Debug("Content hash calculated: {Hash}", currentHash);
 
             var existingSnapshot = await _repository.Query<VariableSetSnapshot>()
-                .FirstOrDefaultAsync(s => s.OriginalVariableSetId == variableSetId && s.ContentHash == currentHash, cancellationToken);
+                .FirstOrDefaultAsync(s => s.OriginalVariableSetId == variableSetId && s.ContentHash == currentHash, cancellationToken).ConfigureAwait(false);
 
             if (existingSnapshot != null)
             {
                 Log.Information("Reusing existing snapshot {SnapshotId}", existingSnapshot.Id);
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 return existingSnapshot.Id;
             }
 
-            var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, cancellationToken);
-            await EmbedScopeDefinitionsAsync(snapshotData, cancellationToken);
+            var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+            await EmbedScopeDefinitionsAsync(snapshotData, cancellationToken).ConfigureAwait(false);
 
             var compressedData = _compressionService.CompressSnapshot(snapshotData);
             var uncompressedSize = _compressionService.EstimateUncompressedSize(snapshotData);
@@ -69,9 +69,9 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 CreatedBy = createdBy
             };
 
-            await _repository.InsertAsync(snapshot, cancellationToken);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await _repository.InsertAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             Log.Information("Snapshot {SnapshotId} created successfully. " +
                                  "Compressed size: {CompressedSize} bytes, " +
@@ -85,7 +85,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to create snapshot for VariableSet {VariableSetId}", variableSetId);
-            await transaction.RollbackAsync(cancellationToken);
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -93,7 +93,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     public async Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default)
     {
         var snapshot = await _repository.Query<VariableSetSnapshot>()
-            .FirstOrDefaultAsync(s => s.Id == snapshotId, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Id == snapshotId, cancellationToken).ConfigureAwait(false);
 
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
@@ -109,13 +109,13 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     {
         var snapshotIds = new List<int>();
 
-        using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken);
+        using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
             foreach (var variableSetId in variableSetIds)
             {
-                var snapshotId = await CreateSnapshotAsync(variableSetId, createdBy, cancellationToken);
+                var snapshotId = await CreateSnapshotAsync(variableSetId, createdBy, cancellationToken).ConfigureAwait(false);
                 snapshotIds.Add(snapshotId);
 
                 var releaseSnapshot = new ReleaseVariableSnapshot
@@ -126,25 +126,25 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                     VariableSetType = ReleaseVariableSetType.Project
                 };
 
-                await _repository.InsertAsync(releaseSnapshot, cancellationToken);
+                await _repository.InsertAsync(releaseSnapshot, cancellationToken).ConfigureAwait(false);
             }
 
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             return snapshotIds;
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to create snapshots for Release {ReleaseId}", releaseId);
-            await transaction.RollbackAsync(cancellationToken);
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
 
     private async Task<VariableSetSnapshotData> LoadCompleteVariableSetAsync(int variableSetId, CancellationToken cancellationToken)
     {
-        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(variableSetId, cancellationToken);
+        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
 
         if (variableSet == null)
             throw new Exception($"VariableSet {variableSetId} not found");

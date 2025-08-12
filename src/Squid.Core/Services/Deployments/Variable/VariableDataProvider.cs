@@ -127,36 +127,36 @@ public class VariableDataProvider : IVariableDataProvider
 
     public async Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
-        var encryptedVariables = await _encryptionService.EncryptSensitiveVariablesAsync(variables, variableSetId);
+        var encryptedVariables = await _encryptionService.EncryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
 
         foreach (var variable in encryptedVariables)
         {
             variable.VariableSetId = variableSetId;
             variable.LastModifiedOn = DateTimeOffset.UtcNow;
-            await _repository.InsertAsync(variable, cancellationToken);
+            await _repository.InsertAsync(variable, cancellationToken).ConfigureAwait(false);
         }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
-        await DeleteVariablesByVariableSetIdAsync(variableSetId, cancellationToken);
+        await DeleteVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
 
-        await AddVariablesAsync(variableSetId, variables, cancellationToken);
+        await AddVariablesAsync(variableSetId, variables, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default)
     {
         var variables = await _repository.Query<Message.Domain.Deployments.Variable>()
             .Where(v => v.VariableSetId == variableSetId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (var variable in variables)
         {
-            await DeleteVariableScopesByVariableIdAsync(variable.Id, cancellationToken);
-            await _repository.DeleteAsync(variable, cancellationToken);
+            await DeleteVariableScopesByVariableIdAsync(variable.Id, cancellationToken).ConfigureAwait(false);
+            await _repository.DeleteAsync(variable, cancellationToken).ConfigureAwait(false);
         }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default)
@@ -165,49 +165,50 @@ public class VariableDataProvider : IVariableDataProvider
             .Where(v => v.VariableSetId == variableSetId)
             .OrderBy(v => v.SortOrder)
             .ThenBy(v => v.Name)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId);
+        return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
     }
 
     public async Task AddVariableScopesAsync(List<VariableScope> scopes, CancellationToken cancellationToken = default)
     {
         foreach (var scope in scopes)
         {
-            await _repository.InsertAsync(scope, cancellationToken);
+            await _repository.InsertAsync(scope, cancellationToken).ConfigureAwait(false);
         }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UpdateVariableScopesAsync(int variableId, List<VariableScope> scopes, CancellationToken cancellationToken = default)
     {
-        await DeleteVariableScopesByVariableIdAsync(variableId, cancellationToken);
+        await DeleteVariableScopesByVariableIdAsync(variableId, cancellationToken).ConfigureAwait(false);
 
         foreach (var scope in scopes)
         {
             scope.VariableId = variableId;
         }
-        await AddVariableScopesAsync(scopes, cancellationToken);
+        await AddVariableScopesAsync(scopes, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteVariableScopesByVariableIdAsync(int variableId, CancellationToken cancellationToken = default)
     {
         var scopes = await _repository.Query<VariableScope>()
             .Where(s => s.VariableId == variableId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (var scope in scopes)
         {
-            await _repository.DeleteAsync(scope, cancellationToken);
+            await _repository.DeleteAsync(scope, cancellationToken).ConfigureAwait(false);
         }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<VariableScope>> GetVariableScopesByVariableIdAsync(int variableId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<VariableScope>()
             .Where(s => s.VariableId == variableId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string ComputeSha256Hash(string input)

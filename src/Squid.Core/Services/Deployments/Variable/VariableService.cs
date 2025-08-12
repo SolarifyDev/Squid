@@ -37,38 +37,38 @@ public class VariableService : IVariableService
 
         await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        await AddVariablesToSet(variableSet, command.Variables, cancellationToken);
+        await AddVariablesToSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
 
-        await UpdateContentHashAsync(variableSet, cancellationToken);
-        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken);
+        await UpdateContentHashAsync(variableSet, cancellationToken).ConfigureAwait(false);
+        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
     }
 
     public async Task<VariableSetDto> UpdateVariableSetAsync(UpdateVariableSetCommand command, CancellationToken cancellationToken)
     {
-        var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken);
+        var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
         UpdateVariableSetProperties(variableSet, command);
 
-        await ReplaceVariablesInSet(variableSet, command.Variables, cancellationToken);
+        await ReplaceVariablesInSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
 
-        await UpdateContentHashAsync(variableSet, cancellationToken);
+        await UpdateContentHashAsync(variableSet, cancellationToken).ConfigureAwait(false);
 
-        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken);
+        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
     }
 
     public async Task DeleteVariableSetAsync(int id, CancellationToken cancellationToken)
     {
-        var variableSet = await GetAndValidateVariableSet(id, cancellationToken);
-        await _variableDataProvider.DeleteVariableSetAsync(variableSet, cancellationToken: cancellationToken);
+        var variableSet = await GetAndValidateVariableSet(id, cancellationToken).ConfigureAwait(false);
+        await _variableDataProvider.DeleteVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<VariableSetDto> GetVariableSetByIdAsync(int id, CancellationToken cancellationToken)
     {
-        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken);
+        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken).ConfigureAwait(false);
 
         if (variableSet == null)
         {
@@ -77,12 +77,12 @@ public class VariableService : IVariableService
 
         var variableSetDto = _mapper.Map<VariableSetDto>(variableSet);
 
-        var variables = await _variableDataProvider.GetVariablesByVariableSetIdAsync(id, cancellationToken);
+        var variables = await _variableDataProvider.GetVariablesByVariableSetIdAsync(id, cancellationToken).ConfigureAwait(false);
         variableSetDto.Variables = _mapper.Map<List<VariableDto>>(variables);
 
         foreach (var variableDto in variableSetDto.Variables)
         {
-            var scopes = await _variableDataProvider.GetVariableScopesByVariableIdAsync(variableDto.Id, cancellationToken);
+            var scopes = await _variableDataProvider.GetVariableScopesByVariableIdAsync(variableDto.Id, cancellationToken).ConfigureAwait(false);
             variableDto.Scopes = _mapper.Map<List<VariableScopeDto>>(scopes);
         }
 
@@ -117,7 +117,7 @@ public class VariableService : IVariableService
         foreach (var dto in variableDtos)
         {
             var variable = CreateVariableFromDto(dto, variableSet.Id);
-            await _variableDataProvider.AddVariablesAsync(variableSet.Id, new List<Message.Domain.Deployments.Variable> { variable }, cancellationToken);
+            await _variableDataProvider.AddVariablesAsync(variableSet.Id, new List<Message.Domain.Deployments.Variable> { variable }, cancellationToken).ConfigureAwait(false);
 
             if (dto.Scopes?.Any() == true)
             {
@@ -126,7 +126,7 @@ public class VariableService : IVariableService
                 {
                     scope.VariableId = variable.Id;
                 }
-                await _variableDataProvider.AddVariableScopesAsync(scopes, cancellationToken);
+                await _variableDataProvider.AddVariableScopesAsync(scopes, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -159,14 +159,14 @@ public class VariableService : IVariableService
 
     private async Task ReplaceVariablesInSet(VariableSet variableSet, IEnumerable<VariableDto> variableDtos, CancellationToken cancellationToken)
     {
-        await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken);
+        await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
 
-        await AddVariablesToSet(variableSet, variableDtos, cancellationToken);
+        await AddVariablesToSet(variableSet, variableDtos, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task UpdateContentHashAsync(VariableSet variableSet, CancellationToken cancellationToken)
     {
-        var contentHash = await _variableDataProvider.CalculateContentHashAsync(variableSet.Id, cancellationToken);
+        var contentHash = await _variableDataProvider.CalculateContentHashAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
         variableSet.ContentHash = contentHash;
     }
 }
