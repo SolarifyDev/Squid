@@ -9,6 +9,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 {
     private readonly byte[] _masterKey;
     private readonly SecuritySetting _securitySetting;
+    private readonly string _encryptionPrefix = "SQUID_ENCRYPTED:";
 
     public VariableEncryptionService(SecuritySetting securitySetting)
     {
@@ -16,7 +17,7 @@ public class VariableEncryptionService : IVariableEncryptionService
         _masterKey = GetOrCreateMasterKey();
     }
 
-    public async Task<string> EncryptAsync(string plainText, int variableSetId)
+    public string EncryptAsync(string plainText, int variableSetId)
     {
         if (string.IsNullOrEmpty(plainText))
             return plainText;
@@ -26,7 +27,7 @@ public class VariableEncryptionService : IVariableEncryptionService
             var derivedKey = DeriveKey(_masterKey, variableSetId);
             var encryptedData = EncryptWithAesGcm(plainText, derivedKey);
             
-            var result = $"SQUID_ENCRYPTED:{Convert.ToBase64String(encryptedData)}";
+            var result = $"{_encryptionPrefix}{Convert.ToBase64String(encryptedData)}";
             
             Log.Information("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
             return result;
@@ -44,7 +45,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
         try
         {
-            var base64Data = encryptedText.Substring("SQUID_ENCRYPTED:".Length);
+            var base64Data = encryptedText.Substring(_encryptionPrefix.Length);
             var encryptedData = Convert.FromBase64String(base64Data);
             
             var derivedKey = DeriveKey(_masterKey, variableSetId);
@@ -79,7 +80,7 @@ public class VariableEncryptionService : IVariableEncryptionService
                 LastModifiedOn = variable.LastModifiedOn,
                 LastModifiedBy = variable.LastModifiedBy,
                 Value = variable.IsSensitive 
-                    ? await EncryptAsync(variable.Value, variableSetId)
+                    ? EncryptAsync(variable.Value, variableSetId)
                     : variable.Value
             };
             
@@ -121,8 +122,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
     public bool IsValidEncryptedValue(string encryptedText)
     {
-        return !string.IsNullOrEmpty(encryptedText) && 
-               encryptedText.StartsWith("SQUID_ENCRYPTED:");
+        return !string.IsNullOrEmpty(encryptedText) && encryptedText.StartsWith(_encryptionPrefix);
     }
 
     private byte[] GetOrCreateMasterKey()

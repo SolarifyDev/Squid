@@ -2,7 +2,7 @@ namespace Squid.Core.Services.Security;
 
 public interface IVariableEncryptionService : IScopedDependency
 {
-    Task<string> EncryptAsync(string plainText, int variableSetId);
+    string EncryptAsync(string plainText, int variableSetId);
 
     Task<string> DecryptAsync(string encryptedText, int variableSetId);
 
