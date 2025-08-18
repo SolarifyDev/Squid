@@ -1,5 +1,3 @@
-DROP TABLE IF EXISTS variable_set;
-
 CREATE TABLE variable_set
 (
     id                   SERIAL PRIMARY KEY,
