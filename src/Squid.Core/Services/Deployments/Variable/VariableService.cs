@@ -22,12 +22,14 @@ public class VariableService : IVariableService
 {
     private readonly IMapper _mapper;
     private readonly IVariableDataProvider _variableDataProvider;
+    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly SensitiveVariableHandler _sensitiveVariableHandler;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, SensitiveVariableHandler sensitiveVariableHandler)
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
+        _variableScopeDataProvider = variableScopeDataProvider;
         _sensitiveVariableHandler = sensitiveVariableHandler;
     }
 
@@ -82,7 +84,7 @@ public class VariableService : IVariableService
 
         foreach (var variableDto in variableSetDto.Variables)
         {
-            var scopes = await _variableDataProvider.GetVariableScopesByVariableIdAsync(variableDto.Id, cancellationToken).ConfigureAwait(false);
+            var scopes = await _variableScopeDataProvider.GetVariableScopesByVariableIdAsync(variableDto.Id, cancellationToken).ConfigureAwait(false);
             variableDto.Scopes = _mapper.Map<List<VariableScopeDto>>(scopes);
         }
 
@@ -126,7 +128,7 @@ public class VariableService : IVariableService
                 {
                     scope.VariableId = variable.Id;
                 }
-                await _variableDataProvider.AddVariableScopesAsync(scopes, cancellationToken).ConfigureAwait(false);
+                await _variableScopeDataProvider.AddVariableScopesAsync(scopes, cancellationToken).ConfigureAwait(false);
             }
         }
     }

@@ -4,10 +4,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Squid.Core.Services.Security;
 
-/// <summary>
-/// 变量加密服务实现
-/// 使用AES-256-GCM加密算法，提供认证加密
-/// </summary>
 public class VariableEncryptionService : IVariableEncryptionService, IScopedDependency
 {
     private readonly ILogger<VariableEncryptionService> _logger;
@@ -31,7 +27,6 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
             var derivedKey = DeriveKey(_masterKey, variableSetId);
             var encryptedData = EncryptWithAesGcm(plainText, derivedKey);
             
-            // 添加前缀标识这是加密数据
             var result = $"SQUID_ENCRYPTED:{Convert.ToBase64String(encryptedData)}";
             
             _logger.LogDebug("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
@@ -51,7 +46,6 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
 
         try
         {
-            // 移除前缀
             var base64Data = encryptedText.Substring("SQUID_ENCRYPTED:".Length);
             var encryptedData = Convert.FromBase64String(base64Data);
             
@@ -136,7 +130,6 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
 
     private byte[] GetOrCreateMasterKey()
     {
-        // 从配置中获取主密钥，如果不存在则生成一个
         var keyBase64 = _configuration["Security:VariableEncryption:MasterKey"];
         
         if (!string.IsNullOrEmpty(keyBase64))
@@ -152,7 +145,6 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
             }
         }
         
-        // 在生产环境中，这应该从安全的密钥管理服务获取
         _logger.LogWarning("No master key configured, using default key. This is not secure for production!");
         
         // 生成一个默认密钥（仅用于开发环境）

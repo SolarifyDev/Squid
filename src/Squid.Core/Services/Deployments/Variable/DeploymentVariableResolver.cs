@@ -31,14 +31,15 @@ public interface IDeploymentVariableResolver : IScopedDependency
 
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
-    private readonly IRepository _repository;
     private readonly IHybridVariableSnapshotService _snapshotService;
+    private readonly IReleaseVariableSnapshotDataProvider _releaseSnapshotDataProvider;
+    
     public DeploymentVariableResolver(
-        IRepository repository,
+        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider,
         IHybridVariableSnapshotService snapshotService)
     {
-        _repository = repository;
         _snapshotService = snapshotService;
+        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
     public async Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(
@@ -48,9 +49,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
     {
         Log.Information("Resolving variables for Release {ReleaseId}", releaseId);
 
-        var snapshotRefs = await _repository.Query<ReleaseVariableSnapshot>()
-            .Where(rvs => rvs.ReleaseId == releaseId)
-            .ToListAsync(cancellationToken);
+        var snapshotRefs = await _releaseSnapshotDataProvider.GetReleaseVariableSnapshotsByReleaseIdAsync((int)releaseId, cancellationToken);
 
         if (!snapshotRefs.Any())
         {
@@ -68,7 +67,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
                 var snapshotData = await _snapshotService.LoadSnapshotAsync(snapshotRef.SnapshotId, cancellationToken);
                 allVariables.AddRange(snapshotData.Variables);
 
-                Log.Debug("Loaded {VariableCount} variables from snapshot {SnapshotId}",
+                Log.Information("Loaded {VariableCount} variables from snapshot {SnapshotId}",
                     snapshotData.Variables.Count, snapshotRef.SnapshotId);
             }
             catch (Exception ex)
