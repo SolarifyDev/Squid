@@ -1,19 +1,18 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Squid.Core.Settings.Security;
 
 namespace Squid.Core.Services.Security;
 
-public class VariableEncryptionService : IVariableEncryptionService, IScopedDependency
+public class VariableEncryptionService : IVariableEncryptionService
 {
-    private readonly ILogger<VariableEncryptionService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly byte[] _masterKey;
+    private readonly SecuritySetting _securitySetting;
 
-    public VariableEncryptionService(ILogger<VariableEncryptionService> logger, IConfiguration configuration)
+    public VariableEncryptionService(SecuritySetting securitySetting)
     {
-        _logger = logger;
-        _configuration = configuration;
+        _securitySetting = securitySetting;
         _masterKey = GetOrCreateMasterKey();
     }
 
@@ -29,13 +28,12 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
             
             var result = $"SQUID_ENCRYPTED:{Convert.ToBase64String(encryptedData)}";
             
-            _logger.LogDebug("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
+            Log.Information("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to encrypt variable for VariableSet {VariableSetId}", variableSetId);
-            throw new InvalidOperationException("Failed to encrypt sensitive variable", ex);
+            throw new InvalidOperationException($"Failed to encrypt variable for VariableSet {variableSetId}", ex);
         }
     }
 
@@ -52,13 +50,12 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
             var derivedKey = DeriveKey(_masterKey, variableSetId);
             var plainText = DecryptWithAesGcm(encryptedData, derivedKey);
             
-            _logger.LogDebug("Successfully decrypted variable for VariableSet {VariableSetId}", variableSetId);
+            Log.Information("Successfully decrypted variable for VariableSet {VariableSetId}", variableSetId);
             return plainText;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to decrypt variable for VariableSet {VariableSetId}", variableSetId);
-            throw new InvalidOperationException("Failed to decrypt sensitive variable", ex);
+            throw new InvalidOperationException($"Failed to decrypt variable for VariableSet {variableSetId}", ex);
         }
     }
 
@@ -130,48 +127,33 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
 
     private byte[] GetOrCreateMasterKey()
     {
-        var keyBase64 = _configuration["Security:VariableEncryption:MasterKey"];
+        var keyBase64 = _securitySetting.MasterKey;
         
-        if (!string.IsNullOrEmpty(keyBase64))
+        try
         {
-            try
-            {
-                return Convert.FromBase64String(keyBase64);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Invalid master key format in configuration");
-                throw new InvalidOperationException("Invalid master key configuration", ex);
-            }
+            return Convert.FromBase64String(keyBase64);
         }
-        
-        _logger.LogWarning("No master key configured, using default key. This is not secure for production!");
-        
-        // 生成一个默认密钥（仅用于开发环境）
-        using var rng = RandomNumberGenerator.Create();
-        var key = new byte[32]; // 256 bits
-        rng.GetBytes(key);
-        
-        _logger.LogInformation("Generated new master key: {MasterKey}", Convert.ToBase64String(key));
-        return key;
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Invalid master key configuration", ex);
+        }
     }
 
     private static byte[] DeriveKey(byte[] masterKey, int variableSetId)
     {
-        // 使用PBKDF2从主密钥和变量集ID派生特定密钥
         var salt = BitConverter.GetBytes(variableSetId);
-        Array.Resize(ref salt, 16); // 确保salt长度为16字节
+        Array.Resize(ref salt, 16);
         
         using var pbkdf2 = new Rfc2898DeriveBytes(masterKey, salt, 10000, HashAlgorithmName.SHA256);
-        return pbkdf2.GetBytes(32); // 256 bits
+        return pbkdf2.GetBytes(32);
     }
 
     private static byte[] EncryptWithAesGcm(string plainText, byte[] key)
     {
         var plainBytes = Encoding.UTF8.GetBytes(plainText);
-        var nonce = new byte[12]; // 96 bits nonce for GCM
+        var nonce = new byte[12];
         var ciphertext = new byte[plainBytes.Length];
-        var tag = new byte[16]; // 128 bits authentication tag
+        var tag = new byte[16];
         
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(nonce);
@@ -179,7 +161,7 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
         using var aes = new AesGcm(key);
         aes.Encrypt(nonce, plainBytes, ciphertext, tag);
         
-        // 组合 nonce + tag + ciphertext
+
         var result = new byte[nonce.Length + tag.Length + ciphertext.Length];
         Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
         Buffer.BlockCopy(tag, 0, result, nonce.Length, tag.Length);
@@ -190,7 +172,7 @@ public class VariableEncryptionService : IVariableEncryptionService, IScopedDepe
 
     private static string DecryptWithAesGcm(byte[] encryptedData, byte[] key)
     {
-        if (encryptedData.Length < 28) // 12 (nonce) + 16 (tag) = 28 minimum
+        if (encryptedData.Length < 28)
             throw new ArgumentException("Invalid encrypted data length");
         
         var nonce = new byte[12];
