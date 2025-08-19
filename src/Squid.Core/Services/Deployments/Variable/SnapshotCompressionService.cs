@@ -2,34 +2,25 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
+using Serilog.Formatting.Json;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments.Variable;
 
-public interface ISnapshotCompressionService : IScopedDependency
+public static class SnapshotCompressionService
 {
-    byte[] CompressSnapshot(VariableSetSnapshotData data);
-    VariableSetSnapshotData DecompressSnapshot(byte[] compressedData);
-    int EstimateUncompressedSize(VariableSetSnapshotData data);
-}
-
-public class SnapshotCompressionService : ISnapshotCompressionService
-{
-    private readonly JsonSerializerOptions _jsonOptions;
-
-    public SnapshotCompressionService()
+    private static readonly JsonSerializerSettings _jsonOptions = new()
     {
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-    }
+        Formatting = Formatting.None,
+        NullValueHandling = NullValueHandling.Ignore,
+        ContractResolver = new CamelCasePropertyNamesContractResolver()
+    };
 
-    public byte[] CompressSnapshot(VariableSetSnapshotData data)
+    public static byte[] CompressSnapshot(VariableSetSnapshotData data)
     {
-        var json = JsonSerializer.Serialize(data, _jsonOptions);
+        var json = JsonConvert.SerializeObject(data, _jsonOptions);
 
         var jsonBytes = Encoding.UTF8.GetBytes(json);
 
@@ -42,7 +33,7 @@ public class SnapshotCompressionService : ISnapshotCompressionService
         return output.ToArray();
     }
     
-    public VariableSetSnapshotData DecompressSnapshot(byte[] compressedData)
+    public static VariableSetSnapshotData DecompressSnapshot(byte[] compressedData)
     {
         using var input = new MemoryStream(compressedData);
         using var gzip = new GZipStream(input, CompressionMode.Decompress);
@@ -53,12 +44,12 @@ public class SnapshotCompressionService : ISnapshotCompressionService
 
         var json = Encoding.UTF8.GetString(jsonBytes);
 
-        return JsonSerializer.Deserialize<VariableSetSnapshotData>(json, _jsonOptions);
+        return JsonConvert.DeserializeObject<VariableSetSnapshotData>(json, _jsonOptions);
     }
 
-    public int EstimateUncompressedSize(VariableSetSnapshotData data)
+    public static int EstimateUncompressedSize(VariableSetSnapshotData data)
     {
-        var json = JsonSerializer.Serialize(data, _jsonOptions);
+        var json = JsonConvert.SerializeObject(data, _jsonOptions);
         return Encoding.UTF8.GetByteCount(json);
     }
 }

@@ -20,20 +20,17 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly IVariableSetSnapshotDataProvider _snapshotDataProvider;
     private readonly IReleaseVariableSnapshotDataProvider _releaseSnapshotDataProvider;
-    private readonly ISnapshotCompressionService _compressionService;
 
     public HybridVariableSnapshotService(
         IGenericDataProvider genericDataProvider,
         IVariableDataProvider variableDataProvider,
         IVariableSetSnapshotDataProvider snapshotDataProvider,
-        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider,
-        ISnapshotCompressionService compressionService)
+        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider)
     {
         _variableDataProvider = variableDataProvider;
         _snapshotDataProvider = snapshotDataProvider;
-        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
-        _compressionService = compressionService;
         _genericDataProvider = genericDataProvider;
+        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
     public async Task<int> CreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
@@ -56,10 +53,10 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 }
 
                 var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, token).ConfigureAwait(false);
-                await EmbedScopeDefinitionsAsync(snapshotData, token).ConfigureAwait(false);
+                EmbedScopeDefinitionsAsync(snapshotData);
 
-                var compressedData = _compressionService.CompressSnapshot(snapshotData);
-                var uncompressedSize = _compressionService.EstimateUncompressedSize(snapshotData);
+                var compressedData = SnapshotCompressionService.CompressSnapshot(snapshotData);
+                var uncompressedSize = SnapshotCompressionService.EstimateUncompressedSize(snapshotData);
 
                 var snapshot = new VariableSetSnapshot
                 {
@@ -93,7 +90,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
 
-        var snapshotData = _compressionService.DecompressSnapshot(snapshot.SnapshotData);
+        var snapshotData = SnapshotCompressionService.DecompressSnapshot(snapshot.SnapshotData);
 
         ValidateSnapshotIntegrity(snapshotData, snapshot);
 
@@ -141,7 +138,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         };
     }
 
-    private Task EmbedScopeDefinitionsAsync(VariableSetSnapshotData snapshotData, CancellationToken cancellationToken)
+    private void EmbedScopeDefinitionsAsync(VariableSetSnapshotData snapshotData)
     {
         var usedScopes = snapshotData.Variables
             .SelectMany(v => v.Scopes)
@@ -149,8 +146,6 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
             .ToDictionary(g => g.Key.ToString(), g => g.Select(s => s.ScopeValue).Distinct().ToList());
 
         snapshotData.ScopeDefinitions = usedScopes;
-
-        return Task.CompletedTask;
     }
 
     private void ValidateSnapshotIntegrity(VariableSetSnapshotData data, VariableSetSnapshot snapshot)

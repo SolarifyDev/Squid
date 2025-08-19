@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Newtonsoft.Json;
 using Squid.Core.Services.Security;
 using Squid.Message.Enums;
 
@@ -42,19 +42,17 @@ public partial class VariableDataProvider : IVariableDataProvider
         _encryptionService = encryptionService;
         _variableScopeDataProvider = variableScopeDataProvider;
     }
-
-
-
+    
     public async Task<string> CalculateContentHashAsync(int variableSetId, CancellationToken cancellationToken)
     {
-        var variables = await GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken);
+        var variables = await GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
 
         var hashData = variables
             .OrderBy(v => v.Name)
             .Select(v => new { v.Name, v.Value, v.Type, v.IsSensitive, v.SortOrder })
             .ToList();
 
-        var json = JsonSerializer.Serialize(hashData);
+        var json = JsonConvert.SerializeObject(hashData);
         return ComputeSha256Hash(json);
     }
 
@@ -102,8 +100,6 @@ public partial class VariableDataProvider : IVariableDataProvider
 
         return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
     }
-
-
 
     private static string ComputeSha256Hash(string input)
     {
