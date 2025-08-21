@@ -17,6 +17,8 @@ public interface IVariableSetSnapshotDataProvider : IScopedDependency
     Task<(int count, List<VariableSetSnapshot>)> GetVariableSetSnapshotPagingAsync(int? originalVariableSetId = null, string contentHash = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
     Task<VariableSetSnapshot> GetExistingSnapshotAsync(int originalVariableSetId, string contentHash, CancellationToken cancellationToken = default);
+    
+    Task<List<VariableSetSnapshot>> GetSnapshotsAsync(List<int> ids, CancellationToken cancellationToken = default);
 }
 
 public class VariableSetSnapshotDataProvider : IVariableSetSnapshotDataProvider
@@ -98,5 +100,12 @@ public class VariableSetSnapshotDataProvider : IVariableSetSnapshotDataProvider
         return await _repository.Query<VariableSetSnapshot>()
             .FirstOrDefaultAsync(s => s.OriginalVariableSetId == originalVariableSetId && s.ContentHash == contentHash, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<List<VariableSetSnapshot>> GetSnapshotsAsync(List<int> ids, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<VariableSetSnapshot>()
+            .Where(s => ids.Contains(s.Id))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

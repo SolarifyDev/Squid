@@ -22,5 +22,7 @@ public class VariableMapping : Profile
             .ForMember(dest => dest.Version, opt => opt.MapFrom(src => 1))
             .ForMember(dest => dest.IsFrozen, opt => opt.MapFrom(src => false))
             .ForMember(dest => dest.LastModified, opt => opt.MapFrom(src => DateTimeOffset.UtcNow));
+
+        CreateMap<VariableSnapshotData, Variable>().ReverseMap();
     }
 }

@@ -26,7 +26,7 @@ public class ResolvedVariables
 
 public interface IDeploymentVariableResolver : IScopedDependency
 {
-    Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(long releaseId, ScopeContext scopeContext, CancellationToken cancellationToken = default);
+    Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(int releaseId, ScopeContext scopeContext, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentVariableResolver : IDeploymentVariableResolver
@@ -43,13 +43,13 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
     }
 
     public async Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(
-        long releaseId, 
+        int releaseId, 
         ScopeContext scopeContext,
         CancellationToken cancellationToken = default)
     {
         Log.Information("Resolving variables for Release {ReleaseId}", releaseId);
 
-        var snapshotRefs = await _releaseSnapshotDataProvider.GetReleaseVariableSnapshotsByReleaseIdAsync((int)releaseId, cancellationToken);
+        var snapshotRefs = await _releaseSnapshotDataProvider.GetReleaseVariableSnapshotsByReleaseIdAsync(releaseId, cancellationToken);
 
         if (!snapshotRefs.Any())
         {
@@ -59,21 +59,23 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
 
         var allVariables = new List<VariableSnapshotData>();
         var sensitiveVariableNames = new List<string>();
+        var snapshots = await _snapshotService.LoadSnapshotsAsync(snapshotRefs.ConvertAll(x => x.SnapshotId), cancellationToken).ConfigureAwait(false);
 
         foreach (var snapshotRef in snapshotRefs)
         {
             try
             {
-                var snapshotData = await _snapshotService.LoadSnapshotAsync(snapshotRef.SnapshotId, cancellationToken);
-                allVariables.AddRange(snapshotData.Variables);
+                var snapshot = snapshots.SingleOrDefault(x => x.Id == snapshotRef.SnapshotId);
+                
+                if (snapshot == null) throw new Exception($"Snapshot {snapshotRef.SnapshotId} not found");
+                
+                allVariables.AddRange(snapshot.Variables);
 
-                Log.Information("Loaded {VariableCount} variables from snapshot {SnapshotId}",
-                    snapshotData.Variables.Count, snapshotRef.SnapshotId);
+                Log.Information("Loaded {VariableCount} variables from snapshot {SnapshotId}", snapshot.Variables.Count, snapshotRef.SnapshotId);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to load snapshot {SnapshotId} for Release {ReleaseId}", 
-                    snapshotRef.SnapshotId, releaseId);
+                Log.Error(ex, "Failed to load snapshot {SnapshotId} for Release {ReleaseId}", snapshotRef.SnapshotId, releaseId);
                 throw;
             }
         }
@@ -96,9 +98,8 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
             }
         }
 
-        Log.Information("Resolved {VariableCount} variables for Release {ReleaseId}, " +
-                             "including {SensitiveCount} sensitive variables",
-                             resolvedVariables.Count, releaseId, sensitiveVariableNames.Count);
+        Log.Information(
+            "Resolved {VariableCount} variables for Release {ReleaseId}, including {SensitiveCount} sensitive variables", resolvedVariables.Count, releaseId, sensitiveVariableNames.Count);
 
         return new ResolvedVariables(resolvedVariables, sensitiveVariableNames);
     }
