@@ -1,6 +1,3 @@
-using Squid.Message.Domain.Deployments;
-using AutoMapper;
-
 namespace Squid.Core.Services.Deployments.ExternalFeed;
 
 public interface IExternalFeedDataProvider : IScopedDependency

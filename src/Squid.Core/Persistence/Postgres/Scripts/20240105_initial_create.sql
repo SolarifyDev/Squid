@@ -110,18 +110,6 @@ CREATE TABLE IF NOT EXISTS "library_variable_set"
     version         INT DEFAULT 0 NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "variable_set"
-(
-    id                   UUID PRIMARY KEY,
-    owner_type           VARCHAR(20) NOT NULL,
-    owner_id             UUID        NOT NULL,
-    version              INT         NOT NULL,
-    is_frozen            BOOLEAN     NOT NULL,
-    json                 TEXT        NOT NULL,
-    related_document_ids TEXT        NOT NULL,
-    space_id             UUID        NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS "machine"
 (
     id                     UUID PRIMARY KEY,

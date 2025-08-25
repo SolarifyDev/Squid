@@ -33,7 +33,7 @@ public class ChannelService : IChannelService
         
         await _channelDataProvider.AddChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return new ChannelCreatedEvent()
+        return new ChannelCreatedEvent
         {
             Data = _mapper.Map<ChannelDto>(channel)
         };
@@ -45,7 +45,7 @@ public class ChannelService : IChannelService
         
         await _channelDataProvider.UpdateChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return new ChannelUpdatedEvent()
+        return new ChannelUpdatedEvent
         {
             Data = _mapper.Map<ChannelDto>(channel)
         };
@@ -57,7 +57,7 @@ public class ChannelService : IChannelService
         
         await _channelDataProvider.DeleteChannelsAsync(channels, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return new ChannelDeletedEvent()
+        return new ChannelDeletedEvent
         {
             Data = new DeleteChannelsResponseData
             {
@@ -70,9 +70,9 @@ public class ChannelService : IChannelService
     {
         var (count, data) = await _channelDataProvider.GetChannelPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
-        return new GetChannelsResponse()
+        return new GetChannelsResponse
         {
-            Data = new GetChannelsResponseData()
+            Data = new GetChannelsResponseData
             {
                 Count = count, Channels = _mapper.Map<List<ChannelDto>>(data)
             }

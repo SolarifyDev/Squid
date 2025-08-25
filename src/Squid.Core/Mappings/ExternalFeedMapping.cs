@@ -1,8 +1,5 @@
-using AutoMapper;
-using Squid.Core.Extensions;
-using Squid.Message.Models.Deployments.ExternalFeed;
 using Squid.Message.Commands.Deployments.ExternalFeed;
-using Squid.Message.Domain.Deployments;
+using Squid.Message.Models.Deployments.ExternalFeed;
 
 namespace Squid.Core.Mappings;
 

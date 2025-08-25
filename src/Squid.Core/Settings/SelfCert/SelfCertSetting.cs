@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Configuration;
-
 namespace Squid.Core.Settings.SelfCert;
 
 public class SelfCertSetting : IConfigurationSetting

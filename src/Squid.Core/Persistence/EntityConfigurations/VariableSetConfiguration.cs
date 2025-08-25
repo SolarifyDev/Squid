@@ -1,8 +1,6 @@
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
-
 namespace Squid.Core.Persistence.EntityConfigurations;
 
-public class VariableSetConfiguration: IEntityTypeConfiguration<VariableSet>
+public class VariableSetConfiguration : IEntityTypeConfiguration<VariableSet>
 {
     public void Configure(EntityTypeBuilder<VariableSet> builder)
     {
