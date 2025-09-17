@@ -1,0 +1,69 @@
+using Squid.Core.DependencyInjection;
+using Squid.Core.Persistence;
+using Squid.Message.Domain.Deployments;
+
+namespace Squid.Core.Services.Deployments.Process;
+
+public interface IActionChannelDataProvider : IScopedDependency
+{
+    Task AddActionChannelsAsync(List<ActionChannel> channels, CancellationToken cancellationToken = default);
+
+    Task UpdateActionChannelsAsync(Guid actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default);
+
+    Task DeleteActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+
+    Task DeleteActionChannelsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default);
+
+    Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+}
+
+public class ActionChannelDataProvider : IActionChannelDataProvider
+{
+    private readonly IRepository _repository;
+    private readonly IUnitOfWork _unitOfWork;
+
+    public ActionChannelDataProvider(IRepository repository, IUnitOfWork unitOfWork)
+    {
+        _repository = repository;
+        _unitOfWork = unitOfWork;
+    }
+
+    public async Task AddActionChannelsAsync(List<ActionChannel> channels, CancellationToken cancellationToken = default)
+    {
+        await _repository.InsertAllAsync(channels, cancellationToken).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task UpdateActionChannelsAsync(Guid actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default)
+    {
+        await DeleteActionChannelsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
+        await AddActionChannelsAsync(channels, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    {
+        var channels = await _repository.Query<ActionChannel>()
+            .Where(c => c.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        await _repository.DeleteAllAsync(channels, cancellationToken).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteActionChannelsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default)
+    {
+        var channels = await _repository.Query<ActionChannel>()
+            .Where(c => actionIds.Contains(c.ActionId))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        await _repository.DeleteAllAsync(channels, cancellationToken).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<ActionChannel>()
+            .Where(c => c.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+}
