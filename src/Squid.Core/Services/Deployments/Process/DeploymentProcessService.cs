@@ -70,11 +70,9 @@ public class DeploymentProcessService : IDeploymentProcessService
 
         await CreateStepsAsync(process.Id, command.Steps, cancellationToken).ConfigureAwait(false);
 
-        var newProcess = await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
-
         return new DeploymentProcessCreatedEvent
         {
-            DeploymentProcess = newProcess
+            DeploymentProcess = _mapper.Map<DeploymentProcessDto>(process)
         };
     }
 
@@ -94,11 +92,9 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _stepDataProvider.DeleteDeploymentStepsByProcessIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
         await CreateStepsAsync(process.Id, command.Steps, cancellationToken).ConfigureAwait(false);
 
-        var newProcess = await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
-
         return new DeploymentProcessUpdatedEvent
         {
-            DeploymentProcess = newProcess
+            DeploymentProcess = _mapper.Map<DeploymentProcessDto>(process)
         };
     }
 
