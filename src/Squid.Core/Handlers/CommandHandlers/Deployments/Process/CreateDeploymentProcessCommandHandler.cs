@@ -14,13 +14,15 @@ public class CreateDeploymentProcessCommandHandler : ICommandHandler<CreateDeplo
 
     public async Task<CreateDeploymentProcessResponse> Handle(IReceiveContext<CreateDeploymentProcessCommand> context, CancellationToken cancellationToken)
     {
-        var deploymentProcess = await _deploymentProcessService.CreateDeploymentProcessAsync(context.Message, cancellationToken).ConfigureAwait(false);
+        var @event = await _deploymentProcessService.CreateDeploymentProcessAsync(context.Message, cancellationToken).ConfigureAwait(false);
+        
+        await context.PublishAsync(@event, cancellationToken).ConfigureAwait(false);
 
         return new CreateDeploymentProcessResponse
         {
             Data = new CreateDeploymentProcessResponseData
             {
-                DeploymentProcess = deploymentProcess
+                DeploymentProcess = @event.DeploymentProcess
             }
         };
     }

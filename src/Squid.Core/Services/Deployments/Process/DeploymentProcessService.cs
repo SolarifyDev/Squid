@@ -2,6 +2,7 @@ using AutoMapper;
 using Squid.Core.DependencyInjection;
 using Squid.Message.Commands.Deployments.Process;
 using Squid.Message.Domain.Deployments;
+using Squid.Message.Events.Deployments.Process;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Requests.Deployments.Process;
 
@@ -9,9 +10,9 @@ namespace Squid.Core.Services.Deployments.Process;
 
 public interface IDeploymentProcessService : IScopedDependency
 {
-    Task<DeploymentProcessDto> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken);
+    Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken);
     
-    Task<DeploymentProcessDto> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken);
+    Task<DeploymentProcessUpdatedEvent> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken);
     
     Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken);
     
@@ -57,7 +58,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
-    public async Task<DeploymentProcessDto> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
+    public async Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
     {
         var process = _mapper.Map<DeploymentProcess>(command);
         process.Id = Guid.NewGuid();
@@ -69,10 +70,15 @@ public class DeploymentProcessService : IDeploymentProcessService
 
         await CreateStepsAsync(process.Id, command.Steps, cancellationToken).ConfigureAwait(false);
 
-        return await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
+        var newProcess = await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
+
+        return new DeploymentProcessCreatedEvent
+        {
+            DeploymentProcess = newProcess
+        };
     }
 
-    public async Task<DeploymentProcessDto> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken)
+    public async Task<DeploymentProcessUpdatedEvent> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken)
     {
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
         if (process == null)
@@ -88,7 +94,12 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _stepDataProvider.DeleteDeploymentStepsByProcessIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
         await CreateStepsAsync(process.Id, command.Steps, cancellationToken).ConfigureAwait(false);
 
-        return await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
+        var newProcess = await GetDeploymentProcessByIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
+
+        return new DeploymentProcessUpdatedEvent
+        {
+            DeploymentProcess = newProcess
+        };
     }
 
     public async Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken)
