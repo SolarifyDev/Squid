@@ -12,8 +12,6 @@ public class DeploymentProcess : IEntity<Guid>
 
     public string Description { get; set; }
 
-    public bool IsFrozen { get; set; } = false;
-
     public Guid SpaceId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;

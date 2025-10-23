@@ -7,7 +7,7 @@ namespace Squid.Core.Services.Deployments.Variable;
 
 public interface IHybridVariableSnapshotService : IScopedDependency
 {
-    Task<int> CreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default);
+    Task<int> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default);
     
     Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default);
     
@@ -38,17 +38,17 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
-    public async Task<int> CreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
+    public async Task<int> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
     {
         return await _genericDataProvider.ExecuteInTransactionAsync<int>(
-            async token =>
+            async innerCancellationToken =>
             {
                 Log.Information("Creating snapshot for VariableSet {VariableSetId}", variableSetId);
 
-                var currentHash = await _variableDataProvider.CalculateContentHashAsync(variableSetId, token).ConfigureAwait(false);
+                var currentHash = await _variableDataProvider.CalculateContentHashAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
                 Log.Information("Content hash calculated: {Hash}", currentHash);
 
-                var existingSnapshot = await _snapshotDataProvider.GetExistingSnapshotAsync(variableSetId, currentHash, token).ConfigureAwait(false);
+                var existingSnapshot = await _snapshotDataProvider.GetExistingSnapshotAsync(variableSetId, currentHash, innerCancellationToken).ConfigureAwait(false);
 
                 if (existingSnapshot != null)
                 {
@@ -57,7 +57,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                     return existingSnapshot.Id;
                 }
 
-                var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, token).ConfigureAwait(false);
+                var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
                 EmbedScopeDefinitionsAsync(snapshotData);
 
                 var compressedData = SnapshotCompressionService.CompressSnapshot(snapshotData);
@@ -74,7 +74,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                     CreatedBy = createdBy
                 };
 
-                await _snapshotDataProvider.AddVariableSetSnapshotAsync(snapshot, false, token).ConfigureAwait(false);
+                await _snapshotDataProvider.AddVariableSetSnapshotAsync(snapshot, false, innerCancellationToken).ConfigureAwait(false);
 
                 Log.Information(
                     "Snapshot {SnapshotId} created successfully. " +
@@ -129,7 +129,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
 
                 foreach (var variableSetId in variableSetIds)
                 {
-                    var snapshotId = await CreateSnapshotAsync(variableSetId, createdBy, token).ConfigureAwait(false);
+                    var snapshotId = await GetOrCreateSnapshotAsync(variableSetId, createdBy, token).ConfigureAwait(false);
                     snapshotIds.Add(snapshotId);
 
                     var releaseSnapshot = new ReleaseVariableSnapshot

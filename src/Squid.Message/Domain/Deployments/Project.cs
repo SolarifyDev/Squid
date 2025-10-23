@@ -10,7 +10,7 @@ public class Project : IEntity<Guid>
     
     public bool IsDisabled { get; set; }
     
-    public Guid VariableSetId { get; set; }
+    public int VariableSetId { get; set; }
     
     public Guid DeploymentProcessId { get; set; }
     
