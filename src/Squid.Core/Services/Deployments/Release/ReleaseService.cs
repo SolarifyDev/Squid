@@ -6,7 +6,7 @@ using Squid.Message.Models.Deployments.Release;
 
 namespace Squid.Core.Services.Deployments.Release;
 
-public interface IReleaseService
+public interface IReleaseService : IScopedDependency
 {
     Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default);
 }

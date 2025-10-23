@@ -1,6 +1,6 @@
 namespace Squid.Core.Services.Deployments.Release;
 
-public interface IReleaseDataProvider
+public interface IReleaseDataProvider : IScopedDependency
 {
     Task CreateReleaseAsync(Message.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
 }
