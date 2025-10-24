@@ -32,8 +32,6 @@ public class EnvironmentService : IEnvironmentService
     {
         var environment = _mapper.Map<Message.Domain.Deployments.Environment>(command);
 
-        // Id由数据库自增，无需手动赋值
-
         await _environmentDataProvider.AddEnvironmentAsync(environment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new EnvironmentCreatedEvent

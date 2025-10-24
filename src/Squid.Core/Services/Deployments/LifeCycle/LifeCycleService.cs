@@ -30,9 +30,6 @@ public class LifeCycleService : ILifeCycleService
 
     public async Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
     {
-        // 所有Id由数据库自增，无需手动赋值
-        // 相关外键id类型已调整为int
-
         var retentionPolicies = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy).Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy)).ToList();
         var lifecycle = _mapper.Map<Lifecycle>(command.LifecyclePhase.Lifecycle);
         var phases = _mapper.Map<List<Phase>>(command.LifecyclePhase.Phases);

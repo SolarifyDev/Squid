@@ -32,8 +32,6 @@ public class MachineService : IMachineService
     {
         var machine = _mapper.Map<Message.Domain.Deployments.Machine>(command);
 
-        // Id由数据库自增，无需手动赋值
-
         await _machineDataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new MachineCreatedEvent

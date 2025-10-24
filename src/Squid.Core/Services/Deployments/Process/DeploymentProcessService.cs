@@ -61,7 +61,7 @@ public class DeploymentProcessService : IDeploymentProcessService
     public async Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
     {
         var process = _mapper.Map<DeploymentProcess>(command);
-        // Id由数据库自增，无需手动赋值
+        
         process.Version = await _processDataProvider.GetNextVersionAsync(command.ProjectId, cancellationToken).ConfigureAwait(false);
         process.CreatedAt = DateTimeOffset.Now;
         process.LastModified = DateTimeOffset.Now;
@@ -172,7 +172,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var stepDto in stepDtos)
         {
             var step = _mapper.Map<DeploymentStep>(stepDto);
-            // Id由数据库自增，无需手动赋值
+            
             step.ProcessId = processId;
             step.CreatedAt = DateTimeOffset.Now;
             steps.Add(step);
@@ -234,7 +234,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var actionDto in actionDtos)
         {
             var action = _mapper.Map<DeploymentAction>(actionDto);
-            // Id由数据库自增，无需手动赋值
+            
             action.StepId = stepId;
             action.CreatedAt = DateTimeOffset.Now;
             batchData.Actions.Add(action);
