@@ -17,15 +17,13 @@ public class ReleaseService : IReleaseService
     private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly HybridVariableSnapshotService _hybridVariableSnapshotService;
-    private readonly IVariableSetSnapshotDataProvider _variableSetSnapshotDataProvider;
 
-    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IProjectDataProvider projectDataProvider, IVariableSetSnapshotDataProvider variableSetSnapshotDataProvider, HybridVariableSnapshotService hybridVariableSnapshotService)
+    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IProjectDataProvider projectDataProvider, HybridVariableSnapshotService hybridVariableSnapshotService)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
         _projectDataProvider = projectDataProvider;
         _hybridVariableSnapshotService = hybridVariableSnapshotService;
-        _variableSetSnapshotDataProvider = variableSetSnapshotDataProvider;
     }
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)
