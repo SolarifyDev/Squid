@@ -14,8 +14,6 @@ public interface IHybridVariableSnapshotService : IScopedDependency
     Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default);
     
     Task<List<VariableSetSnapshotData>> LoadSnapshotsAsync(List<int> snapshotIds, CancellationToken cancellationToken = default);
-    
-    Task<List<int>> CreateSnapshotsForReleaseAsync(int releaseId, List<int> variableSetIds, string createdBy, CancellationToken cancellationToken = default);
 }
 
 public class HybridVariableSnapshotService : IHybridVariableSnapshotService
@@ -24,20 +22,17 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly IVariableSetSnapshotDataProvider _snapshotDataProvider;
-    private readonly IReleaseVariableSnapshotDataProvider _releaseSnapshotDataProvider;
 
     public HybridVariableSnapshotService(
         IMapper mapper,
         IGenericDataProvider genericDataProvider,
         IVariableDataProvider variableDataProvider,
-        IVariableSetSnapshotDataProvider snapshotDataProvider,
-        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider)
+        IVariableSetSnapshotDataProvider snapshotDataProvider)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
         _snapshotDataProvider = snapshotDataProvider;
         _genericDataProvider = genericDataProvider;
-        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
     public async Task<int> CreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
@@ -122,29 +117,6 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         return snapshotData;
     }
 
-    public async Task<List<int>> CreateSnapshotsForReleaseAsync(int releaseId, List<int> variableSetIds, string createdBy, CancellationToken cancellationToken = default)
-    {
-        return await _genericDataProvider.ExecuteInTransactionAsync<List<int>>(
-            async token =>
-            {
-                var snapshotIds = new List<int>();
-
-                foreach (var variableSetId in variableSetIds)
-                {
-                    var snapshotId = await CreateSnapshotAsync(variableSetId, createdBy, token).ConfigureAwait(false);
-                    snapshotIds.Add(snapshotId);
-
-                    var releaseSnapshot = new ReleaseVariableSnapshot
-                    {
-                        ReleaseId = releaseId, VariableSetId = variableSetId, SnapshotId = snapshotId, VariableSetType = ReleaseVariableSetType.Project
-                    };
-
-                    await _releaseSnapshotDataProvider.AddReleaseVariableSnapshotAsync(releaseSnapshot, false, token).ConfigureAwait(false);
-                }
-
-                return snapshotIds;
-            }, cancellationToken).ConfigureAwait(false);
-    }
 
     private async Task<VariableSetSnapshotData> LoadCompleteVariableSetAsync(int variableSetId, CancellationToken cancellationToken)
     {
