@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Squid.Core.Services.Common;
+using System.Text;
+using Newtonsoft.Json;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -60,8 +62,8 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, token).ConfigureAwait(false);
                 EmbedScopeDefinitionsAsync(snapshotData);
 
-                var compressedData = SnapshotCompressionService.CompressSnapshot(snapshotData);
-                var uncompressedSize = SnapshotCompressionService.EstimateUncompressedSize(snapshotData);
+                var compressedData = UtilService.CompressToGzip(snapshotData);
+                var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
 
                 var snapshot = new VariableSetSnapshot
                 {
@@ -95,7 +97,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
 
-        var snapshotData = SnapshotCompressionService.DecompressSnapshot(snapshot.SnapshotData);
+        var snapshotData = UtilService.DecompressFromGzip<VariableSetSnapshotData>(snapshot.SnapshotData);
 
         ValidateSnapshotIntegrity(snapshotData, snapshot);
 
@@ -111,7 +113,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         var snapshotData = snapshots.Select(
             x =>
             {
-                var data = SnapshotCompressionService.DecompressSnapshot(x.SnapshotData);
+                var data = UtilService.DecompressFromGzip<VariableSetSnapshotData>(x.SnapshotData);
                 ValidateSnapshotIntegrity(data, x);
 
                 return data;
