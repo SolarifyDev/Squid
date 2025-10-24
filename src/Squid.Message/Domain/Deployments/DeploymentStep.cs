@@ -1,10 +1,10 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class DeploymentStep : IEntity<Guid>
+public class DeploymentStep : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
-    public Guid ProcessId { get; set; }
+    public int ProcessId { get; set; }
 
     public int StepOrder { get; set; }
 

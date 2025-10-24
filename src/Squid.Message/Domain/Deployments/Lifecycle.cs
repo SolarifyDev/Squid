@@ -1,8 +1,8 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class Lifecycle : IEntity<Guid>
+public class Lifecycle : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string Name { get; set; }
 

@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.Process;
 
 public class DeploymentActionDto
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
-    public Guid StepId { get; set; }
+    public int StepId { get; set; }
     
     public int ActionOrder { get; set; }
     
@@ -12,7 +12,7 @@ public class DeploymentActionDto
     
     public string ActionType { get; set; }
     
-    public Guid? WorkerPoolId { get; set; }
+    public int? WorkerPoolId { get; set; }
     
     public bool IsDisabled { get; set; }
     
@@ -24,9 +24,9 @@ public class DeploymentActionDto
     
     public List<DeploymentActionPropertyDto> Properties { get; set; } = new List<DeploymentActionPropertyDto>();
     
-    public List<Guid> Environments { get; set; } = new List<Guid>();
+    public List<int> Environments { get; set; } = new List<int>();
     
-    public List<Guid> Channels { get; set; } = new List<Guid>();
+    public List<int> Channels { get; set; } = new List<int>();
     
     public List<string> TenantTags { get; set; } = new List<string>();
     

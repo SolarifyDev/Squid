@@ -2,7 +2,7 @@ namespace Squid.Message.Domain.Deployments;
 
 public class DeploymentActionProperty : IEntity
 {
-    public Guid ActionId { get; set; }
+    public int ActionId { get; set; }
 
     public string PropertyName { get; set; }
 

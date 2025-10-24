@@ -4,7 +4,7 @@ namespace Squid.Message.Commands.Deployments.Process;
 
 public class DeleteDeploymentProcessCommand : ICommand
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 }
 
 public class DeleteDeploymentProcessResponse : SquidResponse<DeleteDeploymentProcessResponseData>

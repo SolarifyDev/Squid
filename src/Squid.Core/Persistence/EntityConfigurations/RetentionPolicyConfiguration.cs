@@ -7,5 +7,6 @@ public class RetentionPolicyConfiguration : IEntityTypeConfiguration<RetentionPo
         builder.ToTable("retention_policy");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

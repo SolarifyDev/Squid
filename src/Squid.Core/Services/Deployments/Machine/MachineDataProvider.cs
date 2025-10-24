@@ -10,7 +10,7 @@ public interface IMachineDataProvider : IScopedDependency
 
     Task<(int count, List<Message.Domain.Deployments.Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
-    Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 }
 
 public class MachineDataProvider : IMachineDataProvider
@@ -72,8 +72,8 @@ public class MachineDataProvider : IMachineDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Message.Domain.Deployments.Machine>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
-} 
+}

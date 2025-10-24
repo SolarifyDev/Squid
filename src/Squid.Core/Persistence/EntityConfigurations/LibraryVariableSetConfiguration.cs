@@ -7,5 +7,6 @@ public class LibraryVariableSetConfiguration: IEntityTypeConfiguration<LibraryVa
         builder.ToTable("library_variable_set");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

@@ -7,5 +7,6 @@ public class ProjectConfiguration: IEntityTypeConfiguration<Project>
         builder.ToTable("project");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

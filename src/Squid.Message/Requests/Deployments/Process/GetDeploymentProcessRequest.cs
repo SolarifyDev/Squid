@@ -5,7 +5,7 @@ namespace Squid.Message.Requests.Deployments.Process;
 
 public class GetDeploymentProcessRequest : IRequest
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 }
 
 public class GetDeploymentProcessResponse : SquidResponse<GetDeploymentProcessResponseData>

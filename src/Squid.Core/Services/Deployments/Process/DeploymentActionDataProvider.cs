@@ -14,13 +14,13 @@ public interface IDeploymentActionDataProvider : IScopedDependency
 
     Task DeleteDeploymentActionAsync(DeploymentAction action, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<DeploymentAction> GetDeploymentActionByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<DeploymentAction> GetDeploymentActionByIdAsync(int id, CancellationToken cancellationToken = default);
 
-    Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(Guid stepId, CancellationToken cancellationToken = default);
+    Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
-    Task DeleteDeploymentActionsByStepIdAsync(Guid stepId, CancellationToken cancellationToken = default);
+    Task DeleteDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
-    Task DeleteDeploymentActionsByStepIdsAsync(List<Guid> stepIds, CancellationToken cancellationToken = default);
+    Task DeleteDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentActionDataProvider : IDeploymentActionDataProvider
@@ -95,13 +95,13 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         }
     }
 
-    public async Task<DeploymentAction> GetDeploymentActionByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<DeploymentAction> GetDeploymentActionByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentAction>(x => x.Id == id)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(Guid stepId, CancellationToken cancellationToken = default)
+    public async Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentAction>()
             .Where(a => a.StepId == stepId)
@@ -109,7 +109,7 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteDeploymentActionsByStepIdAsync(Guid stepId, CancellationToken cancellationToken = default)
+    public async Task DeleteDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default)
     {
         var actions = await GetDeploymentActionsByStepIdAsync(stepId, cancellationToken).ConfigureAwait(false);
 
@@ -130,7 +130,7 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteDeploymentActionsByStepIdsAsync(List<Guid> stepIds, CancellationToken cancellationToken = default)
+    public async Task DeleteDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default)
     {
         var actions = await _repository.Query<DeploymentAction>()
             .Where(a => stepIds.Contains(a.StepId))

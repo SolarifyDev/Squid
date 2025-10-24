@@ -8,13 +8,13 @@ public interface IActionChannelDataProvider : IScopedDependency
 {
     Task AddActionChannelsAsync(List<ActionChannel> channels, CancellationToken cancellationToken = default);
 
-    Task UpdateActionChannelsAsync(Guid actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default);
+    Task UpdateActionChannelsAsync(int actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default);
 
-    Task DeleteActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task DeleteActionChannelsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 
-    Task DeleteActionChannelsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default);
+    Task DeleteActionChannelsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
-    Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 }
 
 public class ActionChannelDataProvider : IActionChannelDataProvider
@@ -34,13 +34,13 @@ public class ActionChannelDataProvider : IActionChannelDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateActionChannelsAsync(Guid actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default)
+    public async Task UpdateActionChannelsAsync(int actionId, List<ActionChannel> channels, CancellationToken cancellationToken = default)
     {
         await DeleteActionChannelsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
         await AddActionChannelsAsync(channels, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task DeleteActionChannelsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         var channels = await _repository.Query<ActionChannel>()
             .Where(c => c.ActionId == actionId)
@@ -50,7 +50,7 @@ public class ActionChannelDataProvider : IActionChannelDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionChannelsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default)
+    public async Task DeleteActionChannelsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
     {
         var channels = await _repository.Query<ActionChannel>()
             .Where(c => actionIds.Contains(c.ActionId))
@@ -60,7 +60,7 @@ public class ActionChannelDataProvider : IActionChannelDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<ActionChannel>()
             .Where(c => c.ActionId == actionId)

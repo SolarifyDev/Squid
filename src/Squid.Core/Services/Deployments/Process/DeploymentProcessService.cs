@@ -14,9 +14,9 @@ public interface IDeploymentProcessService : IScopedDependency
     
     Task<DeploymentProcessUpdatedEvent> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken);
     
-    Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken);
+    Task DeleteDeploymentProcessAsync(int id, CancellationToken cancellationToken);
     
-    Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken);
     
     Task<GetDeploymentProcessesResponse> GetDeploymentProcessesAsync(GetDeploymentProcessesRequest request, CancellationToken cancellationToken);
 }
@@ -61,7 +61,7 @@ public class DeploymentProcessService : IDeploymentProcessService
     public async Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
     {
         var process = _mapper.Map<DeploymentProcess>(command);
-        process.Id = Guid.NewGuid();
+        
         process.Version = await _processDataProvider.GetNextVersionAsync(command.ProjectId, cancellationToken).ConfigureAwait(false);
         process.CreatedAt = DateTimeOffset.Now;
         process.LastModified = DateTimeOffset.Now;
@@ -98,7 +98,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         };
     }
 
-    public async Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken)
+    public async Task DeleteDeploymentProcessAsync(int id, CancellationToken cancellationToken)
     {
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
@@ -110,7 +110,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _processDataProvider.DeleteDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken)
     {
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
@@ -161,7 +161,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         };
     }
 
-    private async Task CreateStepsAsync(Guid processId, List<DeploymentStepDto> stepDtos, CancellationToken cancellationToken)
+    private async Task CreateStepsAsync(int processId, List<DeploymentStepDto> stepDtos, CancellationToken cancellationToken)
     {
         if (!stepDtos.Any()) return;
 
@@ -172,7 +172,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var stepDto in stepDtos)
         {
             var step = _mapper.Map<DeploymentStep>(stepDto);
-            step.Id = Guid.NewGuid();
+            
             step.ProcessId = processId;
             step.CreatedAt = DateTimeOffset.Now;
             steps.Add(step);
@@ -229,12 +229,12 @@ public class DeploymentProcessService : IDeploymentProcessService
         public List<ActionMachineRole> MachineRoles { get; set; } = new List<ActionMachineRole>();
     }
 
-    private void CollectActionsData(Guid stepId, List<DeploymentActionDto> actionDtos, BatchActionData batchData)
+    private void CollectActionsData(int stepId, List<DeploymentActionDto> actionDtos, BatchActionData batchData)
     {
         foreach (var actionDto in actionDtos)
         {
             var action = _mapper.Map<DeploymentAction>(actionDto);
-            action.Id = Guid.NewGuid();
+            
             action.StepId = stepId;
             action.CreatedAt = DateTimeOffset.Now;
             batchData.Actions.Add(action);

@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.Process;
 
 public class DeploymentStepDto
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
-    public Guid ProcessId { get; set; }
+    public int ProcessId { get; set; }
     
     public int StepOrder { get; set; }
     

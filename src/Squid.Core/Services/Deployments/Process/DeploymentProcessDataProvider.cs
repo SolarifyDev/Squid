@@ -12,13 +12,13 @@ public interface IDeploymentProcessDataProvider : IScopedDependency
     
     Task DeleteDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default);
     
-    Task<DeploymentProcess> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<DeploymentProcess> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken = default);
     
-    Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(Guid projectId, int version, CancellationToken cancellationToken = default);
+    Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(int projectId, int version, CancellationToken cancellationToken = default);
     
-    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(Guid? projectId = null, Guid? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
-    Task<int> GetNextVersionAsync(Guid projectId, CancellationToken cancellationToken = default);
+    Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
@@ -63,20 +63,20 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         }
     }
 
-    public async Task<DeploymentProcess> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<DeploymentProcess> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentProcess>(x => x.Id == id)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(Guid projectId, int version, CancellationToken cancellationToken = default)
+    public async Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(int projectId, int version, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentProcess>()
             .FirstOrDefaultAsync(p => p.ProjectId == projectId && p.Version == version, cancellationToken)
             .ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(Guid? projectId = null, Guid? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<DeploymentProcess>();
 
@@ -109,7 +109,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         return (count, results);
     }
 
-    public async Task<int> GetNextVersionAsync(Guid projectId, CancellationToken cancellationToken = default)
+    public async Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default)
     {
         var maxVersion = await _repository.Query<DeploymentProcess>()
             .Where(p => p.ProjectId == projectId)

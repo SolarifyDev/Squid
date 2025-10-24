@@ -9,9 +9,9 @@ public class GetDeploymentProcessesRequest : IPaginatedRequest
     
     public int PageSize { get; set; } = 20;
     
-    public Guid? ProjectId { get; set; }
+    public int? ProjectId { get; set; }
     
-    public Guid? SpaceId { get; set; }
+    public int? SpaceId { get; set; }
     
     public bool? IsFrozen { get; set; }
 }

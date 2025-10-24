@@ -30,15 +30,6 @@ public class LifeCycleService : ILifeCycleService
 
     public async Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
     {
-        command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicyId = command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id = Guid.NewGuid();
-        command.LifecyclePhase.Lifecycle.TentacleRetentionPolicyId = command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id = Guid.NewGuid();
-        command.LifecyclePhase.Phases.ForEach(
-            x =>
-            {
-                x.ReleaseRetentionPolicyId = x.ReleaseRetentionPolicy.Id = Guid.NewGuid();
-                x.TentacleRetentionPolicyId = x.TentacleRetentionPolicy.Id = Guid.NewGuid();
-            });
-
         var retentionPolicies = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy).Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy)).ToList();
         var lifecycle = _mapper.Map<Lifecycle>(command.LifecyclePhase.Lifecycle);
         var phases = _mapper.Map<List<Phase>>(command.LifecyclePhase.Phases);
@@ -64,7 +55,7 @@ public class LifeCycleService : ILifeCycleService
     {
         var retentionPoliciesIds = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy.Id)
             .Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy.Id))
-            .Concat([command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id, command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id]).ToList();
+            .Concat(new[] { command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id, command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id }).ToList();
         var lifecycle = await _lifeCycleDataProvider.GetLifecycleByIdAsync(command.LifecyclePhase.Lifecycle.Id, cancellationToken).ConfigureAwait(false);
         var phases = await _lifeCycleDataProvider.GetPhasesByIdAsync(command.LifecyclePhase.Phases.Select(x => x.Id).ToList(), cancellationToken).ConfigureAwait(false);
         var retentionPolicies = await _lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPoliciesIds, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -102,13 +93,13 @@ public class LifeCycleService : ILifeCycleService
 
     public async Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken)
     {
-        var failIds = new List<Guid>();
         var lifecycles = await _lifeCycleDataProvider.GetLifecyclesByIdAsync(command.Ids, cancellationToken).ConfigureAwait(false);
-        
-        if (lifecycles.Count != command.Ids.Count) failIds.AddRange(command.Ids.Except(lifecycles.Select(x => x.Id)));
 
         await _lifeCycleDataProvider.DeleteLifecyclesAsync(lifecycles, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
+
+        var lifecycleIds = lifecycles.Select(x => x.Id).ToList();
+        var failIds = command.Ids.Except(lifecycleIds).ToList();
+
         return new LifeCycleDeletedEvent
         {
             Data = new DeleteLifeCyclesResponseData
