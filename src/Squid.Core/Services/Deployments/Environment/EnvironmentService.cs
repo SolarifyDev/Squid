@@ -32,7 +32,7 @@ public class EnvironmentService : IEnvironmentService
     {
         var environment = _mapper.Map<Message.Domain.Deployments.Environment>(command);
 
-        environment.Id = Guid.NewGuid();
+        // Id由数据库自增，无需手动赋值
 
         await _environmentDataProvider.AddEnvironmentAsync(environment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -44,7 +44,7 @@ public class EnvironmentService : IEnvironmentService
 
     public async Task<EnvironmentUpdatedEvent> UpdateEnvironmentAsync(UpdateEnvironmentCommand command, CancellationToken cancellationToken)
     {
-        var environments = await _environmentDataProvider.GetEnvironmentsByIdsAsync(new List<Guid> { command.Id }, cancellationToken).ConfigureAwait(false);
+        var environments = await _environmentDataProvider.GetEnvironmentsByIdsAsync(new List<int> { command.Id }, cancellationToken).ConfigureAwait(false);
 
         var entity = environments.FirstOrDefault();
 
@@ -69,11 +69,14 @@ public class EnvironmentService : IEnvironmentService
 
         await _environmentDataProvider.DeleteEnvironmentsAsync(environments, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        var environmentIds = environments.Select(f => f.Id).ToList();
+        var failIds = command.Ids.Except(environmentIds).ToList();
+
         return new EnvironmentDeletedEvent
         {
             Data = new DeleteEnvironmentsResponseData
             {
-                FailIds = command.Ids.Except(environments.Select(f => f.Id)).ToList()
+                FailIds = failIds
             }
         };
     }

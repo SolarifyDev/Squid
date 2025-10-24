@@ -7,5 +7,6 @@ public class LifecycleConfiguration: IEntityTypeConfiguration<Lifecycle>
         builder.ToTable("lifecycle");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

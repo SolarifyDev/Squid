@@ -7,5 +7,6 @@ public class ServerTaskConfiguration: IEntityTypeConfiguration<ServerTask>
         builder.ToTable("server_task");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

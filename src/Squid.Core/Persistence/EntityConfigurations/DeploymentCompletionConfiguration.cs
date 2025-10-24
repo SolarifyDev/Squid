@@ -7,5 +7,6 @@ public class DeploymentCompletionConfiguration : IEntityTypeConfiguration<Deploy
         builder.ToTable("deployment_completion");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

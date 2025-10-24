@@ -7,5 +7,6 @@ public class SpaceConfiguration: IEntityTypeConfiguration<Space>
         builder.ToTable("space");
 
         builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedOnAdd();
     }
 }

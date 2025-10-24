@@ -14,9 +14,9 @@ public interface ILifeCycleDataProvider : IScopedDependency
     
     Task<(int count, List<LifecyclePhaseDto> lifecyclePhases)> GetLifecyclePhasePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
-    Task<Lifecycle> GetLifecycleByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<Lifecycle> GetLifecycleByIdAsync(int id, CancellationToken cancellationToken);
     
-    Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task AddPhaseAsync(Phase phase, bool forceSave = true, CancellationToken cancellationToken = default);
     
@@ -28,7 +28,7 @@ public interface ILifeCycleDataProvider : IScopedDependency
     
     Task DeletePhaseAsync(Phase phase, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<List<Phase>> GetPhasesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Phase>> GetPhasesByIdAsync(List<int> ids, CancellationToken cancellationToken);
     
     Task AddRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default);
 
@@ -38,7 +38,7 @@ public interface ILifeCycleDataProvider : IScopedDependency
     
     Task DeleteRetentionPolicyAsync(RetentionPolicy retentionPolicy, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<int> ids, CancellationToken cancellationToken);
 }
 
 public class LifeCycleDataProvider : ILifeCycleDataProvider
@@ -101,12 +101,12 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
             }).ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<Lifecycle> GetLifecycleByIdAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<Lifecycle> GetLifecycleByIdAsync(int id, CancellationToken cancellationToken)
     {
         return await _repository.QueryNoTracking<Lifecycle>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Lifecycle>> GetLifecyclesByIdAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Lifecycle>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -146,7 +146,7 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Phase>> GetPhasesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Phase>> GetPhasesByIdAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.QueryNoTracking<Phase>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -179,7 +179,7 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
     
-    public async Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<RetentionPolicy>> GetRetentionPoliciesByIdAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<RetentionPolicy>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }

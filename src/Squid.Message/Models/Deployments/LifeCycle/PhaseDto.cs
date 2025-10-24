@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.LifeCycle;
 
 public class PhaseDto : IHasDualRetentionPolicies
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
-    public Guid LifecycleId { get; set; }
+    public int LifecycleId { get; set; }
     
     public string Name { get; set; }
 
@@ -18,9 +18,9 @@ public class PhaseDto : IHasDualRetentionPolicies
     
     public bool IsPriorityPhase { get; set; }
     
-    public Guid ReleaseRetentionPolicyId { get; set; }
+    public int ReleaseRetentionPolicyId { get; set; }
     
-    public Guid TentacleRetentionPolicyId { get; set; }
+    public int TentacleRetentionPolicyId { get; set; }
 
     public RetentionPolicyDto ReleaseRetentionPolicy { get; set; } = null;
     

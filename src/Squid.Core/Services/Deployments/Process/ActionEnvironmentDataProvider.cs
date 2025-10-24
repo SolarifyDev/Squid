@@ -8,13 +8,13 @@ public interface IActionEnvironmentDataProvider : IScopedDependency
 {
     Task AddActionEnvironmentsAsync(List<ActionEnvironment> environments, CancellationToken cancellationToken = default);
 
-    Task UpdateActionEnvironmentsAsync(Guid actionId, List<ActionEnvironment> environments, CancellationToken cancellationToken = default);
+    Task UpdateActionEnvironmentsAsync(int actionId, List<ActionEnvironment> environments, CancellationToken cancellationToken = default);
 
-    Task DeleteActionEnvironmentsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task DeleteActionEnvironmentsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 
-    Task DeleteActionEnvironmentsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default);
+    Task DeleteActionEnvironmentsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
-    Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 }
 
 public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
@@ -34,13 +34,13 @@ public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateActionEnvironmentsAsync(Guid actionId, List<ActionEnvironment> environments, CancellationToken cancellationToken = default)
+    public async Task UpdateActionEnvironmentsAsync(int actionId, List<ActionEnvironment> environments, CancellationToken cancellationToken = default)
     {
         await DeleteActionEnvironmentsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
         await AddActionEnvironmentsAsync(environments, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionEnvironmentsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task DeleteActionEnvironmentsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         var environments = await _repository.Query<ActionEnvironment>()
             .Where(e => e.ActionId == actionId)
@@ -50,7 +50,7 @@ public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionEnvironmentsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default)
+    public async Task DeleteActionEnvironmentsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
     {
         var environments = await _repository.Query<ActionEnvironment>()
             .Where(e => actionIds.Contains(e.ActionId))
@@ -60,7 +60,7 @@ public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<ActionEnvironment>()
             .Where(e => e.ActionId == actionId)

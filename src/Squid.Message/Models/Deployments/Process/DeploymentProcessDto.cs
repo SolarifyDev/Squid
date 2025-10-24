@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.Process;
 
 public class DeploymentProcessDto
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public int Version { get; set; }
     
@@ -14,7 +14,7 @@ public class DeploymentProcessDto
     
     public bool IsFrozen { get; set; }
     
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
     
     public DateTimeOffset CreatedAt { get; set; }
     

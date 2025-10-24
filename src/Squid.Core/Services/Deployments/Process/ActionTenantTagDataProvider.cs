@@ -8,13 +8,13 @@ public interface IActionTenantTagDataProvider : IScopedDependency
 {
     Task AddActionTenantTagsAsync(List<ActionTenantTag> tenantTags, CancellationToken cancellationToken = default);
 
-    Task UpdateActionTenantTagsAsync(Guid actionId, List<ActionTenantTag> tenantTags, CancellationToken cancellationToken = default);
+    Task UpdateActionTenantTagsAsync(int actionId, List<ActionTenantTag> tenantTags, CancellationToken cancellationToken = default);
 
-    Task DeleteActionTenantTagsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task DeleteActionTenantTagsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 
-    Task DeleteActionTenantTagsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default);
+    Task DeleteActionTenantTagsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
-    Task<List<ActionTenantTag>> GetActionTenantTagsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task<List<ActionTenantTag>> GetActionTenantTagsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 }
 
 public class ActionTenantTagDataProvider : IActionTenantTagDataProvider
@@ -34,13 +34,13 @@ public class ActionTenantTagDataProvider : IActionTenantTagDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateActionTenantTagsAsync(Guid actionId, List<ActionTenantTag> tenantTags, CancellationToken cancellationToken = default)
+    public async Task UpdateActionTenantTagsAsync(int actionId, List<ActionTenantTag> tenantTags, CancellationToken cancellationToken = default)
     {
         await DeleteActionTenantTagsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
         await AddActionTenantTagsAsync(tenantTags, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionTenantTagsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task DeleteActionTenantTagsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         var tenantTags = await _repository.Query<ActionTenantTag>()
             .Where(t => t.ActionId == actionId)
@@ -50,7 +50,7 @@ public class ActionTenantTagDataProvider : IActionTenantTagDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteActionTenantTagsByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default)
+    public async Task DeleteActionTenantTagsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
     {
         var tenantTags = await _repository.Query<ActionTenantTag>()
             .Where(t => actionIds.Contains(t.ActionId))
@@ -60,7 +60,7 @@ public class ActionTenantTagDataProvider : IActionTenantTagDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<ActionTenantTag>> GetActionTenantTagsByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task<List<ActionTenantTag>> GetActionTenantTagsByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<ActionTenantTag>()
             .Where(t => t.ActionId == actionId)

@@ -32,7 +32,7 @@ public class MachineService : IMachineService
     {
         var machine = _mapper.Map<Message.Domain.Deployments.Machine>(command);
 
-        machine.Id = Guid.NewGuid();
+        // Id由数据库自增，无需手动赋值
 
         await _machineDataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -44,7 +44,7 @@ public class MachineService : IMachineService
 
     public async Task<MachineUpdatedEvent> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken)
     {
-        var machine = await _machineDataProvider.GetMachinesByIdsAsync(new List<Guid> { command.Id }, cancellationToken).ConfigureAwait(false);
+        var machine = await _machineDataProvider.GetMachinesByIdsAsync(new List<int> { command.Id }, cancellationToken).ConfigureAwait(false);
 
         var entity = machine.FirstOrDefault();
 
@@ -69,11 +69,14 @@ public class MachineService : IMachineService
 
         await _machineDataProvider.DeleteMachinesAsync(machines, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        var machineIds = machines.Select(m => m.Id).ToList();
+        var failIds = command.Ids.Except(machineIds).ToList();
+
         return new MachineDeletedEvent
         {
             Data = new DeleteMachinesResponseData
             {
-                FailIds = command.Ids.Except(machines.Select(m => m.Id)).ToList()
+                FailIds = failIds
             }
         };
     }
@@ -91,4 +94,4 @@ public class MachineService : IMachineService
             }
         };
     }
-} 
+}

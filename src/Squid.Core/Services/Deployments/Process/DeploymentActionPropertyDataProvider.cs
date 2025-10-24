@@ -8,13 +8,13 @@ public interface IDeploymentActionPropertyDataProvider : IScopedDependency
 {
     Task AddDeploymentActionPropertiesAsync(List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default);
 
-    Task UpdateDeploymentActionPropertiesAsync(Guid actionId, List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default);
+    Task UpdateDeploymentActionPropertiesAsync(int actionId, List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default);
 
-    Task DeleteDeploymentActionPropertiesByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task DeleteDeploymentActionPropertiesByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 
-    Task DeleteDeploymentActionPropertiesByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default);
+    Task DeleteDeploymentActionPropertiesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
-    Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default);
+    Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDataProvider
@@ -34,13 +34,13 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateDeploymentActionPropertiesAsync(Guid actionId, List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default)
+    public async Task UpdateDeploymentActionPropertiesAsync(int actionId, List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default)
     {
         await DeleteDeploymentActionPropertiesByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
         await AddDeploymentActionPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteDeploymentActionPropertiesByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task DeleteDeploymentActionPropertiesByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         var properties = await _repository.Query<DeploymentActionProperty>()
             .Where(p => p.ActionId == actionId)
@@ -50,7 +50,7 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteDeploymentActionPropertiesByActionIdsAsync(List<Guid> actionIds, CancellationToken cancellationToken = default)
+    public async Task DeleteDeploymentActionPropertiesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
     {
         var properties = await _repository.Query<DeploymentActionProperty>()
             .Where(p => actionIds.Contains(p.ActionId))
@@ -60,7 +60,7 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdAsync(Guid actionId, CancellationToken cancellationToken = default)
+    public async Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdAsync(int actionId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentActionProperty>()
             .Where(p => p.ActionId == actionId)

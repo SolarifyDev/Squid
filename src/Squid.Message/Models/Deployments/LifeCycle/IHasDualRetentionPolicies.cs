@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.LifeCycle;
 
 public interface IHasDualRetentionPolicies
 {
-    Guid ReleaseRetentionPolicyId { get; set; }
+    int ReleaseRetentionPolicyId { get; set; }
     
-    Guid TentacleRetentionPolicyId { get; set; }
+    int TentacleRetentionPolicyId { get; set; }
     
     RetentionPolicyDto ReleaseRetentionPolicy { get; set; }
     

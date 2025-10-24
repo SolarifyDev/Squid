@@ -10,7 +10,7 @@ public interface IEnvironmentDataProvider : IScopedDependency
 
     Task<(int count, List<Message.Domain.Deployments.Environment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
-    Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 }
 
 public class EnvironmentDataProvider : IEnvironmentDataProvider
@@ -72,7 +72,7 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Message.Domain.Deployments.Environment>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
