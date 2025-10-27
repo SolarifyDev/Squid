@@ -14,9 +14,4 @@ public enum ReleaseVariableSetType
     /// 库变量集
     /// </summary>
     Library = 2,
-    
-    /// <summary>
-    /// 租户变量集
-    /// </summary>
-    Tenant = 3
 }

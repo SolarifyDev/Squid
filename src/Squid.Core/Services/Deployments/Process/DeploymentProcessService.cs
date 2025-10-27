@@ -30,7 +30,6 @@ public class DeploymentProcessService : IDeploymentProcessService
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
-    private readonly IActionTenantTagDataProvider _actionTenantTagDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
     private readonly IMapper _mapper;
 
@@ -40,7 +39,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         IDeploymentActionDataProvider actionDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
         IActionChannelDataProvider actionChannelDataProvider,
-        IActionTenantTagDataProvider actionTenantTagDataProvider,
         IActionMachineRoleDataProvider actionMachineRoleDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
@@ -53,7 +51,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         _stepPropertyDataProvider = stepPropertyDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
-        _actionTenantTagDataProvider = actionTenantTagDataProvider;
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
@@ -210,9 +207,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         var channels = await _actionChannelDataProvider.GetActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         actionDto.Channels = channels.Select(c => c.ChannelId).ToList();
 
-        var tenantTags = await _actionTenantTagDataProvider.GetActionTenantTagsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
-        actionDto.TenantTags = tenantTags.Select(t => t.TenantTag).ToList(); 
-
         var machineRoles = await _actionMachineRoleDataProvider.GetActionMachineRolesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         actionDto.MachineRoles = machineRoles.Select(m => m.MachineRole).ToList();
 
@@ -225,7 +219,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         public List<DeploymentActionProperty> ActionProperties { get; set; } = new List<DeploymentActionProperty>();
         public List<ActionEnvironment> Environments { get; set; } = new List<ActionEnvironment>();
         public List<ActionChannel> Channels { get; set; } = new List<ActionChannel>();
-        public List<ActionTenantTag> TenantTags { get; set; } = new List<ActionTenantTag>();
         public List<ActionMachineRole> MachineRoles { get; set; } = new List<ActionMachineRole>();
     }
 
@@ -258,12 +251,6 @@ public class DeploymentProcessService : IDeploymentProcessService
                 batchData.Channels.AddRange(channels);
             }
 
-            if (actionDto.TenantTags?.Any() == true)
-            {
-                var tenantTags = actionDto.TenantTags.Select(t => new ActionTenantTag { ActionId = action.Id, TenantTag = t }).ToList();
-                batchData.TenantTags.AddRange(tenantTags);
-            }
-
             if (actionDto.MachineRoles?.Any() == true)
             {
                 var machineRoles = actionDto.MachineRoles.Select(m => new ActionMachineRole { ActionId = action.Id, MachineRole = m }).ToList();
@@ -281,8 +268,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _actionEnvironmentDataProvider.AddActionEnvironmentsAsync(batchData.Environments, cancellationToken).ConfigureAwait(false);
 
         await _actionChannelDataProvider.AddActionChannelsAsync(batchData.Channels, cancellationToken).ConfigureAwait(false);
-
-        await _actionTenantTagDataProvider.AddActionTenantTagsAsync(batchData.TenantTags, cancellationToken).ConfigureAwait(false);
 
         await _actionMachineRoleDataProvider.AddActionMachineRolesAsync(batchData.MachineRoles, cancellationToken).ConfigureAwait(false);
     }

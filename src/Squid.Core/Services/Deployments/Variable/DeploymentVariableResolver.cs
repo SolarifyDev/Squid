@@ -8,7 +8,6 @@ public class ScopeContext
     public string EnvironmentId { get; set; }
     public string MachineId { get; set; }
     public string ChannelId { get; set; }
-    public string TenantId { get; set; }
     public Dictionary<string, string> AdditionalScopes { get; set; } = new Dictionary<string, string>();
 }
 
@@ -101,7 +100,6 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
             VariableScopeType.Environment => scopeValues.Contains(context.EnvironmentId),
             VariableScopeType.Machine => scopeValues.Contains(context.MachineId),
             VariableScopeType.Channel => scopeValues.Contains(context.ChannelId),
-            VariableScopeType.Tenant => scopeValues.Contains(context.TenantId),
             _ => context.AdditionalScopes.TryGetValue(scopeType.ToString(), out var value) && scopeValues.Contains(value)
         };
     }

@@ -30,14 +30,12 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
-    private readonly IActionTenantTagDataProvider _actionTenantTagDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
 
     public DeploymentActionDataProvider(IRepository repository, IUnitOfWork unitOfWork,
         IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IActionChannelDataProvider actionChannelDataProvider,
-        IActionTenantTagDataProvider actionTenantTagDataProvider,
         IActionMachineRoleDataProvider actionMachineRoleDataProvider)
     {
         _repository = repository;
@@ -45,7 +43,6 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         _actionPropertyDataProvider = actionPropertyDataProvider;
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
-        _actionTenantTagDataProvider = actionTenantTagDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
@@ -84,7 +81,6 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         await _actionPropertyDataProvider.DeleteDeploymentActionPropertiesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await _actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await _actionChannelDataProvider.DeleteActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
-        await _actionTenantTagDataProvider.DeleteActionTenantTagsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await _actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         
         await _repository.DeleteAsync(action, cancellationToken).ConfigureAwait(false);
@@ -121,8 +117,6 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
 
         await _actionChannelDataProvider.DeleteActionChannelsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
-        await _actionTenantTagDataProvider.DeleteActionTenantTagsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
-
         await _actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await _repository.DeleteAllAsync(actions, cancellationToken).ConfigureAwait(false);
@@ -143,8 +137,6 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         await _actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await _actionChannelDataProvider.DeleteActionChannelsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
-
-        await _actionTenantTagDataProvider.DeleteActionTenantTagsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await _actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 

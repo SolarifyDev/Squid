@@ -22,27 +22,41 @@ public interface IHybridProcessSnapshotService : IScopedDependency
 public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 {
     private readonly IMapper _mapper;
-
     private readonly IGenericDataProvider _genericDataProvider;
-
     private readonly IProcessSnapshotDataProvider _snapshotDataProvider;
-
     private readonly IDeploymentProcessDataProvider _processDataProvider;
-
     private readonly IDeploymentStepDataProvider _stepDataProvider;
+    private readonly IDeploymentStepPropertyDataProvider _stepPropertyDataProvider;
+    private readonly IDeploymentActionDataProvider _actionDataProvider;
+    private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
+    private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
+    private readonly IActionChannelDataProvider _actionChannelDataProvider;
+    private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
 
     public HybridProcessSnapshotService(
         IMapper mapper,
         IGenericDataProvider genericDataProvider,
         IProcessSnapshotDataProvider snapshotDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
-        IDeploymentStepDataProvider stepDataProvider)
+        IDeploymentStepDataProvider stepDataProvider,
+        IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
+        IDeploymentActionDataProvider actionDataProvider,
+        IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
+        IActionEnvironmentDataProvider actionEnvironmentDataProvider,
+        IActionChannelDataProvider actionChannelDataProvider,
+        IActionMachineRoleDataProvider actionMachineRoleDataProvider)
     {
         _mapper = mapper;
         _genericDataProvider = genericDataProvider;
         _snapshotDataProvider = snapshotDataProvider;
         _processDataProvider = processDataProvider;
         _stepDataProvider = stepDataProvider;
+        _stepPropertyDataProvider = stepPropertyDataProvider;
+        _actionDataProvider = actionDataProvider;
+        _actionPropertyDataProvider = actionPropertyDataProvider;
+        _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
+        _actionChannelDataProvider = actionChannelDataProvider;
+        _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
     public async Task<int> CreateSnapshotAsync(int processId, string createdBy, CancellationToken cancellationToken = default)
@@ -50,7 +64,6 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         return await _genericDataProvider.ExecuteInTransactionAsync<int>(
             async token =>
             {
-                // 计算 process 的内容哈希
                 var process = await _processDataProvider.GetDeploymentProcessByIdAsync(processId, token).ConfigureAwait(false);
 
                 if (process == null)
@@ -117,7 +130,6 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
         var snapshotData = UtilService.DecompressFromGzip<ProcessSnapshotData>(snapshot.SnapshotData);
 
-        // 可扩展完整性校验
         return snapshotData;
     }
 
@@ -131,8 +143,6 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         var snapshotData = snapshots.ConvertAll(x =>
         {
             var data = UtilService.DecompressFromGzip<ProcessSnapshotData>(x.SnapshotData);
-
-            // 可扩展完整性校验
             return data;
         });
 
@@ -148,23 +158,65 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
         var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(processId, cancellationToken).ConfigureAwait(false);
 
-        var processDetailSnapshot = new ProcessDetailSnapshotData
-        {
-            Id = process.Id, Name = process.Name,
-            // 可扩展更多字段
-        };
+        var processSnapshots = new List<ProcessDetailSnapshotData>();
 
-        // 可扩展将 steps 映射到 processDetailSnapshot
+        foreach (var step in steps.OrderBy(s => s.StepOrder))
+        {
+            var stepProperties = await _stepPropertyDataProvider.GetDeploymentStepPropertiesByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
+
+            var actions = await _actionDataProvider.GetDeploymentActionsByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
+
+            var actionSnapshots = new List<ActionSnapshotData>();
+
+            foreach (var action in actions.OrderBy(a => a.ActionOrder))
+            {
+                var actionProperties = await _actionPropertyDataProvider.GetDeploymentActionPropertiesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+
+                var environments = await _actionEnvironmentDataProvider.GetActionEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+                var channels = await _actionChannelDataProvider.GetActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+                var machineRoles = await _actionMachineRoleDataProvider.GetActionMachineRolesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+
+                var actionSnapshot = new ActionSnapshotData
+                {
+                    Id = action.Id,
+                    Name = action.Name,
+                    ActionType = action.ActionType,
+                    ActionOrder = action.ActionOrder,
+                    WorkerPoolId = action.WorkerPoolId,
+                    IsDisabled = action.IsDisabled,
+                    IsRequired = action.IsRequired,
+                    CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
+                    CreatedAt = action.CreatedAt,
+                    Properties = actionProperties.ToDictionary(p => p.PropertyName, p => p.PropertyValue),
+                    Environments = environments.Select(e => e.EnvironmentId).ToList(),
+                    Channels = channels.Select(c => c.ChannelId).ToList(),
+                    MachineRoles = machineRoles.Select(m => m.MachineRole).ToList()
+                };
+
+                actionSnapshots.Add(actionSnapshot);
+            }
+
+            var processDetailSnapshot = new ProcessDetailSnapshotData
+            {
+                Id = step.Id,
+                Name = step.Name,
+                StepType = step.StepType,
+                StepOrder = step.StepOrder,
+                Condition = step.Condition,
+                Properties = stepProperties.ToDictionary(p => p.PropertyName, p => p.PropertyValue),
+                CreatedAt = step.CreatedAt,
+                Actions = actionSnapshots
+            };
+
+            processSnapshots.Add(processDetailSnapshot);
+        }
 
         return new ProcessSnapshotData
         {
             Id = processId,
             Version = process.Version,
             CreatedAt = process.CreatedAt,
-            Processes = new List<ProcessDetailSnapshotData>
-            {
-                processDetailSnapshot
-            }
+            Processes = processSnapshots
         };
     }
 }

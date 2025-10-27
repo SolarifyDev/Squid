@@ -19,5 +19,5 @@ public class ProcessDetailSnapshotData
 
     public DateTimeOffset CreatedAt { get; set; }
 
-    public DateTimeOffset? UpdatedAt { get; set; }
+    public List<ActionSnapshotData> Actions { get; set; } = new List<ActionSnapshotData>();
 }
