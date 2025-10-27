@@ -15,6 +15,8 @@ public interface IDeploymentActionPropertyDataProvider : IScopedDependency
     Task DeleteDeploymentActionPropertiesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
     Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
+
+    Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDataProvider
@@ -64,6 +66,13 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
     {
         return await _repository.Query<DeploymentActionProperty>()
             .Where(p => p.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<DeploymentActionProperty>> GetDeploymentActionPropertiesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<DeploymentActionProperty>()
+            .Where(p => actionIds.Contains(p.ActionId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

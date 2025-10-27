@@ -18,6 +18,8 @@ public interface IDeploymentActionDataProvider : IScopedDependency
 
     Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
+    Task<List<DeploymentAction>> GetDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
+
     Task DeleteDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
     Task DeleteDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
@@ -102,6 +104,15 @@ public class DeploymentActionDataProvider : IDeploymentActionDataProvider
         return await _repository.Query<DeploymentAction>()
             .Where(a => a.StepId == stepId)
             .OrderBy(a => a.ActionOrder)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<DeploymentAction>> GetDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<DeploymentAction>()
+            .Where(a => stepIds.Contains(a.StepId))
+            .OrderBy(a => a.StepId)
+            .ThenBy(a => a.ActionOrder)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 

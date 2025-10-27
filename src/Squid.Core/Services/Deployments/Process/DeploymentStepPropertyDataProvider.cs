@@ -15,6 +15,8 @@ public interface IDeploymentStepPropertyDataProvider : IScopedDependency
     Task DeleteDeploymentStepPropertiesByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
 
     Task<List<DeploymentStepProperty>> GetDeploymentStepPropertiesByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
+
+    Task<List<DeploymentStepProperty>> GetDeploymentStepPropertiesByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentStepPropertyDataProvider : IDeploymentStepPropertyDataProvider
@@ -64,6 +66,13 @@ public class DeploymentStepPropertyDataProvider : IDeploymentStepPropertyDataPro
     {
         return await _repository.Query<DeploymentStepProperty>()
             .Where(p => p.StepId == stepId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<DeploymentStepProperty>> GetDeploymentStepPropertiesByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<DeploymentStepProperty>()
+            .Where(p => stepIds.Contains(p.StepId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }
