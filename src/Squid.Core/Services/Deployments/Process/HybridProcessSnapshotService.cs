@@ -87,7 +87,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                         .ToList()
                 };
 
-                var json = System.Text.Json.JsonSerializer.Serialize(hashData);
+                var json = JsonConvert.SerializeObject(hashData);
 
                 var currentHash = UtilService.ComputeSha256Hash(json);
 
