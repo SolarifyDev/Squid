@@ -45,14 +45,6 @@ CREATE TABLE variable_set_snapshot
     created_by               VARCHAR(100) NOT NULL
 );
 
-CREATE TABLE release_variable_snapshot
-(
-    id                SERIAL PRIMARY KEY,
-    release_id        INTEGER NOT NULL,
-    variable_set_id   INTEGER NOT NULL,
-    snapshot_id       INTEGER NOT NULL,
-    variable_set_type INTEGER NOT NULL DEFAULT 1
-);
 
 CREATE INDEX ix_variable_variable_set_name ON variable (variable_set_id, name);
 CREATE INDEX ix_variable_sort_order ON variable (variable_set_id, sort_order, name);
@@ -63,9 +55,25 @@ CREATE INDEX ix_snapshot_original_hash ON variable_set_snapshot (original_variab
 CREATE INDEX ix_snapshot_created ON variable_set_snapshot (created_at DESC);
 CREATE INDEX ix_snapshot_content_hash ON variable_set_snapshot (content_hash);
 
-CREATE INDEX ix_release_snapshot_release ON release_variable_snapshot (release_id);
-CREATE INDEX ix_release_snapshot_variable_set ON release_variable_snapshot (variable_set_id);
 
 CREATE INDEX ix_variable_set_owner ON variable_set (owner_type, owner_id);
 CREATE INDEX ix_variable_set_space ON variable_set (space_id);
 CREATE INDEX ix_variable_set_content_hash ON variable_set (content_hash);
+
+-- ProcessSnapshot table
+CREATE TABLE process_snapshot
+(
+    id                       SERIAL PRIMARY KEY,
+    original_process_id      INTEGER      NOT NULL,
+    version                  INTEGER      NOT NULL,
+    snapshot_data            BYTEA        NOT NULL,
+    content_hash             VARCHAR(64)  NOT NULL,
+    compression_type         VARCHAR(20)  NOT NULL DEFAULT 'GZIP',
+    uncompressed_size        INTEGER      NOT NULL,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by               VARCHAR(100) NOT NULL
+);
+
+CREATE INDEX ix_process_snapshot_original_hash ON process_snapshot (original_process_id, content_hash);
+CREATE INDEX ix_process_snapshot_created ON process_snapshot (created_at DESC);
+CREATE INDEX ix_process_snapshot_content_hash ON process_snapshot (content_hash);

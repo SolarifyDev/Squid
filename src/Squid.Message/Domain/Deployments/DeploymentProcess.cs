@@ -1,10 +1,10 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class DeploymentProcess : IEntity<Guid>
+public class DeploymentProcess : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
 
     public int Version { get; set; } = 1;
 
@@ -12,7 +12,7 @@ public class DeploymentProcess : IEntity<Guid>
 
     public string Description { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
 

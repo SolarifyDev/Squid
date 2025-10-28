@@ -14,9 +14,9 @@ public interface IDeploymentProcessService : IScopedDependency
     
     Task<DeploymentProcessUpdatedEvent> UpdateDeploymentProcessAsync(UpdateDeploymentProcessCommand command, CancellationToken cancellationToken);
     
-    Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken);
+    Task DeleteDeploymentProcessAsync(int id, CancellationToken cancellationToken);
     
-    Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken);
     
     Task<GetDeploymentProcessesResponse> GetDeploymentProcessesAsync(GetDeploymentProcessesRequest request, CancellationToken cancellationToken);
 }
@@ -30,7 +30,6 @@ public class DeploymentProcessService : IDeploymentProcessService
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
-    private readonly IActionTenantTagDataProvider _actionTenantTagDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
     private readonly IMapper _mapper;
 
@@ -40,7 +39,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         IDeploymentActionDataProvider actionDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
         IActionChannelDataProvider actionChannelDataProvider,
-        IActionTenantTagDataProvider actionTenantTagDataProvider,
         IActionMachineRoleDataProvider actionMachineRoleDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
@@ -53,7 +51,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         _stepPropertyDataProvider = stepPropertyDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
-        _actionTenantTagDataProvider = actionTenantTagDataProvider;
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
@@ -61,7 +58,7 @@ public class DeploymentProcessService : IDeploymentProcessService
     public async Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
     {
         var process = _mapper.Map<DeploymentProcess>(command);
-        process.Id = Guid.NewGuid();
+        
         process.Version = await _processDataProvider.GetNextVersionAsync(command.ProjectId, cancellationToken).ConfigureAwait(false);
         process.CreatedAt = DateTimeOffset.Now;
         process.LastModified = DateTimeOffset.Now;
@@ -98,7 +95,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         };
     }
 
-    public async Task DeleteDeploymentProcessAsync(Guid id, CancellationToken cancellationToken)
+    public async Task DeleteDeploymentProcessAsync(int id, CancellationToken cancellationToken)
     {
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
@@ -110,7 +107,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _processDataProvider.DeleteDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken)
     {
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
@@ -160,7 +157,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         };
     }
 
-    private async Task CreateStepsAsync(Guid processId, List<DeploymentStepDto> stepDtos, CancellationToken cancellationToken)
+    private async Task CreateStepsAsync(int processId, List<DeploymentStepDto> stepDtos, CancellationToken cancellationToken)
     {
         if (!stepDtos.Any()) return;
 
@@ -171,7 +168,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var stepDto in stepDtos)
         {
             var step = _mapper.Map<DeploymentStep>(stepDto);
-            step.Id = Guid.NewGuid();
+            
             step.ProcessId = processId;
             step.CreatedAt = DateTimeOffset.Now;
             steps.Add(step);
@@ -209,9 +206,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         var channels = await _actionChannelDataProvider.GetActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         actionDto.Channels = channels.Select(c => c.ChannelId).ToList();
 
-        var tenantTags = await _actionTenantTagDataProvider.GetActionTenantTagsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
-        actionDto.TenantTags = tenantTags.Select(t => t.TenantTag).ToList(); 
-
         var machineRoles = await _actionMachineRoleDataProvider.GetActionMachineRolesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         actionDto.MachineRoles = machineRoles.Select(m => m.MachineRole).ToList();
 
@@ -224,16 +218,15 @@ public class DeploymentProcessService : IDeploymentProcessService
         public List<DeploymentActionProperty> ActionProperties { get; set; } = new List<DeploymentActionProperty>();
         public List<ActionEnvironment> Environments { get; set; } = new List<ActionEnvironment>();
         public List<ActionChannel> Channels { get; set; } = new List<ActionChannel>();
-        public List<ActionTenantTag> TenantTags { get; set; } = new List<ActionTenantTag>();
         public List<ActionMachineRole> MachineRoles { get; set; } = new List<ActionMachineRole>();
     }
 
-    private void CollectActionsData(Guid stepId, List<DeploymentActionDto> actionDtos, BatchActionData batchData)
+    private void CollectActionsData(int stepId, List<DeploymentActionDto> actionDtos, BatchActionData batchData)
     {
         foreach (var actionDto in actionDtos)
         {
             var action = _mapper.Map<DeploymentAction>(actionDto);
-            action.Id = Guid.NewGuid();
+            
             action.StepId = stepId;
             action.CreatedAt = DateTimeOffset.Now;
             batchData.Actions.Add(action);
@@ -257,12 +250,6 @@ public class DeploymentProcessService : IDeploymentProcessService
                 batchData.Channels.AddRange(channels);
             }
 
-            if (actionDto.TenantTags?.Any() == true)
-            {
-                var tenantTags = actionDto.TenantTags.Select(t => new ActionTenantTag { ActionId = action.Id, TenantTag = t }).ToList();
-                batchData.TenantTags.AddRange(tenantTags);
-            }
-
             if (actionDto.MachineRoles?.Any() == true)
             {
                 var machineRoles = actionDto.MachineRoles.Select(m => new ActionMachineRole { ActionId = action.Id, MachineRole = m }).ToList();
@@ -280,8 +267,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         await _actionEnvironmentDataProvider.AddActionEnvironmentsAsync(batchData.Environments, cancellationToken).ConfigureAwait(false);
 
         await _actionChannelDataProvider.AddActionChannelsAsync(batchData.Channels, cancellationToken).ConfigureAwait(false);
-
-        await _actionTenantTagDataProvider.AddActionTenantTagsAsync(batchData.TenantTags, cancellationToken).ConfigureAwait(false);
 
         await _actionMachineRoleDataProvider.AddActionMachineRolesAsync(batchData.MachineRoles, cancellationToken).ConfigureAwait(false);
     }

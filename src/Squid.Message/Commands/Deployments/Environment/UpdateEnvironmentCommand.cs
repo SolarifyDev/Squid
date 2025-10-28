@@ -5,9 +5,9 @@ namespace Squid.Message.Commands.Deployments.Environment;
 
 public class UpdateEnvironmentCommand : ICommand
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Slug { get; set; }
 

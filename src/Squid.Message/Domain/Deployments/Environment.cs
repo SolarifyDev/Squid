@@ -1,8 +1,8 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class Environment : IEntity<Guid>
+public class Environment : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public Guid SpaceId { get; set; }
 

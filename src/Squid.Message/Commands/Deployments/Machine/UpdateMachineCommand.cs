@@ -5,7 +5,7 @@ namespace Squid.Message.Commands.Deployments.Machine;
 
 public class UpdateMachineCommand : ICommand
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string Name { get; set; }
 
@@ -17,7 +17,7 @@ public class UpdateMachineCommand : ICommand
 
     public string Json { get; set; }
 
-    public Guid? MachinePolicyId { get; set; }
+    public int? MachinePolicyId { get; set; }
 
     public string Thumbprint { get; set; }
 
@@ -25,7 +25,7 @@ public class UpdateMachineCommand : ICommand
 
     public string DeploymentTargetType { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string OperatingSystem { get; set; }
 

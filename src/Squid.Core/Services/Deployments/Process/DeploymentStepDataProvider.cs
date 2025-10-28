@@ -14,11 +14,11 @@ public interface IDeploymentStepDataProvider : IScopedDependency
 
     Task DeleteDeploymentStepAsync(DeploymentStep step, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<DeploymentStep> GetDeploymentStepByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<DeploymentStep> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken = default);
 
-    Task<List<DeploymentStep>> GetDeploymentStepsByProcessIdAsync(Guid processId, CancellationToken cancellationToken = default);
+    Task<List<DeploymentStep>> GetDeploymentStepsByProcessIdAsync(int processId, CancellationToken cancellationToken = default);
 
-    Task DeleteDeploymentStepsByProcessIdAsync(Guid processId, CancellationToken cancellationToken = default);
+    Task DeleteDeploymentStepsByProcessIdAsync(int processId, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentStepDataProvider : IDeploymentStepDataProvider
@@ -81,13 +81,13 @@ public class DeploymentStepDataProvider : IDeploymentStepDataProvider
         }
     }
 
-    public async Task<DeploymentStep> GetDeploymentStepByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<DeploymentStep> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentStep>(x => x.Id == id)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<DeploymentStep>> GetDeploymentStepsByProcessIdAsync(Guid processId, CancellationToken cancellationToken = default)
+    public async Task<List<DeploymentStep>> GetDeploymentStepsByProcessIdAsync(int processId, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<DeploymentStep>()
             .Where(s => s.ProcessId == processId)
@@ -95,7 +95,7 @@ public class DeploymentStepDataProvider : IDeploymentStepDataProvider
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteDeploymentStepsByProcessIdAsync(Guid processId, CancellationToken cancellationToken = default)
+    public async Task DeleteDeploymentStepsByProcessIdAsync(int processId, CancellationToken cancellationToken = default)
     {
         var steps = await GetDeploymentStepsByProcessIdAsync(processId, cancellationToken).ConfigureAwait(false);
 

@@ -1,10 +1,10 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class DeploymentAction : IEntity<Guid>
+public class DeploymentAction : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
-    public Guid StepId { get; set; }
+    public int StepId { get; set; }
 
     public int ActionOrder { get; set; }
 
@@ -12,7 +12,7 @@ public class DeploymentAction : IEntity<Guid>
 
     public string ActionType { get; set; }
 
-    public Guid? WorkerPoolId { get; set; }
+    public int? WorkerPoolId { get; set; }
 
     public bool IsDisabled { get; set; } = false;
 

@@ -16,12 +16,7 @@ public enum VariableSetOwnerType
     LibraryVariableSet = 2,
     
     /// <summary>
-    /// 租户变量集
-    /// </summary>
-    Tenant = 3,
-    
-    /// <summary>
     /// 环境变量集
     /// </summary>
-    Environment = 4
+    Environment = 3
 }

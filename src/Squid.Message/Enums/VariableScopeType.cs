@@ -26,17 +26,12 @@ public enum VariableScopeType
     Channel = 4,
     
     /// <summary>
-    /// 租户作用域
-    /// </summary>
-    Tenant = 5,
-    
-    /// <summary>
     /// 步骤作用域
     /// </summary>
-    Step = 6,
+    Step = 5,
     
     /// <summary>
     /// 进程作用域
     /// </summary>
-    Process = 7
+    Process = 6
 }

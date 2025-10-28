@@ -5,7 +5,7 @@ namespace Squid.Message.Models.Deployments;
 
 public class RetentionPolicyDto
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public RetentionPolicyUnit Unit { get; set; }
     

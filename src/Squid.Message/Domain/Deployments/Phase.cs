@@ -1,10 +1,10 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class Phase : IEntity<Guid>
+public class Phase : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
-    public Guid LifecycleId { get; set; }
+    public int LifecycleId { get; set; }
     
     public string Name { get; set; }
 

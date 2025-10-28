@@ -1,8 +1,8 @@
 namespace Squid.Core.Domain.Deployments;
 
-public class Release : IEntity<Guid>
+public class Release : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public string Version { get; set; }
     

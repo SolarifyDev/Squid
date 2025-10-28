@@ -1,8 +1,8 @@
 namespace Squid.Core.Domain.Deployments;
 
-public class DeploymentProcess : IEntity<Guid>
+public class DeploymentProcess : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public Guid ProjectId { get; set; }
 

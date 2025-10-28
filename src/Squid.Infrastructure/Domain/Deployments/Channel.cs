@@ -1,8 +1,8 @@
 namespace Squid.Core.Domain.Deployments;
 
-public class Channel : IEntity<Guid>
+public class Channel : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public string Name { get; set; }
     

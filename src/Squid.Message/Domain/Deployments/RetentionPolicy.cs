@@ -2,9 +2,9 @@ using Squid.Message.Enums.Deployments;
 
 namespace Squid.Message.Domain.Deployments;
 
-public class RetentionPolicy : IEntity<Guid>
+public class RetentionPolicy : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public RetentionPolicyUnit Unit { get; set; }
 

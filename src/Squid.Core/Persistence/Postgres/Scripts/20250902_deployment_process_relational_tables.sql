@@ -60,12 +60,6 @@ CREATE TABLE IF NOT EXISTS action_channels (
     
     PRIMARY KEY (action_id, channel_id)
 );
-CREATE TABLE IF NOT EXISTS action_tenant_tags (
-    action_id UUID NOT NULL,
-    tenant_tag VARCHAR(100) NOT NULL,
-    
-    PRIMARY KEY (action_id, tenant_tag)
-);
 CREATE TABLE IF NOT EXISTS action_machine_roles (
     action_id UUID NOT NULL,
     machine_role VARCHAR(100) NOT NULL,

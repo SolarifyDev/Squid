@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Squid.Core.Services.Common;
+using System.Text;
+using Newtonsoft.Json;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -12,8 +14,6 @@ public interface IHybridVariableSnapshotService : IScopedDependency
     Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default);
     
     Task<List<VariableSetSnapshotData>> LoadSnapshotsAsync(List<int> snapshotIds, CancellationToken cancellationToken = default);
-    
-    Task<List<int>> CreateSnapshotsForReleaseAsync(int releaseId, List<int> variableSetIds, string createdBy, CancellationToken cancellationToken = default);
 }
 
 public class HybridVariableSnapshotService : IHybridVariableSnapshotService
@@ -22,20 +22,17 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly IVariableSetSnapshotDataProvider _snapshotDataProvider;
-    private readonly IReleaseVariableSnapshotDataProvider _releaseSnapshotDataProvider;
 
     public HybridVariableSnapshotService(
         IMapper mapper,
         IGenericDataProvider genericDataProvider,
         IVariableDataProvider variableDataProvider,
-        IVariableSetSnapshotDataProvider snapshotDataProvider,
-        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider)
+        IVariableSetSnapshotDataProvider snapshotDataProvider)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
         _snapshotDataProvider = snapshotDataProvider;
         _genericDataProvider = genericDataProvider;
-        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
     public async Task<int> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
@@ -60,8 +57,8 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
                 EmbedScopeDefinitionsAsync(snapshotData);
 
-                var compressedData = SnapshotCompressionService.CompressSnapshot(snapshotData);
-                var uncompressedSize = SnapshotCompressionService.EstimateUncompressedSize(snapshotData);
+                var compressedData = UtilService.CompressToGzip(snapshotData);
+                var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
 
                 var snapshot = new VariableSetSnapshot
                 {
@@ -95,7 +92,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
 
-        var snapshotData = SnapshotCompressionService.DecompressSnapshot(snapshot.SnapshotData);
+        var snapshotData = UtilService.DecompressFromGzip<VariableSetSnapshotData>(snapshot.SnapshotData);
 
         ValidateSnapshotIntegrity(snapshotData, snapshot);
 
@@ -111,7 +108,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         var snapshotData = snapshots.Select(
             x =>
             {
-                var data = SnapshotCompressionService.DecompressSnapshot(x.SnapshotData);
+                var data = UtilService.DecompressFromGzip<VariableSetSnapshotData>(x.SnapshotData);
                 ValidateSnapshotIntegrity(data, x);
 
                 return data;
@@ -120,29 +117,6 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         return snapshotData;
     }
 
-    public async Task<List<int>> CreateSnapshotsForReleaseAsync(int releaseId, List<int> variableSetIds, string createdBy, CancellationToken cancellationToken = default)
-    {
-        return await _genericDataProvider.ExecuteInTransactionAsync<List<int>>(
-            async token =>
-            {
-                var snapshotIds = new List<int>();
-
-                foreach (var variableSetId in variableSetIds)
-                {
-                    var snapshotId = await GetOrCreateSnapshotAsync(variableSetId, createdBy, token).ConfigureAwait(false);
-                    snapshotIds.Add(snapshotId);
-
-                    var releaseSnapshot = new ReleaseVariableSnapshot
-                    {
-                        ReleaseId = releaseId, VariableSetId = variableSetId, SnapshotId = snapshotId, VariableSetType = ReleaseVariableSetType.Project
-                    };
-
-                    await _releaseSnapshotDataProvider.AddReleaseVariableSnapshotAsync(releaseSnapshot, false, token).ConfigureAwait(false);
-                }
-
-                return snapshotIds;
-            }, cancellationToken).ConfigureAwait(false);
-    }
 
     private async Task<VariableSetSnapshotData> LoadCompleteVariableSetAsync(int variableSetId, CancellationToken cancellationToken)
     {

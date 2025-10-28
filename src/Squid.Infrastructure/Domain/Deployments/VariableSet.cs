@@ -1,8 +1,8 @@
 namespace Squid.Core.Domain.Deployments;
 
-public class VariableSet : IEntity<Guid>
+public class VariableSet : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public string OwnerType { get; set; }
     

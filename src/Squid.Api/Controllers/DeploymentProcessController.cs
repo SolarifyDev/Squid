@@ -44,7 +44,7 @@ public class DeploymentProcessController : ControllerBase
 
     [HttpGet("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentProcessResponse))]
-    public async Task<IActionResult> GetDeploymentProcessAsync(Guid id)
+    public async Task<IActionResult> GetDeploymentProcessAsync(int id)
     {
         var request = new GetDeploymentProcessRequest { Id = id };
         var response = await _mediator.RequestAsync<GetDeploymentProcessRequest, GetDeploymentProcessResponse>(request).ConfigureAwait(false);
