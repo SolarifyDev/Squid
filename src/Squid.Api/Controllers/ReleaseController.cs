@@ -23,6 +23,24 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
+    [HttpPut]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateReleaseResponse))]
+    public async Task<IActionResult> UpdateReleaseAsync([FromBody] UpdateReleaseCommand command)
+    {
+        var response = await _mediator.SendAsync<UpdateReleaseCommand, UpdateReleaseResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+    
+    [HttpDelete]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteReleaseResponse))]
+    public async Task<IActionResult> DeleteReleaseAsync([FromBody] DeleteReleaseCommand command)
+    {
+        var response = await _mediator.SendAsync<DeleteReleaseCommand, DeleteReleaseResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+    
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleasesResponse))]
     public async Task<IActionResult> GetReleasesAsync([FromQuery] GetReleasesRequest request)

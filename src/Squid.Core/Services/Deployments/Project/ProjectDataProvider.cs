@@ -2,7 +2,7 @@ namespace Squid.Core.Services.Deployments.Project;
 
 public interface IProjectDataProvider : IScopedDependency
 {
-    Task<Message.Domain.Deployments.Project> GetProjectByIdAsync(Guid projectId, CancellationToken cancellationToken = default);
+    Task<Message.Domain.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default);
 }
 
 public class ProjectDataProvider : IProjectDataProvider
@@ -16,7 +16,7 @@ public class ProjectDataProvider : IProjectDataProvider
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<Message.Domain.Deployments.Project> GetProjectByIdAsync(Guid projectId, CancellationToken cancellationToken = default)
+    public async Task<Message.Domain.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default)
     {
         return await _repository.GetByIdAsync<Message.Domain.Deployments.Project>(projectId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }

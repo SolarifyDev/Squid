@@ -12,8 +12,6 @@ public class DeploymentProcessDto
     
     public string Description { get; set; }
     
-    public bool IsFrozen { get; set; }
-    
     public int SpaceId { get; set; }
     
     public DateTimeOffset CreatedAt { get; set; }

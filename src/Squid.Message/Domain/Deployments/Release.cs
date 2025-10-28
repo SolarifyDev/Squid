@@ -1,22 +1,22 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class Release : IEntity<Guid>
+public class Release : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public string Version { get; set; }
     
     public DateTimeOffset Assembled { get; set; } = DateTimeOffset.Now;
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public int ProjectVariableSetSnapshotId { get; set; }
     
-    public Guid ProjectDeploymentProcessSnapshotId { get; set; }
+    public int ProjectDeploymentProcessSnapshotId { get; set; }
     
-    public Guid ChannelId { get; set; }
+    public int ChannelId { get; set; }
     
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
     
     public DateTimeOffset LastModified { get; set; } = DateTimeOffset.Now;
 }
