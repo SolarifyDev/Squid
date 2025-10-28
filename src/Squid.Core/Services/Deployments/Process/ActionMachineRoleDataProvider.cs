@@ -15,6 +15,8 @@ public interface IActionMachineRoleDataProvider : IScopedDependency
     Task DeleteActionMachineRolesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
     Task<List<ActionMachineRole>> GetActionMachineRolesByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
+
+    Task<List<ActionMachineRole>> GetActionMachineRolesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 }
 
 public class ActionMachineRoleDataProvider : IActionMachineRoleDataProvider
@@ -64,6 +66,13 @@ public class ActionMachineRoleDataProvider : IActionMachineRoleDataProvider
     {
         return await _repository.Query<ActionMachineRole>()
             .Where(m => m.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<ActionMachineRole>> GetActionMachineRolesByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<ActionMachineRole>()
+            .Where(m => actionIds.Contains(m.ActionId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

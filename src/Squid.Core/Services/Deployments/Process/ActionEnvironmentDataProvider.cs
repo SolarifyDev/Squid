@@ -15,6 +15,8 @@ public interface IActionEnvironmentDataProvider : IScopedDependency
     Task DeleteActionEnvironmentsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
     Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
+
+    Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 }
 
 public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
@@ -64,6 +66,13 @@ public class ActionEnvironmentDataProvider : IActionEnvironmentDataProvider
     {
         return await _repository.Query<ActionEnvironment>()
             .Where(e => e.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<ActionEnvironment>> GetActionEnvironmentsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<ActionEnvironment>()
+            .Where(e => actionIds.Contains(e.ActionId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

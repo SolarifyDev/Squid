@@ -15,6 +15,8 @@ public interface IActionChannelDataProvider : IScopedDependency
     Task DeleteActionChannelsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 
     Task<List<ActionChannel>> GetActionChannelsByActionIdAsync(int actionId, CancellationToken cancellationToken = default);
+
+    Task<List<ActionChannel>> GetActionChannelsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default);
 }
 
 public class ActionChannelDataProvider : IActionChannelDataProvider
@@ -64,6 +66,13 @@ public class ActionChannelDataProvider : IActionChannelDataProvider
     {
         return await _repository.Query<ActionChannel>()
             .Where(c => c.ActionId == actionId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<ActionChannel>> GetActionChannelsByActionIdsAsync(List<int> actionIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<ActionChannel>()
+            .Where(c => actionIds.Contains(c.ActionId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

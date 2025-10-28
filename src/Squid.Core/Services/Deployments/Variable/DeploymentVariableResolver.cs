@@ -8,7 +8,6 @@ public class ScopeContext
     public string EnvironmentId { get; set; }
     public string MachineId { get; set; }
     public string ChannelId { get; set; }
-    public string TenantId { get; set; }
     public Dictionary<string, string> AdditionalScopes { get; set; } = new Dictionary<string, string>();
 }
 
@@ -32,14 +31,11 @@ public interface IDeploymentVariableResolver : IScopedDependency
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
     private readonly IHybridVariableSnapshotService _snapshotService;
-    private readonly IReleaseVariableSnapshotDataProvider _releaseSnapshotDataProvider;
-    
+
     public DeploymentVariableResolver(
-        IReleaseVariableSnapshotDataProvider releaseSnapshotDataProvider,
         IHybridVariableSnapshotService snapshotService)
     {
         _snapshotService = snapshotService;
-        _releaseSnapshotDataProvider = releaseSnapshotDataProvider;
     }
 
     public async Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(
@@ -48,37 +44,11 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         CancellationToken cancellationToken = default)
     {
         Log.Information("Resolving variables for Release {ReleaseId}", releaseId);
-
-        var snapshotRefs = await _releaseSnapshotDataProvider.GetReleaseVariableSnapshotsByReleaseIdAsync(releaseId, cancellationToken);
-
-        if (!snapshotRefs.Any())
-        {
-            Log.Warning("No variable snapshots found for Release {ReleaseId}", releaseId);
-            return new ResolvedVariables(new Dictionary<string, string>());
-        }
-
-        var allVariables = new List<VariableSnapshotData>();
+        
         var sensitiveVariableNames = new List<string>();
-        var snapshots = await _snapshotService.LoadSnapshotsAsync(snapshotRefs.ConvertAll(x => x.SnapshotId), cancellationToken).ConfigureAwait(false);
+        var allVariables = new List<VariableSnapshotData>();
 
-        foreach (var snapshotRef in snapshotRefs)
-        {
-            try
-            {
-                var snapshot = snapshots.SingleOrDefault(x => x.Id == snapshotRef.SnapshotId);
-                
-                if (snapshot == null) throw new Exception($"Snapshot {snapshotRef.SnapshotId} not found");
-                
-                allVariables.AddRange(snapshot.Variables);
-
-                Log.Information("Loaded {VariableCount} variables from snapshot {SnapshotId}", snapshot.Variables.Count, snapshotRef.SnapshotId);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Failed to load snapshot {SnapshotId} for Release {ReleaseId}", snapshotRef.SnapshotId, releaseId);
-                throw;
-            }
-        }
+        // TODO: 这里需要根据实际业务调整，直接传入 snapshotId 或由外部传入 snapshot 列表
 
         var resolvedVariables = new Dictionary<string, string>();
 
@@ -130,7 +100,6 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
             VariableScopeType.Environment => scopeValues.Contains(context.EnvironmentId),
             VariableScopeType.Machine => scopeValues.Contains(context.MachineId),
             VariableScopeType.Channel => scopeValues.Contains(context.ChannelId),
-            VariableScopeType.Tenant => scopeValues.Contains(context.TenantId),
             _ => context.AdditionalScopes.TryGetValue(scopeType.ToString(), out var value) && scopeValues.Contains(value)
         };
     }
