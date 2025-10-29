@@ -5,6 +5,7 @@ using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Requests.Deployments.Release;
+using Squid.Message.Requests;
 
 namespace Squid.Core.Services.Deployments.Release;
 
@@ -46,7 +47,7 @@ public class ReleaseService : IReleaseService
         release.ProjectDeploymentProcessSnapshotId = await _hybridProcessSnapshotService.CreateSnapshotAsync(project.DeploymentProcessId, "user", cancellationToken).ConfigureAwait(false);
         
         await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
+
         return new ReleaseCreatedEvent
         {
             Release = _mapper.Map<ReleaseDto>(release)
@@ -55,16 +56,46 @@ public class ReleaseService : IReleaseService
 
     public async Task<ReleaseUpdatedEvent> UpdateReleaseAsync(UpdateReleaseCommand command, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        if (command.Release == null)
+            throw new ArgumentException("Release cannot be null", nameof(command.Release));
+
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.Release.Id, cancellationToken).ConfigureAwait(false);
+
+        if (release == null)
+            throw new Exception($"Release {command.Release.Id} not found");
+
+        _mapper.Map(command.Release, release);
+
+        await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new ReleaseUpdatedEvent
+        {
+            Release = _mapper.Map<ReleaseDto>(release)
+        };
     }
 
     public async Task DeleteReleaseAsync(DeleteReleaseCommand command, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
+
+        if (release == null)
+            throw new Exception($"Release {command.ReleaseId} not found");
+        
+        await _releaseDataProvider.DeleteReleaseAsync(command.ReleaseId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<GetReleasesResponse> GetReleasesAsync(GetReleasesRequest request, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        var releases = await _releaseDataProvider.GetReleasesAsync(cancellationToken).ConfigureAwait(false);
+
+        return new GetReleasesResponse
+        {
+            Data = new GetReleasesResponseData
+            {
+                Releases = _mapper.Map<List<ReleaseDto>>(releases),
+                Count = releases.Count,
+                CurrentDeployedReleases = new List<ReleaseDto>() // 如有特殊逻辑可补充
+            }
+        };
     }
 }

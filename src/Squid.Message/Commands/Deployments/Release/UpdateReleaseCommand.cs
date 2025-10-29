@@ -5,7 +5,7 @@ namespace Squid.Message.Commands.Deployments.Release;
 
 public class UpdateReleaseCommand : ICommand
 {
-    
+    public ReleaseDto Release { get; set; }
 }
 
 public class UpdateReleaseResponse : SquidResponse<ReleaseDto>
