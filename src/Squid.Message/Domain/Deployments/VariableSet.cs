@@ -14,8 +14,6 @@ public class VariableSet : IEntity<int>
 
     public int Version { get; set; } = 1;
 
-    public bool IsFrozen { get; set; }
-
     public string RelatedDocumentIds { get; set; }
 
     public string ContentHash { get; set; }

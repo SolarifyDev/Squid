@@ -12,8 +12,6 @@ public class VariableSetDto
 
     public int Version { get; set; }
 
-    public bool IsFrozen { get; set; }
-
     public string RelatedDocumentIds { get; set; }
 
     public DateTimeOffset? LastModified { get; set; }

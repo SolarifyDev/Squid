@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Newtonsoft.Json;
 
 namespace Squid.Core.Services.Common;
 
@@ -16,7 +17,7 @@ public static class UtilService
 
     public static byte[] CompressToGzip<T>(T data)
     {
-        var json = Newtonsoft.Json.JsonConvert.SerializeObject(data);
+        var json = JsonConvert.SerializeObject(data);
 
         using var ms = new MemoryStream();
         using (var gzip = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal))
@@ -36,6 +37,6 @@ public static class UtilService
 
         var json = sr.ReadToEnd();
 
-        return Newtonsoft.Json.JsonConvert.DeserializeObject<T>(json);
+        return JsonConvert.DeserializeObject<T>(json);
     }
 }

@@ -12,8 +12,6 @@ public class GetDeploymentProcessesRequest : IPaginatedRequest
     public int? ProjectId { get; set; }
     
     public int? SpaceId { get; set; }
-    
-    public bool? IsFrozen { get; set; }
 }
 
 public class GetDeploymentProcessesResponse : SquidResponse<GetDeploymentProcessesResponseData>

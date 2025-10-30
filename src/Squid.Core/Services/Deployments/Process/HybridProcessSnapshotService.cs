@@ -76,7 +76,6 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                     process.Name,
                     process.ProjectId,
                     process.Version,
-                    process.IsFrozen,
                     Steps = steps
                         .OrderBy(s => s.StepOrder)
                         .Select(

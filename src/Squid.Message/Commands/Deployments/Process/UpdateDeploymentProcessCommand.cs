@@ -11,8 +11,6 @@ public class UpdateDeploymentProcessCommand : ICommand
     
     public string Description { get; set; }
     
-    public bool IsFrozen { get; set; }
-    
     public string LastModifiedBy { get; set; }
     
     public List<DeploymentStepDto> Steps { get; set; } = new List<DeploymentStepDto>();

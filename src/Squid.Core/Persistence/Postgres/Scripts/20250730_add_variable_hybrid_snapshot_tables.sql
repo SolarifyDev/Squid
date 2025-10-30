@@ -4,7 +4,6 @@ CREATE TABLE variable_set
     owner_type           INTEGER NOT NULL,
     owner_id             INTEGER NOT NULL,
     version              INTEGER NOT NULL DEFAULT 1,
-    is_frozen            BOOLEAN NOT NULL DEFAULT FALSE,
     related_document_ids TEXT,
     space_id             INTEGER NOT NULL,
     content_hash         VARCHAR(64),
