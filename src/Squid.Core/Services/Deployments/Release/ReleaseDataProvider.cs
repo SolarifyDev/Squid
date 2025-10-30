@@ -10,7 +10,7 @@ public interface IReleaseDataProvider : IScopedDependency
 
     Task<Message.Domain.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default);
 
-    Task<(int, List<Message.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = bad);
+    Task<(int, List<Message.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseDataProvider : IReleaseDataProvider
@@ -47,7 +47,7 @@ public class ReleaseDataProvider : IReleaseDataProvider
         return await _repository.GetByIdAsync<Message.Domain.Deployments.Release>(releaseId, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int, List<Message.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = bad)
+    public async Task<(int, List<Message.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<Message.Domain.Deployments.Release>();
         
