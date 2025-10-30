@@ -32,6 +32,15 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
+    [HttpPut]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateReleaseVariableAsync([FromBody] UpdateReleaseVariableCommand command)
+    {
+        await _mediator.SendAsync(command).ConfigureAwait(false);
+
+        return Ok();
+    }
+    
     [HttpDelete]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteReleaseResponse))]
     public async Task<IActionResult> DeleteReleaseAsync([FromBody] DeleteReleaseCommand command)

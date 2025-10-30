@@ -18,6 +18,8 @@ public interface IReleaseService : IScopedDependency
     Task DeleteReleaseAsync(DeleteReleaseCommand command, CancellationToken cancellationToken = default);
     
     Task<GetReleasesResponse> GetReleasesAsync(GetReleasesRequest request, CancellationToken cancellationToken = default);
+    
+    Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseService : IReleaseService
@@ -81,21 +83,34 @@ public class ReleaseService : IReleaseService
         if (release == null)
             throw new Exception($"Release {command.ReleaseId} not found");
         
-        await _releaseDataProvider.DeleteReleaseAsync(command.ReleaseId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _releaseDataProvider.DeleteReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<GetReleasesResponse> GetReleasesAsync(GetReleasesRequest request, CancellationToken cancellationToken = default)
     {
-        var releases = await _releaseDataProvider.GetReleasesAsync(cancellationToken).ConfigureAwait(false);
+        var (count, releases) = await _releaseDataProvider.GetReleasesAsync(request.PageIndex, request.PageSize, request.ProjectId, request.ChannelId, cancellationToken).ConfigureAwait(false);
 
         return new GetReleasesResponse
         {
             Data = new GetReleasesResponseData
             {
                 Releases = _mapper.Map<List<ReleaseDto>>(releases),
-                Count = releases.Count,
-                CurrentDeployedReleases = new List<ReleaseDto>() // 如有特殊逻辑可补充
+                Count = count,
+                CurrentDeployedReleaseIds = new List<int>() // TODO 等deployment写好后补充查询（deployment）目前已部署版本Release
             }
         };
+    }
+
+    public async Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default)
+    {
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
+
+        if (release == null)
+            throw new Exception($"Release {command.ReleaseId} not found");
+        
+        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
+        
+        release.ProjectVariableSetSnapshotId = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
+        await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

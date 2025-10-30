@@ -10,6 +10,8 @@ public class GetReleasesRequest : IPaginatedRequest
     public int PageSize { get; set; }
     
     public int ChannelId { get; set; }
+    
+    public int ProjectId { get; set; }
 }
 
 public class GetReleasesResponse : SquidResponse<GetReleasesResponseData>
@@ -22,5 +24,5 @@ public class GetReleasesResponseData
     
     public List<ReleaseDto> Releases { get; set; }
     
-    public List<ReleaseDto> CurrentDeployedReleases { get; set; }
+    public List<int> CurrentDeployedReleaseIds { get; set; }
 }
