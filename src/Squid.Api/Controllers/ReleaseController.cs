@@ -32,7 +32,7 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
-    [HttpPut]
+    [HttpPut("variable")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateReleaseVariableAsync([FromBody] UpdateReleaseVariableCommand command)
     {
