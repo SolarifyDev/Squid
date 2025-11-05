@@ -16,7 +16,7 @@ public interface IDeploymentProcessDataProvider : IScopedDependency
     
     Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(int projectId, int version, CancellationToken cancellationToken = default);
     
-    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
     Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default);
 }
@@ -76,7 +76,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
             .ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, bool? isFrozen = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<DeploymentProcess>();
 
@@ -88,11 +88,6 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         if (spaceId.HasValue)
         {
             query = query.Where(p => p.SpaceId == spaceId.Value);
-        }
-
-        if (isFrozen.HasValue)
-        {
-            query = query.Where(p => p.IsFrozen == isFrozen.Value);
         }
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);

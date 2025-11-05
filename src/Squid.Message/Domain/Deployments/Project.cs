@@ -10,27 +10,27 @@ public class Project : IEntity<int>
     
     public bool IsDisabled { get; set; }
     
-    public Guid VariableSetId { get; set; }
+    public int VariableSetId { get; set; }
     
-    public Guid DeploymentProcessId { get; set; }
+    public int DeploymentProcessId { get; set; }
     
-    public Guid ProjectGroupId { get; set; }
+    public int ProjectGroupId { get; set; }
     
-    public Guid LifecycleId { get; set; }
+    public int LifecycleId { get; set; }
     
     public bool AutoCreateRelease { get; set; }
     
     public string Json { get; set; }
     
-    public Guid IncludedLibraryVariableSetIds { get; set; }
+    public string IncludedLibraryVariableSetIds { get; set; }
     
     public bool DiscreteChannelRelease { get; set; }
     
     public byte[] DataVersion { get; set; }
     
-    public Guid? ClonedFromProjectId { get; set; }
+    public int? ClonedFromProjectId { get; set; }
     
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
     
     public DateTimeOffset LastModified { get; set; }
     

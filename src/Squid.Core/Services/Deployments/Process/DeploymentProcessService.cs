@@ -145,8 +145,7 @@ public class DeploymentProcessService : IDeploymentProcessService
     public async Task<GetDeploymentProcessesResponse> GetDeploymentProcessesAsync(GetDeploymentProcessesRequest request, CancellationToken cancellationToken)
     {
         var (count, data) = await _processDataProvider.GetDeploymentProcessPagingAsync(
-            request.ProjectId, request.SpaceId, request.IsFrozen, 
-            request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+            request.ProjectId, request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetDeploymentProcessesResponse
         {

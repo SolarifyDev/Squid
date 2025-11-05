@@ -1,12 +1,12 @@
-namespace Squid.Message.Domain.Deployments;
+namespace Squid.Message.Models.Deployments.Release;
 
-public class Release : IEntity<int>
+public class ReleaseDto
 {
     public int Id { get; set; }
     
     public string Version { get; set; }
     
-    public DateTimeOffset Assembled { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset Assembled { get; set; }
     
     public int ProjectId { get; set; }
     
@@ -16,7 +16,9 @@ public class Release : IEntity<int>
     
     public int ChannelId { get; set; }
     
+    public byte[] DataVersion { get; set; }
+    
     public int SpaceId { get; set; }
     
-    public DateTimeOffset LastModified { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset LastModified { get; set; }
 }
