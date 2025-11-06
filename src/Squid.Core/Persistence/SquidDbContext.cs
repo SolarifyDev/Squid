@@ -8,8 +8,6 @@ public class SquidDbContext : DbContext, IUnitOfWork
     {
     }
 
-    public DbSet<Squid.Core.Infrastructure.Domain.Deployments.ServerTask> ServerTasks { get; set; }
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(DeploymentConfiguration).Assembly);
