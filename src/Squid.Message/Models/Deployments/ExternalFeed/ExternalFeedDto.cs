@@ -2,7 +2,7 @@ namespace Squid.Message.Models.Deployments.ExternalFeed;
 
 public class ExternalFeedDto : IBaseModel
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string FeedType { get; set; }
 
@@ -22,9 +22,9 @@ public class ExternalFeedDto : IBaseModel
 
     public List<string> PackageAcquisitionLocationOptions { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
-    public DateTime? LastModifiedOn { get; set; }
+    public DateTimeOffset? LastModifiedOn { get; set; }
 
     public string LastModifiedBy { get; set; }
 } 

@@ -24,7 +24,7 @@ public class Machine : IEntity<int>
 
     public byte[] DataVersion { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string OperatingSystem { get; set; }
 

@@ -12,7 +12,7 @@ public class Project : IEntity<int>
     
     public Guid VariableSetId { get; set; }
     
-    public Guid DeploymentProcessId { get; set; }
+    public int DeploymentProcessId { get; set; }
     
     public Guid ProjectGroupId { get; set; }
     

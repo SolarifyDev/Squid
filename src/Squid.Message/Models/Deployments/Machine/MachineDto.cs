@@ -2,7 +2,7 @@ namespace Squid.Message.Models.Deployments.Machine;
 
 public class MachineDto : IBaseModel
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string Name { get; set; }
 
@@ -24,7 +24,7 @@ public class MachineDto : IBaseModel
 
     public byte[] DataVersion { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string OperatingSystem { get; set; }
 

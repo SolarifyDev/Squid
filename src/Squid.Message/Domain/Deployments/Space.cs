@@ -16,7 +16,7 @@ public class Space : IEntity<int>
     
     public byte[] DataVersion { get; set; }
     
-    public DateTime LastModified { get; set; }
+    public DateTimeOffset LastModified { get; set; }
     
     public bool IsPrivate { get; set; }
 }

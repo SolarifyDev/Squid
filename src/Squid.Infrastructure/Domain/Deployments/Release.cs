@@ -8,7 +8,7 @@ public class Release : IEntity<int>
     
     public DateTimeOffset Assembled { get; set; }
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public Guid ProjectVariableSetSnapshotId { get; set; }
     

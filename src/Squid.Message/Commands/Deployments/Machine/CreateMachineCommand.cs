@@ -23,7 +23,7 @@ public class CreateMachineCommand : ICommand
 
     public string DeploymentTargetType { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string OperatingSystem { get; set; }
 

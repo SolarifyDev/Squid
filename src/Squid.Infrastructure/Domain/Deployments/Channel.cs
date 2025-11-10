@@ -6,7 +6,7 @@ public class Channel : IEntity<int>
     
     public string Name { get; set; }
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public Guid LifecycleId { get; set; }
     

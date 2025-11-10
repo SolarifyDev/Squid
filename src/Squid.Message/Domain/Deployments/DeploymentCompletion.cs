@@ -1,16 +1,16 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class DeploymentCompletion : IEntity<Guid>
+public class DeploymentCompletion : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public long SequenceNumber { get; set; }
 
-    public Guid DeploymentId { get; set; }
+    public int DeploymentId { get; set; }
 
     public string State { get; set; }
 
     public DateTimeOffset CompletedTime { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 }

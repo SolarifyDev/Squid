@@ -10,7 +10,7 @@ public interface IChannelDataProvider : IScopedDependency
 
     Task<(int count, List<Message.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
-    Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<Guid> ids, CancellationToken cancellationToken);
+    Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
 }
 
 public class ChannelDataProvider : IChannelDataProvider
@@ -59,8 +59,12 @@ public class ChannelDataProvider : IChannelDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<Guid> ids, CancellationToken cancellationToken)
+    public async Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken)
     {
-        return await _repository.Query<Message.Domain.Deployments.Channel>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        // 示例实现：按主键查找
+        return await _repository.Query<Message.Domain.Deployments.Channel>()
+            .Where(c => ids.Contains(c.Id))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 }

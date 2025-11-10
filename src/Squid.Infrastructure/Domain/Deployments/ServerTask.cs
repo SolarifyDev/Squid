@@ -24,7 +24,7 @@ public class ServerTask : IEntity<int>
 
     public Guid ServerNodeId { get; set; }
 
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
 
     public Guid EnvironmentId { get; set; }
     

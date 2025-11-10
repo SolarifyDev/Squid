@@ -4,7 +4,7 @@ public class DeploymentProcess : IEntity<int>
 {
     public int Id { get; set; }
 
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
 
     public int Version { get; set; } = 1;
 

@@ -1,8 +1,8 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class ServerTask : IEntity<Guid>
+public class ServerTask : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string Name { get; set; }
 
@@ -24,9 +24,9 @@ public class ServerTask : IEntity<Guid>
 
     public Guid ServerNodeId { get; set; }
 
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
 
-    public Guid EnvironmentId { get; set; }
+    public int EnvironmentId { get; set; }
     
     public int DurationSeconds { get; set; }
 
@@ -34,7 +34,7 @@ public class ServerTask : IEntity<Guid>
 
     public byte[] DataVersion { get; set; }
 
-    public Guid? SpaceId { get; set; }
+    public int? SpaceId { get; set; }
 
     public DateTimeOffset LastModified { get; set; }
 
@@ -42,7 +42,7 @@ public class ServerTask : IEntity<Guid>
 
     public string ServerTaskType { get; set; }
 
-    public Guid? ParentServerTaskId { get; set; }
+    public int? ParentServerTaskId { get; set; }
 
     public DateTimeOffset? PriorityTime { get; set; }
 
@@ -50,5 +50,5 @@ public class ServerTask : IEntity<Guid>
 
     public int Weight { get; set; }
 
-    public Guid BatchId { get; set; }
+    public int BatchId { get; set; }
 }

@@ -12,7 +12,7 @@ public class Deployment : IEntity<int>
     
     public Guid ChannelId { get; set; }
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public Guid ReleaseId { get; set; }
     
