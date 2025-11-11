@@ -1,5 +1,6 @@
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.Deployments.Release;
 
 namespace Squid.Core.Services.Deployments.Variable;
 
@@ -31,24 +32,51 @@ public interface IDeploymentVariableResolver : IScopedDependency
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
     private readonly IHybridVariableSnapshotService _snapshotService;
+    private readonly IReleaseDataProvider _releaseDataProvider;
 
     public DeploymentVariableResolver(
-        IHybridVariableSnapshotService snapshotService)
+        IHybridVariableSnapshotService snapshotService,
+        IReleaseDataProvider releaseDataProvider)
     {
         _snapshotService = snapshotService;
+        _releaseDataProvider = releaseDataProvider;
     }
 
     public async Task<ResolvedVariables> ResolveVariablesForDeploymentAsync(
-        int releaseId, 
+        int releaseId,
         ScopeContext scopeContext,
         CancellationToken cancellationToken = default)
     {
         Log.Information("Resolving variables for Release {ReleaseId}", releaseId);
-        
+
         var sensitiveVariableNames = new List<string>();
         var allVariables = new List<VariableSnapshotData>();
 
-        // TODO: 这里需要根据实际业务调整，直接传入 snapshotId 或由外部传入 snapshot 列表
+        // 获取Release信息
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(releaseId, cancellationToken).ConfigureAwait(false);
+        if (release == null)
+        {
+            Log.Warning("Release {ReleaseId} not found", releaseId);
+            return new ResolvedVariables(new Dictionary<string, string>(), new List<string>());
+        }
+
+        // 从Release的ProjectVariableSetSnapshotId加载变量快照
+        if (release.ProjectVariableSetSnapshotId > 0)
+        {
+            try
+            {
+                var variableSnapshot = await _snapshotService.LoadSnapshotAsync(release.ProjectVariableSetSnapshotId, cancellationToken).ConfigureAwait(false);
+                allVariables.AddRange(variableSnapshot.Variables);
+
+                Log.Information("Loaded {VariableCount} variables from snapshot {SnapshotId}",
+                    variableSnapshot.Variables.Count, release.ProjectVariableSetSnapshotId);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to load variable snapshot {SnapshotId} for Release {ReleaseId}",
+                    release.ProjectVariableSetSnapshotId, releaseId);
+            }
+        }
 
         var resolvedVariables = new Dictionary<string, string>();
 
@@ -69,7 +97,8 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         }
 
         Log.Information(
-            "Resolved {VariableCount} variables for Release {ReleaseId}, including {SensitiveCount} sensitive variables", resolvedVariables.Count, releaseId, sensitiveVariableNames.Count);
+            "Resolved {VariableCount} variables for Release {ReleaseId}, including {SensitiveCount} sensitive variables",
+            resolvedVariables.Count, releaseId, sensitiveVariableNames.Count);
 
         return new ResolvedVariables(resolvedVariables, sensitiveVariableNames);
     }

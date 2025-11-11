@@ -23,6 +23,10 @@ public class Deployment : IEntity<int>
     public Guid DeployedBy { get; set; }
     
     public string DeployedToMachineIds { get; set; }
-    
+
+    public int? ProcessSnapshotId { get; set; }
+
+    public int? VariableSnapshotId { get; set; }
+
     public DateTimeOffset Created { get; set; }
 }

@@ -8,6 +8,8 @@ public class DeploymentCompletion : IEntity<int>
 
     public int DeploymentId { get; set; }
 
+    public int? ReleaseId { get; set; }
+
     public string State { get; set; }
 
     public DateTimeOffset CompletedTime { get; set; }

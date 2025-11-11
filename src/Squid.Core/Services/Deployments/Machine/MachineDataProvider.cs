@@ -11,6 +11,8 @@ public interface IMachineDataProvider : IScopedDependency
     Task<(int count, List<Message.Domain.Deployments.Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken);
+
+    Task<List<Message.Domain.Deployments.Machine>> GetMachinesByFilterAsync(HashSet<int> environmentIds, HashSet<string> machineRoles, CancellationToken cancellationToken = default);
 }
 
 public class MachineDataProvider : IMachineDataProvider
@@ -75,5 +77,25 @@ public class MachineDataProvider : IMachineDataProvider
     public async Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
         return await _repository.Query<Message.Domain.Deployments.Machine>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<Message.Domain.Deployments.Machine>> GetMachinesByFilterAsync(HashSet<int> environmentIds, HashSet<string> machineRoles, CancellationToken cancellationToken = default)
+    {
+        var query = _repository.QueryNoTracking<Message.Domain.Deployments.Machine>(m => !m.IsDisabled);
+
+        // 按环境筛选
+        if (environmentIds.Any())
+        {
+            var envIdStrings = environmentIds.Select(id => id.ToString()).ToList();
+            query = query.Where(m => envIdStrings.Any(envId => m.EnvironmentIds.Contains(envId)));
+        }
+
+        // 按角色筛选
+        if (machineRoles.Any())
+        {
+            query = query.Where(m => machineRoles.Any(role => m.Roles.Contains(role)));
+        }
+
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

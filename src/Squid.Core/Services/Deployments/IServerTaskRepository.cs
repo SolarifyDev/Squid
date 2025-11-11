@@ -4,11 +4,11 @@ namespace Squid.Core.Services.Deployments;
 
 public interface IServerTaskRepository
 {
-    Task AddAsync(ServerTask task);
+    Task AddAsync(Message.Domain.Deployments.ServerTask task);
 
-    Task<ServerTask?> GetPendingTaskAsync();
+    Task<Message.Domain.Deployments.ServerTask?> GetPendingTaskAsync();
 
     Task UpdateStateAsync(int taskId, string state);
 
-    Task<List<ServerTask>> GetAllAsync();
+    Task<List<Message.Domain.Deployments.ServerTask>> GetAllAsync();
 }

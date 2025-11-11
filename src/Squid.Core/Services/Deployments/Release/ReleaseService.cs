@@ -1,6 +1,8 @@
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Variable;
+using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.DeploymentCompletion;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
@@ -29,14 +31,16 @@ public class ReleaseService : IReleaseService
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly HybridProcessSnapshotService _hybridProcessSnapshotService;
     private readonly HybridVariableSnapshotService _hybridVariableSnapshotService;
+    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
 
-    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IProjectDataProvider projectDataProvider, HybridVariableSnapshotService hybridVariableSnapshotService, HybridProcessSnapshotService hybridProcessSnapshotService)
+    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IProjectDataProvider projectDataProvider, HybridVariableSnapshotService hybridVariableSnapshotService, HybridProcessSnapshotService hybridProcessSnapshotService, IDeploymentCompletionDataProvider deploymentCompletionDataProvider)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
         _projectDataProvider = projectDataProvider;
         _hybridProcessSnapshotService = hybridProcessSnapshotService;
         _hybridVariableSnapshotService = hybridVariableSnapshotService;
+        _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
     }
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)
@@ -90,13 +94,16 @@ public class ReleaseService : IReleaseService
     {
         var (count, releases) = await _releaseDataProvider.GetReleasesAsync(request.PageIndex, request.PageSize, request.ProjectId, request.ChannelId, cancellationToken).ConfigureAwait(false);
 
+        // 获取当前已部署的Release版本
+        var currentDeployedReleaseIds = await GetCurrentDeployedReleaseIdsAsync(request.ProjectId, cancellationToken).ConfigureAwait(false);
+
         return new GetReleasesResponse
         {
             Data = new GetReleasesResponseData
             {
                 Releases = _mapper.Map<List<ReleaseDto>>(releases),
                 Count = count,
-                CurrentDeployedReleaseIds = new List<int>() // TODO 等deployment写好后补充查询（deployment）目前已部署版本Release
+                CurrentDeployedReleaseIds = currentDeployedReleaseIds
             }
         };
     }
@@ -112,5 +119,29 @@ public class ReleaseService : IReleaseService
         
         release.ProjectVariableSetSnapshotId = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<int>> GetCurrentDeployedReleaseIdsAsync(int? projectId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // 查询最新的成功部署完成记录，获取当前已部署的Release版本
+            var completions = await _deploymentCompletionDataProvider.GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+            var releaseIds = completions
+                .Where(c => c.ReleaseId.HasValue)
+                .Select(c => c.ReleaseId.Value)
+                .Distinct()
+                .ToList();
+
+            Log.Information("Found {Count} currently deployed releases for project {ProjectId}", releaseIds.Count, projectId);
+
+            return releaseIds;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to get current deployed release IDs for project {ProjectId}", projectId);
+            return new List<int>();
+        }
     }
 }

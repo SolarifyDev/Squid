@@ -9,8 +9,10 @@ public interface IChannelDataProvider : IScopedDependency
     Task DeleteChannelsAsync(List<Message.Domain.Deployments.Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task<(int count, List<Message.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
-    
+
     Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
+
+    Task<Message.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default);
 }
 
 public class ChannelDataProvider : IChannelDataProvider
@@ -66,5 +68,10 @@ public class ChannelDataProvider : IChannelDataProvider
             .Where(c => ids.Contains(c.Id))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<Message.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetByIdAsync<Message.Domain.Deployments.Channel>(channelId, cancellationToken).ConfigureAwait(false);
     }
 }

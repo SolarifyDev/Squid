@@ -1,45 +1,34 @@
-using Microsoft.EntityFrameworkCore;
-using Squid.Core.Persistence;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Domain.Deployments;
 
 namespace Squid.Core.Services.Deployments;
 
 public class ServerTaskRepository : IServerTaskRepository
 {
-    private readonly SquidDbContext _dbContext;
+    private readonly IServerTaskDataProvider _serverTaskDataProvider;
 
-    public ServerTaskRepository(SquidDbContext dbContext)
+    public ServerTaskRepository(IServerTaskDataProvider serverTaskDataProvider)
     {
-        _dbContext = dbContext;
+        _serverTaskDataProvider = serverTaskDataProvider;
     }
 
-    public async Task AddAsync(ServerTask task)
+    public async Task AddAsync(Message.Domain.Deployments.ServerTask task)
     {
-        await _dbContext.Set<ServerTask>().AddAsync(task);
-        await _dbContext.SaveChangesAsync();
+        await _serverTaskDataProvider.AddServerTaskAsync(task).ConfigureAwait(false);
     }
 
-    public async Task<ServerTask?> GetPendingTaskAsync()
+    public async Task<Message.Domain.Deployments.ServerTask?> GetPendingTaskAsync()
     {
-        return await _dbContext.Set<ServerTask>()
-            .Where(t => t.State == "Pending")
-            .OrderBy(t => t.QueueTime)
-            .FirstOrDefaultAsync();
+        return await _serverTaskDataProvider.GetPendingTaskAsync().ConfigureAwait(false);
     }
 
     public async Task UpdateStateAsync(int taskId, string state)
     {
-        var task = await _dbContext.Set<ServerTask>().FindAsync(taskId);
-
-        if (task != null)
-        {
-            task.State = state;
-            await _dbContext.SaveChangesAsync();
-        }
+        await _serverTaskDataProvider.UpdateServerTaskStateAsync(taskId, state).ConfigureAwait(false);
     }
 
-    public async Task<List<ServerTask>> GetAllAsync()
+    public async Task<List<Message.Domain.Deployments.ServerTask>> GetAllAsync()
     {
-        return await _dbContext.Set<ServerTask>().ToListAsync();
+        return await _serverTaskDataProvider.GetAllServerTasksAsync().ConfigureAwait(false);
     }
 }

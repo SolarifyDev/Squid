@@ -3,95 +3,87 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
-using Squid.Core.Persistence;
+using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Enums;
+using Squid.Core.Services.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
 
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
-    private readonly SquidDbContext _dbContext;
+    private readonly IDeploymentDataProvider _deploymentDataProvider;
+    private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IVariableSetDataProvider _variableSetDataProvider;
+    private readonly IHybridVariableSnapshotService _variableSnapshotService;
 
-    public DeploymentVariableResolver(SquidDbContext dbContext)
+    public DeploymentVariableResolver(
+        IDeploymentDataProvider deploymentDataProvider,
+        IProjectDataProvider projectDataProvider,
+        IVariableSetDataProvider variableSetDataProvider,
+        IHybridVariableSnapshotService variableSnapshotService)
     {
-        _dbContext = dbContext;
+        _deploymentDataProvider = deploymentDataProvider;
+        _projectDataProvider = projectDataProvider;
+        _variableSetDataProvider = variableSetDataProvider;
+        _variableSnapshotService = variableSnapshotService;
     }
 
     public async Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId)
     {
-        var deployment = await _dbContext.Set<Squid.Message.Domain.Deployments.Deployment>().FindAsync(deploymentId);
+        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId);
 
         if (deployment == null)
         {
             throw new InvalidOperationException($"Deployment {deploymentId} not found.");
         }
 
-        var project = await _dbContext.Set<Squid.Message.Domain.Deployments.Project>().FirstOrDefaultAsync(p => p.Id == deployment.ProjectId);
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId);
 
         if (project == null)
         {
             throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
         }
 
-        var variableSet = await _dbContext.Set<Squid.Message.Domain.Deployments.VariableSet>().FirstOrDefaultAsync(vs => vs.OwnerId == project.Id);
+        // 获取或创建变量快照
+        VariableSetSnapshotData variableSnapshot;
 
-        if (variableSet != null)
+        if (deployment.VariableSnapshotId.HasValue)
         {
-            // 优先查找快照
-            var snapshotEntity = await _dbContext.Set<Squid.Message.Domain.Deployments.VariableSetSnapshot>()
-                .Where(s => s.OriginalVariableSetId == variableSet.Id)
-                .OrderByDescending(s => s.Version)
-                .FirstOrDefaultAsync();
+            // 如果已有快照ID，直接加载快照
+            variableSnapshot = await _variableSnapshotService.LoadSnapshotAsync(deployment.VariableSnapshotId.Value);
+        }
+        else
+        {
+            // 如果没有快照ID，查找项目的变量集并创建快照
+            var variableSet = await _variableSetDataProvider.GetVariableSetByOwnerAsync(project.Id, VariableSetOwnerType.Project);
 
-            if (snapshotEntity != null && snapshotEntity.SnapshotData != null && snapshotEntity.SnapshotData.Length > 0)
+            if (variableSet != null)
             {
-                // 假设快照为 JSON 格式
-                var json = System.Text.Encoding.UTF8.GetString(snapshotEntity.SnapshotData);
-                var snapshot = JsonSerializer.Deserialize<VariableSetSnapshotData>(json);
-                if (snapshot != null)
+                var snapshotId = await _variableSnapshotService.GetOrCreateSnapshotAsync(variableSet.Id, "System");
+                variableSnapshot = await _variableSnapshotService.LoadSnapshotAsync(snapshotId);
+
+                // 更新Deployment记录快照ID
+                deployment.VariableSnapshotId = snapshotId;
+                await _deploymentDataProvider.UpdateDeploymentAsync(deployment);
+            }
+            else
+            {
+                // 如果没有变量集，创建空的快照数据
+                variableSnapshot = new VariableSetSnapshotData
                 {
-                    return snapshot;
-                }
+                    Id = 0,
+                    OwnerId = project.Id,
+                    OwnerType = VariableSetOwnerType.Project,
+                    Version = 1,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    Variables = new List<VariableSnapshotData>(),
+                    ScopeDefinitions = new Dictionary<string, List<string>>()
+                };
             }
         }
 
-        // 无快照时组装原始表数据
-        var variables = new List<VariableSnapshotData>();
-
-        if (variableSet != null)
-        {
-            var variableEntities = await _dbContext.Set<Squid.Message.Domain.Deployments.Variable>()
-                .Where(v => v.VariableSetId == variableSet.Id)
-                .ToListAsync();
-
-            foreach (var v in variableEntities)
-            {
-                variables.Add(new VariableSnapshotData
-                {
-                    Name = v.Name,
-                    Value = v.Value,
-                    Type = v.Type,
-                    IsSensitive = false,
-                    Description = "",
-                    SortOrder = 0,
-                    Scopes = new List<Squid.Message.Models.Deployments.Variable.VariableScopeData>()
-                });
-            }
-        }
-
-        var fallbackSnapshot = new VariableSetSnapshotData
-        {
-            Id = 0,
-            OwnerId = project.Id,
-            OwnerType = VariableSetOwnerType.Project,
-            Version = 1,
-            CreatedAt = DateTimeOffset.UtcNow,
-            Variables = variables,
-            ScopeDefinitions = new Dictionary<string, List<string>>() // 可后续补充
-        };
-
-        return fallbackSnapshot;
+        return variableSnapshot;
     }
 }
