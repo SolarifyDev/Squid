@@ -2,31 +2,34 @@ using Squid.Core.Services.Deployments.Deployment;
 using Squid.Core.Services.Deployments.DeploymentCompletion;
 using Squid.Message.Domain.Deployments;
 using System.Linq;
+using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.Core.Services.Deployments;
 
 public class DeploymentTaskBackgroundService
 {
-    private readonly IServerTaskRepository _taskRepo;
     private readonly IDeploymentPlanService _planService;
-    private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IDeploymentTargetFinder _targetFinder;
     private readonly IActionCommandGenerator _commandGenerator;
+    private readonly IGenericDataProvider _genericDataProvider;
+    private readonly IDeploymentVariableResolver _variableResolver;
+    private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
-    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly ICommandExecutionService _commandExecutionService;
+    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
 
     public DeploymentTaskBackgroundService(
-        IServerTaskRepository taskRepo,
         IDeploymentPlanService planService,
         IDeploymentVariableResolver variableResolver,
         IDeploymentTargetFinder targetFinder,
         IActionCommandGenerator commandGenerator,
         IDeploymentDataProvider deploymentDataProvider,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
-        ICommandExecutionService commandExecutionService)
+        ICommandExecutionService commandExecutionService, 
+        IGenericDataProvider genericDataProvider,
+        IServerTaskDataProvider serverTaskDataProvider)
     {
-        _taskRepo = taskRepo;
         _planService = planService;
         _variableResolver = variableResolver;
         _targetFinder = targetFinder;
@@ -34,31 +37,39 @@ public class DeploymentTaskBackgroundService
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
         _commandExecutionService = commandExecutionService;
+        _genericDataProvider = genericDataProvider;
+        _serverTaskDataProvider = serverTaskDataProvider;
     }
 
     public async Task RunAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var task = await _taskRepo.GetPendingTaskAsync().ConfigureAwait(false);
+            var task = await _serverTaskDataProvider.GetAndLockPendingTaskAsync(stoppingToken).ConfigureAwait(false);
 
             if (task != null)
             {
                 Log.Information("Start processing task {TaskId}", task.Id);
 
-                await _taskRepo.UpdateStateAsync(task.Id, "Running").ConfigureAwait(false);
-
                 try
                 {
                     await ProcessDeploymentTaskAsync(task, stoppingToken).ConfigureAwait(false);
 
-                    await _taskRepo.UpdateStateAsync(task.Id, "Success").ConfigureAwait(false);
+                    await _genericDataProvider.ExecuteInTransactionAsync(
+                        async (cancellationToken) =>
+                        {
+                            await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Success", cancellationToken: cancellationToken).ConfigureAwait(false);
+                        }, stoppingToken).ConfigureAwait(false);
 
                     Log.Information("Task {TaskId} completed successfully", task.Id);
                 }
                 catch (Exception ex)
                 {
-                    await _taskRepo.UpdateStateAsync(task.Id, "Failed").ConfigureAwait(false);
+                    await _genericDataProvider.ExecuteInTransactionAsync(
+                        async (cancellationToken) =>
+                        {
+                            await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false);
+                        }, stoppingToken).ConfigureAwait(false);
 
                     Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", task.Id, ex.Message);
                 }

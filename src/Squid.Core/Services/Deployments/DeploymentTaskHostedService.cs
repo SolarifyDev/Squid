@@ -41,7 +41,7 @@ public class DeploymentTaskHostedService : IHostedService
 
         try
         {
-            _stoppingCts.Cancel();
+            await _stoppingCts.CancelAsync();
         }
         finally
         {

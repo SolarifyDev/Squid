@@ -6,6 +6,8 @@ public interface IServerTaskDataProvider : IScopedDependency
 
     Task<Message.Domain.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default);
 
+    Task<Message.Domain.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default);
+
     Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task<List<Message.Domain.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default);
@@ -39,6 +41,33 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         return await _repository.QueryNoTracking<Message.Domain.Deployments.ServerTask>(t => t.State == "Pending")
             .OrderBy(t => t.QueueTime)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<Message.Domain.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default)
+    {
+        using var transaction = await _repository.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var task = await _repository.Query<Message.Domain.Deployments.ServerTask>(t => t.State == "Pending")
+                .OrderBy(t => t.QueueTime)
+                .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+            if (task != null)
+            {
+                task.State = "Running";
+                task.StartTime = DateTimeOffset.Now;
+                await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return task;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
     }
 
     public async Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default)
