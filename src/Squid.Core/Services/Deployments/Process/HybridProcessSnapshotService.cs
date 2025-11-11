@@ -167,7 +167,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         var machineRolesDict = await LoadMachineRolesDict(actionIds, cancellationToken);
         var stepPropertiesDict = await LoadStepPropertiesDict(stepIds, cancellationToken);
 
-        var processSnapshots = new List<ProcessDetailSnapshotData>();
+        var processSnapshots = new List<StepSnapshotData>();
 
         foreach (var step in steps.OrderBy(s => s.StepOrder))
         {
@@ -204,7 +204,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                 actionSnapshots.Add(actionSnapshot);
             }
 
-            var processDetailSnapshot = new ProcessDetailSnapshotData
+            var processDetailSnapshot = new StepSnapshotData
             {
                 Id = step.Id,
                 Name = step.Name,
@@ -224,7 +224,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
             Id = processId,
             Version = process.Version,
             CreatedAt = process.CreatedAt,
-            Processes = processSnapshots
+            StepSnapshots = processSnapshots
         };
     }
 

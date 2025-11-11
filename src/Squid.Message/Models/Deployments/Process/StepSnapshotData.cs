@@ -3,7 +3,7 @@ namespace Squid.Message.Models.Deployments.Process;
 using System;
 using System.Collections.Generic;
 
-public class ProcessDetailSnapshotData
+public class StepSnapshotData
 {
     public int Id { get; set; }
 
