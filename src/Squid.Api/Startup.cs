@@ -24,6 +24,7 @@ public class Startup
         services.AddHttpContextAccessor();
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
+        services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
         
         _serviceCollection = services;
     }
