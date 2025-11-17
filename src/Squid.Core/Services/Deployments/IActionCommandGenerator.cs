@@ -15,7 +15,7 @@ public class ActionCommand
     public Dictionary<string, string> Parameters { get; set; } = new();
 }
 
-public interface IActionCommandGenerator
+public interface IActionCommandGenerator : IScopedDependency
 {
     Task<List<ActionCommand>> GenerateCommandsAsync(
         int deploymentId,

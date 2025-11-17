@@ -3,7 +3,7 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
 
-public interface IDeploymentVariableResolver
+public interface IDeploymentVariableResolver : IScopedDependency
 {
     Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId, CancellationToken cancellationToken);
 }

@@ -7,7 +7,13 @@ using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.Core.Services.Deployments;
 
-public class DeploymentTaskBackgroundService
+
+public interface IDeploymentTaskBackgroundService : IScopedDependency
+{
+    Task RunAsync(CancellationToken cancellationToken = default);
+}
+
+public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 {
     private readonly IDeploymentPlanService _planService;
     private readonly IDeploymentTargetFinder _targetFinder;
