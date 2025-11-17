@@ -5,5 +5,5 @@ namespace Squid.Core.Services.Deployments;
 
 public interface IDeploymentVariableResolver
 {
-    Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId);
+    Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId, CancellationToken cancellationToken);
 }

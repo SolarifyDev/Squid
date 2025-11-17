@@ -84,22 +84,22 @@ public class DeploymentTaskBackgroundService
     private async Task ProcessDeploymentTaskAsync(Message.Domain.Deployments.ServerTask task, CancellationToken cancellationToken)
     {
         // 通过TaskId查找对应的Deployment
-        var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(task.Id, cancellationToken);
+        var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(task.Id, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null) throw new InvalidOperationException($"No deployment found for task {task.Id}");
 
         // 1. 生成部署计划（包含流程快照）
         Log.Information("Generating deployment plan for deployment {DeploymentId}", deployment.Id);
-        var plan = await _planService.GeneratePlanAsync(deployment.Id);
+        var plan = await _planService.GeneratePlanAsync(deployment.Id, cancellationToken).ConfigureAwait(false);
 
         // 2. 解析变量（包含变量快照）
         Log.Information("Resolving variables for deployment {DeploymentId}", deployment.Id);
-        var variables = await _variableResolver.ResolveVariablesAsync(deployment.Id);
+        var variables = await _variableResolver.ResolveVariablesAsync(deployment.Id, cancellationToken).ConfigureAwait(false);
 
         // 3. 筛选目标机器
         Log.Information("Finding targets for deployment {DeploymentId}", deployment.Id);
-        var targets = await _targetFinder.FindTargetsAsync(deployment.Id);
-
+        var targets = await _targetFinder.FindTargetsAsync(deployment.Id).ConfigureAwait(false);
+        
         if (!targets.Any()) throw new InvalidOperationException($"No target machines found for deployment {deployment.Id}");
 
         Log.Information("Found {TargetCount} target machines for deployment {DeploymentId}", targets.Count, deployment.Id);

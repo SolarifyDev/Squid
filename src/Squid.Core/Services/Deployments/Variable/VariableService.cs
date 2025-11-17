@@ -22,15 +22,17 @@ public class VariableService : IVariableService
 {
     private readonly IMapper _mapper;
     private readonly IVariableDataProvider _variableDataProvider;
-    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly SensitiveVariableHandler _sensitiveVariableHandler;
+    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
+    private readonly IHybridVariableSnapshotService _hybridVariableSnapshotService;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler)
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, IHybridVariableSnapshotService hybridVariableSnapshotService)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
-        _variableScopeDataProvider = variableScopeDataProvider;
         _sensitiveVariableHandler = sensitiveVariableHandler;
+        _variableScopeDataProvider = variableScopeDataProvider;
+        _hybridVariableSnapshotService = hybridVariableSnapshotService;
     }
 
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
@@ -168,7 +170,7 @@ public class VariableService : IVariableService
 
     private async Task UpdateContentHashAsync(VariableSet variableSet, CancellationToken cancellationToken)
     {
-        var contentHash = await _variableDataProvider.CalculateContentHashAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
+        var (_, contentHash) = await _hybridVariableSnapshotService.CalculateVariableLatestSnapshotAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
         variableSet.ContentHash = contentHash;
     }
 }

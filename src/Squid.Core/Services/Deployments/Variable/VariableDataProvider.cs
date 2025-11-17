@@ -18,8 +18,6 @@ public interface IVariableDataProvider : IScopedDependency
 
     Task<VariableSet> GetVariableSetByIdAsync(int id, CancellationToken cancellationToken);
 
-    Task<string> CalculateContentHashAsync(int variableSetId, CancellationToken cancellationToken);
-
     Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
     Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
     Task DeleteVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
@@ -41,19 +39,6 @@ public partial class VariableDataProvider : IVariableDataProvider
         _mapper = mapper;
         _encryptionService = encryptionService;
         _variableScopeDataProvider = variableScopeDataProvider;
-    }
-    
-    public async Task<string> CalculateContentHashAsync(int variableSetId, CancellationToken cancellationToken)
-    {
-        var variables = await GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
-
-        var hashData = variables
-            .OrderBy(v => v.Name)
-            .Select(v => new { v.Name, v.Value, v.Type, v.IsSensitive, v.SortOrder })
-            .ToList();
-
-        var json = JsonConvert.SerializeObject(hashData);
-        return ComputeSha256Hash(json);
     }
 
     public async Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)

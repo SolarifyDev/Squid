@@ -9,11 +9,13 @@ namespace Squid.Core.Services.Deployments.Variable;
 
 public interface IHybridVariableSnapshotService : IScopedDependency
 {
-    Task<int> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default);
+    Task<VariableSetSnapshotData> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default);
     
     Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default);
     
     Task<List<VariableSetSnapshotData>> LoadSnapshotsAsync(List<int> snapshotIds, CancellationToken cancellationToken = default);
+
+    Task<(VariableSetSnapshotData snapshotData, string currentHash)> CalculateVariableLatestSnapshotAsync(int variableSetId, CancellationToken innerCancellationToken);
 }
 
 public class HybridVariableSnapshotService : IHybridVariableSnapshotService
@@ -35,14 +37,14 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
         _genericDataProvider = genericDataProvider;
     }
 
-    public async Task<int> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
+    public async Task<VariableSetSnapshotData> GetOrCreateSnapshotAsync(int variableSetId, string createdBy, CancellationToken cancellationToken = default)
     {
-        return await _genericDataProvider.ExecuteInTransactionAsync<int>(
+        return await _genericDataProvider.ExecuteInTransactionAsync(
             async innerCancellationToken =>
             {
                 Log.Information("Creating snapshot for VariableSet {VariableSetId}", variableSetId);
-
-                var currentHash = await _variableDataProvider.CalculateContentHashAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
+                
+                var (snapshotData, currentHash) = await CalculateVariableLatestSnapshotAsync(variableSetId, innerCancellationToken);
                 Log.Information("Content hash calculated: {Hash}", currentHash);
 
                 var existingSnapshot = await _snapshotDataProvider.GetExistingSnapshotAsync(variableSetId, currentHash, innerCancellationToken).ConfigureAwait(false);
@@ -51,12 +53,9 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 {
                     Log.Information("Reusing existing snapshot {SnapshotId}", existingSnapshot.Id);
 
-                    return existingSnapshot.Id;
+                    return UtilService.DecompressFromGzip<VariableSetSnapshotData>(existingSnapshot.SnapshotData);
                 }
-
-                var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
-                EmbedScopeDefinitionsAsync(snapshotData);
-
+                
                 var compressedData = UtilService.CompressToGzip(snapshotData);
                 var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
 
@@ -81,8 +80,19 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                     snapshot.Id, compressedData.Length, uncompressedSize,
                     1.0 - (double)compressedData.Length / uncompressedSize);
 
-                return snapshot.Id;
+                return snapshotData;
             }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<(VariableSetSnapshotData snapshotData, string currentHash)> CalculateVariableLatestSnapshotAsync(int variableSetId, CancellationToken innerCancellationToken)
+    {
+        var snapshotData = await LoadCompleteVariableSetAsync(variableSetId, innerCancellationToken).ConfigureAwait(false);
+        EmbedScopeDefinitionsAsync(snapshotData);
+                
+        var json = JsonConvert.SerializeObject(snapshotData);
+        var currentHash = UtilService.ComputeSha256Hash(json);
+
+        return (snapshotData, currentHash);
     }
 
     public async Task<VariableSetSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default)
@@ -133,8 +143,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
             OwnerId = variableSet.OwnerId,
             OwnerType = variableSet.OwnerType,
             Version = variableSet.Version,
-            Variables = _mapper.Map<List<VariableSnapshotData>>(variables),
-            CreatedAt = DateTimeOffset.UtcNow
+            Variables = _mapper.Map<List<VariableSnapshotData>>(variables)
         };
     }
 

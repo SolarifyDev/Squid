@@ -30,48 +30,40 @@ public class DeploymentPlanService : IDeploymentPlanService
         _processSnapshotService = processSnapshotService;
     }
 
-    public async Task<DeploymentPlanDto> GeneratePlanAsync(int deploymentId)
+    public async Task<DeploymentPlanDto> GeneratePlanAsync(int deploymentId, CancellationToken cancellationToken)
     {
-        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId).ConfigureAwait(false);
+        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null)
         {
             throw new InvalidOperationException($"Deployment {deploymentId} not found.");
         }
 
-        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId).ConfigureAwait(false);
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, cancellationToken).ConfigureAwait(false);
 
         if (project == null)
         {
             throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
         }
+        
+        var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId, cancellationToken).ConfigureAwait(false);
 
         // 获取或创建流程快照
         ProcessSnapshotData processSnapshot;
-
+        
         if (deployment.ProcessSnapshotId.HasValue)
         {
-            // 如果已有快照ID，直接加载快照
-            processSnapshot = await _processSnapshotService.LoadSnapshotAsync(deployment.ProcessSnapshotId.Value).ConfigureAwait(false);
+            processSnapshot = await _processSnapshotService.LoadSnapshotAsync(deployment.ProcessSnapshotId.Value, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            // 如果没有快照ID，创建新快照
-            var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId).ConfigureAwait(false);
-
-            if (process == null)
-            {
-                throw new InvalidOperationException($"DeploymentProcess {project.DeploymentProcessId} not found.");
-            }
-
-            var snapshotId = await _processSnapshotService.CreateSnapshotAsync(process.Id, "System").ConfigureAwait(false);
-            processSnapshot = await _processSnapshotService.LoadSnapshotAsync(snapshotId).ConfigureAwait(false);
-
+            processSnapshot = await _processSnapshotService.GetOrCreateSnapshotAsync(process.Id, "System", cancellationToken).ConfigureAwait(false);
+            
             // 更新Deployment记录快照ID
-            deployment.ProcessSnapshotId = snapshotId;
-            await _deploymentDataProvider.UpdateDeploymentAsync(deployment).ConfigureAwait(false);
+            deployment.ProcessSnapshotId = processSnapshot.Id;
+            await _deploymentDataProvider.UpdateDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-
+        
         var plan = new DeploymentPlanDto
         {
             DeploymentId = deploymentId,

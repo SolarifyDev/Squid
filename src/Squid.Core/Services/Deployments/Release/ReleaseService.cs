@@ -49,9 +49,8 @@ public class ReleaseService : IReleaseService
         
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         
-        release.ProjectVariableSetSnapshotId = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
-        release.ProjectDeploymentProcessSnapshotId = await _hybridProcessSnapshotService.CreateSnapshotAsync(project.DeploymentProcessId, "user", cancellationToken).ConfigureAwait(false);
-        
+        release.ProjectVariableSetSnapshotId = (await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false)).Id;
+        release.ProjectDeploymentProcessSnapshotId = (await _hybridProcessSnapshotService.GetOrCreateSnapshotAsync(project.DeploymentProcessId, "user", cancellationToken).ConfigureAwait(false)).Id;
         await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new ReleaseCreatedEvent
@@ -117,7 +116,9 @@ public class ReleaseService : IReleaseService
         
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         
-        release.ProjectVariableSetSnapshotId = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
+        var variableSetSnapshot = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
+        
+        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 

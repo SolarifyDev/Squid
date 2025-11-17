@@ -30,60 +30,44 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         _variableSnapshotService = variableSnapshotService;
     }
 
-    public async Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId)
+    public async Task<VariableSetSnapshotData> ResolveVariablesAsync(int deploymentId, CancellationToken cancellationToken)
     {
-        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId);
+        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null)
         {
             throw new InvalidOperationException($"Deployment {deploymentId} not found.");
         }
 
-        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId);
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, cancellationToken).ConfigureAwait(false);
 
         if (project == null)
         {
             throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
         }
 
+        VariableSetSnapshotData variableSetSnapshot;
+        
         // 获取或创建变量快照
-        VariableSetSnapshotData variableSnapshot;
-
         if (deployment.VariableSnapshotId.HasValue)
         {
-            // 如果已有快照ID，直接加载快照
-            variableSnapshot = await _variableSnapshotService.LoadSnapshotAsync(deployment.VariableSnapshotId.Value);
+            variableSetSnapshot = await _variableSnapshotService.LoadSnapshotAsync(deployment.VariableSnapshotId.Value, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             // 如果没有快照ID，查找项目的变量集并创建快照
-            var variableSet = await _variableSetDataProvider.GetVariableSetByOwnerAsync(project.Id, VariableSetOwnerType.Project);
+            var variableSet = await _variableSetDataProvider.GetVariableSetByOwnerAsync(project.Id, VariableSetOwnerType.Project, cancellationToken).ConfigureAwait(false);
+        
+            if (variableSet == null) throw new InvalidOperationException($"Variable set not found on project {project.Id}.");
 
-            if (variableSet != null)
-            {
-                var snapshotId = await _variableSnapshotService.GetOrCreateSnapshotAsync(variableSet.Id, "System");
-                variableSnapshot = await _variableSnapshotService.LoadSnapshotAsync(snapshotId);
-
-                // 更新Deployment记录快照ID
-                deployment.VariableSnapshotId = snapshotId;
-                await _deploymentDataProvider.UpdateDeploymentAsync(deployment);
-            }
-            else
-            {
-                // 如果没有变量集，创建空的快照数据
-                variableSnapshot = new VariableSetSnapshotData
-                {
-                    Id = 0,
-                    OwnerId = project.Id,
-                    OwnerType = VariableSetOwnerType.Project,
-                    Version = 1,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Variables = new List<VariableSnapshotData>(),
-                    ScopeDefinitions = new Dictionary<string, List<string>>()
-                };
-            }
+            variableSetSnapshot = await _variableSnapshotService.GetOrCreateSnapshotAsync(variableSet.Id, "System", cancellationToken).ConfigureAwait(false);
+            
+            // 更新Deployment记录快照ID
+            deployment.VariableSnapshotId = variableSetSnapshot.Id;
+            await _deploymentDataProvider.UpdateDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        return variableSnapshot;
+
+        return variableSetSnapshot;
     }
 }

@@ -4,5 +4,5 @@ namespace Squid.Core.Services.Deployments;
 
 public interface IDeploymentPlanService
 {
-    Task<DeploymentPlanDto> GeneratePlanAsync(int deploymentId);
+    Task<DeploymentPlanDto> GeneratePlanAsync(int deploymentId, CancellationToken cancellationToken);
 }
