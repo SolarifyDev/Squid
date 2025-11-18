@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 using Halibut;
 
@@ -177,7 +178,8 @@ public class ScriptStatusRequest
 
 public class ScriptStatusResponse
 {
-    public ScriptStatusResponse(ScriptTicket ticket,
+    public ScriptStatusResponse(
+        ScriptTicket ticket,
         ProcessState state,
         int exitCode,
         List<ProcessOutput> logs,
@@ -201,13 +203,9 @@ public class ScriptStatusResponse
     public int ExitCode { get; }
 }
 
-// [DebuggerDisplay("{Occurred} | {Source} | {Text}")]
+[DebuggerDisplay("{Occurred} | {Source} | {Text}")]
 public class ProcessOutput
 {
-    public ProcessOutput()
-    {
-    }
-
     public ProcessOutput(ProcessOutputSource source, string text) : this(source, text, DateTimeOffset.UtcNow)
     {
     }

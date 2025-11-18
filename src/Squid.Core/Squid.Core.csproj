@@ -42,6 +42,10 @@
     <Folder Include="Enums\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="TentaclesScripts\*.ps1" />
+  </ItemGroup>
+
   <ItemGroup Label="DbUp">
     <Content Include="Persistence\*\*\*.sql">
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
