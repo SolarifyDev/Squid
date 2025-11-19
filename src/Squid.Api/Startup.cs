@@ -24,6 +24,7 @@ public class Startup
         services.AddHttpContextAccessor();
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
+        services.AddCorsPolicy(Configuration);
         
         _serviceCollection = services;
     }
