@@ -25,6 +25,7 @@ public class Startup
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
         services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
+        services.AddCorsPolicy(Configuration);
         
         _serviceCollection = services;
     }
