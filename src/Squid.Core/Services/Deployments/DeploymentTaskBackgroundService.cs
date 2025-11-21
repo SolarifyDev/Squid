@@ -11,9 +11,9 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Tentacle;
+using Squid.Core.Settings.GithubPackage;
 
 namespace Squid.Core.Services.Deployments;
-
 
 public interface IDeploymentTaskBackgroundService : IScopedDependency
 {
@@ -30,9 +30,10 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
-    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IEnumerable<IActionYamlGenerator> _actionYamlGenerators;
-    
+    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
+    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
+
     public DeploymentTaskBackgroundService(
         IDeploymentPlanService planService,
         IDeploymentVariableResolver variableResolver,
@@ -43,7 +44,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         IServerTaskDataProvider serverTaskDataProvider,
         IEnumerable<IActionYamlGenerator> actionYamlGenerators,
         IYamlNuGetPacker yamlNuGetPacker,
-        HalibutRuntime halibutRuntime)
+        HalibutRuntime halibutRuntime, CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _planService = planService;
         _variableResolver = variableResolver;
@@ -55,6 +56,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         _actionYamlGenerators = actionYamlGenerators;
         _yamlNuGetPacker = yamlNuGetPacker;
         _halibutRuntime = halibutRuntime;
+        _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 
     public async Task RunAsync(CancellationToken stoppingToken)
@@ -71,21 +73,19 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                 {
                     await ProcessDeploymentTaskAsync(task, stoppingToken).ConfigureAwait(false);
 
-                    await _genericDataProvider.ExecuteInTransactionAsync(async (cancellationToken) =>
-                    {
-                        await _serverTaskDataProvider.UpdateServerTaskStateAsync(
-                            task.Id, "Success", cancellationToken: cancellationToken).ConfigureAwait(false);
-                    }, stoppingToken).ConfigureAwait(false);
+                    await _genericDataProvider.ExecuteInTransactionAsync(
+                        async (cancellationToken) =>
+                        {
+                            await _serverTaskDataProvider.UpdateServerTaskStateAsync(
+                                task.Id, "Success", cancellationToken: cancellationToken).ConfigureAwait(false);
+                        }, stoppingToken).ConfigureAwait(false);
 
                     Log.Information("Task {TaskId} completed successfully", task.Id);
                 }
                 catch (Exception ex)
                 {
                     await _genericDataProvider.ExecuteInTransactionAsync(
-                        async (cancellationToken) =>
-                        {
-                            await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false);
-                        }, stoppingToken).ConfigureAwait(false);
+                        async (cancellationToken) => { await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false); }, stoppingToken).ConfigureAwait(false);
 
                     Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", task.Id, ex.Message);
                 }
@@ -111,9 +111,8 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             // 从嵌入资源中读取 ExtractCalamariPackage 安装脚本内容
             var extractCalamariPackageScript = UtilService.GetEmbeddedScriptContent("ExtractCalamariPackage.ps1");
 
-            // TODO：拿到Calamari安装文件流
-
-            // TODO：把ExtractCalamariPackage和安装文件流用StartScriptCommand传去目标机器执行
+            // 拿到Calamari安装包字节内容
+            var calamariPackageBytes = await ContractCalamariPackageAsync().ConfigureAwait(false);
 
             Log.Information("Generating deployment plan for deployment {DeploymentId}", deployment.Id);
 
@@ -136,6 +135,18 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             if (!targets.Any()) throw new InvalidOperationException($"No target machines found for deployment {deployment.Id}");
 
             Log.Information("Found {TargetCount} target machines for deployment {DeploymentId}", targets.Count, deployment.Id);
+
+            // 把ExtractCalamariPackage和安装文件流用StartScriptCommand传去目标机器执行
+            var extractSuccess = await ExtractCalamariPackageAsync(cancellationToken, extractCalamariPackageScript, calamariPackageBytes, targets);
+
+            if (!extractSuccess)
+            {
+                throw new InvalidOperationException($"Calamari package extraction failed on one or more target machines for deployment {deployment.Id}");
+            }
+
+            Log.Information("Calamari package extraction completed successfully on all target machines for deployment {DeploymentId}", deployment.Id);
+
+            // 后续继续部署
 
             // 4. 转换ProcessSnapshot为DeploymentStepDto列表
             var steps = ConvertProcessSnapshotToSteps(plan.ProcessSnapshot);
@@ -165,7 +176,8 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             var executionSuccess = await ObserveDeploymentScriptsAsync(scriptExecutions, cancellationToken).ConfigureAwait(false);
 
             // 7. 记录部署完成状态
-            await RecordDeploymentCompletionAsync(deployment.Id, executionSuccess,
+            await RecordDeploymentCompletionAsync(
+                deployment.Id, executionSuccess,
                 executionSuccess ? "Deployment completed successfully" : "Deployment completed with errors").ConfigureAwait(false);
 
             if (executionSuccess)
@@ -186,7 +198,31 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             throw;
         }
     }
-    
+
+    private async Task<bool> ExtractCalamariPackageAsync(CancellationToken cancellationToken, string extractCalamariPackageScript, byte[] calamariPackageBytes, List<Message.Domain.Deployments.Machine> targets)
+    {
+        var extractExecutions = await StartExtractCalamariPackageScriptsAsync(
+            extractCalamariPackageScript,
+            calamariPackageBytes,
+            targets,
+            cancellationToken).ConfigureAwait(false);
+
+        var extractSuccess = await ObserveDeploymentScriptsAsync(extractExecutions, cancellationToken).ConfigureAwait(false);
+
+        return extractSuccess;
+    }
+
+    private async Task<byte[]> ContractCalamariPackageAsync()
+    {
+        const string packageId = "SolarifyDev.SquidCalamari";
+        const string githubUserName = "SolarifyDev";
+
+        var downloader = new GithubPackageDownloader(githubUserName, _calamariGithubPackageSetting.Token);
+        var packageStream = await downloader.DownloadPackageAsync(packageId, _calamariGithubPackageSetting.Version).ConfigureAwait(false);
+
+        return ReadAllBytes(packageStream);
+    }
+
     private async Task<List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>> StartDeployByCalamariScriptsAsync(
         string deployByCalamariScript,
         byte[] yamlNuGetPackageBytes,
@@ -232,14 +268,13 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             if (endpoint == null)
             {
                 Log.Warning("Skipping machine {MachineName} because endpoint could not be parsed", target.Name);
+
                 continue;
             }
 
             var scriptFiles = new[]
             {
-                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null),
-                new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null),
-                new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null), new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null), new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
             };
 
             var command = new StartScriptCommand(
@@ -262,6 +297,72 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
         return result;
     }
+
+    private async Task<List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>> StartExtractCalamariPackageScriptsAsync(
+        string extractCalamariPackageScript,
+        byte[] calamariPackageBytes,
+        List<Message.Domain.Deployments.Machine> targets,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>();
+
+        if (targets == null || targets.Count == 0)
+        {
+            throw new InvalidOperationException("No target machines to execute ExtractCalamariPackage script");
+        }
+
+        var calamariVersion = _calamariGithubPackageSetting.Version;
+
+        var scriptBody = extractCalamariPackageScript
+            .Replace("{{CalamariPath}}", string.Empty, StringComparison.Ordinal)
+            .Replace("{{CalamariPackageVersion}}", calamariVersion, StringComparison.Ordinal)
+            .Replace("{{CalamariPackage}}", "SolarifyDev.SquidCalamari", StringComparison.Ordinal)
+            .Replace("{{SupportPackage}}", string.Empty, StringComparison.Ordinal)
+            .Replace("{{SupportPackageVersion}}", string.Empty, StringComparison.Ordinal)
+            .Replace("{{UsesCustomPackageDirectory}}", "false", StringComparison.Ordinal)
+            .Replace("{{CalamariPackageVersionsToKeep}}", calamariVersion, StringComparison.Ordinal);
+
+        var calamariPackageFileName = $"SolarifyDev.SquidCalamari.{calamariVersion}.nupkg";
+
+        foreach (var target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var endpoint = ParseMachineEndpoint(target);
+
+            if (endpoint == null)
+            {
+                Log.Warning("Skipping machine {MachineName} because endpoint could not be parsed", target.Name);
+
+                continue;
+            }
+
+            var scriptFiles = new[]
+            {
+                new ScriptFile(calamariPackageFileName, DataStream.FromBytes(calamariPackageBytes), null)
+            };
+
+            var command = new StartScriptCommand(
+                scriptBody,
+                ScriptIsolationLevel.FullIsolation,
+                TimeSpan.FromMinutes(30),
+                null,
+                Array.Empty<string>(),
+                null,
+                scriptFiles);
+
+            Log.Information("Starting ExtractCalamariPackage script on machine {MachineName}", target.Name);
+
+            var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+            var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+
+            result.Add((target, scriptClient, ticket));
+        }
+
+        return result;
+    }
+
 
     private async Task<bool> ObserveDeploymentScriptsAsync(
         List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> scriptExecutions,
@@ -348,6 +449,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         if (yamlStreams == null || yamlStreams.Count == 0)
         {
             Log.Information("No YAML streams to pack into NuGet package");
+
             return Array.Empty<byte>();
         }
 
@@ -380,6 +482,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
+
         return memory.ToArray();
     }
 
@@ -404,6 +507,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to parse machine endpoint for machine {MachineName}", machine.Name);
+
             return null;
         }
     }
@@ -473,41 +577,41 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                 IsDisabled = false,
                 IsRequired = true,
                 CreatedAt = stepSnap.CreatedAt,
-                Properties = stepSnap.Properties.Select(kvp =>
-                    new Squid.Message.Models.Deployments.Process.DeploymentStepPropertyDto
-                    {
-                        StepId = stepSnap.Id,
-                        PropertyName = kvp.Key,
-                        PropertyValue = kvp.Value
-                    }).ToList(),
-                Actions = stepSnap.Actions.Select(action =>
-                    new Squid.Message.Models.Deployments.Process.DeploymentActionDto
-                    {
-                        Id = action.Id,
-                        StepId = stepSnap.Id,
-                        ActionOrder = action.ActionOrder,
-                        Name = action.Name,
-                        ActionType = action.ActionType,
-                        WorkerPoolId = action.WorkerPoolId,
-                        IsDisabled = action.IsDisabled,
-                        IsRequired = action.IsRequired,
-                        CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
-                        CreatedAt = action.CreatedAt,
-                        Properties = action.Properties.Select(kvp =>
-                            new Squid.Message.Models.Deployments.Process.DeploymentActionPropertyDto
-                            {
-                                ActionId = action.Id,
-                                PropertyName = kvp.Key,
-                                PropertyValue = kvp.Value
-                            }).ToList(),
-                        Environments = action.Environments,
-                        Channels = action.Channels,
-                        MachineRoles = action.MachineRoles
-                    }).ToList()
+                Properties = stepSnap.Properties.Select(
+                    kvp =>
+                        new Squid.Message.Models.Deployments.Process.DeploymentStepPropertyDto
+                        {
+                            StepId = stepSnap.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
+                        }).ToList(),
+                Actions = stepSnap.Actions.Select(
+                    action =>
+                        new Squid.Message.Models.Deployments.Process.DeploymentActionDto
+                        {
+                            Id = action.Id,
+                            StepId = stepSnap.Id,
+                            ActionOrder = action.ActionOrder,
+                            Name = action.Name,
+                            ActionType = action.ActionType,
+                            WorkerPoolId = action.WorkerPoolId,
+                            IsDisabled = action.IsDisabled,
+                            IsRequired = action.IsRequired,
+                            CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
+                            CreatedAt = action.CreatedAt,
+                            Properties = action.Properties.Select(
+                                kvp =>
+                                    new Squid.Message.Models.Deployments.Process.DeploymentActionPropertyDto
+                                    {
+                                        ActionId = action.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
+                                    }).ToList(),
+                            Environments = action.Environments,
+                            Channels = action.Channels,
+                            MachineRoles = action.MachineRoles
+                        }).ToList()
             };
 
             steps.Add(step);
         }
+
         return steps;
     }
 
@@ -518,6 +622,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         {
             var emptyJson = "{}";
             var emptyBytes = Encoding.UTF8.GetBytes(emptyJson);
+
             return (new MemoryStream(emptyBytes), new MemoryStream(emptyBytes), string.Empty);
         }
 
@@ -555,7 +660,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
             var sensitiveJson = JsonSerializer.Serialize(sensitiveVariables);
             var encryption = new CalamariCompatibleEncryption(password);
-            var encryptedBytes = encryption.Encrypt(sensitiveJson);  // 加密整个JSON
+            var encryptedBytes = encryption.Encrypt(sensitiveJson); // 加密整个JSON
 
             sensitiveStream = new MemoryStream(encryptedBytes);
         }
@@ -585,10 +690,11 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
         await _deploymentCompletionDataProvider.AddDeploymentCompletionAsync(completion).ConfigureAwait(false);
 
-        Log.Information("Recorded deployment completion for deployment {DeploymentId} (Release {ReleaseId}): {Status}",
+        Log.Information(
+            "Recorded deployment completion for deployment {DeploymentId} (Release {ReleaseId}): {Status}",
             deploymentId, deployment?.ReleaseId, success ? "Success" : "Failed");
     }
-    
+
     public class MachineConfigurationDto
     {
         public MachineEndpointDto? Endpoint { get; set; }
