@@ -1,3 +1,4 @@
+using Squid.Core.Services.Common;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Requests.Deployments.Channel;
 
@@ -48,5 +49,24 @@ public class ChannelController : ControllerBase
         var response = await _mediator.RequestAsync<GetChannelsRequest, GetChannelsResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
+    }
+    
+    [HttpPost]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> TestsAsync([FromBody] testClass request)
+    {
+        var client = new DockerHubClient(request.Username, request.Password);
+        var response = await client.DownloadPrivateImageAsync(request.ImageName, "/download").ConfigureAwait(false);
+
+        return Ok(response);
+    }
+    
+    public class testClass
+    {
+        public string Username { get; set; } = string.Empty;
+        
+        public string Password { get; set; } = string.Empty;
+        
+        public string ImageName { get; set; } = string.Empty;
     }
 }
