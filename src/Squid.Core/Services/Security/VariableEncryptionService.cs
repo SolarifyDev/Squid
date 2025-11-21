@@ -127,7 +127,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
     private byte[] GetOrCreateMasterKey()
     {
-        var keyBase64 = _securitySetting.MasterKey;
+        var keyBase64 = _securitySetting.VariableEncryption.MasterKey;
         
         try
         {
