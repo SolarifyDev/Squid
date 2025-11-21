@@ -17,16 +17,17 @@ public class HalibutModule : Module
     
     protected override void Load(ContainerBuilder builder)
     {
-        builder.Register(c =>
+        builder.Register(_ =>
         {
-            var services = c.Resolve<IServiceFactory>();
-        
-            if (string.IsNullOrEmpty(_selfCertSetting.Base64))
+            var selfCertBase64 = _selfCertSetting.Base64;
+
+            if (string.IsNullOrEmpty(selfCertBase64))
                 throw new InvalidOperationException("缺少HALIBUT_CERT_BASE64环境变量");
-        
-            var certBytes = Convert.FromBase64String(_selfCertSetting.Base64);
-            
+
+            var certBytes = Convert.FromBase64String(selfCertBase64);
             var serverCert = new X509Certificate2(certBytes, _selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
+
+            var services = new DelegateServiceFactory();
 
             var halibutTimeoutsAndLimits = HalibutTimeoutsAndLimits.RecommendedValues();
 
