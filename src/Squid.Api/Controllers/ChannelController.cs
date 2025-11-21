@@ -52,6 +52,7 @@ public class ChannelController : ControllerBase
     }
     
     [HttpPost]
+    [Route("test")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> TestsAsync([FromBody] testClass request)
     {
