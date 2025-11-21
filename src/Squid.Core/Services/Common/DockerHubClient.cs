@@ -40,7 +40,7 @@ public class DockerHubClient
     {
         for (int attempt = 1; attempt <= _maxRetries; attempt++)
         {
-            Console.WriteLine($"正在登录 Docker Hub (用户: {_username}) - 尝试 {attempt}/{_maxRetries}...");
+            Log.Information($"正在登录 Docker Hub (用户: {_username}) - 尝试 {attempt}/{_maxRetries}...");
 
             var processInfo = new ProcessStartInfo
             {
@@ -56,7 +56,7 @@ public class DockerHubClient
             using var process = Process.Start(processInfo);
             if (process == null)
             {
-                Console.WriteLine("❌ 无法启动 Docker 进程");
+                Log.Information("❌ 无法启动 Docker 进程");
                 return false;
             }
 
@@ -78,36 +78,36 @@ public class DockerHubClient
 
                 if (process.ExitCode == 0)
                 {
-                    Console.WriteLine("✅ 登录成功");
+                    Log.Information("✅ 登录成功");
                     return true;
                 }
                 else
                 {
-                    Console.WriteLine($"❌ 登录失败: {error}");
+                    Log.Information($"❌ 登录失败: {error}");
 
                     if (attempt < _maxRetries)
                     {
                         int waitSeconds = attempt * 2; // 递增等待时间
-                        Console.WriteLine($"⏳ 等待 {waitSeconds} 秒后重试...");
+                        Log.Information($"⏳ 等待 {waitSeconds} 秒后重试...");
                         await Task.Delay(TimeSpan.FromSeconds(waitSeconds));
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                Console.WriteLine($"⏱️  登录超时 ({_timeoutSeconds} 秒)");
+                Log.Information($"⏱️  登录超时 ({_timeoutSeconds} 秒)");
                 process.Kill(true);
 
                 if (attempt < _maxRetries)
                 {
                     int waitSeconds = attempt * 2;
-                    Console.WriteLine($"⏳ 等待 {waitSeconds} 秒后重试...");
+                    Log.Information($"⏳ 等待 {waitSeconds} 秒后重试...");
                     await Task.Delay(TimeSpan.FromSeconds(waitSeconds));
                 }
             }
         }
 
-        Console.WriteLine("❌ 登录失败: 已达到最大重试次数");
+        Log.Information("❌ 登录失败: 已达到最大重试次数");
         return false;
     }
 
@@ -117,7 +117,7 @@ public class DockerHubClient
     /// <param name="imageName">镜像名称,格式: username/repository:tag</param>
     public async Task<bool> PullImageAsync(string imageName)
     {
-        Console.WriteLine($"正在拉取镜像: {imageName}...");
+        Log.Information($"正在拉取镜像: {imageName}...");
         
         var processInfo = new ProcessStartInfo
         {
@@ -132,7 +132,7 @@ public class DockerHubClient
         using var process = Process.Start(processInfo);
         if (process == null)
         {
-            Console.WriteLine("❌ 无法启动 Docker 进程");
+            Log.Information("❌ 无法启动 Docker 进程");
             return false;
         }
 
@@ -143,7 +143,7 @@ public class DockerHubClient
             {
                 var line = await process.StandardOutput.ReadLineAsync();
                 if (!string.IsNullOrWhiteSpace(line))
-                    Console.WriteLine($"  {line}");
+                    Log.Information($"  {line}");
             }
         });
 
@@ -153,7 +153,7 @@ public class DockerHubClient
             {
                 var line = await process.StandardError.ReadLineAsync();
                 if (!string.IsNullOrWhiteSpace(line))
-                    Console.WriteLine($"  ⚠️  {line}");
+                    Log.Information($"  ⚠️  {line}");
             }
         });
 
@@ -162,12 +162,12 @@ public class DockerHubClient
 
         if (process.ExitCode == 0)
         {
-            Console.WriteLine($"✅ 镜像拉取成功: {imageName}");
+            Log.Information($"✅ 镜像拉取成功: {imageName}");
             return true;
         }
         else
         {
-            Console.WriteLine($"❌ 镜像拉取失败");
+            Log.Information($"❌ 镜像拉取失败");
             return false;
         }
     }
@@ -179,7 +179,7 @@ public class DockerHubClient
     /// <param name="outputPath">输出文件路径</param>
     public async Task<bool> SaveImageAsync(string imageName, string outputPath)
     {
-        Console.WriteLine($"正在保存镜像到: {outputPath}...");
+        Log.Information($"正在保存镜像到: {outputPath}...");
         
         // 确保输出目录存在
         var directory = Path.GetDirectoryName(outputPath);
@@ -201,7 +201,7 @@ public class DockerHubClient
         using var process = Process.Start(processInfo);
         if (process == null)
         {
-            Console.WriteLine("❌ 无法启动 Docker 进程");
+            Log.Information("❌ 无法启动 Docker 进程");
             return false;
         }
 
@@ -212,14 +212,14 @@ public class DockerHubClient
 
         if (process.ExitCode == 0)
         {
-            Console.WriteLine($"✅ 镜像已保存到: {outputPath}");
+            Log.Information($"✅ 镜像已保存到: {outputPath}");
             var fileInfo = new FileInfo(outputPath);
-            Console.WriteLine($"📦 文件大小: {fileInfo.Length / 1024.0 / 1024.0:F2} MB");
+            Log.Information($"📦 文件大小: {fileInfo.Length / 1024.0 / 1024.0:F2} MB");
             return true;
         }
         else
         {
-            Console.WriteLine($"❌ 保存镜像失败: {error}");
+            Log.Information($"❌ 保存镜像失败: {error}");
             return false;
         }
     }
@@ -230,7 +230,7 @@ public class DockerHubClient
     /// <param name="imageName">镜像名称</param>
     public async Task<bool> RemoveImageAsync(string imageName)
     {
-        Console.WriteLine($"正在删除镜像: {imageName}...");
+        Log.Information($"正在删除镜像: {imageName}...");
 
         var processInfo = new ProcessStartInfo
         {
@@ -245,7 +245,7 @@ public class DockerHubClient
         using var process = Process.Start(processInfo);
         if (process == null)
         {
-            Console.WriteLine("❌ 无法启动 Docker 进程");
+            Log.Information("❌ 无法启动 Docker 进程");
             return false;
         }
 
@@ -256,12 +256,12 @@ public class DockerHubClient
 
         if (process.ExitCode == 0)
         {
-            Console.WriteLine($"✅ 镜像已删除: {imageName}");
+            Log.Information($"✅ 镜像已删除: {imageName}");
             return true;
         }
         else
         {
-            Console.WriteLine($"⚠️  删除镜像失败或镜像不存在: {error}");
+            Log.Information($"⚠️  删除镜像失败或镜像不存在: {error}");
             return false;
         }
     }
@@ -271,7 +271,7 @@ public class DockerHubClient
     /// </summary>
     public async Task<bool> LogoutAsync()
     {
-        Console.WriteLine("正在登出 Docker Hub...");
+        Log.Information("正在登出 Docker Hub...");
 
         var processInfo = new ProcessStartInfo
         {
@@ -286,7 +286,7 @@ public class DockerHubClient
         using var process = Process.Start(processInfo);
         if (process == null)
         {
-            Console.WriteLine("❌ 无法启动 Docker 进程");
+            Log.Information("❌ 无法启动 Docker 进程");
             return false;
         }
 
@@ -294,12 +294,12 @@ public class DockerHubClient
 
         if (process.ExitCode == 0)
         {
-            Console.WriteLine("✅ 已登出");
+            Log.Information("✅ 已登出");
             return true;
         }
         else
         {
-            Console.WriteLine("⚠️  登出失败");
+            Log.Information("⚠️  登出失败");
             return false;
         }
     }
@@ -335,12 +335,12 @@ public class DockerHubClient
             // 5. 登出
             await LogoutAsync();
 
-            Console.WriteLine($"\n🎉 下载完成!");
+            Log.Information($"\n🎉 下载完成!");
             return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ 发生错误: {ex.Message}");
+            Log.Information($"❌ 发生错误: {ex.Message}");
             return false;
         }
     }
