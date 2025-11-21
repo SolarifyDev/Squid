@@ -39,4 +39,48 @@ public static class UtilService
 
         return JsonConvert.DeserializeObject<T>(json);
     }
+
+    public static string GetEmbeddedScriptContent(string resourceFileName)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+
+        var resourceNames = assembly.GetManifestResourceNames();
+
+        var resourceName = FindEmbeddedResourceName(resourceNames, resourceFileName);
+
+        if (string.IsNullOrWhiteSpace(resourceName))
+            throw new FileNotFoundException($"找不到嵌入资源脚本: {resourceFileName}");
+
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+
+        if (stream == null)
+            throw new FileNotFoundException($"无法读取嵌入资源脚本: {resourceName}");
+
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        return reader.ReadToEnd();
+    }
+
+    private static string FindEmbeddedResourceName(string[] resourceNames, string resourceFileName)
+    {
+        foreach (var name in resourceNames)
+        {
+            if (name.EndsWith(resourceFileName, StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(resourceFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return name;
+            }
+        }
+
+        foreach (var name in resourceNames)
+        {
+            if (name.Contains(resourceFileName, StringComparison.OrdinalIgnoreCase) ||
+                resourceFileName.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return name;
+            }
+        }
+
+        return string.Empty;
+    }
 }

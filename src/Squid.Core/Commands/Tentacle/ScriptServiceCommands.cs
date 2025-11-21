@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.Text.Json.Serialization;
 using Halibut;
+using Newtonsoft.Json;
 
 namespace Squid.Core.Commands.Tentacle;
 
