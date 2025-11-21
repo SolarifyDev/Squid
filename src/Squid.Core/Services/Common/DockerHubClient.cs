@@ -1,346 +1,237 @@
-using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Docker.DotNet;
+using Docker.DotNet.Models;
 
 namespace Squid.Core.Services.Common;
 
-/// <summary>
-/// Docker Hub 私人仓库客户端,用于下载私人镜像
-/// </summary>
 public class DockerHubClient
 {
     private readonly string _username;
     private readonly string _password;
-    private readonly string _dockerCommand;
     private readonly int _timeoutSeconds;
     private readonly int _maxRetries;
+    private readonly DockerClient _dockerClient;
 
     public DockerHubClient(
         string username,
         string password,
-        string dockerCommand = "docker",
-        int timeoutSeconds = 300,  // 默认 5 分钟超时
-        int maxRetries = 3)        // 默认重试 3 次
+        int timeoutSeconds = 300,
+        int maxRetries = 3)
     {
         if (string.IsNullOrWhiteSpace(username))
+        {
             throw new ArgumentException("用户名不能为空", nameof(username));
+        }
 
         if (string.IsNullOrWhiteSpace(password))
+        {
             throw new ArgumentException("密码不能为空", nameof(password));
+        }
 
         _username = username;
         _password = password;
-        _dockerCommand = dockerCommand;
         _timeoutSeconds = timeoutSeconds;
         _maxRetries = maxRetries;
+
+        var dockerUri = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new Uri("npipe://./pipe/docker_engine")
+            : new Uri("unix:///var/run/docker.sock");
+
+        _dockerClient = new DockerClientConfiguration(dockerUri).CreateClient();
     }
 
-    /// <summary>
-    /// 登录到 Docker Hub (带重试机制)
-    /// </summary>
     public async Task<bool> LoginAsync()
     {
-        for (int attempt = 1; attempt <= _maxRetries; attempt++)
+        for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
-            Log.Information($"正在登录 Docker Hub (用户: {_username}) - 尝试 {attempt}/{_maxRetries}...");
+            Log.Information("正在登录 Docker Hub (用户: {Username}) - 尝试 {Attempt}/{MaxRetries}...", _username, attempt, _maxRetries);
 
-            var processInfo = new ProcessStartInfo
-            {
-                FileName = _dockerCommand,
-                Arguments = "login -u " + _username + " --password-stdin",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(processInfo);
-            if (process == null)
-            {
-                Log.Information("❌ 无法启动 Docker 进程");
-                return false;
-            }
-
-            await process.StandardInput.WriteLineAsync(_password);
-            await process.StandardInput.FlushAsync();
-            process.StandardInput.Close();
-
-            // 使用超时等待
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
             try
             {
-                var outputTask = process.StandardOutput.ReadToEndAsync();
-                var errorTask = process.StandardError.ReadToEndAsync();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
 
-                await process.WaitForExitAsync(cts.Token);
-
-                var output = await outputTask;
-                var error = await errorTask;
-
-                if (process.ExitCode == 0)
+                var imagesCreateParameters = new ImagesCreateParameters
                 {
-                    Log.Information("✅ 登录成功");
-                    return true;
-                }
-                else
-                {
-                    Log.Information($"❌ 登录失败: {error}");
+                    FromImage = "registry.hub.docker.com/library/alpine",
+                    Tag = "latest"
+                };
 
-                    if (attempt < _maxRetries)
-                    {
-                        int waitSeconds = attempt * 2; // 递增等待时间
-                        Log.Information($"⏳ 等待 {waitSeconds} 秒后重试...");
-                        await Task.Delay(TimeSpan.FromSeconds(waitSeconds));
-                    }
-                }
+                var authConfig = new AuthConfig
+                {
+                    Username = _username,
+                    Password = _password,
+                    ServerAddress = "https://index.docker.io/v1/"
+                };
+
+                await _dockerClient.Images.CreateImageAsync(imagesCreateParameters, authConfig, new Progress<JSONMessage>(), cts.Token).ConfigureAwait(false);
+
+                Log.Information("登录成功");
+
+                return true;
             }
-            catch (OperationCanceledException)
+            catch (Exception ex)
             {
-                Log.Information($"⏱️  登录超时 ({_timeoutSeconds} 秒)");
-                process.Kill(true);
+                Log.Error(ex, "登录 Docker Hub 失败 (用户: {Username})", _username);
 
                 if (attempt < _maxRetries)
                 {
-                    int waitSeconds = attempt * 2;
-                    Log.Information($"⏳ 等待 {waitSeconds} 秒后重试...");
-                    await Task.Delay(TimeSpan.FromSeconds(waitSeconds));
+                    var waitSeconds = attempt * 2;
+
+                    Log.Information("等待 {WaitSeconds} 秒后重试", waitSeconds);
+
+                    await Task.Delay(TimeSpan.FromSeconds(waitSeconds)).ConfigureAwait(false);
                 }
             }
         }
 
-        Log.Information("❌ 登录失败: 已达到最大重试次数");
+        Log.Information("登录失败: 已达到最大重试次数");
+
         return false;
     }
 
-    /// <summary>
-    /// 拉取 Docker 镜像
-    /// </summary>
-    /// <param name="imageName">镜像名称,格式: username/repository:tag</param>
     public async Task<bool> PullImageAsync(string imageName)
     {
-        Log.Information($"正在拉取镜像: {imageName}...");
-        
-        var processInfo = new ProcessStartInfo
-        {
-            FileName = _dockerCommand,
-            Arguments = $"pull {imageName}",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        Log.Information("正在拉取镜像: {ImageName}...", imageName);
 
-        using var process = Process.Start(processInfo);
-        if (process == null)
+        try
         {
-            Log.Information("❌ 无法启动 Docker 进程");
-            return false;
-        }
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
 
-        // 实时输出拉取进度
-        var outputTask = Task.Run(async () =>
-        {
-            while (!process.StandardOutput.EndOfStream)
+            var imagesCreateParameters = new ImagesCreateParameters
             {
-                var line = await process.StandardOutput.ReadLineAsync();
-                if (!string.IsNullOrWhiteSpace(line))
-                    Log.Information($"  {line}");
-            }
-        });
+                FromImage = imageName
+            };
 
-        var errorTask = Task.Run(async () =>
-        {
-            while (!process.StandardError.EndOfStream)
+            var authConfig = new AuthConfig
             {
-                var line = await process.StandardError.ReadLineAsync();
-                if (!string.IsNullOrWhiteSpace(line))
-                    Log.Information($"  ⚠️  {line}");
-            }
-        });
+                Username = _username,
+                Password = _password,
+                ServerAddress = "https://index.docker.io/v1/"
+            };
 
-        await Task.WhenAll(outputTask, errorTask);
-        await process.WaitForExitAsync();
+            await _dockerClient.Images.CreateImageAsync(imagesCreateParameters, authConfig, new Progress<JSONMessage>(), cts.Token).ConfigureAwait(false);
 
-        if (process.ExitCode == 0)
-        {
-            Log.Information($"✅ 镜像拉取成功: {imageName}");
+            Log.Information("镜像拉取成功: {ImageName}", imageName);
+
             return true;
         }
-        else
+        catch (Exception ex)
         {
-            Log.Information($"❌ 镜像拉取失败");
+            Log.Error(ex, "镜像拉取失败: {ImageName}", imageName);
+
             return false;
         }
     }
 
-    /// <summary>
-    /// 保存 Docker 镜像为 tar 文件
-    /// </summary>
-    /// <param name="imageName">镜像名称</param>
-    /// <param name="outputPath">输出文件路径</param>
     public async Task<bool> SaveImageAsync(string imageName, string outputPath)
     {
-        Log.Information($"正在保存镜像到: {outputPath}...");
-        
-        // 确保输出目录存在
+        Log.Information("正在保存镜像到: {OutputPath}...", outputPath);
+
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
         {
             Directory.CreateDirectory(directory);
         }
 
-        var processInfo = new ProcessStartInfo
-        {
-            FileName = _dockerCommand,
-            Arguments = $"save -o \"{outputPath}\" {imageName}",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(processInfo);
-        if (process == null)
-        {
-            Log.Information("❌ 无法启动 Docker 进程");
-            return false;
-        }
-
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
-
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode == 0)
-        {
-            Log.Information($"✅ 镜像已保存到: {outputPath}");
-            var fileInfo = new FileInfo(outputPath);
-            Log.Information($"📦 文件大小: {fileInfo.Length / 1024.0 / 1024.0:F2} MB");
-            return true;
-        }
-        else
-        {
-            Log.Information($"❌ 保存镜像失败: {error}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 删除本地 Docker 镜像
-    /// </summary>
-    /// <param name="imageName">镜像名称</param>
-    public async Task<bool> RemoveImageAsync(string imageName)
-    {
-        Log.Information($"正在删除镜像: {imageName}...");
-
-        var processInfo = new ProcessStartInfo
-        {
-            FileName = _dockerCommand,
-            Arguments = $"rmi {imageName}",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(processInfo);
-        if (process == null)
-        {
-            Log.Information("❌ 无法启动 Docker 进程");
-            return false;
-        }
-
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
-
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode == 0)
-        {
-            Log.Information($"✅ 镜像已删除: {imageName}");
-            return true;
-        }
-        else
-        {
-            Log.Information($"⚠️  删除镜像失败或镜像不存在: {error}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 登出 Docker Hub
-    /// </summary>
-    public async Task<bool> LogoutAsync()
-    {
-        Log.Information("正在登出 Docker Hub...");
-
-        var processInfo = new ProcessStartInfo
-        {
-            FileName = _dockerCommand,
-            Arguments = "logout",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(processInfo);
-        if (process == null)
-        {
-            Log.Information("❌ 无法启动 Docker 进程");
-            return false;
-        }
-
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode == 0)
-        {
-            Log.Information("✅ 已登出");
-            return true;
-        }
-        else
-        {
-            Log.Information("⚠️  登出失败");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 下载私人镜像的完整流程
-    /// </summary>
-    /// <param name="imageName">镜像名称</param>
-    /// <param name="outputPath">输出文件路径</param>
-    /// <param name="removeAfterSave">保存后是否删除本地镜像</param>
-    public async Task<bool> DownloadPrivateImageAsync(string imageName, string outputPath, bool removeAfterSave = true)
-    {
         try
         {
-            // 1. 登录
-            if (!await LoginAsync())
-                return false;
+            await using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
-            // 2. 拉取镜像
-            if (!await PullImageAsync(imageName))
-                return false;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
 
-            // 3. 保存镜像
-            if (!await SaveImageAsync(imageName, outputPath))
-                return false;
+            using var imageStream = await _dockerClient.Images.SaveImageAsync(imageName, cts.Token).ConfigureAwait(false);
 
-            // 4. 可选:删除本地镜像以节省空间
-            if (removeAfterSave)
-            {
-                await RemoveImageAsync(imageName);
-            }
+            await imageStream.CopyToAsync(fileStream, cts.Token).ConfigureAwait(false);
 
-            // 5. 登出
-            await LogoutAsync();
+            var fileInfo = new FileInfo(outputPath);
 
-            Log.Information($"\n🎉 下载完成!");
+            Log.Information("镜像已保存到: {OutputPath}, 文件大小: {FileSize} MB", outputPath, fileInfo.Length / 1024.0 / 1024.0);
+
             return true;
         }
         catch (Exception ex)
         {
-            Log.Information($"❌ 发生错误: {ex.Message}");
+            Log.Error(ex, "保存镜像失败: {ImageName}", imageName);
+
+            return false;
+        }
+    }
+
+    public async Task<bool> RemoveImageAsync(string imageName)
+    {
+        Log.Information("正在删除镜像: {ImageName}...", imageName);
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
+
+            await _dockerClient.Images.DeleteImageAsync(imageName, new ImageDeleteParameters(), cts.Token).ConfigureAwait(false);
+
+            Log.Information("镜像已删除: {ImageName}", imageName);
+
+            return true;
+        }
+        catch (DockerImageNotFoundException)
+        {
+            Log.Information("镜像不存在: {ImageName}", imageName);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "删除镜像失败: {ImageName}", imageName);
+
+            return false;
+        }
+    }
+
+    public Task<bool> LogoutAsync()
+    {
+        Log.Information("Docker Hub 使用的是基于请求的认证,无需显式登出");
+
+        return Task.FromResult(true);
+    }
+
+    public async Task<bool> DownloadPrivateImageAsync(string imageName, string outputPath, bool removeAfterSave = true)
+    {
+        try
+        {
+            var loginResult = await LoginAsync().ConfigureAwait(false);
+
+            if (!loginResult)
+            {
+                return false;
+            }
+
+            var pullResult = await PullImageAsync(imageName).ConfigureAwait(false);
+
+            if (!pullResult)
+            {
+                return false;
+            }
+
+            var saveResult = await SaveImageAsync(imageName, outputPath).ConfigureAwait(false);
+
+            if (!saveResult)
+            {
+                return false;
+            }
+
+            if (removeAfterSave)
+            {
+                await RemoveImageAsync(imageName).ConfigureAwait(false);
+            }
+
+            await LogoutAsync().ConfigureAwait(false);
+
+            Log.Information("下载完成: {ImageName}", imageName);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "下载私人镜像时发生错误: {ImageName}", imageName);
+
             return false;
         }
     }
