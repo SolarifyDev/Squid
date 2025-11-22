@@ -20,12 +20,18 @@ public class IntegrationFixture : IAsyncLifetime
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", false, true).Build();
 
+        var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>() ?? new SelfCertSetting
+        {
+            Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64"),
+            Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
+        };
+
         ApplicationStartup.Initialize(
-            containerBuilder, 
+            containerBuilder,
             configuration.GetSection("SquidStore").Get<SquidStoreSetting>(),
-            logger.Object, new IntegrationTestUser(), 
+            logger.Object, new IntegrationTestUser(),
             configuration,
-            new SelfCertSetting());
+            selfCertSetting);
         
         LifetimeScope = containerBuilder.Build();
     }
