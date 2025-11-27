@@ -7,9 +7,10 @@ using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.IntegrationTests;
 
-public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTestBase
+[Collection("Sequential")]
+public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationKubernetesContainersActionYamlGenerator>>
 {
-    public IntegrationKubernetesContainersActionYamlGenerator(IntegrationFixture fixture) : base(fixture)
+    public IntegrationKubernetesContainersActionYamlGenerator(IntegrationFixture<IntegrationKubernetesContainersActionYamlGenerator> fixture) : base(fixture)
     {
     }
 

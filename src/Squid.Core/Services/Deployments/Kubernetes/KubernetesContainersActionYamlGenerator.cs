@@ -1,9 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.Deployments.Kubernetes;
@@ -159,17 +155,30 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             }
         }
 
+        var selectorLabels = deploymentLabels.Count > 0
+            ? deploymentLabels
+            : new Dictionary<string, string> { ["app"] = deploymentName };
+
         sb.AppendLine("spec:");
         sb.AppendLine($"  replicas: {replicas}");
         sb.AppendLine("  selector:");
         sb.AppendLine("    matchLabels:");
-        sb.AppendLine($"      app: {deploymentName}");
+
+        foreach (var kvp in selectorLabels)
+        {
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, "      ", kvp.Key, kvp.Value);
+        }
+
         sb.AppendLine("  strategy:");
         sb.AppendLine($"    type: {deploymentStrategy}");
         sb.AppendLine("  template:");
         sb.AppendLine("    metadata:");
         sb.AppendLine("      labels:");
-        sb.AppendLine($"        app: {deploymentName}");
+
+        foreach (var kvp in selectorLabels)
+        {
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, "        ", kvp.Key, kvp.Value);
+        }
 
         if (podAnnotations.Count > 0)
         {
@@ -310,6 +319,37 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
                     sb.AppendLine("        sysctls:");
 
                     AppendJsonElementYaml(sb, "          ", podSecuritySysctlsDoc.RootElement);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        if (properties.TryGetValue("Octopus.Action.KubernetesContainers.PodSecurityImagePullSecrets", out var imagePullSecretsRaw)
+            && !string.IsNullOrWhiteSpace(imagePullSecretsRaw))
+        {
+            imagePullSecretsRaw = imagePullSecretsRaw.Trim();
+
+            if (!string.Equals(imagePullSecretsRaw, "[]", StringComparison.Ordinal)
+                && !string.Equals(imagePullSecretsRaw, "{}", StringComparison.Ordinal))
+            {
+                try
+                {
+                    using var imagePullSecretsDoc = JsonDocument.Parse(imagePullSecretsRaw);
+
+                    if (imagePullSecretsDoc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        sb.AppendLine("      imagePullSecrets:");
+
+                        foreach (var secret in imagePullSecretsDoc.RootElement.EnumerateArray())
+                        {
+                            if (secret.TryGetProperty("name", out var nameElement))
+                            {
+                                sb.AppendLine($"      - name: {nameElement.GetString()}");
+                            }
+                        }
+                    }
                 }
                 catch
                 {
@@ -502,6 +542,14 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             deploymentName = action.Name;
         }
 
+        var deploymentLabels = ParseStringDictionaryProperty(
+            properties,
+            "Octopus.Action.KubernetesContainers.DeploymentLabels");
+
+        var selectorLabels = deploymentLabels.Count > 0
+            ? deploymentLabels
+            : new Dictionary<string, string> { ["app"] = deploymentName };
+
         var serviceType = GetProperty(properties, "Octopus.Action.KubernetesContainers.ServiceType");
 
         if (string.IsNullOrWhiteSpace(serviceType))
@@ -531,7 +579,12 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         sb.AppendLine("spec:");
         sb.AppendLine($"  type: {serviceType}");
         sb.AppendLine("  selector:");
-        sb.AppendLine($"    app: {deploymentName}");
+
+        foreach (var kvp in selectorLabels)
+        {
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, "    ", kvp.Key, kvp.Value);
+        }
+
         sb.AppendLine("  ports:");
 
         foreach (var port in ports)

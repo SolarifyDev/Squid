@@ -10,6 +10,8 @@ public interface IMachineDataProvider : IScopedDependency
 
     Task<(int count, List<Message.Domain.Deployments.Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
+    Task<Message.Domain.Deployments.Machine> GetMachinesByIdAsync(int id, CancellationToken cancellationToken);
+    
     Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task<List<Message.Domain.Deployments.Machine>> GetMachinesByFilterAsync(HashSet<int> environmentIds, HashSet<string> machineRoles, CancellationToken cancellationToken = default);
@@ -72,6 +74,11 @@ public class MachineDataProvider : IMachineDataProvider
         }
 
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    public async Task<Message.Domain.Deployments.Machine> GetMachinesByIdAsync(int id, CancellationToken cancellationToken)
+    {
+        return await _repository.Query<Message.Domain.Deployments.Machine>(x => id == x.Id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<Message.Domain.Deployments.Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken)

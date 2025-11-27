@@ -1,6 +1,4 @@
-using AutoMapper;
 using Squid.Message.Commands.Deployments.Process;
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Mappings;

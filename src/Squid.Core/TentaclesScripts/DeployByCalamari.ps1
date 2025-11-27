@@ -9,5 +9,10 @@ if (-not (Test-Path $calamariExe)) {
     Exit 1
 }
 
+$sensitiveVariables = ""
+if ("{{SensitiveVariableFile}}" -ne "") {
+    $sensitiveVariables = "--sensitiveVariables={{SensitiveVariableFile}} --sensitiveVariablesPassword={{SensitiveVariablePassword}}"
+}
+
 # 调用Calamari
-& $calamariExe kubernetes-apply-raw-yaml --package={{PackageFilePath}} --variables={{VariableFilePath}} --sensitiveVariables={{SensitiveVariableFile}}
+& $calamariExe kubernetes-apply-raw-yaml --package={{PackageFilePath}} --variables={{VariableFilePath}} $sensitiveVariables

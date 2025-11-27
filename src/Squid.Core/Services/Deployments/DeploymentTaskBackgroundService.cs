@@ -1,17 +1,23 @@
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.DeploymentCompletion;
-using Squid.Message.Domain.Deployments;
-using System.Linq;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Halibut;
 using Halibut.Diagnostics;
-using Halibut.ServiceModel;
-using Squid.Core.Services.Common;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Commands.Tentacle;
+using Squid.Core.Extensions;
+using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.DeploymentCompletion;
+using Squid.Core.Services.Deployments.ExternalFeed;
+using Squid.Core.Services.Deployments.Release;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Tentacle;
 using Squid.Core.Settings.GithubPackage;
+using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
 
@@ -26,37 +32,46 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     private readonly IYamlNuGetPacker _yamlNuGetPacker;
     private readonly IDeploymentPlanService _planService;
     private readonly IDeploymentTargetFinder _targetFinder;
+    private readonly IAccountDataProvider _accountDataProvider;
+    private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
+    private readonly IExternalFeedDataProvider _externalFeedDataProvider;
     private readonly IEnumerable<IActionYamlGenerator> _actionYamlGenerators;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
 
     public DeploymentTaskBackgroundService(
-        IDeploymentPlanService planService,
-        IDeploymentVariableResolver variableResolver,
-        IDeploymentTargetFinder targetFinder,
-        IDeploymentDataProvider deploymentDataProvider,
-        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
-        IGenericDataProvider genericDataProvider,
-        IServerTaskDataProvider serverTaskDataProvider,
-        IEnumerable<IActionYamlGenerator> actionYamlGenerators,
         IYamlNuGetPacker yamlNuGetPacker,
+        IDeploymentPlanService planService,
+        IDeploymentTargetFinder targetFinder,
+        IAccountDataProvider accountDataProvider,
+        IReleaseDataProvider releaseDataProvider,
+        IGenericDataProvider genericDataProvider,
+        IDeploymentVariableResolver variableResolver,
+        IServerTaskDataProvider serverTaskDataProvider,
+        IDeploymentDataProvider deploymentDataProvider,
+        IExternalFeedDataProvider externalFeedDataProvider,
+        IEnumerable<IActionYamlGenerator> actionYamlGenerators,
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
         HalibutRuntime halibutRuntime, CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _planService = planService;
-        _variableResolver = variableResolver;
         _targetFinder = targetFinder;
-        _deploymentDataProvider = deploymentDataProvider;
-        _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
-        _genericDataProvider = genericDataProvider;
-        _serverTaskDataProvider = serverTaskDataProvider;
-        _actionYamlGenerators = actionYamlGenerators;
-        _yamlNuGetPacker = yamlNuGetPacker;
         _halibutRuntime = halibutRuntime;
+        _yamlNuGetPacker = yamlNuGetPacker;
+        _variableResolver = variableResolver;
+        _accountDataProvider = accountDataProvider;
+        _genericDataProvider = genericDataProvider;
+        _releaseDataProvider = releaseDataProvider;
+        _actionYamlGenerators = actionYamlGenerators;
+        _deploymentDataProvider = deploymentDataProvider;
+        _serverTaskDataProvider = serverTaskDataProvider;
+        _externalFeedDataProvider = externalFeedDataProvider;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
+        _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
     }
 
     public async Task RunAsync(CancellationToken stoppingToken)
@@ -74,7 +89,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                     await ProcessDeploymentTaskAsync(task, stoppingToken).ConfigureAwait(false);
 
                     await _genericDataProvider.ExecuteInTransactionAsync(
-                        async (cancellationToken) =>
+                        async cancellationToken =>
                         {
                             await _serverTaskDataProvider.UpdateServerTaskStateAsync(
                                 task.Id, "Success", cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -85,14 +100,21 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                 catch (Exception ex)
                 {
                     await _genericDataProvider.ExecuteInTransactionAsync(
-                        async (cancellationToken) => { await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false); }, stoppingToken).ConfigureAwait(false);
+                        async cancellationToken => { await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false); }, stoppingToken).ConfigureAwait(false);
 
                     Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", task.Id, ex.Message);
                 }
             }
             else
             {
-                await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
     }
@@ -102,6 +124,8 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(task.Id, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null) throw new InvalidOperationException($"No deployment found for task {task.Id}");
+        
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -112,7 +136,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             var extractCalamariPackageScript = UtilService.GetEmbeddedScriptContent("ExtractCalamariPackage.ps1");
 
             // 拿到Calamari安装包字节内容
-            var calamariPackageBytes = await ContractCalamariPackageAsync().ConfigureAwait(false);
+            var calamariPackageBytes = await DownloadCalamariPackageAsync().ConfigureAwait(false);
 
             Log.Information("Generating deployment plan for deployment {DeploymentId}", deployment.Id);
 
@@ -129,20 +153,22 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             Log.Information("Finding targets for deployment {DeploymentId}", deployment.Id);
 
             // 3. 筛选目标机器
-            // 调用 DeploymentTargetFinder 根据 Deployment 和环境筛选出需要部署的机器列表
-            var targets = await _targetFinder.FindTargetsAsync(deployment.Id).ConfigureAwait(false);
+            // 调用 DeploymentTargetFinder 根据 Deployment 和环境筛选出需要部署的机器
+            var target = await _targetFinder.FindTargetsAsync(deployment, cancellationToken).ConfigureAwait(false);
 
-            if (!targets.Any()) throw new InvalidOperationException($"No target machines found for deployment {deployment.Id}");
+            if (target == null) throw new InvalidOperationException($"No target machine found for deployment {deployment.Id}");
 
-            Log.Information("Found {TargetCount} target machines for deployment {DeploymentId}", targets.Count, deployment.Id);
+            Log.Information("Found target machine {MachineName} for deployment {DeploymentId}", target.Name, deployment.Id);
+
+            await InsertMachineVariablesAsync(target, variables, release, plan, cancellationToken).ConfigureAwait(false);
 
             // 把ExtractCalamariPackage和安装文件流用StartScriptCommand传去目标机器执行
-            var extractSuccess = await ExtractCalamariPackageAsync(cancellationToken, extractCalamariPackageScript, calamariPackageBytes, targets);
-
-            if (!extractSuccess)
-            {
-                throw new InvalidOperationException($"Calamari package extraction failed on one or more target machines for deployment {deployment.Id}");
-            }
+            // var extractSuccess = await ExtractCalamariPackageAsync(cancellationToken, extractCalamariPackageScript, calamariPackageBytes, target).ConfigureAwait(false);
+            //
+            // if (!extractSuccess)
+            // {
+            //     throw new InvalidOperationException($"Calamari package extraction failed on one or more target machines for deployment {deployment.Id}");
+            // }
 
             Log.Information("Calamari package extraction completed successfully on all target machines for deployment {DeploymentId}", deployment.Id);
 
@@ -159,21 +185,24 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             // 把所有 YAML 流打包成一个 NuGet 包的字节数组，准备发送给目标机器
             var yamlNuGetPackageBytes = CreateYamlNuGetPackage(yamlStreams);
 
+            CheckNugetPackage(yamlNuGetPackageBytes);
+
             // 根据解析后的变量生成 variables.json、sensitiveVariables.json 以及对应的密码
             var (variableJsonStream, sensitiveVariableJsonStream, sensitiveVariablesPassword) = CreateVariableFileStreamsAndPassword(variables);
-
+            
             // 使用 StartScriptCommand 调用 Tentacle，把脚本和 NuGet 包、变量文件一并传到目标机器执行
-            var scriptExecutions = await StartDeployByCalamariScriptsAsync(
+            var scriptExecution = await StartDeployByCalamariScriptAsync(
                 deployByCalamariScript,
                 yamlNuGetPackageBytes,
                 variableJsonStream,
                 sensitiveVariableJsonStream,
                 sensitiveVariablesPassword,
-                targets,
+                target,
+                release.Version,
                 cancellationToken).ConfigureAwait(false);
 
             // 观察远程脚本执行状态和输出日志，并根据结果判断本次部署是否成功
-            var executionSuccess = await ObserveDeploymentScriptsAsync(scriptExecutions, cancellationToken).ConfigureAwait(false);
+            var executionSuccess = await ObserveDeploymentScriptAsync(scriptExecution, cancellationToken).ConfigureAwait(false);
 
             // 7. 记录部署完成状态
             await RecordDeploymentCompletionAsync(
@@ -199,116 +228,318 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         }
     }
 
-    private async Task<bool> ExtractCalamariPackageAsync(CancellationToken cancellationToken, string extractCalamariPackageScript, byte[] calamariPackageBytes, List<Message.Domain.Deployments.Machine> targets)
+    private async Task InsertMachineVariablesAsync(Message.Domain.Deployments.Machine target, List<VariableDto> variables, Message.Domain.Deployments.Release release, DeploymentPlanDto plan, CancellationToken cancellationToken)
     {
-        var extractExecutions = await StartExtractCalamariPackageScriptsAsync(
+        var kubernetesEndpoint = ParseKubernetesEndpoint(target.Endpoint);
+
+        if (kubernetesEndpoint == null)
+        {
+            return;
+        }
+
+        var accountToken = string.Empty;
+
+        if (!string.IsNullOrEmpty(kubernetesEndpoint.AccountId) && int.TryParse(kubernetesEndpoint.AccountId, out var accountId))
+        {
+            var account = await _accountDataProvider.GetAccountByIdAsync(accountId, cancellationToken).ConfigureAwait(false);
+
+            if (account != null)
+            {
+                accountToken = account.Token ?? string.Empty;
+            }
+        }
+
+        var containerImage = await BuildContainerImageAsync(plan, release, cancellationToken).ConfigureAwait(false);
+
+        variables.AddRange(new List<VariableDto>
+        {
+            new VariableDto
+            {
+                Name = "Octopus.Action.Kubernetes.ClusterUrl",
+                Value = kubernetesEndpoint.ClusterUrl ?? string.Empty,
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "Octopus.Account.AccountType",
+                Value = "Token",
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "Octopus.Account.Token",
+                Value = accountToken,
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "Octopus.Action.Kubernetes.SkipTlsVerification",
+                Value = kubernetesEndpoint.SkipTlsVerification ?? "False",
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "Octopus.Action.Script.SuppressEnvironmentLogging",
+                Value = "False",
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "ContainerImage",
+                Value = containerImage,
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "Octopus.Action.Kubernetes.OutputKubectlVersion",
+                Value = "True",
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            },
+            new VariableDto
+            {
+                Name = "OctopusPrintEvaluatedVariables",
+                Value = "True",
+                Description = string.Empty,
+                Type = VariableType.String,
+                IsSensitive = false,
+                LastModifiedOn = DateTimeOffset.UtcNow,
+                LastModifiedBy = "System"
+            }
+        });
+    }
+
+    private async Task<string> BuildContainerImageAsync(DeploymentPlanDto plan, Message.Domain.Deployments.Release release, CancellationToken cancellationToken)
+    {
+        var firstAction = plan.ProcessSnapshot?.StepSnapshots?
+            .SelectMany(s => s.Actions)
+            .FirstOrDefault(a => a.FeedId.HasValue && !string.IsNullOrEmpty(a.PackageId));
+
+        if (firstAction == null)
+        {
+            return release.Version;
+        }
+
+        var feed = await _externalFeedDataProvider.GetFeedByIdAsync(firstAction.FeedId.Value, cancellationToken).ConfigureAwait(false);
+
+        if (feed == null)
+        {
+            return release.Version;
+        }
+
+        var uri = new Uri(feed.FeedUri ?? string.Empty);
+
+        var feedUri = uri.Host;
+        var packageId = firstAction.PackageId ?? string.Empty;
+        var version = release.Version ?? string.Empty;
+
+        return $"{feedUri}/{packageId}:{version}";
+    }
+
+    public void CheckNugetPackage(byte[] packageBytes)
+    {
+        using var stream = new MemoryStream(packageBytes);
+
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+
+        Log.Information("=== NuGet Package Contents ===");
+        Log.Information("Total entries in package: {Count}", archive.Entries.Count);
+
+        foreach (var entry in archive.Entries)
+        {
+            Log.Information("Entry: {EntryName}, Size: {Size} bytes", entry.FullName, entry.Length);
+
+            if (entry.FullName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+                entry.FullName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) ||
+                entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
+            {
+                using var entryStream = entry.Open();
+
+                using var reader = new StreamReader(entryStream);
+
+                var content = reader.ReadToEnd();
+
+                Log.Information("=== {FileName} ===\n{Content}", entry.FullName, content);
+            }
+        }
+
+        Log.Information("=== End of Package Contents ===");
+    }
+
+    private KubernetesEndpointDto ParseKubernetesEndpoint(string endpointJson)
+    {
+        if (string.IsNullOrEmpty(endpointJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<KubernetesEndpointDto>(endpointJson);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse Kubernetes endpoint from JSON");
+
+            return null;
+        }
+    }
+
+    private async Task<bool> ExtractCalamariPackageAsync(CancellationToken cancellationToken, string extractCalamariPackageScript, byte[] calamariPackageBytes, Message.Domain.Deployments.Machine target)
+    {
+        var extractExecution = await StartExtractCalamariPackageScriptAsync(
             extractCalamariPackageScript,
             calamariPackageBytes,
-            targets,
+            target,
             cancellationToken).ConfigureAwait(false);
 
-        var extractSuccess = await ObserveDeploymentScriptsAsync(extractExecutions, cancellationToken).ConfigureAwait(false);
+        var extractSuccess = await ObserveDeploymentScriptAsync(extractExecution, cancellationToken).ConfigureAwait(false);
 
         return extractSuccess;
     }
 
-    private async Task<byte[]> ContractCalamariPackageAsync()
+    private async Task<byte[]> DownloadCalamariPackageAsync()
     {
-        const string packageId = "SolarifyDev.SquidCalamari";
+        const string packageId = "Calamari";
         const string githubUserName = "SolarifyDev";
 
-        var downloader = new GithubPackageDownloader(githubUserName, _calamariGithubPackageSetting.Token);
-        var packageStream = await downloader.DownloadPackageAsync(packageId, _calamariGithubPackageSetting.Version).ConfigureAwait(false);
+        var version = _calamariGithubPackageSetting.Version;
 
-        return ReadAllBytes(packageStream);
+        var cacheDirectory = string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.CacheDirectory)
+            ? Path.Combine(AppContext.BaseDirectory, "CalamariPackages")
+            : _calamariGithubPackageSetting.CacheDirectory;
+
+        Directory.CreateDirectory(cacheDirectory);
+
+        var cacheFilePath = Path.Combine(cacheDirectory, $"Calamari.{version}.nupkg");
+
+        if (File.Exists(cacheFilePath))
+        {
+            Log.Information("Using cached Calamari package from {CachePath}", cacheFilePath);
+
+            return await File.ReadAllBytesAsync(cacheFilePath).ConfigureAwait(false);
+        }
+
+        var downloader = new GithubPackageDownloader(githubUserName, _calamariGithubPackageSetting.Token, _calamariGithubPackageSetting.MirrorUrlTemplate);
+        var packageStream = await downloader.DownloadPackageAsync(packageId, version).ConfigureAwait(false);
+
+        var bytes = ReadAllBytes(packageStream);
+
+        await File.WriteAllBytesAsync(cacheFilePath, bytes).ConfigureAwait(false);
+
+        Log.Information("Downloaded and cached Calamari package to {CachePath}", cacheFilePath);
+
+        return bytes;
     }
 
-    private async Task<List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>> StartDeployByCalamariScriptsAsync(
+    private async Task<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartDeployByCalamariScriptAsync(
         string deployByCalamariScript,
         byte[] yamlNuGetPackageBytes,
         Stream variableJsonStream,
         Stream sensitiveVariableJsonStream,
         string sensitiveVariablesPassword,
-        List<Message.Domain.Deployments.Machine> targets,
+        Message.Domain.Deployments.Machine target,
+        string version,
         CancellationToken cancellationToken)
     {
-        var result = new List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>();
-
-        if (targets == null || targets.Count == 0)
+        if (target == null)
         {
-            throw new InvalidOperationException("No target machines to execute DeployByCalamari script");
+            throw new InvalidOperationException("No target machine to execute DeployByCalamari script");
         }
 
         var packageBytes = yamlNuGetPackageBytes ?? Array.Empty<byte>();
         var variableBytes = ReadAllBytes(variableJsonStream);
         var sensitiveBytes = ReadAllBytes(sensitiveVariableJsonStream);
 
-        const string packageFileName = "squid.yaml.package.nupkg";
+        var packageFileName = $"squid.{version}.nupkg";
         const string variableFileName = "variables.json";
         const string sensitiveVariableFileName = "sensitiveVariables.json";
 
         var packageFilePath = $".\\{packageFileName}";
         var variableFilePath = $".\\{variableFileName}";
-        var sensitiveVariableFilePath = $".\\{sensitiveVariableFileName}";
+        var sensitiveVariableFilePath = string.IsNullOrEmpty(sensitiveVariablesPassword) ? string.Empty : $".\\{sensitiveVariableFileName}";
 
         var calamariVersion = GetCalamariVersion();
 
         var scriptBody = deployByCalamariScript
-            .Replace("{{CalamariVersion}}", calamariVersion, StringComparison.Ordinal)
             .Replace("{{PackageFilePath}}", packageFilePath, StringComparison.Ordinal)
             .Replace("{{VariableFilePath}}", variableFilePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariableFile}}", sensitiveVariableFilePath, StringComparison.Ordinal);
+            .Replace("{{SensitiveVariableFile}}", sensitiveVariableFilePath, StringComparison.Ordinal)
+            .Replace("{{SensitiveVariablePassword}}", sensitiveVariablesPassword, StringComparison.Ordinal)
+            .Replace("{{CalamariVersion}}", GetCalamariVersion() + $"/{target.OperatingSystem.GetDescription()}", StringComparison.Ordinal);
 
-        foreach (var target in targets)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var endpoint = ParseMachineEndpoint(target);
+
+        if (endpoint == null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var endpoint = ParseMachineEndpoint(target);
-
-            if (endpoint == null)
-            {
-                Log.Warning("Skipping machine {MachineName} because endpoint could not be parsed", target.Name);
-
-                continue;
-            }
-
-            var scriptFiles = new[]
-            {
-                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null), new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null), new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
-            };
-
-            var command = new StartScriptCommand(
-                scriptBody,
-                ScriptIsolationLevel.FullIsolation,
-                TimeSpan.FromMinutes(30),
-                null,
-                Array.Empty<string>(),
-                null,
-                scriptFiles);
-
-            Log.Information("Starting DeployByCalamari script on machine {MachineName}", target.Name);
-
-            var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
-
-            var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
-            result.Add((target, scriptClient, ticket));
+            throw new InvalidOperationException($"Endpoint could not be parsed for machine {target.Name}");
         }
 
-        return result;
+        var scriptFiles = new[]
+        {
+            new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null),
+            new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null),
+            new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
+        };
+
+        Log.Information("Starting DeployByCalamari with script {@Script}", scriptBody);
+
+        var command = new StartScriptCommand(
+            scriptBody,
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromMinutes(30),
+            null,
+            Array.Empty<string>(),
+            null,
+            scriptFiles);
+
+        var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+
+        Log.Information("Starting DeployByCalamari script on machine {MachineName} with ticket id: {Tiecket}", target.Name, ticket);
+
+        return (target, scriptClient, ticket);
     }
 
-    private async Task<List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>> StartExtractCalamariPackageScriptsAsync(
+    private async Task<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartExtractCalamariPackageScriptAsync(
         string extractCalamariPackageScript,
         byte[] calamariPackageBytes,
-        List<Message.Domain.Deployments.Machine> targets,
+        Message.Domain.Deployments.Machine target,
         CancellationToken cancellationToken)
     {
-        var result = new List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)>();
-
-        if (targets == null || targets.Count == 0)
+        if (target == null)
         {
-            throw new InvalidOperationException("No target machines to execute ExtractCalamariPackage script");
+            throw new InvalidOperationException("No target machine to execute ExtractCalamariPackage script");
         }
 
         var calamariVersion = _calamariGithubPackageSetting.Version;
@@ -324,72 +555,73 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
         var calamariPackageFileName = $"SolarifyDev.SquidCalamari.{calamariVersion}.nupkg";
 
-        foreach (var target in targets)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var endpoint = ParseMachineEndpoint(target);
+
+        if (endpoint == null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var endpoint = ParseMachineEndpoint(target);
-
-            if (endpoint == null)
-            {
-                Log.Warning("Skipping machine {MachineName} because endpoint could not be parsed", target.Name);
-
-                continue;
-            }
-
-            var scriptFiles = new[]
-            {
-                new ScriptFile(calamariPackageFileName, DataStream.FromBytes(calamariPackageBytes), null)
-            };
-
-            var command = new StartScriptCommand(
-                scriptBody,
-                ScriptIsolationLevel.FullIsolation,
-                TimeSpan.FromMinutes(30),
-                null,
-                Array.Empty<string>(),
-                null,
-                scriptFiles);
-
-            Log.Information("Starting ExtractCalamariPackage script on machine {MachineName}", target.Name);
-
-            var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
-
-            var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
-            result.Add((target, scriptClient, ticket));
+            throw new InvalidOperationException($"Endpoint could not be parsed for machine {target.Name}");
         }
 
-        return result;
+        var scriptFiles = new[]
+        {
+            new ScriptFile(calamariPackageFileName, DataStream.FromBytes(calamariPackageBytes), null)
+        };
+
+        var command = new StartScriptCommand(
+            scriptBody,
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromMinutes(30),
+            null,
+            Array.Empty<string>(),
+            null,
+            scriptFiles);
+
+        var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+
+        Log.Information("Starting ExtractCalamariPackage script on machine {MachineName} with ticket id: {Ticket}", target.Name, ticket);
+
+        return (target, scriptClient, ticket);
     }
 
-
-    private async Task<bool> ObserveDeploymentScriptsAsync(
-        List<(Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> scriptExecutions,
-        CancellationToken cancellationToken)
+    private async Task<bool> ObserveDeploymentScriptAsync(
+        (Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout = null)
     {
-        if (scriptExecutions == null || scriptExecutions.Count == 0)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var scriptTimeout = timeout ?? TimeSpan.FromMinutes(3);
+        var startTime = DateTime.UtcNow;
+
+        var scriptStatusResponse = new ScriptStatusResponse(
+            execution.Ticket,
+            ProcessState.Pending,
+            0,
+            new List<ProcessOutput>(),
+            0);
+
+        var logs = new List<ProcessOutput>();
+
+        try
         {
-            throw new InvalidOperationException("No script executions to observe for deployment");
-        }
-
-        var overallSuccess = true;
-
-        foreach (var execution in scriptExecutions)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var scriptStatusResponse = new ScriptStatusResponse(
-                execution.Ticket,
-                ProcessState.Pending,
-                0,
-                new List<ProcessOutput>(),
-                0);
-
-            var logs = new List<ProcessOutput>();
-
             while (scriptStatusResponse.State != ProcessState.Complete)
             {
+                if (DateTime.UtcNow - startTime > scriptTimeout)
+                {
+                    Log.Warning(
+                        "Script execution timeout on machine {MachineName}, cancelling script with ticket {Ticket}",
+                        execution.Machine.Name,
+                        execution.Ticket.TaskId);
+
+                    await CancelScriptAsync(execution, scriptStatusResponse.NextLogSequence).ConfigureAwait(false);
+
+                    return false;
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
 
                 scriptStatusResponse = await execution.ScriptClient.GetStatusAsync(
@@ -397,51 +629,95 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
                 logs.AddRange(scriptStatusResponse.Logs);
 
+                foreach (var log in scriptStatusResponse.Logs)
+                {
+                    Log.Information(
+                        "[Deployment Script] Machine={MachineName}, Time={Time}, Source={Source}, Message={Message}",
+                        execution.Machine.Name,
+                        log.Occurred,
+                        log.Source,
+                        log.Text);
+                }
+
                 if (scriptStatusResponse.State != ProcessState.Complete)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warning(
+                "Script observation cancelled on machine {MachineName}, cancelling script with ticket {Ticket}",
+                execution.Machine.Name,
+                execution.Ticket.TaskId);
 
-            var completeResponse = await execution.ScriptClient.CompleteScriptAsync(
-                new CompleteScriptCommand(execution.Ticket, scriptStatusResponse.NextLogSequence)).ConfigureAwait(false);
+            await CancelScriptAsync(execution, scriptStatusResponse.NextLogSequence).ConfigureAwait(false);
 
-            logs.AddRange(completeResponse.Logs);
-
-            var orderedLogs = logs
-                .OrderBy(l => l.Occurred)
-                .ToList();
-
-            foreach (var log in orderedLogs)
-            {
-                Log.Information(
-                    "[Deployment Script] Machine={MachineName}, Time={Time}, Source={Source}, Message={Message}",
-                    execution.Machine.Name,
-                    log.Occurred,
-                    log.Source,
-                    log.Text);
-            }
-
-            var success = completeResponse.ExitCode == 0;
-
-            if (!success)
-            {
-                overallSuccess = false;
-
-                Log.Error(
-                    "Deployment script failed on machine {MachineName} with exit code {ExitCode}",
-                    execution.Machine.Name,
-                    completeResponse.ExitCode);
-            }
-            else
-            {
-                Log.Information(
-                    "Deployment script completed successfully on machine {MachineName}",
-                    execution.Machine.Name);
-            }
+            throw;
         }
 
-        return overallSuccess;
+        var completeResponse = await execution.ScriptClient.CompleteScriptAsync(
+            new CompleteScriptCommand(execution.Ticket, scriptStatusResponse.NextLogSequence)).ConfigureAwait(false);
+
+        logs.AddRange(completeResponse.Logs);
+
+        var orderedLogs = logs
+            .OrderBy(l => l.Occurred)
+            .ToList();
+
+        foreach (var log in orderedLogs)
+        {
+            Log.Information(
+                "[Deployment Script] Machine={MachineName}, Time={Time}, Source={Source}, Message={Message}",
+                execution.Machine.Name,
+                log.Occurred,
+                log.Source,
+                log.Text);
+        }
+
+        var success = completeResponse.ExitCode == 0;
+
+        if (!success)
+        {
+            Log.Error(
+                "Deployment script failed on machine {MachineName} with exit code {ExitCode}",
+                execution.Machine.Name,
+                completeResponse.ExitCode);
+        }
+        else
+        {
+            Log.Information(
+                "Deployment script completed successfully on machine {MachineName}",
+                execution.Machine.Name);
+        }
+
+        return success;
+    }
+
+    private async Task CancelScriptAsync(
+        (Message.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
+        long lastLogSequence)
+    {
+        try
+        {
+            var cancelResponse = await execution.ScriptClient.CancelScriptAsync(
+                new CancelScriptCommand(execution.Ticket, lastLogSequence)).ConfigureAwait(false);
+
+            Log.Information(
+                "Script cancelled on machine {MachineName}, ticket {Ticket}, state: {State}",
+                execution.Machine.Name,
+                execution.Ticket.TaskId,
+                cancelResponse.State);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(
+                ex,
+                "Failed to cancel script on machine {MachineName}, ticket {Ticket}",
+                execution.Machine.Name,
+                execution.Ticket.TaskId);
+        }
     }
 
     private byte[] CreateYamlNuGetPackage(Dictionary<string, Stream> yamlStreams)
@@ -456,16 +732,9 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         return _yamlNuGetPacker.CreateNuGetPackageFromYamlStreams(yamlStreams);
     }
 
-    private static string GetCalamariVersion()
+    private string GetCalamariVersion()
     {
-        var version = System.Environment.GetEnvironmentVariable("SQUID_CALAMARI_VERSION");
-
-        if (string.IsNullOrWhiteSpace(version))
-        {
-            version = "0.1.0";
-        }
-
-        return version;
+        return string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.Version) ? "28.2.1" : _calamariGithubPackageSetting.Version;
     }
 
     private static byte[] ReadAllBytes(Stream stream)
@@ -490,19 +759,14 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     {
         try
         {
-            if (string.IsNullOrEmpty(machine.Json))
+            if (string.IsNullOrEmpty(machine.Uri) || string.IsNullOrEmpty(machine.Thumbprint))
             {
+                Log.Warning("Machine {MachineName} has missing Uri or Thumbprint", machine.Name);
+
                 return null;
             }
 
-            var machineConfig = JsonSerializer.Deserialize<MachineConfigurationDto>(machine.Json);
-
-            if (machineConfig?.Endpoint == null)
-            {
-                return null;
-            }
-
-            return new ServiceEndPoint(machineConfig.Endpoint.Uri, machineConfig.Endpoint.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return new ServiceEndPoint(machine.Uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
         }
         catch (Exception ex)
         {
@@ -513,7 +777,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     }
 
     private async Task<Dictionary<string, Stream>> GenerateYamlStreamsAsync(
-        List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps,
+        List<DeploymentStepDto> steps,
         CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, Stream>(StringComparer.OrdinalIgnoreCase);
@@ -557,14 +821,14 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         return result;
     }
 
-    private List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> ConvertProcessSnapshotToSteps(
-        Squid.Message.Models.Deployments.Process.ProcessSnapshotData processSnapshot)
+    private List<DeploymentStepDto> ConvertProcessSnapshotToSteps(
+        ProcessSnapshotData processSnapshot)
     {
-        var steps = new List<Squid.Message.Models.Deployments.Process.DeploymentStepDto>();
+        var steps = new List<DeploymentStepDto>();
 
         foreach (var stepSnap in processSnapshot.StepSnapshots.OrderBy(p => p.StepOrder))
         {
-            var step = new Squid.Message.Models.Deployments.Process.DeploymentStepDto
+            var step = new DeploymentStepDto
             {
                 Id = stepSnap.Id,
                 ProcessId = processSnapshot.Id,
@@ -579,13 +843,13 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                 CreatedAt = stepSnap.CreatedAt,
                 Properties = stepSnap.Properties.Select(
                     kvp =>
-                        new Squid.Message.Models.Deployments.Process.DeploymentStepPropertyDto
+                        new DeploymentStepPropertyDto
                         {
                             StepId = stepSnap.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
                         }).ToList(),
                 Actions = stepSnap.Actions.Select(
                     action =>
-                        new Squid.Message.Models.Deployments.Process.DeploymentActionDto
+                        new DeploymentActionDto
                         {
                             Id = action.Id,
                             StepId = stepSnap.Id,
@@ -599,7 +863,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                             CreatedAt = action.CreatedAt,
                             Properties = action.Properties.Select(
                                 kvp =>
-                                    new Squid.Message.Models.Deployments.Process.DeploymentActionPropertyDto
+                                    new DeploymentActionPropertyDto
                                     {
                                         ActionId = action.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
                                     }).ToList(),
@@ -616,9 +880,9 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     }
 
     private (Stream variableJsonStream, Stream sensitiveVariableJsonStream, string password) CreateVariableFileStreamsAndPassword(
-        Squid.Message.Models.Deployments.Variable.VariableSetSnapshotData variables)
+        List<VariableDto> variables)
     {
-        if (variables == null || variables.Variables == null || variables.Variables.Count == 0)
+        if (variables == null || variables.Count == 0)
         {
             var emptyJson = "{}";
             var emptyBytes = Encoding.UTF8.GetBytes(emptyJson);
@@ -629,7 +893,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         var nonSensitiveVariables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var sensitiveVariables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var variable in variables.Variables)
+        foreach (var variable in variables)
         {
             if (variable == null || string.IsNullOrWhiteSpace(variable.Name))
                 continue;
@@ -681,7 +945,6 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         var completion = new Message.Domain.Deployments.DeploymentCompletion
         {
             DeploymentId = deploymentId,
-            ReleaseId = deployment?.ReleaseId,
             CompletedTime = DateTimeOffset.UtcNow,
             State = success ? "Success" : "Failed",
             SpaceId = deployment?.SpaceId ?? 1, // 如果找不到部署，使用默认SpaceId
@@ -693,17 +956,5 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         Log.Information(
             "Recorded deployment completion for deployment {DeploymentId} (Release {ReleaseId}): {Status}",
             deploymentId, deployment?.ReleaseId, success ? "Success" : "Failed");
-    }
-
-    public class MachineConfigurationDto
-    {
-        public MachineEndpointDto? Endpoint { get; set; }
-    }
-
-    public class MachineEndpointDto
-    {
-        public string Uri { get; set; } = string.Empty;
-
-        public string Thumbprint { get; set; } = string.Empty;
     }
 }

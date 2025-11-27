@@ -2,9 +2,9 @@ namespace Squid.Message.Models.Deployments.Machine;
 
 public class MachinePolicyDto
 {
-    public string Id { get; set; }
+    public int Id { get; set; }
 
-    public string SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Name { get; set; }
 

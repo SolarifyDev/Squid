@@ -18,15 +18,17 @@ public class Deployment : IEntity<int>
     
     public int EnvironmentId { get; set; }
     
+    public int MachineId { get; set; }
+    
     public string Json { get; set; }
     
     public int DeployedBy { get; set; }
     
-    public string DeployedToMachineIds { get; set; }
+    public string DeployedToMachineIds { get; set; } = string.Empty;
 
     public int? ProcessSnapshotId { get; set; }
 
-    public int? VariableSnapshotId { get; set; }
+    public int? VariableSetSnapshotId { get; set; }
 
     public DateTimeOffset Created { get; set; }
 }

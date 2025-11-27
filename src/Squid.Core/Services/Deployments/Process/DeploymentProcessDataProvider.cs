@@ -1,7 +1,3 @@
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Services.Deployments.Process;
 
 public interface IDeploymentProcessDataProvider : IScopedDependency
@@ -44,7 +40,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task UpdateDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default)
     {
-        process.LastModified = DateTimeOffset.Now;
+        process.LastModified = DateTimeOffset.UtcNow;
         await _repository.UpdateAsync(process, cancellationToken).ConfigureAwait(false);
 
         if (forceSave)

@@ -14,11 +14,11 @@ public class DeploymentProcess : IEntity<int>
 
     public int SpaceId { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public string CreatedBy { get; set; }
 
-    public DateTimeOffset LastModified { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset LastModified { get; set; } = DateTimeOffset.UtcNow;
 
     public string LastModifiedBy { get; set; }
 }

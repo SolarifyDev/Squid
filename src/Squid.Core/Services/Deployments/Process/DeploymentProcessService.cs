@@ -1,7 +1,4 @@
-using AutoMapper;
-using Squid.Core.DependencyInjection;
 using Squid.Message.Commands.Deployments.Process;
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Events.Deployments.Process;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Requests.Deployments.Process;
@@ -60,8 +57,8 @@ public class DeploymentProcessService : IDeploymentProcessService
         var process = _mapper.Map<DeploymentProcess>(command);
         
         process.Version = await _processDataProvider.GetNextVersionAsync(command.ProjectId, cancellationToken).ConfigureAwait(false);
-        process.CreatedAt = DateTimeOffset.Now;
-        process.LastModified = DateTimeOffset.Now;
+        process.CreatedAt = DateTimeOffset.UtcNow;
+        process.LastModified = DateTimeOffset.UtcNow;
 
         await _processDataProvider.AddDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -82,7 +79,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         }
 
         _mapper.Map(command, process);
-        process.LastModified = DateTimeOffset.Now;
+        process.LastModified = DateTimeOffset.UtcNow;
 
         await _processDataProvider.UpdateDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -168,9 +165,9 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var stepDto in stepDtos)
         {
             var step = _mapper.Map<DeploymentStep>(stepDto);
-            
+
             step.ProcessId = processId;
-            step.CreatedAt = DateTimeOffset.Now;
+            step.CreatedAt = DateTimeOffset.UtcNow;
             steps.Add(step);
 
             if (stepDto.Properties?.Any() == true)
@@ -226,9 +223,9 @@ public class DeploymentProcessService : IDeploymentProcessService
         foreach (var actionDto in actionDtos)
         {
             var action = _mapper.Map<DeploymentAction>(actionDto);
-            
+
             action.StepId = stepId;
-            action.CreatedAt = DateTimeOffset.Now;
+            action.CreatedAt = DateTimeOffset.UtcNow;
             batchData.Actions.Add(action);
 
             if (actionDto.Properties?.Any() == true)

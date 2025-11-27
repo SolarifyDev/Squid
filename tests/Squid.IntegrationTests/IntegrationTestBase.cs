@@ -1,11 +1,10 @@
 namespace Squid.IntegrationTests;
 
-[Collection("Sequential")]
 public class IntegrationTestBase : IAsyncLifetime
 {
     private readonly ILifetimeScope _lifetimeScope;
 
-    protected IntegrationTestBase(IntegrationFixture fixture)
+    protected IntegrationTestBase(IIntegrationFixture fixture)
     {
         _lifetimeScope = fixture.LifetimeScope;
     }
@@ -15,7 +14,8 @@ public class IntegrationTestBase : IAsyncLifetime
         var dependency = extraRegistration != null
             ? _lifetimeScope.BeginLifetimeScope(extraRegistration).Resolve<T>()
             : _lifetimeScope.BeginLifetimeScope().Resolve<T>();
-        await action(dependency);
+
+        await action(dependency).ConfigureAwait(false);
     }
 
     protected Task Run<T, U>(Func<T, U, Task> action, Action<ContainerBuilder> extraRegistration = null)
@@ -34,7 +34,7 @@ public class IntegrationTestBase : IAsyncLifetime
             ? _lifetimeScope.BeginLifetimeScope(extraRegistration).Resolve<T>()
             : _lifetimeScope.BeginLifetimeScope().Resolve<T>();
 
-        return await action(dependency);
+        return await action(dependency).ConfigureAwait(false);
     }
 
     public Task InitializeAsync()

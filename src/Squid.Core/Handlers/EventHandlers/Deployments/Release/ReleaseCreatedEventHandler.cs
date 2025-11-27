@@ -6,6 +6,5 @@ public class ReleaseCreatedEventHandler : IEventHandler<ReleaseCreatedEvent>
 {
     public async Task Handle(IReceiveContext<ReleaseCreatedEvent> context, CancellationToken cancellationToken)
     {
-        return;
     }
 }

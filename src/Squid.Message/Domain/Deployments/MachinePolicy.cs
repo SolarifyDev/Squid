@@ -1,10 +1,10 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class MachinePolicy : IEntity<string>
+public class MachinePolicy : IEntity<int>
 {
-    public string Id { get; set; }
+    public int Id { get; set; }
 
-    public string SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Name { get; set; }
 

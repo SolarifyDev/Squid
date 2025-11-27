@@ -1,5 +1,5 @@
-using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Core.Services.Deployments;
+using Squid.Message.Commands.Deployments.Deployment;
 
 namespace Squid.Core.Handlers.CommandHandlers.Deployments.Deployment;
 

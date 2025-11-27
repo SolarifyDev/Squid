@@ -1,12 +1,7 @@
-using Microsoft.Extensions.Logging;
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Core.Services.Common;
-using System.IO.Compression;
 using System.Text;
 using Newtonsoft.Json;
+using Squid.Core.Services.Common;
 using Squid.Message.Models.Deployments.Process;
-using Squid.Message.Domain.Deployments;
 
 namespace Squid.Core.Services.Deployments.Process;
 
@@ -178,6 +173,8 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                     ActionType = action.ActionType,
                     ActionOrder = action.ActionOrder,
                     WorkerPoolId = action.WorkerPoolId,
+                    FeedId = action.FeedId,
+                    PackageId = action.PackageId,
                     IsDisabled = action.IsDisabled,
                     IsRequired = action.IsRequired,
                     CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,

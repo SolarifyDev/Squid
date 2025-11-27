@@ -1,7 +1,3 @@
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Services.Deployments.Process;
 
 public interface IDeploymentActionPropertyDataProvider : IScopedDependency

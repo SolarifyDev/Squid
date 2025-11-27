@@ -2,13 +2,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Serilog;
 using Squid.Core.Services.Common;
 
 namespace Squid.IntegrationTests;
 
-public class IntegrationYamlNugetPacker : IntegrationTestBase
+[Collection("Sequential")]
+public class IntegrationYamlNugetPacker : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationYamlNugetPacker>>
 {
-    public IntegrationYamlNugetPacker(IntegrationFixture fixture) : base(fixture)
+    public IntegrationYamlNugetPacker(IntegrationFixture<IntegrationYamlNugetPacker> fixture) : base(fixture)
     {
     }
 
@@ -111,5 +113,4 @@ public class IntegrationYamlNugetPacker : IntegrationTestBase
             return Task.CompletedTask;
         }).ConfigureAwait(false);
     }
-
 }

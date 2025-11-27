@@ -1,15 +1,14 @@
+using Squid.Core.Services.Deployments.Release;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
-using Squid.Core.Services.Deployments.Release;
 
 namespace Squid.Core.Services.Deployments.Variable;
 
 public class ScopeContext
 {
     public string EnvironmentId { get; set; }
+    
     public string MachineId { get; set; }
-    public string ChannelId { get; set; }
-    public Dictionary<string, string> AdditionalScopes { get; set; } = new Dictionary<string, string>();
 }
 
 public class ResolvedVariables
@@ -50,7 +49,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         Log.Information("Resolving variables for Release {ReleaseId}", releaseId);
 
         var sensitiveVariableNames = new List<string>();
-        var allVariables = new List<VariableSnapshotData>();
+        var allVariables = new List<VariableDto>();
 
         // 获取Release信息
         var release = await _releaseDataProvider.GetReleaseByIdAsync(releaseId, cancellationToken).ConfigureAwait(false);
@@ -103,7 +102,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         return new ResolvedVariables(resolvedVariables, sensitiveVariableNames);
     }
 
-    private bool IsVariableInScope(VariableSnapshotData variable, ScopeContext context)
+    private bool IsVariableInScope(VariableDto variable, ScopeContext context)
     {
         if (!variable.Scopes.Any())
             return true;
@@ -128,12 +127,11 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         {
             VariableScopeType.Environment => scopeValues.Contains(context.EnvironmentId),
             VariableScopeType.Machine => scopeValues.Contains(context.MachineId),
-            VariableScopeType.Channel => scopeValues.Contains(context.ChannelId),
-            _ => context.AdditionalScopes.TryGetValue(scopeType.ToString(), out var value) && scopeValues.Contains(value)
+            _ => throw new NotImplementedException(),
         };
     }
 
-    private int GetScopePriority(VariableSnapshotData variable, ScopeContext context)
+    private int GetScopePriority(VariableDto variable, ScopeContext context)
     {
         if (!variable.Scopes.Any())
             return 1000;

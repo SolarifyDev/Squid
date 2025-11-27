@@ -11,6 +11,8 @@ public interface IExternalFeedDataProvider : IScopedDependency
     Task<(int count, List<Message.Domain.Deployments.ExternalFeed>)> GetExternalFeedPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<Message.Domain.Deployments.ExternalFeed>> GetExternalFeedsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
+
+    Task<Message.Domain.Deployments.ExternalFeed> GetFeedByIdAsync(int feedId, CancellationToken cancellationToken = default);
 }
 
 public class ExternalFeedDataProvider : IExternalFeedDataProvider
@@ -74,10 +76,14 @@ public class ExternalFeedDataProvider : IExternalFeedDataProvider
 
     public async Task<List<Message.Domain.Deployments.ExternalFeed>> GetExternalFeedsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
-        // 示例实现：按主键查找
         return await _repository.Query<Message.Domain.Deployments.ExternalFeed>()
             .Where(f => ids.Contains(f.Id))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<Message.Domain.Deployments.ExternalFeed> GetFeedByIdAsync(int feedId, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetByIdAsync<Message.Domain.Deployments.ExternalFeed>(feedId, cancellationToken).ConfigureAwait(false);
     }
 }

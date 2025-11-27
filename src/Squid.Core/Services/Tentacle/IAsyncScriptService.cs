@@ -9,4 +9,6 @@ public interface IAsyncScriptService
     Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request);
     
     Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command);
+    
+    Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command);
 }
