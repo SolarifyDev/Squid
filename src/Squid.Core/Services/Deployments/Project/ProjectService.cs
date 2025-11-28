@@ -1,13 +1,16 @@
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Events.Deployments.Project;
+using Squid.Message.Requests.Deployments.Project;
 
 namespace Squid.Core.Services.Deployments.Project;
 
 public interface IProjectService : IScopedDependency
 {
-    Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand createProjectCommand, CancellationToken cancellationToken);
+    Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken);
 
-    Task<ProjectGroupCreatedEvent> CreateProjectGroupAsync(CreateProjectGroupCommand createProjectGroupCommand, CancellationToken cancellationToken);
+    Task<ProjectGroupCreatedEvent> CreateProjectGroupAsync(CreateProjectGroupCommand command, CancellationToken cancellationToken);
+
+    Task<GetProjectGroupsWithProjectsResponse> GetProjectsAsync(GetProjectGroupsWithProjectsRequest request, CancellationToken cancellationToken);
 }
 
 public class ProjectService : IProjectService
@@ -27,6 +30,11 @@ public class ProjectService : IProjectService
     }
 
     public Task<ProjectGroupCreatedEvent> CreateProjectGroupAsync(CreateProjectGroupCommand createProjectGroupCommand, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<GetProjectGroupsWithProjectsResponse> GetProjectsAsync(GetProjectGroupsWithProjectsRequest request, CancellationToken cancellationToken)
     {
         throw new NotImplementedException();
     }

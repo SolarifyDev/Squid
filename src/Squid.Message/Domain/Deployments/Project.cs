@@ -10,6 +10,8 @@ public class Project : IEntity<int>
     
     public bool IsDisabled { get; set; }
     
+    public int EnvironmentId { get; set; }
+    
     public int VariableSetId { get; set; }
     
     public int DeploymentProcessId { get; set; }

@@ -12,6 +12,8 @@ public class ProjectDto
     
     public int VariableSetId { get; set; }
     
+    public int EnvironmentId { get; set; }
+    
     public int DeploymentProcessId { get; set; }
     
     public int ProjectGroupId { get; set; }
