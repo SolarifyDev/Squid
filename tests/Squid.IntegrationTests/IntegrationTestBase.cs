@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using Serilog;
+
 namespace Squid.IntegrationTests;
 
 public class IntegrationTestBase : IAsyncLifetime
@@ -42,10 +45,18 @@ public class IntegrationTestBase : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        //If have a real database, only need to clean the table after each test.
         var context = _lifetimeScope.Resolve<SquidDbContext>();
-        return context.Database.EnsureDeletedAsync();
+
+        var dbName = context.Database.GetDbConnection().Database;
+
+        if (!dbName.StartsWith("squid_integrationtests_", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("Skipping database deletion: {DatabaseName} is not a test database", dbName);
+            return;
+        }
+
+        await context.Database.EnsureDeletedAsync().ConfigureAwait(false);
     }
 }

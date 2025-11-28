@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
@@ -82,9 +83,18 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         var context = LifetimeScope.Resolve<SquidDbContext>();
-        return context.Database.EnsureDeletedAsync();
+
+        var dbName = context.Database.GetDbConnection().Database;
+
+        if (!dbName.StartsWith("squid_integrationtests_", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("Skipping database deletion: {DatabaseName} is not a test database", dbName);
+            return;
+        }
+
+        await context.Database.EnsureDeletedAsync().ConfigureAwait(false);
     }
 }
