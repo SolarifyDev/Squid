@@ -1,5 +1,7 @@
 using Squid.Core.Services.Deployments.Deployment;
 using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.Process.Action;
+using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Models.Deployments.Process;
 
@@ -124,13 +126,7 @@ public class DeploymentStepPlanner : IDeploymentStepPlanner
                             ActionId = ap.ActionId,
                             PropertyName = ap.PropertyName,
                             PropertyValue = ap.PropertyValue
-                        }).ToList(),
-                    Environments = actionEnvironments.Where(ae => ae.ActionId == a.Id)
-                        .Select(ae => ae.EnvironmentId).ToList(),
-                    Channels = actionChannels.Where(ac => ac.ActionId == a.Id)
-                        .Select(ac => ac.ChannelId).ToList(),
-                    MachineRoles = actionMachineRoles.Where(amr => amr.ActionId == a.Id)
-                        .Select(amr => amr.MachineRole).ToList()
+                        }).ToList()
                 }).ToList()
         }).ToList();
 

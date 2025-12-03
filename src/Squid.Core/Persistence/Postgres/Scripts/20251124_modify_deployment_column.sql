@@ -18,3 +18,26 @@ ALTER TABLE variable_set DROP COLUMN content_hash;
 
 ALTER TABLE deployment_action ADD COLUMN IF NOT EXISTS feed_id INTEGER;
 ALTER TABLE deployment_action ADD COLUMN IF NOT EXISTS package_id VARCHAR(500);
+
+-- DeploymentProcess schema update to match new entity:
+--   C#: Squid.Message.Domain.Deployments.DeploymentProcess
+--   Fields: Id (PK), Version, SpaceId, LastModified, LastModifiedBy
+--   Relation: Project.DeploymentProcessId -> DeploymentProcess.Id (1:1)
+
+ALTER TABLE deployment_process
+    DROP COLUMN IF EXISTS name,
+    DROP COLUMN IF EXISTS description,
+    DROP COLUMN IF EXISTS created_at,
+    DROP COLUMN IF EXISTS created_by,
+    DROP COLUMN IF EXISTS project_id;
+
+DROP INDEX IF EXISTS ix_deployment_process_project_id;
+DROP INDEX IF EXISTS ix_deployment_process_project_version;
+
+ALTER TABLE deployment_process
+    ALTER COLUMN version SET NOT NULL,
+    ALTER COLUMN version SET DEFAULT 1;
+
+ALTER TABLE deployment_process
+    ALTER COLUMN last_modified SET NOT NULL,
+    ALTER COLUMN last_modified SET DEFAULT NOW();

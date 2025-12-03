@@ -1,6 +1,8 @@
 using System.Text;
 using Newtonsoft.Json;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Process.Action;
+using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.Deployments.Process;
@@ -207,7 +209,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         {
             Id = processId,
             Version = process.Version,
-            CreatedAt = process.CreatedAt,
+            CreatedAt = process.LastModified,
             StepSnapshots = processSnapshots
         };
     }

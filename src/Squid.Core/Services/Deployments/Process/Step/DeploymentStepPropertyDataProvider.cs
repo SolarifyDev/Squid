@@ -1,4 +1,4 @@
-namespace Squid.Core.Services.Deployments.Process;
+namespace Squid.Core.Services.Deployments.Process.Step;
 
 public interface IDeploymentStepPropertyDataProvider : IScopedDependency
 {

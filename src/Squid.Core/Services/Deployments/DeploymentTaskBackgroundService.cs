@@ -163,12 +163,12 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
             await InsertMachineVariablesAsync(target, variables, release, plan, cancellationToken).ConfigureAwait(false);
 
             // 把ExtractCalamariPackage和安装文件流用StartScriptCommand传去目标机器执行
-            // var extractSuccess = await ExtractCalamariPackageAsync(cancellationToken, extractCalamariPackageScript, calamariPackageBytes, target).ConfigureAwait(false);
-            //
-            // if (!extractSuccess)
-            // {
-            //     throw new InvalidOperationException($"Calamari package extraction failed on one or more target machines for deployment {deployment.Id}");
-            // }
+            var extractSuccess = await ExtractCalamariPackageAsync(cancellationToken, extractCalamariPackageScript, calamariPackageBytes, target).ConfigureAwait(false);
+            
+            if (!extractSuccess)
+            {
+                throw new InvalidOperationException($"Calamari package extraction failed on one or more target machines for deployment {deployment.Id}");
+            }
 
             Log.Information("Calamari package extraction completed successfully on all target machines for deployment {DeploymentId}", deployment.Id);
 
@@ -866,10 +866,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                                     new DeploymentActionPropertyDto
                                     {
                                         ActionId = action.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
-                                    }).ToList(),
-                            Environments = action.Environments,
-                            Channels = action.Channels,
-                            MachineRoles = action.MachineRoles
+                                    }).ToList()
                         }).ToList()
             };
 
