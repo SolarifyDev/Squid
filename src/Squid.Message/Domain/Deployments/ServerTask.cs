@@ -27,8 +27,10 @@ public class ServerTask : IEntity<int>
     public int ProjectId { get; set; }
 
     public int EnvironmentId { get; set; }
-    
+
     public int DurationSeconds { get; set; }
+
+    public int BatchId { get; set; }
 
     public string JSON { get; set; }
 
@@ -49,6 +51,4 @@ public class ServerTask : IEntity<int>
     public int StateOrder { get; set; }
 
     public int Weight { get; set; }
-
-    public int BatchId { get; set; }
 }

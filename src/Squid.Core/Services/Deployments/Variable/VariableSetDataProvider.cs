@@ -4,11 +4,13 @@ namespace Squid.Core.Services.Deployments.Variable;
 
 public interface IVariableSetDataProvider : IScopedDependency
 {
-    Task<Message.Domain.Deployments.VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
+    Task<VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
 
-    Task<List<Message.Domain.Deployments.VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
+    Task<List<VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
 
-    Task<Message.Domain.Deployments.VariableSet> GetVariableSetByIdAsync(int variableSetId, CancellationToken cancellationToken = default);
+    Task<VariableSet> GetVariableSetByIdAsync(int variableSetId, CancellationToken cancellationToken = default);
+    
+    Task<List<VariableSet>> GetVariableSetsByIdAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
 }
 
 public class VariableSetDataProvider : IVariableSetDataProvider
@@ -20,20 +22,25 @@ public class VariableSetDataProvider : IVariableSetDataProvider
         _repository = repository;
     }
 
-    public async Task<Message.Domain.Deployments.VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
+    public async Task<VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Message.Domain.Deployments.VariableSet>(vs => vs.OwnerId == ownerId && vs.OwnerType == ownerType)
+        return await _repository.QueryNoTracking<VariableSet>(vs => vs.OwnerId == ownerId && vs.OwnerType == ownerType)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Message.Domain.Deployments.VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
+    public async Task<List<VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Message.Domain.Deployments.VariableSet>(vs => ownerIds.Contains(vs.OwnerId) && vs.OwnerType == ownerType)
+        return await _repository.QueryNoTracking<VariableSet>(vs => ownerIds.Contains(vs.OwnerId) && vs.OwnerType == ownerType)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Message.Domain.Deployments.VariableSet> GetVariableSetByIdAsync(int variableSetId, CancellationToken cancellationToken = default)
+    public async Task<VariableSet> GetVariableSetByIdAsync(int variableSetId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Message.Domain.Deployments.VariableSet>(variableSetId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<VariableSet>(variableSetId, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<VariableSet>> GetVariableSetsByIdAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<VariableSet>(x => variableSetIds.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

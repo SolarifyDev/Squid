@@ -15,13 +15,15 @@ public class CreateMachineCommand : ICommand
 
     public string Json { get; set; }
 
-    public Guid? MachinePolicyId { get; set; }
+    public int? MachinePolicyId { get; set; }
 
     public string Thumbprint { get; set; }
 
-    public string Fingerprint { get; set; }
+    public string Uri { get; set; }
 
-    public string DeploymentTargetType { get; set; }
+    public bool HasLatestCalamari { get; set; }
+
+    public string Endpoint { get; set; }
 
     public int SpaceId { get; set; }
 

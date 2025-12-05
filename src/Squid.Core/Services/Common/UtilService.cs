@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
@@ -20,7 +21,7 @@ public static class UtilService
         var json = JsonConvert.SerializeObject(data);
 
         using var ms = new MemoryStream();
-        using (var gzip = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal))
+        using (var gzip = new GZipStream(ms, CompressionLevel.Optimal))
         using (var sw = new StreamWriter(gzip))
         {
             sw.Write(json);
@@ -32,7 +33,7 @@ public static class UtilService
     public static T DecompressFromGzip<T>(byte[] compressedData)
     {
         using var ms = new MemoryStream(compressedData);
-        using var gzip = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionMode.Decompress);
+        using var gzip = new GZipStream(ms, CompressionMode.Decompress);
         using var sr = new StreamReader(gzip);
 
         var json = sr.ReadToEnd();

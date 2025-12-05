@@ -1,10 +1,8 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Machine;
 using Squid.Core.Services.Deployments.Channel;
+using Squid.Core.Services.Deployments.Deployment;
 using Squid.Core.Services.Deployments.Environment;
-using Squid.Message.Domain.Deployments;
+using Squid.Core.Services.Deployments.Machine;
+
 namespace Squid.Core.Services.Deployments;
 
 public class DeploymentTargetFinder : IDeploymentTargetFinder
@@ -26,27 +24,20 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         _environmentDataProvider = environmentDataProvider;
     }
 
-    public async Task<List<Squid.Message.Domain.Deployments.Machine>> FindTargetsAsync(int deploymentId)
+    public async Task<Message.Domain.Deployments.Machine> FindTargetsAsync(Message.Domain.Deployments.Deployment deployment, CancellationToken cancellationToken)
     {
-        var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId).ConfigureAwait(false);
-
-        if (deployment == null)
-        {
-            throw new System.InvalidOperationException($"Deployment {deploymentId} not found.");
-        }
-
-        Log.Information("Finding target machines for deployment {DeploymentId} in environment {EnvironmentId}",
-            deploymentId, deployment.EnvironmentId);
+        Log.Information("Finding target machines for deployment {@Deployment} in environment {EnvironmentId}",
+            deployment, deployment.EnvironmentId);
 
         // 基于部署的环境筛选目标机器
-        var targetEnvironmentIds = new HashSet<int> { deployment.EnvironmentId };
-        var targetMachineRoles = new HashSet<string>(); // 暂时不使用角色筛选
+        // var targetEnvironmentIds = new HashSet<int> { deployment.EnvironmentId };
+        // var targetMachineRoles = new HashSet<string>(); // 暂时不使用角色筛选
 
         // 筛选机器
-        var machines = await _machineDataProvider.GetMachinesByFilterAsync(targetEnvironmentIds, targetMachineRoles).ConfigureAwait(false);
+        var machine = await _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, cancellationToken).ConfigureAwait(false);
 
-        Log.Information("Found {MachineCount} target machines for deployment {DeploymentId}", machines.Count, deploymentId);
+        Log.Information("Found {@Machine} target machines for deployment {Deployment}", machine, deployment);
 
-        return machines;
+        return machine;
     }
 }

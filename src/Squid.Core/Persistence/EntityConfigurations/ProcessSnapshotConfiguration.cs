@@ -1,7 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class ProcessSnapshotConfiguration : IEntityTypeConfiguration<ProcessSnapshot>

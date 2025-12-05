@@ -1,11 +1,13 @@
+using Microsoft.EntityFrameworkCore;
+using Serilog;
+
 namespace Squid.IntegrationTests;
 
-[Collection("Sequential")]
 public class IntegrationTestBase : IAsyncLifetime
 {
     private readonly ILifetimeScope _lifetimeScope;
 
-    protected IntegrationTestBase(IntegrationFixture fixture)
+    protected IntegrationTestBase(IIntegrationFixture fixture)
     {
         _lifetimeScope = fixture.LifetimeScope;
     }
@@ -15,7 +17,8 @@ public class IntegrationTestBase : IAsyncLifetime
         var dependency = extraRegistration != null
             ? _lifetimeScope.BeginLifetimeScope(extraRegistration).Resolve<T>()
             : _lifetimeScope.BeginLifetimeScope().Resolve<T>();
-        await action(dependency);
+
+        await action(dependency).ConfigureAwait(false);
     }
 
     protected Task Run<T, U>(Func<T, U, Task> action, Action<ContainerBuilder> extraRegistration = null)
@@ -34,7 +37,7 @@ public class IntegrationTestBase : IAsyncLifetime
             ? _lifetimeScope.BeginLifetimeScope(extraRegistration).Resolve<T>()
             : _lifetimeScope.BeginLifetimeScope().Resolve<T>();
 
-        return await action(dependency);
+        return await action(dependency).ConfigureAwait(false);
     }
 
     public Task InitializeAsync()
@@ -42,10 +45,18 @@ public class IntegrationTestBase : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        //If have a real database, only need to clean the table after each test.
         var context = _lifetimeScope.Resolve<SquidDbContext>();
-        return context.Database.EnsureDeletedAsync();
+
+        var dbName = context.Database.GetDbConnection().Database;
+
+        if (!dbName.StartsWith("squid_integrationtests_", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("Skipping database deletion: {DatabaseName} is not a test database", dbName);
+            return;
+        }
+
+        await context.Database.EnsureDeletedAsync().ConfigureAwait(false);
     }
 }

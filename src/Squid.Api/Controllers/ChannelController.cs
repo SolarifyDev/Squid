@@ -50,24 +50,4 @@ public class ChannelController : ControllerBase
 
         return Ok(response);
     }
-    
-    [HttpPost]
-    [Route("test")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> TestsAsync([FromBody] testClass request)
-    {
-        var client = new DockerHubClient(request.Username, request.Password);
-        var response = await client.DownloadPrivateImageAsync(request.ImageName, "/download").ConfigureAwait(false);
-
-        return Ok(response);
-    }
-    
-    public class testClass
-    {
-        public string Username { get; set; } = string.Empty;
-        
-        public string Password { get; set; } = string.Empty;
-        
-        public string ImageName { get; set; } = string.Empty;
-    }
 }

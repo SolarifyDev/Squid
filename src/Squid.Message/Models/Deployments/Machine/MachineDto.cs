@@ -1,3 +1,5 @@
+using Squid.Message.Enums;
+
 namespace Squid.Message.Models.Deployments.Machine;
 
 public class MachineDto : IBaseModel
@@ -14,19 +16,21 @@ public class MachineDto : IBaseModel
 
     public string Json { get; set; }
 
-    public Guid? MachinePolicyId { get; set; }
+    public int? MachinePolicyId { get; set; }
 
     public string Thumbprint { get; set; }
 
-    public string Fingerprint { get; set; }
+    public string Uri { get; set; }
 
-    public string DeploymentTargetType { get; set; }
+    public bool HasLatestCalamari { get; set; }
+
+    public string Endpoint { get; set; }
 
     public byte[] DataVersion { get; set; }
 
     public int SpaceId { get; set; }
 
-    public string OperatingSystem { get; set; }
+    public OperatingSystemType OperatingSystem { get; set; }
 
     public string ShellName { get; set; }
 

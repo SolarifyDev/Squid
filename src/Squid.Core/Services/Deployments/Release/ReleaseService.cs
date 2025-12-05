@@ -1,13 +1,11 @@
+using Squid.Core.Services.Deployments.DeploymentCompletion;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Variable;
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.DeploymentCompletion;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Requests.Deployments.Release;
-using Squid.Message.Requests;
 
 namespace Squid.Core.Services.Deployments.Release;
 
@@ -49,7 +47,8 @@ public class ReleaseService : IReleaseService
         
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         
-        release.ProjectVariableSetSnapshotId = (await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false)).Id;
+        release.ProjectVariableSetSnapshotId = (await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(
+            project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([project.VariableSetId]).ToList(), "user", cancellationToken).ConfigureAwait(false)).Id;
         release.ProjectDeploymentProcessSnapshotId = (await _hybridProcessSnapshotService.GetOrCreateSnapshotAsync(project.DeploymentProcessId, "user", cancellationToken).ConfigureAwait(false)).Id;
         await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -116,7 +115,8 @@ public class ReleaseService : IReleaseService
         
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         
-        var variableSetSnapshot = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(project.VariableSetId, "user", cancellationToken).ConfigureAwait(false);
+        var variableSetSnapshot = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(
+            project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([project.VariableSetId]).ToList(), "user", cancellationToken).ConfigureAwait(false);
         
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -130,14 +130,13 @@ public class ReleaseService : IReleaseService
             var completions = await _deploymentCompletionDataProvider.GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
 
             var releaseIds = completions
-                .Where(c => c.ReleaseId.HasValue)
-                .Select(c => c.ReleaseId.Value)
+                    // TODO: 从project开始查LifeCycle=>Phase=>Environments=>Deployment=>Release
                 .Distinct()
                 .ToList();
 
             Log.Information("Found {Count} currently deployed releases for project {ProjectId}", releaseIds.Count, projectId);
 
-            return releaseIds;
+            return [];
         }
         catch (Exception ex)
         {

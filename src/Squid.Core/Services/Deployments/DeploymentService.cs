@@ -1,8 +1,8 @@
-using AutoMapper;
+using System.Text.Json;
 using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Environment;
 using Squid.Core.Services.Deployments.Machine;
+using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Events.Deployments.Deployment;
@@ -59,13 +59,13 @@ public class DeploymentService : IDeploymentService
         {
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
             Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
-            QueueTime = DateTimeOffset.Now,
+            QueueTime = DateTimeOffset.UtcNow,
             State = "Pending",
             ServerTaskType = "Deploy",
             ProjectId = release.ProjectId,
             EnvironmentId = command.EnvironmentId,
             SpaceId = release.SpaceId,
-            LastModified = DateTimeOffset.Now,
+            LastModified = DateTimeOffset.UtcNow,
             BusinessProcessState = "Queued",
             StateOrder = 1,
             Weight = 1,
@@ -86,14 +86,14 @@ public class DeploymentService : IDeploymentService
             EnvironmentId = command.EnvironmentId,
             DeployedBy = command.DeployedBy,
             Created = DateTimeOffset.Now,
-            Json = System.Text.Json.JsonSerializer.Serialize(new
+            Json = JsonSerializer.Serialize(new
             {
-                Comments = command.Comments,
-                ForcePackageDownload = command.ForcePackageDownload,
-                UseGuidedFailure = command.UseGuidedFailure,
-                FormValues = command.FormValues,
-                SpecificMachineIds = command.SpecificMachineIds,
-                ExcludedMachineIds = command.ExcludedMachineIds
+                command.Comments,
+                command.ForcePackageDownload,
+                command.UseGuidedFailure,
+                command.FormValues,
+                command.SpecificMachineIds,
+                command.ExcludedMachineIds
             })
         };
 

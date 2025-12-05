@@ -1,9 +1,8 @@
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.Process.Action;
+using Squid.Core.Services.Deployments.Process.Step;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.Deployments;
@@ -52,21 +51,21 @@ public class DeploymentStepPlanner : IDeploymentStepPlanner
 
         if (deployment == null)
         {
-            throw new System.InvalidOperationException($"Deployment {deploymentId} not found.");
+            throw new InvalidOperationException($"Deployment {deploymentId} not found.");
         }
 
         var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId).ConfigureAwait(false);
 
         if (project == null)
         {
-            throw new System.InvalidOperationException($"Project {deployment.ProjectId} not found.");
+            throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
         }
 
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId).ConfigureAwait(false);
 
         if (process == null)
         {
-            throw new System.InvalidOperationException($"DeploymentProcess for Project {project.Id} not found.");
+            throw new InvalidOperationException($"DeploymentProcess for Project {project.Id} not found.");
         }
 
         var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(process.Id).ConfigureAwait(false);
@@ -127,13 +126,7 @@ public class DeploymentStepPlanner : IDeploymentStepPlanner
                             ActionId = ap.ActionId,
                             PropertyName = ap.PropertyName,
                             PropertyValue = ap.PropertyValue
-                        }).ToList(),
-                    Environments = actionEnvironments.Where(ae => ae.ActionId == a.Id)
-                        .Select(ae => ae.EnvironmentId).ToList(),
-                    Channels = actionChannels.Where(ac => ac.ActionId == a.Id)
-                        .Select(ac => ac.ChannelId).ToList(),
-                    MachineRoles = actionMachineRoles.Where(amr => amr.ActionId == a.Id)
-                        .Select(amr => amr.MachineRole).ToList()
+                        }).ToList()
                 }).ToList()
         }).ToList();
 

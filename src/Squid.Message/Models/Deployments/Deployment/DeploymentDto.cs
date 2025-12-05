@@ -15,6 +15,8 @@ public class DeploymentDto
     public int ProjectId { get; set; }
 
     public int ReleaseId { get; set; }
+    
+    public int MachineId { get; set; }
 
     public int EnvironmentId { get; set; }
 

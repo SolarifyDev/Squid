@@ -1,13 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Project;
-using Squid.Message.Domain.Deployments;
-using ProjectEntity = Squid.Message.Domain.Deployments.Project;
-using DeploymentProcessEntity = Squid.Message.Domain.Deployments.DeploymentProcess;
-using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.Project;
+using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.Deployments;
 

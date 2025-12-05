@@ -16,7 +16,7 @@ public class ProcessSnapshot : IEntity<int>
 
     public int UncompressedSize { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public string CreatedBy { get; set; }
 }

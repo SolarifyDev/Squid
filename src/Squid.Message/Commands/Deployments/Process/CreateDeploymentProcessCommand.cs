@@ -14,8 +14,6 @@ public class CreateDeploymentProcessCommand : ICommand
     public int SpaceId { get; set; }
     
     public string CreatedBy { get; set; }
-    
-    public List<DeploymentStepDto> Steps { get; set; } = new List<DeploymentStepDto>();
 }
 
 public class CreateDeploymentProcessResponse : SquidResponse<CreateDeploymentProcessResponseData>

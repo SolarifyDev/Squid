@@ -1,3 +1,5 @@
+using System.Data;
+
 namespace Squid.Core.Services.Deployments.ServerTask;
 
 public interface IServerTaskDataProvider : IScopedDependency
@@ -45,7 +47,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task<Message.Domain.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default)
     {
-        using var transaction = await _repository.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
+        using var transaction = await _repository.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -56,7 +58,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             if (task != null)
             {
                 task.State = "Running";
-                task.StartTime = DateTimeOffset.Now;
+                task.StartTime = DateTimeOffset.UtcNow;
                 await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
             }
 
