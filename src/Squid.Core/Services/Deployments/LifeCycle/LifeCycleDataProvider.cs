@@ -10,7 +10,7 @@ public interface ILifeCycleDataProvider : IScopedDependency
 
     Task DeleteLifecyclesAsync(List<Lifecycle> lifeCycles, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task GetLifecyclePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<List<Lifecycle>> GetLifecyclePagingAsync(string keyWord, CancellationToken cancellationToken = default);
     
     Task<(int count, List<LifecyclePhaseDto> lifecyclePhases)> GetLifecyclePhasePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
@@ -75,9 +75,16 @@ public class LifeCycleDataProvider : ILifeCycleDataProvider
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task GetLifecyclePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<List<Lifecycle>> GetLifecyclePagingAsync(string keyWord, CancellationToken cancellationToken = default)
     {
+        var query = await _repository.Query<Lifecycle>().ToListAsync(cancellationToken).ConfigureAwait(false);
         
+        if (!string.IsNullOrWhiteSpace(keyWord))
+        {
+            query = query.Where(x => x.Name.Contains(keyWord)).ToList();
+        }
+
+        return query;
     }
 
     public async Task<(int count, List<LifecyclePhaseDto> lifecyclePhases)> GetLifecyclePhasePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)

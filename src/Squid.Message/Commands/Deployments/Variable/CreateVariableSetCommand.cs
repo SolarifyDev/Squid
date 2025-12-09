@@ -9,6 +9,10 @@ public class CreateVariableSetCommand : ICommand
     public int OwnerId { get; set; }
 
     public VariableSetOwnerType OwnerType { get; set; }
+    
+    public string Name { get; set; }
+    
+    public string Description { get; set; }
 
     public int SpaceId { get; set; }
 

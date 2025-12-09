@@ -1,6 +1,6 @@
-namespace Squid.Message.Domain.Deployments;
+namespace Squid.Message.Models.Deployments.Project;
 
-public class Project : IEntity<int>
+public class ProjectDto
 {
     public int Id { get; set; }
     
@@ -10,9 +10,9 @@ public class Project : IEntity<int>
     
     public bool IsDisabled { get; set; }
     
-    public int EnvironmentId { get; set; }
-    
     public int VariableSetId { get; set; }
+    
+    public int EnvironmentId { get; set; }
     
     public int DeploymentProcessId { get; set; }
     
