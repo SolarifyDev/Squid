@@ -21,9 +21,11 @@ public class UpdateMachineCommand : ICommand
 
     public string Thumbprint { get; set; }
 
-    public string Fingerprint { get; set; }
+    public string Uri { get; set; }
 
-    public string DeploymentTargetType { get; set; }
+    public bool HasLatestCalamari { get; set; }
+
+    public string Endpoint { get; set; }
 
     public int SpaceId { get; set; }
 

@@ -1,0 +1,121 @@
+using Squid.Core.Services.Deployments.Process;
+using Squid.Message.Commands.Deployments.Project;
+using Squid.Message.Events.Deployments.Project;
+using Squid.Message.Models.Deployments.Project;
+using Squid.Message.Requests.Deployments.Project;
+
+namespace Squid.Core.Services.Deployments.Project;
+
+public interface IProjectService : IScopedDependency
+{
+    Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken);
+
+    Task<ProjectUpdatedEvent> UpdateProjectAsync(UpdateProjectCommand command, CancellationToken cancellationToken);
+
+    Task<ProjectDeletedEvent> DeleteProjectsAsync(DeleteProjectsCommand command, CancellationToken cancellationToken);
+
+    Task<GetProjectsResponse> GetProjectsAsync(GetProjectsRequest request, CancellationToken cancellationToken);
+
+    Task<GetProjectResponse> GetProjectByIdAsync(int id, CancellationToken cancellationToken);
+}
+
+public class ProjectService : IProjectService
+{
+    private readonly IMapper _mapper;
+    private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IDeploymentProcessDataProvider _processDataProvider;
+
+    public ProjectService(
+        IMapper mapper,
+        IProjectDataProvider projectDataProvider,
+        IDeploymentProcessDataProvider processDataProvider)
+    {
+        _mapper = mapper;
+        _projectDataProvider = projectDataProvider;
+        _processDataProvider = processDataProvider;
+    }
+
+    public async Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken)
+    {
+        var project = _mapper.Map<Message.Domain.Deployments.Project>(command.Project);
+        project.LastModified = DateTimeOffset.UtcNow;
+
+        var deploymentProcess = new DeploymentProcess
+        {
+            Version = 1,
+            SpaceId = project.SpaceId,
+            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedBy = "System"
+        };
+
+        await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, false, cancellationToken).ConfigureAwait(false);
+
+        project.DeploymentProcessId = deploymentProcess.Id;
+
+        await _projectDataProvider.AddProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new ProjectCreatedEvent
+        {
+            Data = _mapper.Map<ProjectDto>(project)
+        };
+    }
+
+    public async Task<ProjectUpdatedEvent> UpdateProjectAsync(UpdateProjectCommand command, CancellationToken cancellationToken)
+    {
+        var project = _mapper.Map<Message.Domain.Deployments.Project>(command.Project);
+        project.LastModified = DateTimeOffset.UtcNow;
+
+        await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new ProjectUpdatedEvent
+        {
+            Data = _mapper.Map<ProjectDto>(project)
+        };
+    }
+
+    public async Task<ProjectDeletedEvent> DeleteProjectsAsync(DeleteProjectsCommand command, CancellationToken cancellationToken)
+    {
+        var projects = await _projectDataProvider.GetProjectsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+
+        await _projectDataProvider.DeleteProjectsAsync(projects, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new ProjectDeletedEvent
+        {
+            Data = new DeleteProjectsResponseData
+            {
+                FailIds = command.Ids.Except(projects.Select(p => p.Id)).ToList()
+            }
+        };
+    }
+
+    public async Task<GetProjectsResponse> GetProjectsAsync(GetProjectsRequest request, CancellationToken cancellationToken)
+    {
+        var (count, data) = await _projectDataProvider.GetProjectPagingAsync(
+            request.PageIndex, request.PageSize, request.Keyword, cancellationToken).ConfigureAwait(false);
+
+        return new GetProjectsResponse
+        {
+            Data = new GetProjectsResponseData
+            {
+                Count = count,
+                Projects = _mapper.Map<List<ProjectDto>>(data)
+            }
+        };
+    }
+
+    public async Task<GetProjectResponse> GetProjectByIdAsync(int id, CancellationToken cancellationToken)
+    {
+        var project = await _projectDataProvider.GetProjectByIdAsync(id, cancellationToken).ConfigureAwait(false);
+
+        if (project == null)
+        {
+            throw new InvalidOperationException($"Project with id {id} not found");
+        }
+
+        return new GetProjectResponse
+        {
+            Data = _mapper.Map<ProjectDto>(project)
+        };
+    }
+}
+

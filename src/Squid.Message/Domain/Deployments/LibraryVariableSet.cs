@@ -6,13 +6,13 @@ public class LibraryVariableSet : IEntity<int>
     
     public string Name { get; set; }
     
-    public Guid VariableSetId { get; set; }
+    public int VariableSetId { get; set; }
     
     public string ContentType { get; set; }
     
     public string Json { get; set; }
     
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
     
     public int Version { get; set; }
 }

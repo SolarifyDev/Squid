@@ -22,15 +22,17 @@ public class VariableService : IVariableService
 {
     private readonly IMapper _mapper;
     private readonly IVariableDataProvider _variableDataProvider;
-    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly SensitiveVariableHandler _sensitiveVariableHandler;
+    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
+    private readonly IHybridVariableSnapshotService _hybridVariableSnapshotService;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler)
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, IHybridVariableSnapshotService hybridVariableSnapshotService)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
-        _variableScopeDataProvider = variableScopeDataProvider;
         _sensitiveVariableHandler = sensitiveVariableHandler;
+        _variableScopeDataProvider = variableScopeDataProvider;
+        _hybridVariableSnapshotService = hybridVariableSnapshotService;
     }
 
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
@@ -41,7 +43,6 @@ public class VariableService : IVariableService
 
         await AddVariablesToSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
 
-        await UpdateContentHashAsync(variableSet, cancellationToken).ConfigureAwait(false);
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
@@ -54,8 +55,6 @@ public class VariableService : IVariableService
         UpdateVariableSetProperties(variableSet, command);
 
         await ReplaceVariablesInSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
-
-        await UpdateContentHashAsync(variableSet, cancellationToken).ConfigureAwait(false);
 
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -164,11 +163,5 @@ public class VariableService : IVariableService
         await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
 
         await AddVariablesToSet(variableSet, variableDtos, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task UpdateContentHashAsync(VariableSet variableSet, CancellationToken cancellationToken)
-    {
-        var contentHash = await _variableDataProvider.CalculateContentHashAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
-        variableSet.ContentHash = contentHash;
     }
 }

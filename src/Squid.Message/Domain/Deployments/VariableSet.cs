@@ -16,7 +16,5 @@ public class VariableSet : IEntity<int>
 
     public string RelatedDocumentIds { get; set; }
 
-    public string ContentHash { get; set; }
-
     public DateTimeOffset? LastModified { get; set; }
 }

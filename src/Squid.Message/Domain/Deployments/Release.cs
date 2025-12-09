@@ -6,7 +6,7 @@ public class Release : IEntity<int>
     
     public string Version { get; set; }
     
-    public DateTimeOffset Assembled { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset Assembled { get; set; } = DateTimeOffset.UtcNow;
     
     public int ProjectId { get; set; }
     
@@ -18,5 +18,5 @@ public class Release : IEntity<int>
     
     public int SpaceId { get; set; }
     
-    public DateTimeOffset LastModified { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset LastModified { get; set; } = DateTimeOffset.UtcNow;
 }

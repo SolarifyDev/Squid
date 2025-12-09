@@ -9,4 +9,6 @@ public interface IScriptService
     ScriptStatusResponse GetStatus(ScriptStatusRequest request);
     
     ScriptStatusResponse CompleteScript(CompleteScriptCommand command);
+    
+    ScriptStatusResponse CancelScript(CancelScriptCommand command);
 }

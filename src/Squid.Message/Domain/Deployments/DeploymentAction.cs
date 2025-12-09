@@ -14,11 +14,15 @@ public class DeploymentAction : IEntity<int>
 
     public int? WorkerPoolId { get; set; }
 
+    public int? FeedId { get; set; }
+
+    public string PackageId { get; set; }
+
     public bool IsDisabled { get; set; } = false;
 
     public bool IsRequired { get; set; } = true;
 
     public bool CanBeUsedForProjectVersioning { get; set; } = false;
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

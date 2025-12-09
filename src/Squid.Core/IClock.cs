@@ -3,6 +3,8 @@ namespace Squid.Core;
 public interface IClock : IScopedDependency
 {
     DateTimeOffset Now { get; }
+    
+    DateTimeOffset UtcNow { get; }
 
     DateTime DateTimeNow { get; }
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>Squid</id>
+    <version>0.1.0</version>
+    <authors>Solarify Ai</authors>
+    <description>Package description</description>
+  </metadata>
+  <files>
+    <file src="**/*" target="content" />
+  </files>
+</package>

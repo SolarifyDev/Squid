@@ -32,7 +32,7 @@ public class ExternalFeedService : IExternalFeedService
     {
         var externalFeed = _mapper.Map<Message.Domain.Deployments.ExternalFeed>(command);
 
-        externalFeed.Id = Guid.NewGuid();
+        // externalFeed.Id = Guid.NewGuid(); // int 主键由数据库自增
 
         await _externalFeedDataProvider.AddExternalFeedAsync(externalFeed, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -44,7 +44,7 @@ public class ExternalFeedService : IExternalFeedService
 
     public async Task<ExternalFeedUpdatedEvent> UpdateExternalFeedAsync(UpdateExternalFeedCommand command, CancellationToken cancellationToken)
     {
-        var feeds = await _externalFeedDataProvider.GetExternalFeedsByIdsAsync(new List<Guid> { command.Id }, cancellationToken).ConfigureAwait(false);
+        var feeds = await _externalFeedDataProvider.GetExternalFeedsByIdsAsync(new List<int> { command.Id }, cancellationToken).ConfigureAwait(false);
 
         var entity = feeds.FirstOrDefault();
 
@@ -91,4 +91,4 @@ public class ExternalFeedService : IExternalFeedService
             }
         };
     }
-} 
+}

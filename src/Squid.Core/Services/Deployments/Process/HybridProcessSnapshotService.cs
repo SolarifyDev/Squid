@@ -1,18 +1,15 @@
-using Microsoft.Extensions.Logging;
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Core.Services.Common;
-using System.IO.Compression;
 using System.Text;
 using Newtonsoft.Json;
+using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Process.Action;
+using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Message.Models.Deployments.Process;
-using Squid.Message.Domain.Deployments;
 
 namespace Squid.Core.Services.Deployments.Process;
 
 public interface IHybridProcessSnapshotService : IScopedDependency
 {
-    Task<int> CreateSnapshotAsync(int processId, string createdBy, CancellationToken cancellationToken = default);
+    Task<ProcessSnapshotData> GetOrCreateSnapshotAsync(int processId, string createdBy, CancellationToken cancellationToken = default);
 
     Task<ProcessSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default);
 
@@ -59,45 +56,24 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
-    public async Task<int> CreateSnapshotAsync(int processId, string createdBy, CancellationToken cancellationToken = default)
+    public async Task<ProcessSnapshotData> GetOrCreateSnapshotAsync(int processId, string createdBy, CancellationToken cancellationToken = default)
     {
-        return await _genericDataProvider.ExecuteInTransactionAsync<int>(
+        return await _genericDataProvider.ExecuteInTransactionAsync(
             async token =>
             {
                 var process = await _processDataProvider.GetDeploymentProcessByIdAsync(processId, token).ConfigureAwait(false);
 
-                if (process == null)
-                    throw new Exception($"DeploymentProcess {processId} not found");
+                if (process == null) throw new Exception($"DeploymentProcess {processId} not found");
+                
+                var snapshotData = await LoadCompleteProcessAsync(processId, token).ConfigureAwait(false);
 
-                var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(processId, token).ConfigureAwait(false);
-
-                var hashData = new
-                {
-                    process.Name,
-                    process.ProjectId,
-                    process.Version,
-                    Steps = steps
-                        .OrderBy(s => s.StepOrder)
-                        .Select(
-                            s => new
-                            {
-                                s.Name, s.StepOrder, s.StepType
-                            })
-                        .ToList()
-                };
-
-                var json = JsonConvert.SerializeObject(hashData);
+                var json = JsonConvert.SerializeObject(snapshotData);
 
                 var currentHash = UtilService.ComputeSha256Hash(json);
 
                 var existingSnapshot = await _snapshotDataProvider.GetExistingSnapshotAsync(processId, currentHash, token).ConfigureAwait(false);
 
-                if (existingSnapshot != null)
-                {
-                    return existingSnapshot.Id;
-                }
-
-                var snapshotData = await LoadCompleteProcessAsync(processId, token).ConfigureAwait(false);
+                if (existingSnapshot != null) return UtilService.DecompressFromGzip<ProcessSnapshotData>(existingSnapshot.SnapshotData);
 
                 var compressedData = UtilService.CompressToGzip(snapshotData);
 
@@ -115,8 +91,16 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                 };
 
                 await _snapshotDataProvider.AddProcessSnapshotAsync(snapshot, false, token).ConfigureAwait(false);
+                
+                Log.Information(
+                    "Snapshot {SnapshotId} created successfully. " +
+                    "Compressed size: {CompressedSize} bytes, " +
+                    "Uncompressed size: {UncompressedSize} bytes, " +
+                    "Compression ratio: {Ratio:P2}",
+                    snapshot.Id, compressedData.Length, uncompressedSize,
+                    1.0 - (double)compressedData.Length / uncompressedSize);
 
-                return snapshot.Id;
+                return snapshotData;
             }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -167,7 +151,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         var machineRolesDict = await LoadMachineRolesDict(actionIds, cancellationToken);
         var stepPropertiesDict = await LoadStepPropertiesDict(stepIds, cancellationToken);
 
-        var processSnapshots = new List<ProcessDetailSnapshotData>();
+        var processSnapshots = new List<StepSnapshotData>();
 
         foreach (var step in steps.OrderBy(s => s.StepOrder))
         {
@@ -191,6 +175,8 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                     ActionType = action.ActionType,
                     ActionOrder = action.ActionOrder,
                     WorkerPoolId = action.WorkerPoolId,
+                    FeedId = action.FeedId,
+                    PackageId = action.PackageId,
                     IsDisabled = action.IsDisabled,
                     IsRequired = action.IsRequired,
                     CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
@@ -204,7 +190,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                 actionSnapshots.Add(actionSnapshot);
             }
 
-            var processDetailSnapshot = new ProcessDetailSnapshotData
+            var processDetailSnapshot = new StepSnapshotData
             {
                 Id = step.Id,
                 Name = step.Name,
@@ -223,8 +209,8 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
         {
             Id = processId,
             Version = process.Version,
-            CreatedAt = process.CreatedAt,
-            Processes = processSnapshots
+            CreatedAt = process.LastModified,
+            StepSnapshots = processSnapshots
         };
     }
 

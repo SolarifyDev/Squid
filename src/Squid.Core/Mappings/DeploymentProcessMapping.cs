@@ -1,6 +1,4 @@
-using AutoMapper;
 using Squid.Message.Commands.Deployments.Process;
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Mappings;
@@ -29,16 +27,13 @@ public class DeploymentProcessMapping : Profile
         CreateMap<CreateDeploymentProcessCommand, DeploymentProcess>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.Version, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.LastModified, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModifiedBy, opt => opt.MapFrom(src => src.CreatedBy));
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
 
         CreateMap<UpdateDeploymentProcessCommand, DeploymentProcess>()
-            .ForMember(dest => dest.ProjectId, opt => opt.Ignore())
             .ForMember(dest => dest.Version, opt => opt.Ignore())
             .ForMember(dest => dest.SpaceId, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModified, opt => opt.Ignore());
+            .ForMember(dest => dest.LastModified, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
     }
 }

@@ -5,7 +5,7 @@ namespace Squid.Message.Commands.Deployments.ExternalFeed;
 
 public class UpdateExternalFeedCommand : ICommand
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string FeedType { get; set; }
 
@@ -25,7 +25,7 @@ public class UpdateExternalFeedCommand : ICommand
 
     public List<string> PackageAcquisitionLocationOptions { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 }
 
 public class UpdateExternalFeedResponse : SquidResponse<UpdateExternalFeedResponseData>
@@ -35,4 +35,4 @@ public class UpdateExternalFeedResponse : SquidResponse<UpdateExternalFeedRespon
 public class UpdateExternalFeedResponseData
 {
     public ExternalFeedDto ExternalFeed { get; set; }
-} 
+}

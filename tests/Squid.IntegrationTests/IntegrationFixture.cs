@@ -1,33 +1,81 @@
 ﻿using System.IO;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Moq;
+using Npgsql;
 using Serilog;
+using Serilog.Sinks.SystemConsole;
+using Squid.Core.Persistence;
+using Squid.Core.Persistence.Postgres;
 using Squid.Message;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.IntegrationTests;
 
-public class IntegrationFixture : IAsyncLifetime
+public interface IIntegrationFixture
 {
-    public readonly ILifetimeScope LifetimeScope;
+    ILifetimeScope LifetimeScope { get; }
+}
+
+public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixture
+{
+    public ILifetimeScope LifetimeScope { get; }
 
     public IntegrationFixture()
     {
         var containerBuilder = new ContainerBuilder();
-        var logger = new Mock<ILogger>();
 
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", false, true).Build();
+            .AddJsonFile("appsettings.json", false, true)
+            .Build();
+
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .Enrich.WithProperty("ApplicationContext", "Squid")
+            .Enrich.FromLogContext()
+            .WriteTo.Console()
+            .CreateLogger();
+
+        Log.Logger = logger;
+
+        var storeSetting = configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
+
+        if (storeSetting?.Postgres != null)
+        {
+            storeSetting.Postgres = CreateIsolatedPostgresSetting(storeSetting.Postgres);
+        }
+
+        var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>() ?? new SelfCertSetting
+        {
+            Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64"),
+            Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
+        };
 
         ApplicationStartup.Initialize(
-            containerBuilder, 
-            configuration.GetSection("SquidStore").Get<SquidStoreSetting>(),
-            logger.Object, new IntegrationTestUser(), 
+            containerBuilder,
+            storeSetting!,
+            logger,
+            new IntegrationTestUser(),
             configuration,
-            new SelfCertSetting());
-        
+            selfCertSetting);
+
         LifetimeScope = containerBuilder.Build();
+    }
+
+    private static string DatabaseName => $"squid_integrationtests_{typeof(TTestClass).Name.ToLowerInvariant()}";
+
+    private static PostgresSetting CreateIsolatedPostgresSetting(PostgresSetting original)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(original.ConnectionString)
+        {
+            Database = DatabaseName
+        };
+
+        return new PostgresSetting
+        {
+            ConnectionString = builder.ToString(),
+            Version = original.Version
+        };
     }
 
     public Task InitializeAsync()
@@ -35,9 +83,18 @@ public class IntegrationFixture : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         var context = LifetimeScope.Resolve<SquidDbContext>();
-        return context.Database.EnsureDeletedAsync();
+
+        var dbName = context.Database.GetDbConnection().Database;
+
+        if (!dbName.StartsWith("squid_integrationtests_", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("Skipping database deletion: {DatabaseName} is not a test database", dbName);
+            return;
+        }
+
+        await context.Database.EnsureDeletedAsync().ConfigureAwait(false);
     }
 }

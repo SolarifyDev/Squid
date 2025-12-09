@@ -12,8 +12,6 @@ public class UpdateDeploymentProcessCommand : ICommand
     public string Description { get; set; }
     
     public string LastModifiedBy { get; set; }
-    
-    public List<DeploymentStepDto> Steps { get; set; } = new List<DeploymentStepDto>();
 }
 
 public class UpdateDeploymentProcessResponse : SquidResponse<UpdateDeploymentProcessResponseData>

@@ -1,8 +1,8 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class DeploymentEnvironment : IEntity<Guid>
+public class DeploymentEnvironment : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     
     public string Name { get; set; }
     
@@ -12,7 +12,7 @@ public class DeploymentEnvironment : IEntity<Guid>
     
     public byte[] DataVersion { get; set; }
     
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
     
     public string Slug { get; set; }
     

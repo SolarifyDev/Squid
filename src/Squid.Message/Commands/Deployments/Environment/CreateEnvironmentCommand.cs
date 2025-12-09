@@ -6,7 +6,7 @@ namespace Squid.Message.Commands.Deployments.Environment;
 
 public class CreateEnvironmentCommand : ICommand
 {
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Slug { get; set; }
 

@@ -1,8 +1,8 @@
 namespace Squid.Message.Domain.Deployments;
 
-public class ExternalFeed : IEntity<Guid>
+public class ExternalFeed : IEntity<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
     public string FeedType { get; set; }
 
@@ -24,7 +24,7 @@ public class ExternalFeed : IEntity<Guid>
 
     public string PackageAcquisitionLocationOptions { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public DateTimeOffset? LastModifiedOn { get; set; }
 

@@ -7,9 +7,9 @@ public class CreateReleaseCommand : ICommand
 {
     public string Version { get; set; }
     
-    public Guid ChannelId { get; set; }
+    public int ChannelId { get; set; }
     
-    public Guid ProjectId { get; set; }
+    public int ProjectId { get; set; }
     
     public string ReleaseNote { get; set; }
     

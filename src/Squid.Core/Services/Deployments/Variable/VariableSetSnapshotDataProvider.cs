@@ -1,7 +1,3 @@
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Services.Deployments.Variable;
 
 public interface IVariableSetSnapshotDataProvider : IScopedDependency
@@ -14,9 +10,7 @@ public interface IVariableSetSnapshotDataProvider : IScopedDependency
     
     Task<VariableSetSnapshot> GetVariableSetSnapshotByIdAsync(int id, CancellationToken cancellationToken = default);
     
-    Task<(int count, List<VariableSetSnapshot>)> GetVariableSetSnapshotPagingAsync(int? originalVariableSetId = null, string contentHash = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
-    
-    Task<VariableSetSnapshot> GetExistingSnapshotAsync(int originalVariableSetId, string contentHash, CancellationToken cancellationToken = default);
+    Task<VariableSetSnapshot> GetExistingSnapshotAsync(string contentHash, CancellationToken cancellationToken = default);
     
     Task<List<VariableSetSnapshot>> GetSnapshotsAsync(List<int> ids, CancellationToken cancellationToken = default);
 }
@@ -68,37 +62,10 @@ public class VariableSetSnapshotDataProvider : IVariableSetSnapshotDataProvider
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<VariableSetSnapshot>)> GetVariableSetSnapshotPagingAsync(int? originalVariableSetId = null, string contentHash = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
-    {
-        var query = _repository.Query<VariableSetSnapshot>();
-
-        if (originalVariableSetId.HasValue)
-        {
-            query = query.Where(s => s.OriginalVariableSetId == originalVariableSetId.Value);
-        }
-
-        if (!string.IsNullOrEmpty(contentHash))
-        {
-            query = query.Where(s => s.ContentHash == contentHash);
-        }
-
-        var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
-
-        if (pageIndex.HasValue && pageSize.HasValue)
-        {
-            query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
-        }
-
-        var results = await query.OrderByDescending(s => s.CreatedAt)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-
-        return (count, results);
-    }
-
-    public async Task<VariableSetSnapshot> GetExistingSnapshotAsync(int originalVariableSetId, string contentHash, CancellationToken cancellationToken = default)
+    public async Task<VariableSetSnapshot> GetExistingSnapshotAsync(string contentHash, CancellationToken cancellationToken = default)
     {
         return await _repository.Query<VariableSetSnapshot>()
-            .FirstOrDefaultAsync(s => s.OriginalVariableSetId == originalVariableSetId && s.ContentHash == contentHash, cancellationToken)
+            .FirstOrDefaultAsync(s => s.ContentHash == contentHash, cancellationToken)
             .ConfigureAwait(false);
     }
 

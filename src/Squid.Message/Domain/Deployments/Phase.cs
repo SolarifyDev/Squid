@@ -18,7 +18,7 @@ public class Phase : IEntity<int>
 
     public bool IsPriorityPhase { get; set; }
 
-    public Guid ReleaseRetentionPolicyId { get; set; }
+    public int ReleaseRetentionPolicyId { get; set; }
 
-    public Guid TentacleRetentionPolicyId { get; set; }
+    public int TentacleRetentionPolicyId { get; set; }
 }

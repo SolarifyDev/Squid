@@ -1,5 +1,3 @@
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class DeploymentActionConfiguration : IEntityTypeConfiguration<DeploymentAction>
@@ -26,6 +24,11 @@ public class DeploymentActionConfiguration : IEntityTypeConfiguration<Deployment
             .HasMaxLength(100);
 
         builder.Property(da => da.WorkerPoolId);
+
+        builder.Property(da => da.FeedId);
+
+        builder.Property(da => da.PackageId)
+            .HasMaxLength(500);
 
         builder.Property(da => da.IsDisabled)
             .IsRequired()
