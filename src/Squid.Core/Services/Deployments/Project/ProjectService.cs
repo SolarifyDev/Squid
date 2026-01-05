@@ -40,19 +40,28 @@ public class ProjectService : IProjectService
         var project = _mapper.Map<Message.Domain.Deployments.Project>(command.Project);
         project.LastModified = DateTimeOffset.UtcNow;
 
+        if (project.IncludedLibraryVariableSetIds == null)
+        {
+            project.IncludedLibraryVariableSetIds = string.Empty;
+        }
+
+        // 先保存 Project，拿到数据库生成的 Id
+        await _projectDataProvider.AddProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
+
         var deploymentProcess = new DeploymentProcess
         {
             Version = 1,
             SpaceId = project.SpaceId,
             LastModified = DateTimeOffset.UtcNow,
-            LastModifiedBy = "System"
+            LastModifiedBy = "System",
+            ProjectId = project.Id
         };
 
-        await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, false, cancellationToken).ConfigureAwait(false);
+        await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         project.DeploymentProcessId = deploymentProcess.Id;
 
-        await _projectDataProvider.AddProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new ProjectCreatedEvent
         {
@@ -64,6 +73,11 @@ public class ProjectService : IProjectService
     {
         var project = _mapper.Map<Message.Domain.Deployments.Project>(command.Project);
         project.LastModified = DateTimeOffset.UtcNow;
+
+        if (project.IncludedLibraryVariableSetIds == null)
+        {
+            project.IncludedLibraryVariableSetIds = string.Empty;
+        }
 
         await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -118,4 +132,3 @@ public class ProjectService : IProjectService
         };
     }
 }
-

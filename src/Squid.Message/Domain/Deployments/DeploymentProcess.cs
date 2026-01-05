@@ -11,4 +11,6 @@ public class DeploymentProcess : IEntity<int>
     public DateTimeOffset LastModified { get; set; } = DateTimeOffset.UtcNow;
 
     public string LastModifiedBy { get; set; }
+
+    public int ProjectId { get; set; }
 }

@@ -75,10 +75,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         
         if (projectId.HasValue)
         {
-            query = from deploymentProcess in query
-                join project in _repository.Query<Message.Domain.Deployments.Project>() on deploymentProcess.Id equals project.DeploymentProcessId
-                where projectId == project.Id
-                select deploymentProcess;
+            query = query.Where(p => p.ProjectId == projectId.Value);
         }
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
@@ -98,11 +95,9 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default)
     {
-        var maxVersion = await (from project in _repository.Query<Squid.Message.Domain.Deployments.Project>()
-                                join process in _repository.Query<DeploymentProcess>()
-                                    on project.DeploymentProcessId equals process.Id
-                                where project.Id == projectId
-                                select (int?)process.Version)
+        var maxVersion = await _repository.Query<DeploymentProcess>()
+            .Where(p => p.ProjectId == projectId)
+            .Select(p => (int?)p.Version)
             .MaxAsync(cancellationToken).ConfigureAwait(false);
 
         return (maxVersion ?? 0) + 1;
