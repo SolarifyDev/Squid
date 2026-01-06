@@ -30,7 +30,7 @@ public class EnvironmentService : IEnvironmentService
 
     public async Task<EnvironmentCreatedEvent> CreateEnvironmentAsync(CreateEnvironmentCommand command, CancellationToken cancellationToken)
     {
-        var environment = _mapper.Map<Message.Domain.Deployments.Environment>(command);
+        var environment = _mapper.Map<Persistence.Data.Domain.Deployments.Environment>(command);
 
         await _environmentDataProvider.AddEnvironmentAsync(environment, cancellationToken: cancellationToken).ConfigureAwait(false);
 

@@ -30,7 +30,7 @@ public class MachineService : IMachineService
 
     public async Task<MachineCreatedEvent> CreateMachineAsync(CreateMachineCommand command, CancellationToken cancellationToken)
     {
-        var machine = _mapper.Map<Message.Domain.Deployments.Machine>(command);
+        var machine = _mapper.Map<Persistence.Data.Domain.Deployments.Machine>(command);
 
         await _machineDataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 

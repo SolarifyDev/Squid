@@ -1,5 +1,6 @@
 using System.Text;
 using Newtonsoft.Json;
+using Squid.Core.Persistence.Data.Domain.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;

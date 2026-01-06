@@ -6,11 +6,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autofac;
 using Serilog;
-
 using Moq;
 using Squid.Core;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Persistence.Data;
+using Squid.Core.Persistence.Data.Domain.Deployments;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.Channel;
 using Squid.Core.Services.Deployments.Deployment;
@@ -19,9 +19,9 @@ using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Variable;
 using Squid.Core.Services.Tentacle;
-using Squid.Message.Domain.Deployments;
 using Squid.Message.Enums;
-using Machine = Squid.Message.Domain.Deployments.Machine;
+using Environment = Squid.Core.Persistence.Data.Domain.Deployments.Environment;
+using Machine = Squid.Core.Persistence.Data.Domain.Deployments.Machine;
 
 namespace Squid.IntegrationTests;
 
@@ -180,7 +180,7 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
 
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
-            var environment = new Message.Domain.Deployments.Environment
+            var environment = new Environment
             {
                 SpaceId = 1,
                 Slug = "test-environment",

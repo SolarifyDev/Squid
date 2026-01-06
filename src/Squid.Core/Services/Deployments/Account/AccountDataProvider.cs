@@ -1,6 +1,6 @@
 using Squid.Core.Persistence.Data;
+using Squid.Core.Persistence.Data.Domain.Deployments;
 using Squid.Core.Services.Common;
-using Squid.Message.Domain.Deployments;
 
 namespace Squid.Core.Services.Deployments.Account;
 

@@ -19,15 +19,15 @@ public interface IVariableDataProvider : IScopedDependency
     
     Task<List<VariableSet>> GetVariableSetsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
-    Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
+    Task AddVariablesAsync(int variableSetId, List<Persistence.Data.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
     
-    Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
+    Task UpdateVariablesAsync(int variableSetId, List<Persistence.Data.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
     
     Task DeleteVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
     
-    Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
+    Task<List<Persistence.Data.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
     
-    Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
+    Task<List<Persistence.Data.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
 }
 
 public partial class VariableDataProvider : IVariableDataProvider
@@ -52,7 +52,7 @@ public partial class VariableDataProvider : IVariableDataProvider
         return await _repository.Query<VariableSet>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
+    public async Task AddVariablesAsync(int variableSetId, List<Persistence.Data.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
         var encryptedVariables = await _encryptionService.EncryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
 
@@ -65,7 +65,7 @@ public partial class VariableDataProvider : IVariableDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
+    public async Task UpdateVariablesAsync(int variableSetId, List<Persistence.Data.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
     {
         await DeleteVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
 
@@ -74,7 +74,7 @@ public partial class VariableDataProvider : IVariableDataProvider
 
     public async Task DeleteVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default)
     {
-        var variables = await _repository.Query<Message.Domain.Deployments.Variable>()
+        var variables = await _repository.Query<Persistence.Data.Domain.Deployments.Variable>()
             .Where(v => v.VariableSetId == variableSetId)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
@@ -86,9 +86,9 @@ public partial class VariableDataProvider : IVariableDataProvider
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Data.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default)
     {
-        var variables = await _repository.Query<Message.Domain.Deployments.Variable>()
+        var variables = await _repository.Query<Persistence.Data.Domain.Deployments.Variable>()
             .Where(v => v.VariableSetId == variableSetId)
             .OrderBy(v => v.SortOrder)
             .ThenBy(v => v.Name)
@@ -97,15 +97,15 @@ public partial class VariableDataProvider : IVariableDataProvider
         return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
     }
 
-    public async Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Data.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
     {
-        var variables = await _repository.Query<Message.Domain.Deployments.Variable>()
+        var variables = await _repository.Query<Persistence.Data.Domain.Deployments.Variable>()
             .Where(v => variableSetIds.Contains(v.VariableSetId))
             .OrderBy(v => v.SortOrder)
             .ThenBy(v => v.Name)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        var result = new List<Message.Domain.Deployments.Variable>();
+        var result = new List<Persistence.Data.Domain.Deployments.Variable>();
 
         foreach (var variableSetId in variableSetIds)
         {

@@ -2,17 +2,17 @@ namespace Squid.Core.Services.Deployments.Channel;
 
 public interface IChannelDataProvider : IScopedDependency
 {
-    Task AddChannelAsync(Message.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task AddChannelAsync(Persistence.Data.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task UpdateChannelAsync(Message.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task UpdateChannelAsync(Persistence.Data.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task DeleteChannelsAsync(List<Message.Domain.Deployments.Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task DeleteChannelsAsync(List<Persistence.Data.Domain.Deployments.Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Message.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Persistence.Data.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
-    Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
+    Task<List<Persistence.Data.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
 
-    Task<Message.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default);
+    Task<Persistence.Data.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default);
 }
 
 public class ChannelDataProvider : IChannelDataProvider
@@ -28,30 +28,30 @@ public class ChannelDataProvider : IChannelDataProvider
         _repository = repository;
     }
 
-    public async Task AddChannelAsync(Message.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddChannelAsync(Persistence.Data.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(channel, cancellationToken).ConfigureAwait(false);
         
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateChannelAsync(Message.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task UpdateChannelAsync(Persistence.Data.Domain.Deployments.Channel channel, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.UpdateAsync(channel, cancellationToken).ConfigureAwait(false);
         
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteChannelsAsync(List<Message.Domain.Deployments.Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task DeleteChannelsAsync(List<Persistence.Data.Domain.Deployments.Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.DeleteAllAsync(channels, cancellationToken).ConfigureAwait(false);
         
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Message.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Persistence.Data.Domain.Deployments.Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.Query<Message.Domain.Deployments.Channel>();
+        var query = _repository.Query<Persistence.Data.Domain.Deployments.Channel>();
         
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
         
@@ -61,17 +61,17 @@ public class ChannelDataProvider : IChannelDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Message.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken)
+    public async Task<List<Persistence.Data.Domain.Deployments.Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken)
     {
         // 示例实现：按主键查找
-        return await _repository.Query<Message.Domain.Deployments.Channel>()
+        return await _repository.Query<Persistence.Data.Domain.Deployments.Channel>()
             .Where(c => ids.Contains(c.Id))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
-    public async Task<Message.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default)
+    public async Task<Persistence.Data.Domain.Deployments.Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Message.Domain.Deployments.Channel>(channelId, cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.Channel>(channelId, cancellationToken).ConfigureAwait(false);
     }
 }

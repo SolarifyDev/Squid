@@ -43,7 +43,7 @@ public class ReleaseService : IReleaseService
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)
     {
-        var release = _mapper.Map<Message.Domain.Deployments.Release>(command);
+        var release = _mapper.Map<Persistence.Data.Domain.Deployments.Release>(command);
         
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         

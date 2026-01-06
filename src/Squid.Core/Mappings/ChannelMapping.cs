@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Data.Domain.Deployments;
 using Squid.Message.Models.Deployments.Channel;
 
 namespace Squid.Core.Mappings;
