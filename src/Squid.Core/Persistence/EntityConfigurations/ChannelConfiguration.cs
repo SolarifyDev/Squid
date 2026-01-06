@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Data.Domain.Deployments;
+
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class ChannelConfiguration: IEntityTypeConfiguration<Channel>

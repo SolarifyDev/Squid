@@ -2,17 +2,17 @@ namespace Squid.Core.Services.Deployments.Environment;
 
 public interface IEnvironmentDataProvider : IScopedDependency
 {
-    Task AddEnvironmentAsync(Message.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task AddEnvironmentAsync(Persistence.Data.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task UpdateEnvironmentAsync(Message.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task UpdateEnvironmentAsync(Persistence.Data.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task DeleteEnvironmentsAsync(List<Message.Domain.Deployments.Environment> environments, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task DeleteEnvironmentsAsync(List<Persistence.Data.Domain.Deployments.Environment> environments, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Message.Domain.Deployments.Environment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Persistence.Data.Domain.Deployments.Environment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
-    Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
+    Task<List<Persistence.Data.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
-    Task<Message.Domain.Deployments.Environment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default);
+    Task<Persistence.Data.Domain.Deployments.Environment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default);
 }
 
 public class EnvironmentDataProvider : IEnvironmentDataProvider
@@ -30,7 +30,7 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         _mapper = mapper;
     }
 
-    public async Task AddEnvironmentAsync(Message.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddEnvironmentAsync(Persistence.Data.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(environment, cancellationToken).ConfigureAwait(false);
 
@@ -40,7 +40,7 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         }
     }
 
-    public async Task UpdateEnvironmentAsync(Message.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task UpdateEnvironmentAsync(Persistence.Data.Domain.Deployments.Environment environment, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.UpdateAsync(environment, cancellationToken).ConfigureAwait(false);
 
@@ -50,7 +50,7 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         }
     }
 
-    public async Task DeleteEnvironmentsAsync(List<Message.Domain.Deployments.Environment> environments, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task DeleteEnvironmentsAsync(List<Persistence.Data.Domain.Deployments.Environment> environments, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.DeleteAllAsync(environments, cancellationToken).ConfigureAwait(false);
 
@@ -60,9 +60,9 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         }
     }
 
-    public async Task<(int count, List<Message.Domain.Deployments.Environment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Persistence.Data.Domain.Deployments.Environment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.Query<Message.Domain.Deployments.Environment>();
+        var query = _repository.Query<Persistence.Data.Domain.Deployments.Environment>();
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
@@ -74,13 +74,13 @@ public class EnvironmentDataProvider : IEnvironmentDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Message.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
+    public async Task<List<Persistence.Data.Domain.Deployments.Environment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
-        return await _repository.Query<Message.Domain.Deployments.Environment>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await _repository.Query<Persistence.Data.Domain.Deployments.Environment>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Message.Domain.Deployments.Environment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default)
+    public async Task<Persistence.Data.Domain.Deployments.Environment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Message.Domain.Deployments.Environment>(environmentId, cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.Environment>(environmentId, cancellationToken).ConfigureAwait(false);
     }
 }

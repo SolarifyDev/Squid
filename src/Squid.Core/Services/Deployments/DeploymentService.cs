@@ -55,7 +55,7 @@ public class DeploymentService : IDeploymentService
         }
 
         // 3. 创建ServerTask
-        var serverTask = new Message.Domain.Deployments.ServerTask
+        var serverTask = new Persistence.Data.Domain.Deployments.ServerTask
         {
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
             Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
@@ -75,7 +75,7 @@ public class DeploymentService : IDeploymentService
         await _serverTaskDataProvider.AddServerTaskAsync(serverTask, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // 4. 创建Deployment
-        var deployment = new Message.Domain.Deployments.Deployment
+        var deployment = new Persistence.Data.Domain.Deployments.Deployment
         {
             Name = command.Name ?? $"Deploy {release.Version}",
             TaskId = serverTask.Id,
