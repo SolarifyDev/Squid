@@ -1,9 +1,3 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-
 namespace Squid.Core.Services.Common;
 
 public interface IGenericDataProvider : IScopedDependency

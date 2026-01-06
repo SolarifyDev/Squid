@@ -4,7 +4,7 @@ public class Environment : IEntity<int>
 {
     public int Id { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Slug { get; set; }
 

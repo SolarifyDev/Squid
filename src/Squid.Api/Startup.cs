@@ -1,3 +1,4 @@
+using Squid.Api.Filters;
 using Squid.Core.Persistence;
 using Squid.Core.Settings.SelfCert;
 
@@ -25,6 +26,12 @@ public class Startup
         services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
+        services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
+        services.AddMvc(options =>
+        {
+            options.Filters.Add<GlobalExceptionFilter>();
+            options.Filters.Add<GlobalSuccessFilter>();
+        });
         
         _serviceCollection = services;
     }

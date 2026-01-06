@@ -1,3 +1,4 @@
+using Squid.Core.Services.Common;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Requests.Deployments.Channel;
 

@@ -1,5 +1,6 @@
-using System.Text.Json.Serialization;
+using System.Diagnostics;
 using Halibut;
+using Newtonsoft.Json;
 
 namespace Squid.Core.Commands.Tentacle;
 
@@ -177,7 +178,8 @@ public class ScriptStatusRequest
 
 public class ScriptStatusResponse
 {
-    public ScriptStatusResponse(ScriptTicket ticket,
+    public ScriptStatusResponse(
+        ScriptTicket ticket,
         ProcessState state,
         int exitCode,
         List<ProcessOutput> logs,
@@ -201,13 +203,9 @@ public class ScriptStatusResponse
     public int ExitCode { get; }
 }
 
-// [DebuggerDisplay("{Occurred} | {Source} | {Text}")]
+[DebuggerDisplay("{Occurred} | {Source} | {Text}")]
 public class ProcessOutput
 {
-    public ProcessOutput()
-    {
-    }
-
     public ProcessOutput(ProcessOutputSource source, string text) : this(source, text, DateTimeOffset.UtcNow)
     {
     }
@@ -260,6 +258,19 @@ public class UploadResult
 public class CompleteScriptCommand
 {
     public CompleteScriptCommand(ScriptTicket ticket, long lastLogSequence)
+    {
+        Ticket = ticket;
+        LastLogSequence = lastLogSequence;
+    }
+
+    public ScriptTicket Ticket { get; }
+
+    public long LastLogSequence { get; }
+}
+
+public class CancelScriptCommand
+{
+    public CancelScriptCommand(ScriptTicket ticket, long lastLogSequence)
     {
         Ticket = ticket;
         LastLogSequence = lastLogSequence;

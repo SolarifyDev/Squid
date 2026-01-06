@@ -1,7 +1,3 @@
-using Squid.Core.DependencyInjection;
-using Squid.Core.Persistence;
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Services.Deployments.Process;
 
 public interface IDeploymentProcessDataProvider : IScopedDependency
@@ -14,9 +10,7 @@ public interface IDeploymentProcessDataProvider : IScopedDependency
     
     Task<DeploymentProcess> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken = default);
     
-    Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(int projectId, int version, CancellationToken cancellationToken = default);
-    
-    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? spaceId = null, int? projectId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
     
     Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default);
 }
@@ -44,7 +38,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task UpdateDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default)
     {
-        process.LastModified = DateTimeOffset.Now;
+        process.LastModified = DateTimeOffset.UtcNow;
         await _repository.UpdateAsync(process, cancellationToken).ConfigureAwait(false);
 
         if (forceSave)
@@ -69,25 +63,19 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentProcess> GetDeploymentProcessByProjectIdAndVersionAsync(int projectId, int version, CancellationToken cancellationToken = default)
-    {
-        return await _repository.Query<DeploymentProcess>()
-            .FirstOrDefaultAsync(p => p.ProjectId == projectId && p.Version == version, cancellationToken)
-            .ConfigureAwait(false);
-    }
 
-    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? projectId = null, int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? spaceId = null, int? projectId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<DeploymentProcess>();
-
-        if (projectId.HasValue)
-        {
-            query = query.Where(p => p.ProjectId == projectId.Value);
-        }
 
         if (spaceId.HasValue)
         {
             query = query.Where(p => p.SpaceId == spaceId.Value);
+        }
+        
+        if (projectId.HasValue)
+        {
+            query = query.Where(p => p.ProjectId == projectId.Value);
         }
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
@@ -97,8 +85,9 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
             query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
         }
 
-        var results = await query.OrderByDescending(p => p.Version)
-            .ThenByDescending(p => p.CreatedAt)
+        var results = await query
+            .OrderByDescending(p => p.Version)
+            .ThenByDescending(p => p.LastModified)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return (count, results);
@@ -108,7 +97,8 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
     {
         var maxVersion = await _repository.Query<DeploymentProcess>()
             .Where(p => p.ProjectId == projectId)
-            .MaxAsync(p => (int?)p.Version, cancellationToken).ConfigureAwait(false);
+            .Select(p => (int?)p.Version)
+            .MaxAsync(cancellationToken).ConfigureAwait(false);
 
         return (maxVersion ?? 0) + 1;
     }

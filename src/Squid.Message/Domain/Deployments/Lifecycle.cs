@@ -8,11 +8,11 @@ public class Lifecycle : IEntity<int>
 
     public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 
     public string Slug { get; set; }
     
-    public Guid ReleaseRetentionPolicyId { get; set; }
+    public int ReleaseRetentionPolicyId { get; set; }
     
-    public Guid TentacleRetentionPolicyId { get; set; }
+    public int TentacleRetentionPolicyId { get; set; }
 }

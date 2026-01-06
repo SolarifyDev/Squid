@@ -11,7 +11,7 @@ public class ProcessSnapshotData
 
     public DateTimeOffset CreatedAt { get; set; }
 
-    public List<ProcessDetailSnapshotData> Processes { get; set; } = new List<ProcessDetailSnapshotData>();
+    public List<StepSnapshotData> StepSnapshots { get; set; } = new List<StepSnapshotData>();
 
     public Dictionary<string, List<string>> ScopeDefinitions { get; set; } = new Dictionary<string, List<string>>();
 }

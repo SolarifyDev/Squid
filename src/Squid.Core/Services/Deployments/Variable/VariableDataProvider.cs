@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using Newtonsoft.Json;
 using Squid.Core.Services.Security;
 using Squid.Message.Enums;
 
@@ -17,13 +16,18 @@ public interface IVariableDataProvider : IScopedDependency
     Task<(int count, List<VariableSet>)> GetVariableSetPagingAsync(VariableSetOwnerType? ownerType = null, int? ownerId = null, int? spaceId = null, string keyword = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<VariableSet> GetVariableSetByIdAsync(int id, CancellationToken cancellationToken);
-
-    Task<string> CalculateContentHashAsync(int variableSetId, CancellationToken cancellationToken);
+    
+    Task<List<VariableSet>> GetVariableSetsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
+    
     Task UpdateVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default);
+    
     Task DeleteVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
+    
     Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdAsync(int variableSetId, CancellationToken cancellationToken = default);
+    
+    Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
 }
 
 public partial class VariableDataProvider : IVariableDataProvider
@@ -42,18 +46,10 @@ public partial class VariableDataProvider : IVariableDataProvider
         _encryptionService = encryptionService;
         _variableScopeDataProvider = variableScopeDataProvider;
     }
-    
-    public async Task<string> CalculateContentHashAsync(int variableSetId, CancellationToken cancellationToken)
+
+    public async Task<List<VariableSet>> GetVariableSetsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
-        var variables = await GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
-
-        var hashData = variables
-            .OrderBy(v => v.Name)
-            .Select(v => new { v.Name, v.Value, v.Type, v.IsSensitive, v.SortOrder })
-            .ToList();
-
-        var json = JsonConvert.SerializeObject(hashData);
-        return ComputeSha256Hash(json);
+        return await _repository.Query<VariableSet>(x => ids.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task AddVariablesAsync(int variableSetId, List<Message.Domain.Deployments.Variable> variables, CancellationToken cancellationToken = default)
@@ -101,10 +97,22 @@ public partial class VariableDataProvider : IVariableDataProvider
         return await _encryptionService.DecryptSensitiveVariablesAsync(variables, variableSetId).ConfigureAwait(false);
     }
 
-    private static string ComputeSha256Hash(string input)
+    public async Task<List<Message.Domain.Deployments.Variable>> GetVariablesByVariableSetIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
     {
-        using var sha256 = SHA256.Create();
-        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
+        var variables = await _repository.Query<Message.Domain.Deployments.Variable>()
+            .Where(v => variableSetIds.Contains(v.VariableSetId))
+            .OrderBy(v => v.SortOrder)
+            .ThenBy(v => v.Name)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var result = new List<Message.Domain.Deployments.Variable>();
+
+        foreach (var variableSetId in variableSetIds)
+        {
+            result.AddRange(await _encryptionService.DecryptSensitiveVariablesAsync(
+                variables.Where(x => x.VariableSetId == variableSetId).ToList(), variableSetId).ConfigureAwait(false));
+        }
+        
+        return result;
     }
 }

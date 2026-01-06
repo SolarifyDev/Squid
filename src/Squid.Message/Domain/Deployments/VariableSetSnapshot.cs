@@ -4,10 +4,6 @@ public class VariableSetSnapshot : IEntity<int>
 {
     public int Id { get; set; }
 
-    public int OriginalVariableSetId { get; set; }
-
-    public int Version { get; set; }
-
     public byte[] SnapshotData { get; set; }
 
     public string ContentHash { get; set; }
@@ -16,7 +12,7 @@ public class VariableSetSnapshot : IEntity<int>
 
     public int UncompressedSize { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public string CreatedBy { get; set; }
 }

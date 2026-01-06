@@ -13,25 +13,5 @@ public enum VariableScopeType
     /// <summary>
     /// 机器作用域
     /// </summary>
-    Machine = 2,
-    
-    /// <summary>
-    /// 角色作用域
-    /// </summary>
-    Role = 3,
-    
-    /// <summary>
-    /// 渠道作用域
-    /// </summary>
-    Channel = 4,
-    
-    /// <summary>
-    /// 步骤作用域
-    /// </summary>
-    Step = 5,
-    
-    /// <summary>
-    /// 进程作用域
-    /// </summary>
-    Process = 6
+    Machine = 2
 }

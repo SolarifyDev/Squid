@@ -24,7 +24,7 @@ public class CreateExternalFeedCommand : ICommand
 
     public List<string> PackageAcquisitionLocationOptions { get; set; }
 
-    public Guid SpaceId { get; set; }
+    public int SpaceId { get; set; }
 }
 
 public class CreateExternalFeedResponse : SquidResponse<CreateExternalFeedResponseData>

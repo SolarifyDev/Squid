@@ -1,5 +1,3 @@
-using Squid.Message.Domain.Deployments;
-
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class DeploymentActionPropertyConfiguration : IEntityTypeConfiguration<DeploymentActionProperty>
