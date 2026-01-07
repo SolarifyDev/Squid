@@ -24,7 +24,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         _environmentDataProvider = environmentDataProvider;
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.Machine> FindTargetsAsync(Persistence.Data.Domain.Deployments.Deployment deployment, CancellationToken cancellationToken)
+    public async Task<Persistence.Entities.Deployments.Machine> FindTargetsAsync(Persistence.Entities.Deployments.Deployment deployment, CancellationToken cancellationToken)
     {
         Log.Information("Finding target machines for deployment {@Deployment} in environment {EnvironmentId}",
             deployment, deployment.EnvironmentId);

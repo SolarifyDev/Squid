@@ -1,4 +1,5 @@
-using Squid.Core.Persistence.Data.Domain.Deployments;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Services.Deployments.Process.Action;
 

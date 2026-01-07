@@ -1,3 +1,6 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Db.Postgres;
+
 namespace Squid.Core.Persistence;
 
 public class PersistenceModule : Module

@@ -1,18 +1,20 @@
+using Squid.Core.Persistence.Db;
+
 namespace Squid.Core.Services.Deployments.Project;
 
 public interface IProjectDataProvider : IScopedDependency
 {
-    Task<Persistence.Data.Domain.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default);
+    Task<Persistence.Entities.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default);
 
-    Task AddProjectAsync(Persistence.Data.Domain.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task AddProjectAsync(Persistence.Entities.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task UpdateProjectAsync(Persistence.Data.Domain.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task UpdateProjectAsync(Persistence.Entities.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task DeleteProjectsAsync(List<Persistence.Data.Domain.Deployments.Project> projects, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task DeleteProjectsAsync(List<Persistence.Entities.Deployments.Project> projects, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Persistence.Data.Domain.Deployments.Project>)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Persistence.Entities.Deployments.Project>)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default);
 
-    Task<List<Persistence.Data.Domain.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default);
+    Task<List<Persistence.Entities.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default);
 }
 
 public class ProjectDataProvider : IProjectDataProvider
@@ -26,35 +28,35 @@ public class ProjectDataProvider : IProjectDataProvider
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default)
+    public async Task<Persistence.Entities.Deployments.Project> GetProjectByIdAsync(int projectId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.Project>(projectId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<Persistence.Entities.Deployments.Project>(projectId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task AddProjectAsync(Persistence.Data.Domain.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddProjectAsync(Persistence.Entities.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(project, cancellationToken).ConfigureAwait(false);
 
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateProjectAsync(Persistence.Data.Domain.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task UpdateProjectAsync(Persistence.Entities.Deployments.Project project, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.UpdateAsync(project, cancellationToken).ConfigureAwait(false);
 
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteProjectsAsync(List<Persistence.Data.Domain.Deployments.Project> projects, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task DeleteProjectsAsync(List<Persistence.Entities.Deployments.Project> projects, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.DeleteAllAsync(projects, cancellationToken).ConfigureAwait(false);
 
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Persistence.Data.Domain.Deployments.Project>)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Persistence.Entities.Deployments.Project>)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.Query<Persistence.Data.Domain.Deployments.Project>();
+        var query = _repository.Query<Persistence.Entities.Deployments.Project>();
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -69,9 +71,9 @@ public class ProjectDataProvider : IProjectDataProvider
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<List<Persistence.Data.Domain.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Entities.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default)
     {
-        return await _repository.Query<Persistence.Data.Domain.Deployments.Project>()
+        return await _repository.Query<Persistence.Entities.Deployments.Project>()
             .Where(p => ids.Contains(p.Id))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

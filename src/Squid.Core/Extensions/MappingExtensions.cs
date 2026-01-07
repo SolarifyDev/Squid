@@ -1,4 +1,4 @@
-using Squid.Message.Domain;
+using Squid.Core.Persistence.Entities;
 using Squid.Message.Models;
 
 namespace Squid.Core.Extensions;

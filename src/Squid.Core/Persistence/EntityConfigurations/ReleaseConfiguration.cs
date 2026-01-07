@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Entities.Deployments;
+
 namespace Squid.Core.Persistence.EntityConfigurations;
 
 public class ReleaseConfiguration: IEntityTypeConfiguration<Release>

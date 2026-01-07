@@ -1,4 +1,4 @@
-using Squid.Core.Persistence.Data.Domain.Deployments;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Process;
 using Squid.Message.Models.Deployments.Process;
 

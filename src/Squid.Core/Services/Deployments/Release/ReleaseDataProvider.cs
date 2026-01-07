@@ -1,16 +1,18 @@
+using Squid.Core.Persistence.Db;
+
 namespace Squid.Core.Services.Deployments.Release;
 
 public interface IReleaseDataProvider : IScopedDependency
 {
-    Task CreateReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
+    Task CreateReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
 
-    Task UpdateReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
+    Task UpdateReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
 
-    Task DeleteReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
+    Task DeleteReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default);
 
-    Task<Persistence.Data.Domain.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default);
+    Task<Persistence.Entities.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default);
 
-    Task<(int, List<Persistence.Data.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default);
+    Task<(int, List<Persistence.Entities.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseDataProvider : IReleaseDataProvider
@@ -24,32 +26,32 @@ public class ReleaseDataProvider : IReleaseDataProvider
         _unitOfWork = unitOfWork;
     }
 
-    public async Task CreateReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
+    public async Task CreateReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(release, cancellationToken).ConfigureAwait(false);
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UpdateReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
+    public async Task UpdateReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
     {
         await _repository.UpdateAsync(release, cancellationToken).ConfigureAwait(false);
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task DeleteReleaseAsync(Persistence.Data.Domain.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
+    public async Task DeleteReleaseAsync(Persistence.Entities.Deployments.Release release, bool forceSave = false, CancellationToken cancellationToken = default)
     {
         await _repository.DeleteAsync(release, cancellationToken).ConfigureAwait(false);
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default)
+    public async Task<Persistence.Entities.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.Release>(releaseId, cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<Persistence.Entities.Deployments.Release>(releaseId, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int, List<Persistence.Data.Domain.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default)
+    public async Task<(int, List<Persistence.Entities.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.Query<Persistence.Data.Domain.Deployments.Release>();
+        var query = _repository.Query<Persistence.Entities.Deployments.Release>();
         
         if (channelId.HasValue)
             query = query.Where(x => x.ChannelId == channelId.Value);

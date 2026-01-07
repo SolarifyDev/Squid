@@ -1,5 +1,5 @@
 using Squid.Message.Models.Deployments.Project;
-using Project = Squid.Core.Persistence.Data.Domain.Deployments.Project;
+using Project = Squid.Core.Persistence.Entities.Deployments.Project;
 
 namespace Squid.Core.Mappings;
 

@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.LifeCycle;
 using Squid.Message.Events.Deployments.LifeCycle;
 using Squid.Message.Models.Deployments;

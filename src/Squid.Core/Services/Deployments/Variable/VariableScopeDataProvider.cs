@@ -1,3 +1,6 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
+
 namespace Squid.Core.Services.Deployments.Variable;
 
 public interface IVariableScopeDataProvider : IScopedDependency

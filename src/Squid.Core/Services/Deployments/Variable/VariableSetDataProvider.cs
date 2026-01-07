@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
 
 namespace Squid.Core.Services.Deployments.Variable;

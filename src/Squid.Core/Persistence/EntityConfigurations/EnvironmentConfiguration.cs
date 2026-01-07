@@ -1,4 +1,4 @@
-using Environment = Squid.Core.Persistence.Data.Domain.Deployments.Environment;
+using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.Core.Persistence.EntityConfigurations;
 

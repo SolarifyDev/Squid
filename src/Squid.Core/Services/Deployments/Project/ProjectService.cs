@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Events.Deployments.Project;
@@ -37,7 +38,7 @@ public class ProjectService : IProjectService
 
     public async Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken)
     {
-        var project = _mapper.Map<Persistence.Data.Domain.Deployments.Project>(command.Project);
+        var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
         project.LastModified = DateTimeOffset.UtcNow;
 
         if (project.IncludedLibraryVariableSetIds == null)
@@ -71,7 +72,7 @@ public class ProjectService : IProjectService
 
     public async Task<ProjectUpdatedEvent> UpdateProjectAsync(UpdateProjectCommand command, CancellationToken cancellationToken)
     {
-        var project = _mapper.Map<Persistence.Data.Domain.Deployments.Project>(command.Project);
+        var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
         project.LastModified = DateTimeOffset.UtcNow;
 
         if (project.IncludedLibraryVariableSetIds == null)
