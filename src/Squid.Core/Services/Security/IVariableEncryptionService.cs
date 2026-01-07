@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Entities.Deployments;
+
 namespace Squid.Core.Services.Security;
 
 public interface IVariableEncryptionService : IScopedDependency

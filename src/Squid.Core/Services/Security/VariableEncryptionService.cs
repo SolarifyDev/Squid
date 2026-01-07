@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Settings.Security;
 
 namespace Squid.Core.Services.Security;

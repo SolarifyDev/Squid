@@ -29,7 +29,7 @@ public class ChannelService : IChannelService
     
     public async Task<ChannelCreatedEvent> CreateChannelAsync(CreateChannelCommand command, CancellationToken cancellationToken)
     {
-        var channel = _mapper.Map<Persistence.Data.Domain.Deployments.Channel>(command.Channel);
+        var channel = _mapper.Map<Persistence.Entities.Deployments.Channel>(command.Channel);
         
         await _channelDataProvider.AddChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -41,7 +41,7 @@ public class ChannelService : IChannelService
 
     public async Task<ChannelUpdatedEvent> UpdateChannelAsync(UpdateChannelCommand command, CancellationToken cancellationToken)
     {
-        var channel = _mapper.Map<Persistence.Data.Domain.Deployments.Channel>(command.Channel);
+        var channel = _mapper.Map<Persistence.Entities.Deployments.Channel>(command.Channel);
         
         await _channelDataProvider.UpdateChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 

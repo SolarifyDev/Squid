@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.LifeCycle;
 
 namespace Squid.Core.Services.Deployments.LifeCycle;

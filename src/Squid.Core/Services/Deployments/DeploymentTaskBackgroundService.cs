@@ -119,7 +119,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         }
     }
 
-    private async Task ProcessDeploymentTaskAsync(Persistence.Data.Domain.Deployments.ServerTask task, CancellationToken cancellationToken)
+    private async Task ProcessDeploymentTaskAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken cancellationToken)
     {
         var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(task.Id, cancellationToken).ConfigureAwait(false);
 
@@ -228,7 +228,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         }
     }
 
-    private async Task InsertMachineVariablesAsync(Persistence.Data.Domain.Deployments.Machine target, List<VariableDto> variables, Persistence.Data.Domain.Deployments.Release release, DeploymentPlanDto plan, CancellationToken cancellationToken)
+    private async Task InsertMachineVariablesAsync(Persistence.Entities.Deployments.Machine target, List<VariableDto> variables, Persistence.Entities.Deployments.Release release, DeploymentPlanDto plan, CancellationToken cancellationToken)
     {
         var kubernetesEndpoint = ParseKubernetesEndpoint(target.Endpoint);
 
@@ -336,7 +336,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         });
     }
 
-    private async Task<string> BuildContainerImageAsync(DeploymentPlanDto plan, Persistence.Data.Domain.Deployments.Release release, CancellationToken cancellationToken)
+    private async Task<string> BuildContainerImageAsync(DeploymentPlanDto plan, Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken)
     {
         var firstAction = plan.ProcessSnapshot?.StepSnapshots?
             .SelectMany(s => s.Actions)
@@ -412,7 +412,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         }
     }
 
-    private async Task<bool> ExtractCalamariPackageAsync(CancellationToken cancellationToken, string extractCalamariPackageScript, byte[] calamariPackageBytes, Persistence.Data.Domain.Deployments.Machine target)
+    private async Task<bool> ExtractCalamariPackageAsync(CancellationToken cancellationToken, string extractCalamariPackageScript, byte[] calamariPackageBytes, Persistence.Entities.Deployments.Machine target)
     {
         var extractExecution = await StartExtractCalamariPackageScriptAsync(
             extractCalamariPackageScript,
@@ -459,13 +459,13 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         return bytes;
     }
 
-    private async Task<(Persistence.Data.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartDeployByCalamariScriptAsync(
+    private async Task<(Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartDeployByCalamariScriptAsync(
         string deployByCalamariScript,
         byte[] yamlNuGetPackageBytes,
         Stream variableJsonStream,
         Stream sensitiveVariableJsonStream,
         string sensitiveVariablesPassword,
-        Persistence.Data.Domain.Deployments.Machine target,
+        Persistence.Entities.Deployments.Machine target,
         string version,
         CancellationToken cancellationToken)
     {
@@ -531,10 +531,10 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         return (target, scriptClient, ticket);
     }
 
-    private async Task<(Persistence.Data.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartExtractCalamariPackageScriptAsync(
+    private async Task<(Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartExtractCalamariPackageScriptAsync(
         string extractCalamariPackageScript,
         byte[] calamariPackageBytes,
-        Persistence.Data.Domain.Deployments.Machine target,
+        Persistence.Entities.Deployments.Machine target,
         CancellationToken cancellationToken)
     {
         if (target == null)
@@ -588,7 +588,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     }
 
     private async Task<bool> ObserveDeploymentScriptAsync(
-        (Persistence.Data.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
+        (Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
         CancellationToken cancellationToken,
         TimeSpan? timeout = null)
     {
@@ -696,7 +696,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     }
 
     private async Task CancelScriptAsync(
-        (Persistence.Data.Domain.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
+        (Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
         long lastLogSequence)
     {
         try
@@ -755,7 +755,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         return memory.ToArray();
     }
 
-    private ServiceEndPoint? ParseMachineEndpoint(Persistence.Data.Domain.Deployments.Machine machine)
+    private ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
     {
         try
         {
@@ -939,7 +939,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         // 获取部署信息以获取SpaceId和ReleaseId
         var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId).ConfigureAwait(false);
 
-        var completion = new Persistence.Data.Domain.Deployments.DeploymentCompletion
+        var completion = new Persistence.Entities.Deployments.DeploymentCompletion
         {
             DeploymentId = deploymentId,
             CompletedTime = DateTimeOffset.UtcNow,

@@ -1,5 +1,6 @@
 using System.Text;
 using Newtonsoft.Json;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Message.Models.Deployments.Variable;
 

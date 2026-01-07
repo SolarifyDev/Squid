@@ -1,6 +1,6 @@
 using Squid.Message.Commands.Deployments.Environment;
 using Squid.Message.Models.Deployments.Environment;
-using Environment = Squid.Core.Persistence.Data.Domain.Deployments.Environment;
+using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.Core.Mappings;
 

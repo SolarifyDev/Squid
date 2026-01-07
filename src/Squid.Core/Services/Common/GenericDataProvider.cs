@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+
 namespace Squid.Core.Services.Common;
 
 public interface IGenericDataProvider : IScopedDependency

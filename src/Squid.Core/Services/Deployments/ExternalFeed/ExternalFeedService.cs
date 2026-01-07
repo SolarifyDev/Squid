@@ -30,7 +30,7 @@ public class ExternalFeedService : IExternalFeedService
 
     public async Task<ExternalFeedCreatedEvent> CreateExternalFeedAsync(CreateExternalFeedCommand command, CancellationToken cancellationToken)
     {
-        var externalFeed = _mapper.Map<Persistence.Data.Domain.Deployments.ExternalFeed>(command);
+        var externalFeed = _mapper.Map<Persistence.Entities.Deployments.ExternalFeed>(command);
 
         // externalFeed.Id = Guid.NewGuid(); // int 主键由数据库自增
 

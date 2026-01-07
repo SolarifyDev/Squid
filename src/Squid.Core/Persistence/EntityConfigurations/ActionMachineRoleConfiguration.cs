@@ -1,4 +1,4 @@
-using Squid.Core.Persistence.Data.Domain.Deployments;
+using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Persistence.EntityConfigurations;
 

@@ -1,5 +1,5 @@
-using Squid.Core.Persistence.Data;
-using Squid.Core.Persistence.Data.Domain.Deployments;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 
 namespace Squid.Core.Services.Deployments.Account;

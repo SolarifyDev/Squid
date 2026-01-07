@@ -1,20 +1,21 @@
 using System.Data;
+using Squid.Core.Persistence.Db;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
 public interface IServerTaskDataProvider : IScopedDependency
 {
-    Task AddServerTaskAsync(Persistence.Data.Domain.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task AddServerTaskAsync(Persistence.Entities.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<Persistence.Data.Domain.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default);
+    Task<Persistence.Entities.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default);
 
-    Task<Persistence.Data.Domain.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default);
+    Task<Persistence.Entities.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default);
 
     Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<List<Persistence.Data.Domain.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default);
+    Task<List<Persistence.Entities.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default);
 
-    Task<Persistence.Data.Domain.Deployments.ServerTask> GetServerTaskByIdAsync(int taskId, CancellationToken cancellationToken = default);
+    Task<Persistence.Entities.Deployments.ServerTask> GetServerTaskByIdAsync(int taskId, CancellationToken cancellationToken = default);
 }
 
 public class ServerTaskDataProvider : IServerTaskDataProvider
@@ -28,7 +29,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         _unitOfWork = unitOfWork;
     }
 
-    public async Task AddServerTaskAsync(Persistence.Data.Domain.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddServerTaskAsync(Persistence.Entities.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(task, cancellationToken).ConfigureAwait(false);
 
@@ -38,20 +39,20 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         }
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default)
+    public async Task<Persistence.Entities.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Persistence.Data.Domain.Deployments.ServerTask>(t => t.State == "Pending")
+        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.State == "Pending")
             .OrderBy(t => t.QueueTime)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default)
+    public async Task<Persistence.Entities.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default)
     {
         using var transaction = await _repository.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var task = await _repository.Query<Persistence.Data.Domain.Deployments.ServerTask>(t => t.State == "Pending")
+            var task = await _repository.Query<Persistence.Entities.Deployments.ServerTask>(t => t.State == "Pending")
                 .OrderBy(t => t.QueueTime)
                 .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
@@ -74,7 +75,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default)
     {
-        var task = await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var task = await _repository.GetByIdAsync<Persistence.Entities.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (task != null)
         {
@@ -88,14 +89,14 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         }
     }
 
-    public async Task<List<Persistence.Data.Domain.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Entities.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Persistence.Data.Domain.Deployments.ServerTask>()
+        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>()
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Persistence.Data.Domain.Deployments.ServerTask> GetServerTaskByIdAsync(int taskId, CancellationToken cancellationToken = default)
+    public async Task<Persistence.Entities.Deployments.ServerTask> GetServerTaskByIdAsync(int taskId, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetByIdAsync<Persistence.Data.Domain.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _repository.GetByIdAsync<Persistence.Entities.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

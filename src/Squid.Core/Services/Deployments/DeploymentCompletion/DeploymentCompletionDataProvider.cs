@@ -1,12 +1,14 @@
+using Squid.Core.Persistence.Db;
+
 namespace Squid.Core.Services.Deployments.DeploymentCompletion;
 
 public interface IDeploymentCompletionDataProvider : IScopedDependency
 {
-    Task AddDeploymentCompletionAsync(Persistence.Data.Domain.Deployments.DeploymentCompletion completion, bool forceSave = true, CancellationToken cancellationToken = default);
+    Task AddDeploymentCompletionAsync(Persistence.Entities.Deployments.DeploymentCompletion completion, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<List<Persistence.Data.Domain.Deployments.DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default);
+    Task<List<Persistence.Entities.Deployments.DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default);
 
-    Task<List<Persistence.Data.Domain.Deployments.DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default);
+    Task<List<Persistence.Entities.Deployments.DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentCompletionDataProvider : IDeploymentCompletionDataProvider
@@ -20,7 +22,7 @@ public class DeploymentCompletionDataProvider : IDeploymentCompletionDataProvide
         _unitOfWork = unitOfWork;
     }
 
-    public async Task AddDeploymentCompletionAsync(Persistence.Data.Domain.Deployments.DeploymentCompletion completion, bool forceSave = true, CancellationToken cancellationToken = default)
+    public async Task AddDeploymentCompletionAsync(Persistence.Entities.Deployments.DeploymentCompletion completion, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(completion, cancellationToken).ConfigureAwait(false);
 
@@ -30,21 +32,21 @@ public class DeploymentCompletionDataProvider : IDeploymentCompletionDataProvide
         }
     }
 
-    public async Task<List<Persistence.Data.Domain.Deployments.DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Entities.Deployments.DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Persistence.Data.Domain.Deployments.DeploymentCompletion>(dc => dc.DeploymentId == deploymentId)
+        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.DeploymentCompletion>(dc => dc.DeploymentId == deploymentId)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<List<Persistence.Data.Domain.Deployments.DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Entities.Deployments.DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.QueryNoTracking<Persistence.Data.Domain.Deployments.DeploymentCompletion>(dc => dc.State == "Success");
+        var query = _repository.QueryNoTracking<Persistence.Entities.Deployments.DeploymentCompletion>(dc => dc.State == "Success");
 
         if (projectId.HasValue)
         {
             // 需要通过Deployment表关联来过滤ProjectId
             query = from completion in query
-                    join deployment in _repository.QueryNoTracking<Persistence.Data.Domain.Deployments.Deployment>()
+                    join deployment in _repository.QueryNoTracking<Persistence.Entities.Deployments.Deployment>()
                         on completion.DeploymentId equals deployment.Id
                     where deployment.ProjectId == projectId.Value
                     select completion;

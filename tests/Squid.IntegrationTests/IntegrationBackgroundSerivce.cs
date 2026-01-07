@@ -9,8 +9,8 @@ using Serilog;
 using Moq;
 using Squid.Core;
 using Squid.Core.Commands.Tentacle;
-using Squid.Core.Persistence.Data;
-using Squid.Core.Persistence.Data.Domain.Deployments;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.Channel;
 using Squid.Core.Services.Deployments.Deployment;
@@ -20,8 +20,8 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Variable;
 using Squid.Core.Services.Tentacle;
 using Squid.Message.Enums;
-using Environment = Squid.Core.Persistence.Data.Domain.Deployments.Environment;
-using Machine = Squid.Core.Persistence.Data.Domain.Deployments.Machine;
+using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
+using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 
 namespace Squid.IntegrationTests;
 

@@ -5,7 +5,7 @@ using Npgsql;
 using Serilog;
 using Serilog.Sinks.SystemConsole;
 using Squid.Core.Persistence;
-using Squid.Core.Persistence.Postgres;
+using Squid.Core.Persistence.Db.Postgres;
 using Squid.Message;
 using Squid.Core.Settings.SelfCert;
 

@@ -1,4 +1,5 @@
 using Squid.Core.Attributes;
+using Squid.Core.Persistence.Db.Postgres;
 
 namespace Squid.Core.Persistence;
 
