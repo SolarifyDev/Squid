@@ -6,8 +6,8 @@ namespace Squid.Core.Persistence;
 
 public class DbUpRunner: IStartable
 {
-    private string _scriptFolderName;
     private readonly IUpgradeLog _logger;
+    private readonly string _scriptFolderName;
     private readonly UpgradeEngineBuilder _builder;
 
     public DbUpRunner(UpgradeEngineBuilder builder, IUpgradeLog logger, string scriptFolderName)
