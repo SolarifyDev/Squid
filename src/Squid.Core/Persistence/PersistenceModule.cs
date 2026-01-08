@@ -67,13 +67,6 @@ public class PersistenceModule : Module
             .As<DbContext>()
             .AsImplementedInterfaces()
             .InstancePerLifetimeScope();
-
-        // builder
-        //     .Register(_ =>
-        //         new PostgresDbUp(_squidStoreSetting.Postgres!.ConnectionString,
-        //             new DbUpLogger<PostgresDbUp>(_logger)))
-        //     .As<IStartable>()
-        //     .SingleInstance();
     }
     
     private void RegisterMySqlDbContext(ContainerBuilder builder)
@@ -101,7 +94,7 @@ public class PersistenceModule : Module
 
         string connectionString;
         string scriptFolderName;
-        UpgradeEngineBuilder engineBuilder = null;
+        UpgradeEngineBuilder engineBuilder;
         
         switch (_squidStoreSetting.Type)
         {
