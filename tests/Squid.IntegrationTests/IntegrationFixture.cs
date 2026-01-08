@@ -55,7 +55,6 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
             containerBuilder,
             storeSetting!,
             logger,
-            new IntegrationTestUser(),
             configuration,
             selfCertSetting);
 
