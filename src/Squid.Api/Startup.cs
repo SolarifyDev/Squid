@@ -23,7 +23,6 @@ public class Startup
         services.AddOptions();
         services.AddCustomSwagger();
         services.AddHttpContextAccessor();
-        services.AddScoped<IUserContext, UserContext>();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
         services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
@@ -44,12 +43,11 @@ public class Startup
     {
         var serviceProvider = _serviceCollection.BuildServiceProvider();
 
-        var userContext = serviceProvider.GetRequiredService<IUserContext>();
         var selfCertSetting = Configuration.GetSection("SelfCert").Get<SelfCertSetting>();
 
         var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
 
-        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, userContext, Configuration, selfCertSetting);
+        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, Configuration, selfCertSetting);
     }
 
     // Configure is where you add middleware. This is called after
