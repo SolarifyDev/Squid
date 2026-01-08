@@ -19,17 +19,6 @@ public class DbUpRunner: IStartable
 
     public void Start()
     {
-        var coreAssembly = Assembly.GetExecutingAssembly(); // Squid.Core.dll
-        
-        // 选项3：明确指定
-        var scriptAssembly = Assembly.GetAssembly(typeof(DbUpRunner));
-
-        var rr = Path.GetDirectoryName(coreAssembly.Location);
-        var rr2 = Path.GetDirectoryName(scriptAssembly.Location);
-        
-        var path = Path.Combine(Path.GetDirectoryName(Assembly.GetAssembly(typeof(DbUpRunner))?.Location) ?? string.Empty, _scriptFolderName);
-        var path2 = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, _scriptFolderName);
-        
         _builder.WithScriptsFromFileSystem(
                 Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, _scriptFolderName),
                 new FileSystemScriptOptions
