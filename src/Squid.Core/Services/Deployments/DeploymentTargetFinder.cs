@@ -1,6 +1,6 @@
-using Squid.Core.Services.Deployments.Channel;
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Environment;
+using Squid.Core.Services.Deployments.Channels;
+using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Machine;
 
 namespace Squid.Core.Services.Deployments;

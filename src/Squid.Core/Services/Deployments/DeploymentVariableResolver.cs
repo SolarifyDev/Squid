@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Variable;
 using Squid.Message.Enums;

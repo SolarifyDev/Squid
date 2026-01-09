@@ -1,9 +1,10 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Events.Deployments.Channel;
 using Squid.Message.Models.Deployments.Channel;
 using Squid.Message.Requests.Deployments.Channel;
 
-namespace Squid.Core.Services.Deployments.Channel;
+namespace Squid.Core.Services.Deployments.Channels;
 
 public interface IChannelService : IScopedDependency
 {
@@ -29,7 +30,7 @@ public class ChannelService : IChannelService
     
     public async Task<ChannelCreatedEvent> CreateChannelAsync(CreateChannelCommand command, CancellationToken cancellationToken)
     {
-        var channel = _mapper.Map<Persistence.Entities.Deployments.Channel>(command.Channel);
+        var channel = _mapper.Map<Channel>(command.Channel);
         
         await _channelDataProvider.AddChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -41,7 +42,7 @@ public class ChannelService : IChannelService
 
     public async Task<ChannelUpdatedEvent> UpdateChannelAsync(UpdateChannelCommand command, CancellationToken cancellationToken)
     {
-        var channel = _mapper.Map<Persistence.Entities.Deployments.Channel>(command.Channel);
+        var channel = _mapper.Map<Channel>(command.Channel);
         
         await _channelDataProvider.UpdateChannelAsync(channel, cancellationToken: cancellationToken).ConfigureAwait(false);
 

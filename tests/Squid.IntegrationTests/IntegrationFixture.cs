@@ -3,10 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
-using Serilog.Sinks.SystemConsole;
-using Squid.Core.Persistence;
 using Squid.Core.Persistence.Db.Postgres;
-using Squid.Message;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.IntegrationTests;

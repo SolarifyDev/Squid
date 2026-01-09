@@ -2,8 +2,9 @@ using Squid.Message.Commands.Deployments.Environment;
 using Squid.Message.Events.Deployments.Environment;
 using Squid.Message.Models.Deployments.Environment;
 using Squid.Message.Requests.Deployments.Environment;
+using DeploymentEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
-namespace Squid.Core.Services.Deployments.Environment;
+namespace Squid.Core.Services.Deployments.Environments;
 
 public interface IEnvironmentService : IScopedDependency
 {
@@ -16,33 +17,24 @@ public interface IEnvironmentService : IScopedDependency
     Task<GetEnvironmentsResponse> GetEnvironmentsAsync(GetEnvironmentsRequest request, CancellationToken cancellationToken);
 }
 
-public class EnvironmentService : IEnvironmentService
+public class EnvironmentService(IMapper mapper, IEnvironmentDataProvider environmentDataProvider)
+    : IEnvironmentService
 {
-    private readonly IMapper _mapper;
-
-    private readonly IEnvironmentDataProvider _environmentDataProvider;
-
-    public EnvironmentService(IMapper mapper, IEnvironmentDataProvider environmentDataProvider)
-    {
-        _mapper = mapper;
-        _environmentDataProvider = environmentDataProvider;
-    }
-
     public async Task<EnvironmentCreatedEvent> CreateEnvironmentAsync(CreateEnvironmentCommand command, CancellationToken cancellationToken)
     {
-        var environment = _mapper.Map<Persistence.Entities.Deployments.Environment>(command);
+        var environment = mapper.Map<DeploymentEnvironment>(command);
 
-        await _environmentDataProvider.AddEnvironmentAsync(environment, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await environmentDataProvider.AddEnvironmentAsync(environment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new EnvironmentCreatedEvent
         {
-            Data = _mapper.Map<EnvironmentDto>(environment)
+            Data = mapper.Map<EnvironmentDto>(environment)
         };
     }
 
     public async Task<EnvironmentUpdatedEvent> UpdateEnvironmentAsync(UpdateEnvironmentCommand command, CancellationToken cancellationToken)
     {
-        var environments = await _environmentDataProvider.GetEnvironmentsByIdsAsync(new List<int> { command.Id }, cancellationToken).ConfigureAwait(false);
+        var environments = await environmentDataProvider.GetEnvironmentsByIdsAsync(new List<int> { command.Id }, cancellationToken).ConfigureAwait(false);
 
         var entity = environments.FirstOrDefault();
 
@@ -51,21 +43,21 @@ public class EnvironmentService : IEnvironmentService
             throw new Exception("Environment not found");
         }
 
-        _mapper.Map(command, entity);
+        mapper.Map(command, entity);
 
-        await _environmentDataProvider.UpdateEnvironmentAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await environmentDataProvider.UpdateEnvironmentAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new EnvironmentUpdatedEvent
         {
-            Data = _mapper.Map<EnvironmentDto>(entity)
+            Data = mapper.Map<EnvironmentDto>(entity)
         };
     }
 
     public async Task<EnvironmentDeletedEvent> DeleteEnvironmentsAsync(DeleteEnvironmentsCommand command, CancellationToken cancellationToken)
     {
-        var environments = await _environmentDataProvider.GetEnvironmentsByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+        var environments = await environmentDataProvider.GetEnvironmentsByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
 
-        await _environmentDataProvider.DeleteEnvironmentsAsync(environments, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await environmentDataProvider.DeleteEnvironmentsAsync(environments, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var environmentIds = environments.Select(f => f.Id).ToList();
         var failIds = command.Ids.Except(environmentIds).ToList();
@@ -81,14 +73,14 @@ public class EnvironmentService : IEnvironmentService
 
     public async Task<GetEnvironmentsResponse> GetEnvironmentsAsync(GetEnvironmentsRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await _environmentDataProvider.GetEnvironmentPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, data) = await environmentDataProvider.GetEnvironmentPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetEnvironmentsResponse
         {
             Data = new GetEnvironmentsResponseData
             {
                 Count = count,
-                Environments = _mapper.Map<List<EnvironmentDto>>(data)
+                Environments = mapper.Map<List<EnvironmentDto>>(data)
             }
         };
     }
