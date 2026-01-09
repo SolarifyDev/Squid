@@ -10,8 +10,13 @@
     <PackageReference Include="AutoMapper" Version="13.0.1" />
     <PackageReference Include="FluentValidation" Version="11.11.0" />
     <PackageReference Include="Halibut" Version="8.1.1052" />
+    <PackageReference Include="Hangfire" Version="1.8.3" />
+    <PackageReference Include="Hangfire.MemoryStorage" Version="1.8.0" />
+    <PackageReference Include="Hangfire.Pro.Redis" Version="3.0.0" />
+    <PackageReference Include="Hangfire.Throttling" Version="1.0.0-beta1" />
     <PackageReference Include="Mediator.Net" Version="4.7.0" />
     <PackageReference Include="Mediator.Net.Autofac" Version="4.7.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.8" />
     <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.6" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.6" />
@@ -25,12 +30,14 @@
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.10" />
+    <PackageReference Include="RedLock.net" Version="2.3.2" />
     <PackageReference Include="Serilog" Version="4.1.0" />
     <PackageReference Include="dbup-postgresql" Version="5.0.40" />
     <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
     <PackageReference Include="AutoMapper.Contrib.Autofac.DependencyInjection" Version="8.1.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
+    <PackageReference Include="StackExchange.Redis" Version="2.6.122" />
   </ItemGroup>
 
   <ItemGroup>
@@ -40,6 +47,8 @@
   <ItemGroup>
     <Folder Include="Configuration\" />
     <Folder Include="Enums\" />
+    <Folder Include="Jobs\RecurringJobs\" />
+    <Folder Include="Services\System\" />
   </ItemGroup>
 
   <ItemGroup>
