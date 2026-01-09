@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
-using Squid.Core.Persistence.Db.Postgres;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.IntegrationTests;
@@ -52,7 +51,6 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
             containerBuilder,
             storeSetting!,
             logger,
-            new IntegrationTestUser(),
             configuration,
             selfCertSetting);
 
@@ -61,14 +59,14 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
 
     private static string DatabaseName => $"squid_integrationtests_{typeof(TTestClass).Name.ToLowerInvariant()}";
 
-    private static PostgresSetting CreateIsolatedPostgresSetting(PostgresSetting original)
+    private static ConnectionSetting CreateIsolatedPostgresSetting(ConnectionSetting original)
     {
         var builder = new NpgsqlConnectionStringBuilder(original.ConnectionString)
         {
             Database = DatabaseName
         };
 
-        return new PostgresSetting
+        return new ConnectionSetting
         {
             ConnectionString = builder.ToString(),
             Version = original.Version

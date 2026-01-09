@@ -1,28 +1,26 @@
-using DbUp;
+using DbUp.Builder;
 using DbUp.Engine.Output;
 using DbUp.ScriptProviders;
 
-namespace Squid.Core.Persistence.Db.Postgres;
+namespace Squid.Core.Persistence;
 
-public class PostgresDbUp: IStartable
+public class DbUpRunner: IStartable
 {
-    private readonly string _connectionString;
     private readonly IUpgradeLog _logger;
+    private readonly string _scriptFolderName;
+    private readonly UpgradeEngineBuilder _builder;
 
-    public PostgresDbUp(string connectionString, IUpgradeLog logger)
+    public DbUpRunner(UpgradeEngineBuilder builder, IUpgradeLog logger, string scriptFolderName)
     {
-        _connectionString = connectionString;
         _logger = logger;
+        _builder = builder;
+        _scriptFolderName = scriptFolderName;
     }
 
     public void Start()
     {
-        EnsureDatabase.For.PostgresqlDatabase(_connectionString);
-        
-        var engineBuilder = DeployChanges.To
-            .PostgresqlDatabase(_connectionString)
-            .WithScriptsFromFileSystem(
-                Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, "Persistence/Postgres/Scripts"),
+        _builder.WithScriptsFromFileSystem(
+                Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, _scriptFolderName),
                 new FileSystemScriptOptions
                 {
                     IncludeSubDirectories = true,
@@ -31,7 +29,7 @@ public class PostgresDbUp: IStartable
             .WithExecutionTimeout(TimeSpan.FromMinutes(3))
             .LogTo(_logger);
 
-        var upgradeEngine = engineBuilder.Build();
+        var upgradeEngine = _builder.Build();
 
         if (upgradeEngine.IsUpgradeRequired())
         {

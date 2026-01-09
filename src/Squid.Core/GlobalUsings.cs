@@ -14,7 +14,6 @@ global using Mediator.Net.Context;
 global using Mediator.Net.Contracts;
 global using Squid.Core.Persistence;
 global using Module = Autofac.Module;
-global using Squid.Core.Authentication;
 global using Microsoft.EntityFrameworkCore;
 global using Squid.Core.DependencyInjection;
 global using Squid.Core.Middlewares.Logging;
