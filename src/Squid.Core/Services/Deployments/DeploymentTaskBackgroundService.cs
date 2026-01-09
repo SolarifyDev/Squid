@@ -9,7 +9,7 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.ExternalFeed;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Tentacle;

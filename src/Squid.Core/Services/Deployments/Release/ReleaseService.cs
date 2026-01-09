@@ -99,8 +99,8 @@ public class ReleaseService : IReleaseService
         {
             Data = new GetReleasesResponseData
             {
-                Releases = _mapper.Map<List<ReleaseDto>>(releases),
                 Count = count,
+                Releases = _mapper.Map<List<ReleaseDto>>(releases),
                 CurrentDeployedReleaseIds = currentDeployedReleaseIds
             }
         };
