@@ -4,7 +4,7 @@ using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Requests.Deployments.Variable;
 
-namespace Squid.Core.Services.Deployments.Variable;
+namespace Squid.Core.Services.Deployments.Variables;
 
 public interface IVariableService : IScopedDependency
 {
@@ -72,11 +72,8 @@ public class VariableService : IVariableService
     {
         var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken).ConfigureAwait(false);
 
-        if (variableSet == null)
-        {
-            return null;
-        }
-
+        if (variableSet == null) return null;
+        
         var variableSetDto = _mapper.Map<VariableSetDto>(variableSet);
 
         var variables = await _variableDataProvider.GetVariablesByVariableSetIdAsync(id, cancellationToken).ConfigureAwait(false);
@@ -119,7 +116,7 @@ public class VariableService : IVariableService
         foreach (var dto in variableDtos)
         {
             var variable = CreateVariableFromDto(dto, variableSet.Id);
-            await _variableDataProvider.AddVariablesAsync(variableSet.Id, new List<Persistence.Entities.Deployments.Variable> { variable }, cancellationToken).ConfigureAwait(false);
+            await _variableDataProvider.AddVariablesAsync(variableSet.Id, new List<Variable> { variable }, cancellationToken).ConfigureAwait(false);
 
             if (dto.Scopes?.Any() == true)
             {
@@ -133,9 +130,9 @@ public class VariableService : IVariableService
         }
     }
 
-    private Persistence.Entities.Deployments.Variable CreateVariableFromDto(VariableDto dto, int variableSetId)
+    private Variable CreateVariableFromDto(VariableDto dto, int variableSetId)
     {
-        var variable = _mapper.Map<Persistence.Entities.Deployments.Variable>(dto);
+        var variable = _mapper.Map<Variable>(dto);
         variable.VariableSetId = variableSetId;
         return variable;
     }

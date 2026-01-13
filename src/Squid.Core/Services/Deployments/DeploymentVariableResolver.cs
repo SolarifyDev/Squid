@@ -1,6 +1,6 @@
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
-using Squid.Core.Services.Deployments.Variable;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -9,19 +9,19 @@ namespace Squid.Core.Services.Deployments;
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
     private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IVariableDataProvider _variableDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
-    private readonly IVariableSetDataProvider _variableSetDataProvider;
     private readonly IHybridVariableSnapshotService _variableSnapshotService;
 
     public DeploymentVariableResolver(
         IProjectDataProvider projectDataProvider,
+        IVariableDataProvider variableDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
-        IVariableSetDataProvider variableSetDataProvider,
         IHybridVariableSnapshotService variableSnapshotService)
     {
         _projectDataProvider = projectDataProvider;
+        _variableDataProvider = variableDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
-        _variableSetDataProvider = variableSetDataProvider;
         _variableSnapshotService = variableSnapshotService;
     }
 
@@ -51,8 +51,8 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         else
         {
             // 如果没有快照ID，查找项目的变量集并创建快照
-            var projectVariableSets = await _variableSetDataProvider.GetVariableSetsByIdAsync([project.VariableSetId], cancellationToken).ConfigureAwait(false);
-            var libraryVariableSets = await _variableSetDataProvider.GetVariableSetsByIdAsync(
+            var projectVariableSets = await _variableDataProvider.GetVariableSetsByIdAsync([project.VariableSetId], cancellationToken).ConfigureAwait(false);
+            var libraryVariableSets = await _variableDataProvider.GetVariableSetsByIdAsync(
                 project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).ToList(), cancellationToken).ConfigureAwait(false);
             var allVariableSets = libraryVariableSets.ConvertAll(x => x.Id);
             

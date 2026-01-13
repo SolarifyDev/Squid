@@ -2,9 +2,10 @@ using System.Text;
 using Newtonsoft.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.Deployments.Variable;
+namespace Squid.Core.Services.Deployments.Variables;
 
 public interface IHybridVariableSnapshotService : IScopedDependency
 {
@@ -22,18 +23,18 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
     private readonly IMapper _mapper;
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IVariableDataProvider _variableDataProvider;
-    private readonly IVariableSetSnapshotDataProvider _variableSetSnapshotDataProvider;
+    private readonly IDeploymentSnapshotDataProvider _deploymentSnapshotDataProvider;
 
     public HybridVariableSnapshotService(
         IMapper mapper,
         IGenericDataProvider genericDataProvider,
         IVariableDataProvider variableDataProvider,
-        IVariableSetSnapshotDataProvider variableSetSnapshotDataProvider)
+        IDeploymentSnapshotDataProvider deploymentSnapshotDataProvider)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
         _genericDataProvider = genericDataProvider;
-        _variableSetSnapshotDataProvider = variableSetSnapshotDataProvider;
+        _deploymentSnapshotDataProvider = deploymentSnapshotDataProvider;
     }
 
     public async Task<VariableSetSnapshotDto> GetOrCreateSnapshotAsync(List<int> variableSetIds, string createdBy, CancellationToken cancellationToken = default)
@@ -46,7 +47,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                 var (snapshotData, currentHash) = await CalculateVariableLatestSnapshotAsync(variableSetIds, innerCancellationToken).ConfigureAwait(false);
                 Log.Information("Content hash calculated: {Hash}", currentHash);
 
-                var existingSnapshot = await _variableSetSnapshotDataProvider.GetExistingSnapshotAsync(currentHash, innerCancellationToken).ConfigureAwait(false);
+                var existingSnapshot = await _deploymentSnapshotDataProvider.GetExistingVariableSetSnapshotAsync(currentHash, innerCancellationToken).ConfigureAwait(false);
 
                 if (existingSnapshot != null)
                 {
@@ -67,7 +68,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
                     CreatedBy = createdBy
                 };
 
-                await _variableSetSnapshotDataProvider.AddVariableSetSnapshotAsync(snapshot, false, innerCancellationToken).ConfigureAwait(false);
+                await _deploymentSnapshotDataProvider.AddVariableSetSnapshotAsync(snapshot, false, innerCancellationToken).ConfigureAwait(false);
 
                 Log.Information(
                     "Snapshot {SnapshotId} created successfully. " +
@@ -93,7 +94,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
 
     public async Task<VariableSetSnapshotDto> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default)
     {
-        var snapshot = await _variableSetSnapshotDataProvider.GetVariableSetSnapshotByIdAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        var snapshot = await _deploymentSnapshotDataProvider.GetVariableSetSnapshotByIdAsync(snapshotId, cancellationToken).ConfigureAwait(false);
 
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
@@ -105,7 +106,7 @@ public class HybridVariableSnapshotService : IHybridVariableSnapshotService
 
     public async Task<List<VariableSetSnapshotDto>> LoadSnapshotsAsync(List<int> snapshotIds, CancellationToken cancellationToken = default)
     {
-        var snapshots = await _variableSetSnapshotDataProvider.GetSnapshotsAsync(snapshotIds, cancellationToken).ConfigureAwait(false);
+        var snapshots = await _deploymentSnapshotDataProvider.GetVariableSetSnapshotsAsync(snapshotIds, cancellationToken).ConfigureAwait(false);
         
         if (snapshots.Count == 0) throw new Exception($"No snapshots found for {string.Join(',', snapshotIds)} variable sets");
         

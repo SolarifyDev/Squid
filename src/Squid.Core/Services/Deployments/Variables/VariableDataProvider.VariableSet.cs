@@ -1,10 +1,27 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
 
-namespace Squid.Core.Services.Deployments.Variable;
+namespace Squid.Core.Services.Deployments.Variables;
 
 public partial class VariableDataProvider
 {
+    public async Task<VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
+    {
+        return await _repository.QueryNoTracking<VariableSet>(vs => vs.OwnerId == ownerId && vs.OwnerType == ownerType)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default)
+    {
+        return await _repository.QueryNoTracking<VariableSet>(vs => ownerIds.Contains(vs.OwnerId) && vs.OwnerType == ownerType)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<VariableSet>> GetVariableSetsByIdAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<VariableSet>(x => variableSetIds.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
     public async Task AddVariableSetAsync(VariableSet variableSet, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.InsertAsync(variableSet, cancellationToken).ConfigureAwait(false);

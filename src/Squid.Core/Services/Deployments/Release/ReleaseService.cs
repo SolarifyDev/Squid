@@ -1,7 +1,7 @@
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Project;
-using Squid.Core.Services.Deployments.Variable;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;

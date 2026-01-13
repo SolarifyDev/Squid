@@ -2,7 +2,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.Deployments.Variable;
+namespace Squid.Core.Services.Deployments.Variables;
 
 public class ScopeContext
 {

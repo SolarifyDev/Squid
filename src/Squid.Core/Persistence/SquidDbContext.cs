@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.EntityConfigurations;
 
 namespace Squid.Core.Persistence;

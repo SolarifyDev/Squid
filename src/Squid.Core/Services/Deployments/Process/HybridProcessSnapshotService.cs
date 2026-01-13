@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.Deployments.Process;
@@ -21,7 +22,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 {
     private readonly IMapper _mapper;
     private readonly IGenericDataProvider _genericDataProvider;
-    private readonly IProcessSnapshotDataProvider _snapshotDataProvider;
+    private readonly IDeploymentSnapshotDataProvider _snapshotDataProvider;
     private readonly IDeploymentProcessDataProvider _processDataProvider;
     private readonly IDeploymentStepDataProvider _stepDataProvider;
     private readonly IDeploymentStepPropertyDataProvider _stepPropertyDataProvider;
@@ -34,7 +35,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
     public HybridProcessSnapshotService(
         IMapper mapper,
         IGenericDataProvider genericDataProvider,
-        IProcessSnapshotDataProvider snapshotDataProvider,
+        IDeploymentSnapshotDataProvider snapshotDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
         IDeploymentStepDataProvider stepDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
@@ -72,7 +73,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
                 var currentHash = UtilService.ComputeSha256Hash(json);
 
-                var existingSnapshot = await _snapshotDataProvider.GetExistingSnapshotAsync(processId, currentHash, token).ConfigureAwait(false);
+                var existingSnapshot = await _snapshotDataProvider.GetExistingDeploymentSnapshotAsync(processId, currentHash, token).ConfigureAwait(false);
 
                 if (existingSnapshot != null) return UtilService.DecompressFromGzip<ProcessSnapshotData>(existingSnapshot.SnapshotData);
 
@@ -80,7 +81,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
                 var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
 
-                var snapshot = new ProcessSnapshot
+                var snapshot = new DeploymentProcessSnapshot
                 {
                     OriginalProcessId = processId,
                     Version = snapshotData.Version,
@@ -91,7 +92,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
                     CreatedBy = createdBy
                 };
 
-                await _snapshotDataProvider.AddProcessSnapshotAsync(snapshot, false, token).ConfigureAwait(false);
+                await _snapshotDataProvider.AddDeploymentProcessSnapshotAsync(snapshot, false, token).ConfigureAwait(false);
                 
                 Log.Information(
                     "Snapshot {SnapshotId} created successfully. " +
@@ -107,7 +108,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
     public async Task<ProcessSnapshotData> LoadSnapshotAsync(int snapshotId, CancellationToken cancellationToken = default)
     {
-        var snapshot = await _snapshotDataProvider.GetProcessSnapshotByIdAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        var snapshot = await _snapshotDataProvider.GetDeploymentProcessSnapshotByIdAsync(snapshotId, cancellationToken).ConfigureAwait(false);
 
         if (snapshot == null)
             throw new Exception($"Snapshot {snapshotId} not found");
@@ -119,7 +120,7 @@ public class HybridProcessSnapshotService : IHybridProcessSnapshotService
 
     public async Task<List<ProcessSnapshotData>> LoadSnapshotsAsync(List<int> snapshotIds, CancellationToken cancellationToken = default)
     {
-        var snapshots = await _snapshotDataProvider.GetSnapshotsAsync(snapshotIds, cancellationToken).ConfigureAwait(false);
+        var snapshots = await _snapshotDataProvider.GetDeploymentProcessSnapshotsAsync(snapshotIds, cancellationToken).ConfigureAwait(false);
 
         if (snapshots.Count == 0)
             throw new Exception($"No snapshots found for {string.Join(',', snapshotIds)} processes");

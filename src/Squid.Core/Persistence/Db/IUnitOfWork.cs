@@ -1,4 +1,4 @@
-namespace Squid.Core;
+namespace Squid.Core.Persistence.Db;
 
 public interface IUnitOfWork
 {

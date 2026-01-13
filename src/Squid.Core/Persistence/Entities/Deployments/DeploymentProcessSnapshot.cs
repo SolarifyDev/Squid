@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class ProcessSnapshot : IEntity<int>
+public class DeploymentProcessSnapshot : IEntity<int>
 {
     public int Id { get; set; }
 
