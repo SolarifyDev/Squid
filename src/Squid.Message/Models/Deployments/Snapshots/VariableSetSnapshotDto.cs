@@ -1,12 +1,10 @@
-using Squid.Message.Enums;
-
-namespace Squid.Message.Models.Deployments.Variable;
+namespace Squid.Message.Models.Deployments.Snapshots;
 
 public class VariableSetSnapshotDto
 {
     public int Id { get; set; }
     
-    public List<VariableDto> Variables { get; set; } = new List<VariableDto>();
+    public VariableSetSnapshotDataDto Data { get; set; } = new();
     
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

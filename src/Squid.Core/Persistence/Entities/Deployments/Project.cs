@@ -24,6 +24,13 @@ public class Project : IEntity<int>
     
     public string IncludedLibraryVariableSetIds { get; set; }
     
+    public List<int> GetIncludedLibraryVariableSetIdList()
+    {
+        return string.IsNullOrWhiteSpace(IncludedLibraryVariableSetIds)
+            ? new List<int> { VariableSetId }
+            : IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([VariableSetId]).ToList();
+    }
+    
     public bool DiscreteChannelRelease { get; set; }
     
     public byte[] DataVersion { get; set; }

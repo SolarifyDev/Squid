@@ -1,7 +1,5 @@
-using Squid.Core.Services.Deployments.Process;
-using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
-using Squid.Core.Services.Deployments.Variables;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
@@ -26,30 +24,29 @@ public class ReleaseService : IReleaseService
 {
     private readonly IMapper _mapper;
     private readonly IReleaseDataProvider _releaseDataProvider;
-    private readonly IProjectDataProvider _projectDataProvider;
-    private readonly HybridProcessSnapshotService _hybridProcessSnapshotService;
-    private readonly HybridVariableSnapshotService _hybridVariableSnapshotService;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
-
-    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IProjectDataProvider projectDataProvider, HybridVariableSnapshotService hybridVariableSnapshotService, HybridProcessSnapshotService hybridProcessSnapshotService, IDeploymentCompletionDataProvider deploymentCompletionDataProvider)
+    private readonly IDeploymentSnapshotService _deploymentSnapshotService;
+    
+    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IDeploymentCompletionDataProvider deploymentCompletionDataProvider, IDeploymentSnapshotService deploymentSnapshotService)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
-        _projectDataProvider = projectDataProvider;
-        _hybridProcessSnapshotService = hybridProcessSnapshotService;
-        _hybridVariableSnapshotService = hybridVariableSnapshotService;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
+        _deploymentSnapshotService = deploymentSnapshotService;
     }
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)
     {
         var release = _mapper.Map<Persistence.Entities.Deployments.Release>(command);
         
-        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
+        var variableSetSnapshot = await _deploymentSnapshotService
+            .SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+        var deploymentProcessSnapshot = await _deploymentSnapshotService
+            .SnapshotProcessFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
         
-        release.ProjectVariableSetSnapshotId = (await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(
-            project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([project.VariableSetId]).ToList(), "user", cancellationToken).ConfigureAwait(false)).Id;
-        release.ProjectDeploymentProcessSnapshotId = (await _hybridProcessSnapshotService.GetOrCreateSnapshotAsync(project.DeploymentProcessId, "user", cancellationToken).ConfigureAwait(false)).Id;
+        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
+        release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
+        
         await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new ReleaseCreatedEvent
@@ -113,12 +110,11 @@ public class ReleaseService : IReleaseService
         if (release == null)
             throw new Exception($"Release {command.ReleaseId} not found");
         
-        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
-        
-        var variableSetSnapshot = await _hybridVariableSnapshotService.GetOrCreateSnapshotAsync(
-            project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([project.VariableSetId]).ToList(), "user", cancellationToken).ConfigureAwait(false);
+        var variableSetSnapshot = await _deploymentSnapshotService
+            .SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
         
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
+        
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 

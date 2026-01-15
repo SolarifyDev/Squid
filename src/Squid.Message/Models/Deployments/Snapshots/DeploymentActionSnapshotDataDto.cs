@@ -1,9 +1,6 @@
-namespace Squid.Message.Models.Deployments.Process;
+namespace Squid.Message.Models.Deployments.Snapshots;
 
-using System;
-using System.Collections.Generic;
-
-public class ActionSnapshotData
+public class DeploymentActionSnapshotDataDto
 {
     public int Id { get; set; }
 

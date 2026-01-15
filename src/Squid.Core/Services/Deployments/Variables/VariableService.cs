@@ -25,15 +25,13 @@ public class VariableService : IVariableService
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly SensitiveVariableHandler _sensitiveVariableHandler;
     private readonly IVariableScopeDataProvider _variableScopeDataProvider;
-    private readonly IHybridVariableSnapshotService _hybridVariableSnapshotService;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, IHybridVariableSnapshotService hybridVariableSnapshotService)
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler)
     {
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
         _sensitiveVariableHandler = sensitiveVariableHandler;
         _variableScopeDataProvider = variableScopeDataProvider;
-        _hybridVariableSnapshotService = hybridVariableSnapshotService;
     }
 
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
