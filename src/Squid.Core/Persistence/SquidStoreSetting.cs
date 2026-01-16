@@ -1,5 +1,4 @@
 using Squid.Core.Attributes;
-using Squid.Core.Persistence.Db.Postgres;
 
 namespace Squid.Core.Persistence;
 
@@ -26,5 +25,8 @@ public class SquidStoreSetting: IConfigurationSetting
     public SquidStoreType Type { get; set; } = SquidStoreType.Volatile;
 
     [RequiredOnPropertyValue(nameof(Type), SquidStoreType.Postgres)]
-    public PostgresSetting? Postgres { get; set; }
+    public ConnectionSetting? Postgres { get; set; }
+    
+    [RequiredOnPropertyValue(nameof(Type), SquidStoreType.MySql)]
+    public ConnectionSetting? MySql { get; set; }
 }

@@ -10,14 +10,12 @@ public class ApplicationStartup
         ContainerBuilder builder,
         SquidStoreSetting storeSetting,
         ILogger logger,
-        IUserContext userContext,
         IConfiguration configuration,
         SelfCertSetting selfCertSetting)
     {
         var assemblies = new[] { typeof(ApplicationStartup).Assembly };
 
         builder.RegisterModule(new LoggingModule(logger));
-        builder.RegisterModule(new AuthenticationModule(userContext));
         builder.RegisterModule(new SettingModule(configuration, assemblies));
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));

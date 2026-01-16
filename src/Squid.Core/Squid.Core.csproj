@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageReference Include="AutoMapper" Version="13.0.1" />
+    <PackageReference Include="dbup-mysql" Version="5.0.44" />
     <PackageReference Include="FluentValidation" Version="11.11.0" />
     <PackageReference Include="Halibut" Version="8.1.1052" />
     <PackageReference Include="Hangfire" Version="1.8.3" />
@@ -31,6 +32,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.10" />
     <PackageReference Include="RedLock.net" Version="2.3.2" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
     <PackageReference Include="Serilog" Version="4.1.0" />
     <PackageReference Include="dbup-postgresql" Version="5.0.40" />
     <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
@@ -45,10 +47,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="Authentication\" />
     <Folder Include="Configuration\" />
     <Folder Include="Enums\" />
     <Folder Include="Jobs\RecurringJobs\" />
     <Folder Include="Services\System\" />
+    <Folder Include="Persistence\Db\MySql\Scripts\" />
   </ItemGroup>
 
   <ItemGroup>
@@ -56,7 +60,7 @@
   </ItemGroup>
 
   <ItemGroup Label="DbUp">
-    <Content Include="Persistence\*\*\*.sql">
+    <Content Include="Persistence/Db/*/**"  Exclude="*.cs">
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
