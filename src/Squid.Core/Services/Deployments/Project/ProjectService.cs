@@ -1,6 +1,8 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.Variable;
 using Squid.Message.Commands.Deployments.Project;
+using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.Project;
 using Squid.Message.Models.Deployments.Project;
 using Squid.Message.Requests.Deployments.Project;
@@ -24,16 +26,19 @@ public class ProjectService : IProjectService
 {
     private readonly IMapper _mapper;
     private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IVariableDataProvider _variableDataProvider;
     private readonly IDeploymentProcessDataProvider _processDataProvider;
 
     public ProjectService(
         IMapper mapper,
         IProjectDataProvider projectDataProvider,
+        IVariableDataProvider variableDataProvider,
         IDeploymentProcessDataProvider processDataProvider)
     {
         _mapper = mapper;
         _projectDataProvider = projectDataProvider;
         _processDataProvider = processDataProvider;
+        _variableDataProvider = variableDataProvider;
     }
 
     public async Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken)
@@ -60,6 +65,18 @@ public class ProjectService : IProjectService
 
         await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        var variableSet = new VariableSet
+        {
+            SpaceId = project.SpaceId,
+            OwnerType = VariableSetOwnerType.Project,
+            OwnerId = project.Id,
+            Version = 1,
+            LastModified = DateTimeOffset.UtcNow
+        };
+        
+        await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        project.VariableSetId = variableSet.Id;
         project.DeploymentProcessId = deploymentProcess.Id;
 
         await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
