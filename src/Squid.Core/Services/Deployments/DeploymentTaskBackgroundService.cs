@@ -32,7 +32,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     private readonly IYamlNuGetPacker _yamlNuGetPacker;
     private readonly IDeploymentPlanService _planService;
     private readonly IDeploymentTargetFinder _targetFinder;
-    private readonly IAccountDataProvider _accountDataProvider;
+    private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IDeploymentVariableResolver _variableResolver;
@@ -47,7 +47,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         IYamlNuGetPacker yamlNuGetPacker,
         IDeploymentPlanService planService,
         IDeploymentTargetFinder targetFinder,
-        IAccountDataProvider accountDataProvider,
+        IDeploymentAccountDataProvider deploymentAccountDataProvider,
         IReleaseDataProvider releaseDataProvider,
         IGenericDataProvider genericDataProvider,
         IDeploymentVariableResolver variableResolver,
@@ -63,7 +63,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
         _halibutRuntime = halibutRuntime;
         _yamlNuGetPacker = yamlNuGetPacker;
         _variableResolver = variableResolver;
-        _accountDataProvider = accountDataProvider;
+        _deploymentAccountDataProvider = deploymentAccountDataProvider;
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
         _actionYamlGenerators = actionYamlGenerators;
@@ -241,7 +241,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
         if (!string.IsNullOrEmpty(kubernetesEndpoint.AccountId) && int.TryParse(kubernetesEndpoint.AccountId, out var accountId))
         {
-            var account = await _accountDataProvider.GetAccountByIdAsync(accountId, cancellationToken).ConfigureAwait(false);
+            var account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId, cancellationToken).ConfigureAwait(false);
 
             if (account != null)
             {

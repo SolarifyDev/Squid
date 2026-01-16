@@ -25,6 +25,7 @@ public class Startup
         services.AddHttpContextAccessor();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
+        services.AddHangfireInternal(Configuration);
         services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
         services.AddMvc(options =>
         {
@@ -64,5 +65,6 @@ public class Startup
         app.UseRouting();
         app.UseCors();
         app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
+        app.UseHangfireInternal(Configuration);
     }
 }
