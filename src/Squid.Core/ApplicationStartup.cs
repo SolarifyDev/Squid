@@ -1,3 +1,4 @@
+using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Settings.SelfCert;
 
@@ -19,6 +20,7 @@ public class ApplicationStartup
         builder.RegisterModule(new MediatorModule(assemblies));
         builder.RegisterModule(new PersistenceModule(storeSetting, logger));
         builder.RegisterModule(new HalibutModule(selfCertSetting));
+        builder.RegisterModule(new CachingModule());
         builder.RegisterAutoMapper(assemblies: assemblies);
 
         RegisterDependency(builder);

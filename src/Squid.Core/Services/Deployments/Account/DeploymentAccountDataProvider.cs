@@ -3,16 +3,16 @@ using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Services.Deployments.Account;
 
-public interface IAccountDataProvider : IScopedDependency
+public interface IDeploymentAccountDataProvider : IScopedDependency
 {
     Task<DeploymentAccount> GetAccountByIdAsync(int accountId, CancellationToken cancellationToken = default);
 }
 
-public class AccountDataProvider : IAccountDataProvider
+public class DeploymentAccountDataProvider : IDeploymentAccountDataProvider
 {
     private readonly IRepository _repository;
 
-    public AccountDataProvider(IRepository repository)
+    public DeploymentAccountDataProvider(IRepository repository)
     {
         _repository = repository;
     }
