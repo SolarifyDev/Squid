@@ -18,30 +18,22 @@ public interface ILifeCycleService : IScopedDependency
     Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken);
 }
 
-public class LifeCycleService : ILifeCycleService
+public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDataProvider)
+    : ILifeCycleService
 {
-    private readonly IMapper _mapper;
-    private readonly ILifeCycleDataProvider _lifeCycleDataProvider;
-
-    public LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDataProvider)
-    {
-        _mapper = mapper;
-        _lifeCycleDataProvider = lifeCycleDataProvider;
-    }
-
     public async Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
     {
         var retentionPolicies = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy).Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy)).ToList();
-        var lifecycle = _mapper.Map<Lifecycle>(command.LifecyclePhase.Lifecycle);
-        var phases = _mapper.Map<List<Phase>>(command.LifecyclePhase.Phases);
+        var lifecycle = mapper.Map<Lifecycle>(command.LifecyclePhase.Lifecycle);
+        var phases = mapper.Map<List<Phase>>(command.LifecyclePhase.Phases);
         
         retentionPolicies.Add(command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy);
         retentionPolicies.Add(command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy);
 
-        await _lifeCycleDataProvider.AddRetentionPoliciesAsync(_mapper.Map<List<RetentionPolicy>>(retentionPolicies), cancellationToken: cancellationToken).ConfigureAwait(false);
-        await _lifeCycleDataProvider.AddLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.AddRetentionPoliciesAsync(mapper.Map<List<RetentionPolicy>>(retentionPolicies), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.AddLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
         phases.ForEach(x => x.LifecycleId = lifecycle.Id);
-        await _lifeCycleDataProvider.AddPhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.AddPhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new LifeCycleCreateEvent
         {
@@ -57,31 +49,31 @@ public class LifeCycleService : ILifeCycleService
         var retentionPoliciesIds = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy.Id)
             .Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy.Id))
             .Concat(new[] { command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id, command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id }).ToList();
-        var lifecycle = await _lifeCycleDataProvider.GetLifecycleByIdAsync(command.LifecyclePhase.Lifecycle.Id, cancellationToken).ConfigureAwait(false);
-        var phases = await _lifeCycleDataProvider.GetPhasesByIdAsync(command.LifecyclePhase.Phases.Select(x => x.Id).ToList(), cancellationToken).ConfigureAwait(false);
-        var retentionPolicies = await _lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPoliciesIds, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(command.LifecyclePhase.Lifecycle.Id, cancellationToken).ConfigureAwait(false);
+        var phases = await lifeCycleDataProvider.GetPhasesByIdAsync(command.LifecyclePhase.Phases.Select(x => x.Id).ToList(), cancellationToken).ConfigureAwait(false);
+        var retentionPolicies = await lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPoliciesIds, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        lifecycle = _mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
-        phases = _mapper.Map(command.LifecyclePhase.Phases, phases);
+        lifecycle = mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
+        phases = mapper.Map(command.LifecyclePhase.Phases, phases);
         retentionPolicies.ForEach(x =>
         {
             var rrpPhase = command.LifecyclePhase.Phases.FirstOrDefault(phase => x.Id == phase.ReleaseRetentionPolicy.Id);
             var trpPhase = command.LifecyclePhase.Phases.FirstOrDefault(phase => x.Id == phase.TentacleRetentionPolicy.Id);
             
-            if (rrpPhase != null) x = _mapper.Map(rrpPhase.ReleaseRetentionPolicy, x);
+            if (rrpPhase != null) x = mapper.Map(rrpPhase.ReleaseRetentionPolicy, x);
             
-            if (trpPhase != null) x = _mapper.Map(trpPhase.TentacleRetentionPolicy, x);
+            if (trpPhase != null) x = mapper.Map(trpPhase.TentacleRetentionPolicy, x);
 
             if (command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id == x.Id)
-                x = _mapper.Map(command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy, x);
+                x = mapper.Map(command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy, x);
             
             if (command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id == x.Id)
-                x = _mapper.Map(command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy, x);
+                x = mapper.Map(command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy, x);
         });
 
-        await _lifeCycleDataProvider.UpdateLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await _lifeCycleDataProvider.UpdatePhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await _lifeCycleDataProvider.UpdateRetentionPoliciesAsync(retentionPolicies, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.UpdateLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.UpdatePhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.UpdateRetentionPoliciesAsync(retentionPolicies, cancellationToken: cancellationToken).ConfigureAwait(false);
         
         return new LifeCycleUpdatedEvent
         {
@@ -94,9 +86,9 @@ public class LifeCycleService : ILifeCycleService
 
     public async Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken)
     {
-        var lifecycles = await _lifeCycleDataProvider.GetLifecyclesByIdAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+        var lifecycles = await lifeCycleDataProvider.GetLifecyclesByIdAsync(command.Ids, cancellationToken).ConfigureAwait(false);
 
-        await _lifeCycleDataProvider.DeleteLifecyclesAsync(lifecycles, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.DeleteLifecyclesAsync(lifecycles, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var lifecycleIds = lifecycles.Select(x => x.Id).ToList();
         var failIds = command.Ids.Except(lifecycleIds).ToList();
@@ -112,7 +104,7 @@ public class LifeCycleService : ILifeCycleService
 
     public async Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken)
     {
-        var (count, lifecyclePhases) = await _lifeCycleDataProvider.GetLifecyclePhasePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, lifecyclePhases) = await lifeCycleDataProvider.GetLifecyclePhasePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         lifecyclePhases = await EnhanceRetentionPolicyToLifecycleAsync(lifecyclePhases, cancellationToken).ConfigureAwait(false);
 
@@ -132,7 +124,7 @@ public class LifeCycleService : ILifeCycleService
         
         retentionPolicyIds.AddRange(lifecyclePhases.Select(x => x.Lifecycle.ReleaseRetentionPolicyId).Concat(lifecyclePhases.Select(x => x.Lifecycle.TentacleRetentionPolicyId)));
 
-        var retentionPolicies = await _lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPolicyIds, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var retentionPolicies = await lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPolicyIds, cancellationToken: cancellationToken).ConfigureAwait(false);
         
         foreach (var lifecyclePhase in lifecyclePhases)
         {
@@ -147,9 +139,9 @@ public class LifeCycleService : ILifeCycleService
     private void GetRetentionPolicyById<T>(List<RetentionPolicy> retentionPolicies, T data) where T : IHasDualRetentionPolicies
     {
         var rrp = retentionPolicies.FirstOrDefault(r => r.Id == data.ReleaseRetentionPolicyId);
-        if (rrp != null) data.ReleaseRetentionPolicy = _mapper.Map<RetentionPolicyDto>(rrp);
+        if (rrp != null) data.ReleaseRetentionPolicy = mapper.Map<RetentionPolicyDto>(rrp);
         
         var trp = retentionPolicies.FirstOrDefault(r => r.Id == data.TentacleRetentionPolicyId);
-        if (trp != null) data.TentacleRetentionPolicy = _mapper.Map<RetentionPolicyDto>(trp);
+        if (trp != null) data.TentacleRetentionPolicy = mapper.Map<RetentionPolicyDto>(trp);
     }
 }

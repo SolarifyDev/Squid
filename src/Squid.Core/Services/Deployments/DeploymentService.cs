@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.Environment;
+using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Machine;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;

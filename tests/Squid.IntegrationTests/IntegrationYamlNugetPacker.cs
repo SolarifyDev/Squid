@@ -1,8 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
-using System.Text;
-using Serilog;
 using Squid.Core.Services.Common;
 
 namespace Squid.IntegrationTests;

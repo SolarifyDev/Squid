@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;

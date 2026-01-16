@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.ExternalFeed;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Commands.Deployments.ExternalFeed;
 
 namespace Squid.Core.Handlers.CommandHandlers.Deployments.ExternalFeed;

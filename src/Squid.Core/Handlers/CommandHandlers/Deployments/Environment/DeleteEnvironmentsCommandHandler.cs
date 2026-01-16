@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Environment;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Message.Commands.Deployments.Environment;
 
 namespace Squid.Core.Handlers.CommandHandlers.Deployments.Environment;

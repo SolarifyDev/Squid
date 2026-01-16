@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Channel;
+using Squid.Core.Services.Deployments.Channels;
 using Squid.Message.Requests.Deployments.Channel;
 
 namespace Squid.Core.Handlers.RequestHandlers.Deployments.Channel;

@@ -33,10 +33,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
     {
         await _repository.InsertAsync(process, cancellationToken).ConfigureAwait(false);
 
-        if (forceSave)
-        {
-            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UpdateDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default)
@@ -44,20 +41,14 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         process.LastModified = DateTimeOffset.UtcNow;
         await _repository.UpdateAsync(process, cancellationToken).ConfigureAwait(false);
 
-        if (forceSave)
-        {
-            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default)
     {
         await _repository.DeleteAsync(process, cancellationToken).ConfigureAwait(false);
 
-        if (forceSave)
-        {
-            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
+        if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<DeploymentProcess> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken = default)
@@ -72,21 +63,16 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
         var query = _repository.Query<DeploymentProcess>();
 
         if (spaceId.HasValue)
-        {
             query = query.Where(p => p.SpaceId == spaceId.Value);
-        }
+        
         
         if (projectId.HasValue)
-        {
             query = query.Where(p => p.ProjectId == projectId.Value);
-        }
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
         if (pageIndex.HasValue && pageSize.HasValue)
-        {
             query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
-        }
 
         var results = await query
             .OrderByDescending(p => p.Version)

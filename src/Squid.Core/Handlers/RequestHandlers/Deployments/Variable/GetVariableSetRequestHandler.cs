@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Variable;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Requests.Deployments.Variable;
 
 namespace Squid.Core.Handlers.RequestHandlers.Deployments.Variable;
