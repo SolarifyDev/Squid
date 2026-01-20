@@ -1,4 +1,5 @@
 using Mediator.Net.Pipeline;
+using Squid.Core.Persistence.Db;
 
 namespace Squid.Core.Middlewares.UnitOfWork;
 

@@ -7,9 +7,9 @@ using Squid.Core.Commands.Tentacle;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.Deployment;
-using Squid.Core.Services.Deployments.DeploymentCompletion;
-using Squid.Core.Services.Deployments.ExternalFeed;
+using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Tentacle;
@@ -17,6 +17,7 @@ using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
@@ -338,8 +339,8 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
 
     private async Task<string> BuildContainerImageAsync(DeploymentPlanDto plan, Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken)
     {
-        var firstAction = plan.ProcessSnapshot?.StepSnapshots?
-            .SelectMany(s => s.Actions)
+        var firstAction = plan.ProcessSnapshot?.Data.StepSnapshots?
+            .SelectMany(s => s.ActionSnapshots)
             .FirstOrDefault(a => a.FeedId.HasValue && !string.IsNullOrEmpty(a.PackageId));
 
         if (firstAction == null)
@@ -822,11 +823,11 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
     }
 
     private List<DeploymentStepDto> ConvertProcessSnapshotToSteps(
-        ProcessSnapshotData processSnapshot)
+        DeploymentProcessSnapshotDto processSnapshot)
     {
         var steps = new List<DeploymentStepDto>();
 
-        foreach (var stepSnap in processSnapshot.StepSnapshots.OrderBy(p => p.StepOrder))
+        foreach (var stepSnap in processSnapshot.Data.StepSnapshots.OrderBy(p => p.StepOrder))
         {
             var step = new DeploymentStepDto
             {
@@ -847,7 +848,7 @@ public class DeploymentTaskBackgroundService : IDeploymentTaskBackgroundService
                         {
                             StepId = stepSnap.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
                         }).ToList(),
-                Actions = stepSnap.Actions.Select(
+                Actions = stepSnap.ActionSnapshots.Select(
                     action =>
                         new DeploymentActionDto
                         {
