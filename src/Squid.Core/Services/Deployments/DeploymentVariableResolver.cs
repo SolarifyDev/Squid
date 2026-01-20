@@ -62,7 +62,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
             if (allVariableSetIds.Count == 0) throw new InvalidOperationException($"Variable set not found on project {project.Id}.");
 
             var variableSetSnapshot = await _deploymentSnapshotService.SnapshotVariableSetFromIdsAsync(allVariableSetIds, cancellationToken).ConfigureAwait(false);
-            variables = variableSetSnapshot.Variables;
+            variables = variableSetSnapshot.Data.Variables;
 
             // 更新Deployment记录快照ID
             deployment.VariableSetSnapshotId = variableSetSnapshot.Id;

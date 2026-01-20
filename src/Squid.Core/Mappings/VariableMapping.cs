@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Variable;
+using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Mappings;
@@ -15,6 +16,7 @@ public class VariableMapping : Profile
             .ForMember(dest => dest.Id, opt => opt.Ignore());
 
         CreateMap<VariableSet, VariableSetDto>().ReverseMap();
+        CreateMap<VariableSetSnapshot, VariableSetSnapshotDto>().ReverseMap();
 
         CreateMap<CreateVariableSetCommand, VariableSet>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())

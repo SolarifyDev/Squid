@@ -49,11 +49,11 @@ public class DeploymentPlanService : IDeploymentPlanService
         
         if (deployment.ProcessSnapshotId.HasValue)
         {
-            processSnapshot = await _processSnapshotService.LoadSnapshotAsync(deployment.ProcessSnapshotId.Value, cancellationToken).ConfigureAwait(false);
+            processSnapshot = await _deploymentSnapshotService.LoadProcessSnapshotAsync(deployment.ProcessSnapshotId.Value, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            processSnapshot = await _processSnapshotService.GetOrCreateSnapshotAsync(process.Id, "System", cancellationToken).ConfigureAwait(false);
+            processSnapshot = await _deploymentSnapshotService.SnapshotProcessFromIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
             
             // 更新Deployment记录快照ID
             deployment.ProcessSnapshotId = processSnapshot.Id;

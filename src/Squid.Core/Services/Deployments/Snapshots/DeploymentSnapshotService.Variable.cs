@@ -9,23 +9,23 @@ namespace Squid.Core.Services.Deployments.Snapshots;
 
 public partial interface IDeploymentSnapshotService
 {
-    Task<VariableSetSnapshot> SnapshotVariableSetFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default);
+    Task<VariableSetSnapshotDto> SnapshotVariableSetFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default);
     
-    Task<VariableSetSnapshot> SnapshotVariableSetFromIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
+    Task<VariableSetSnapshotDto> SnapshotVariableSetFromIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default);
 
     Task<VariableSetSnapshotDto> LoadVariableSetSnapshotAsync(int variableSetSnapshotId, CancellationToken cancellationToken = default);
 }
 
 public partial class DeploymentSnapshotService
 {
-    public async Task<VariableSetSnapshot> SnapshotVariableSetFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default)
+    public async Task<VariableSetSnapshotDto> SnapshotVariableSetFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default)
     {
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
 
         return await SnapshotVariableSetFromIdsAsync(project.GetIncludedLibraryVariableSetIdList(), cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<VariableSetSnapshot> SnapshotVariableSetFromIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
+    public async Task<VariableSetSnapshotDto> SnapshotVariableSetFromIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
     {
         var variables = await _variableDataProvider
             .GetVariablesByVariableSetIdsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
@@ -35,8 +35,9 @@ public partial class DeploymentSnapshotService
         var variableSetSnapshot = BuildVariableSetSnapshot(snapshotData);
         
         await _deploymentSnapshotDataProvider.AddVariableSetSnapshotAsync(variableSetSnapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
-        return variableSetSnapshot;
+
+        return _mapper.Map<VariableSetSnapshotDto>(variableSetSnapshot,
+            opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
     }
 
     public async Task<VariableSetSnapshotDto> LoadVariableSetSnapshotAsync(int variableSetSnapshotId, CancellationToken cancellationToken = default)

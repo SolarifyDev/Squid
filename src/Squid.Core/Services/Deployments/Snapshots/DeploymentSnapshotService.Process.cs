@@ -8,18 +8,27 @@ namespace Squid.Core.Services.Deployments.Snapshots;
 
 public partial interface IDeploymentSnapshotService
 {
-    Task<DeploymentProcessSnapshot> SnapshotProcessFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default);
+    Task<DeploymentProcessSnapshotDto> SnapshotProcessFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default);
 
+    Task<DeploymentProcessSnapshotDto> SnapshotProcessFromIdAsync(int processId, CancellationToken cancellationToken = default);
+    
     Task<DeploymentProcessSnapshotDto> LoadProcessSnapshotAsync(int processSnapshotId, CancellationToken cancellationToken = default);
 }
 
 public partial class DeploymentSnapshotService
 {
-    public async Task<DeploymentProcessSnapshot> SnapshotProcessFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default)
+    public async Task<DeploymentProcessSnapshotDto> SnapshotProcessFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default)
     {
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
         
-        var process = await _deploymentProcessDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId, cancellationToken).ConfigureAwait(false);
+        var processSnapshot = await SnapshotProcessFromIdAsync(project.DeploymentProcessId, cancellationToken).ConfigureAwait(false);
+
+        return processSnapshot;
+    }
+
+    public async Task<DeploymentProcessSnapshotDto> SnapshotProcessFromIdAsync(int processId, CancellationToken cancellationToken = default)
+    {
+        var process = await _deploymentProcessDataProvider.GetDeploymentProcessByIdAsync(processId, cancellationToken).ConfigureAwait(false);
         
         var snapshotData = await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
 
@@ -27,7 +36,8 @@ public partial class DeploymentSnapshotService
 
         await _deploymentSnapshotDataProvider.AddDeploymentProcessSnapshotAsync(processSnapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
         
-        return processSnapshot;
+        return _mapper.Map<DeploymentProcessSnapshotDto>(processSnapshot,
+            opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
     }
 
     public async Task<DeploymentProcessSnapshotDto> LoadProcessSnapshotAsync(int processSnapshotId, CancellationToken cancellationToken = default)
