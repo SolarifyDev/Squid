@@ -1,7 +1,9 @@
-using Squid.Core.Services.Deployments.Deployment;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.Core.Services.Deployments;
 
@@ -10,18 +12,18 @@ public class DeploymentPlanService : IDeploymentPlanService
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IDeploymentProcessDataProvider _processDataProvider;
-    private readonly IHybridProcessSnapshotService _processSnapshotService;
+    private readonly IDeploymentSnapshotService _deploymentSnapshotService;
 
     public DeploymentPlanService(
         IDeploymentDataProvider deploymentDataProvider,
         IProjectDataProvider projectDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
-        IHybridProcessSnapshotService processSnapshotService)
+        IDeploymentSnapshotService deploymentSnapshotService)
     {
         _deploymentDataProvider = deploymentDataProvider;
         _projectDataProvider = projectDataProvider;
         _processDataProvider = processDataProvider;
-        _processSnapshotService = processSnapshotService;
+        _deploymentSnapshotService = deploymentSnapshotService;
     }
 
     public async Task<DeploymentPlanDto> GeneratePlanAsync(int deploymentId, CancellationToken cancellationToken)
@@ -43,15 +45,15 @@ public class DeploymentPlanService : IDeploymentPlanService
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId, cancellationToken).ConfigureAwait(false);
 
         // 获取或创建流程快照
-        ProcessSnapshotData processSnapshot;
+        DeploymentProcessSnapshotDto processSnapshot;
         
         if (deployment.ProcessSnapshotId.HasValue)
         {
-            processSnapshot = await _processSnapshotService.LoadSnapshotAsync(deployment.ProcessSnapshotId.Value, cancellationToken).ConfigureAwait(false);
+            processSnapshot = await _deploymentSnapshotService.LoadProcessSnapshotAsync(deployment.ProcessSnapshotId.Value, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            processSnapshot = await _processSnapshotService.GetOrCreateSnapshotAsync(process.Id, "System", cancellationToken).ConfigureAwait(false);
+            processSnapshot = await _deploymentSnapshotService.SnapshotProcessFromIdAsync(process.Id, cancellationToken).ConfigureAwait(false);
             
             // 更新Deployment记录快照ID
             deployment.ProcessSnapshotId = processSnapshot.Id;

@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Process;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.Core.Mappings;
 
@@ -8,9 +9,9 @@ public class DeploymentProcessMapping : Profile
 {
     public DeploymentProcessMapping()
     {
-        CreateMap<DeploymentProcess, DeploymentProcessDto>();
-        CreateMap<DeploymentProcessDto, DeploymentProcess>();
-
+        CreateMap<DeploymentProcess, DeploymentProcessDto>().ReverseMap();
+        CreateMap<DeploymentProcessSnapshot, DeploymentProcessSnapshotDto>().ReverseMap();
+        
         CreateMap<DeploymentStep, DeploymentStepDto>();
         CreateMap<DeploymentStepDto, DeploymentStep>()
             .ForMember(dest => dest.Id, opt => opt.Ignore());

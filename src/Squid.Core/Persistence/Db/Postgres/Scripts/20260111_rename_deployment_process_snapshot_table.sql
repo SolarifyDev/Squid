@@ -1,0 +1,1 @@
+ALTER TABLE IF EXISTS process_snapshot RENAME TO deployment_process_snapshot;

@@ -39,7 +39,7 @@ public class ApiUser : ICurrentUser
     {
         get
         {
-            var currentAuthScheme = _httpContextAccessor.HttpContext.User.Identity?.AuthenticationType;
+            var currentAuthScheme = _httpContextAccessor.HttpContext?.User.Identity?.AuthenticationType;
             
             return _httpContextAccessor?.HttpContext?.User.Claims.SingleOrDefault(x => x.Type == ClaimTypes.Name && x.Subject?.AuthenticationType == currentAuthScheme)?.Value;
         }
