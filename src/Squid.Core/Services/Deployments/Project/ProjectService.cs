@@ -1,6 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Process;
-using Squid.Core.Services.Deployments.Variable;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.Project;
