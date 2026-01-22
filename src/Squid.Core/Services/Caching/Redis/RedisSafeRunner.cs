@@ -1,7 +1,6 @@
 using Serilog;
 using Autofac;
 using RedLockNet;
-// using Squid.Core.Ioc;
 using RedLockNet.SERedis;
 using StackExchange.Redis;
 using RedLockNet.SERedis.Configuration;

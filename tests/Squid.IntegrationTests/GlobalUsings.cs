@@ -1,10 +1,9 @@
-// Global using directives
-
 global using System;
+global using System.Collections.Generic;
+global using System.IO;
+global using System.IO.Compression;
+global using System.Linq;
+global using System.Text;
 global using System.Threading.Tasks;
-global using Autofac;
-global using Mediator.Net;
 global using Shouldly;
-global using Squid.Core;
-global using Squid.Core.Persistence;
 global using Xunit;
