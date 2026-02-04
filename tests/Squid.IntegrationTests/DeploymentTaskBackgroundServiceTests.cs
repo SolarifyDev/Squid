@@ -8,7 +8,6 @@ using Squid.Core;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments;
-using Squid.Core.Services.Deployments.DeploymentCompletion;
 using Squid.Core.Services.Tentacle;
 using Squid.IntegrationTests.Builders;
 using Squid.IntegrationTests.Fixtures;

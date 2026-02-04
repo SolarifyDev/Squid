@@ -6,109 +6,99 @@ using Squid.Core.Services.Common;
 namespace Squid.IntegrationTests;
 
 [Collection("Sequential")]
-public class IntegrationYamlNugetPacker : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationYamlNugetPacker>>
+public class IntegrationYamlNugetPacker : TestBase<IntegrationYamlNugetPacker>
 {
-    public IntegrationYamlNugetPacker(IntegrationFixture<IntegrationYamlNugetPacker> fixture) : base(fixture)
+    [Fact]
+    public void ShouldCreateNugetPackageWithYamlFiles()
     {
+        var packer = Resolve<IYamlNuGetPacker>();
+
+        var yamlFiles = new Dictionary<string, byte[]>
+        {
+            { "deployment.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config"u8.ToArray() }
+        };
+
+        var version = "1.0.0-test";
+
+        var packageId = "Squid.Test.Package";
+
+        var packageBytes = packer.CreateNuGetPackageFromYamlBytes(yamlFiles, version, packageId);
+
+        packageBytes.ShouldNotBeNull();
+
+        packageBytes.Length.ShouldBeGreaterThan(0);
+
+        using var stream = new MemoryStream(packageBytes);
+
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+
+        var nuspecEntry = archive.GetEntry("Squid.nuspec");
+
+        nuspecEntry.ShouldNotBeNull();
+
+        using var nuspecStream = nuspecEntry.Open();
+
+        using var reader = new StreamReader(nuspecStream);
+
+        var nuspecContent = reader.ReadToEnd();
+
+        nuspecContent.ShouldContain(version);
+
+        nuspecContent.ShouldContain(packageId);
+
+        foreach (var yamlFile in yamlFiles.Keys)
+        {
+            var entry = archive.GetEntry($"content/{yamlFile}");
+
+            entry.ShouldNotBeNull();
+        }
     }
 
     [Fact]
-    public async Task ShouldCreateNugetPackageWithYamlFiles()
+    public void ShouldCreateNugetPackageWithYamlStreams()
     {
-        await Run<IYamlNuGetPacker>(packer =>
+        var packer = Resolve<IYamlNuGetPacker>();
+
+        using var yamlStream = new MemoryStream("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config"u8.ToArray());
+
+        var yamlFiles = new Dictionary<string, Stream>
         {
-            var yamlFiles = new Dictionary<string, byte[]>
-            {
-                { "deployment.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config"u8.ToArray() }
-            };
+            { "deployment.yaml", yamlStream }
+        };
 
-            var version = "1.0.0-test";
+        var version = "1.0.0-stream";
 
-            var packageId = "Squid.Test.Package";
+        var packageId = "Squid.Test.Stream.Package";
 
-            var packageBytes = packer.CreateNuGetPackageFromYamlBytes(yamlFiles, version, packageId);
+        var packageBytes = packer.CreateNuGetPackageFromYamlStreams(yamlFiles, version, packageId);
 
-            packageBytes.ShouldNotBeNull();
+        packageBytes.ShouldNotBeNull();
 
-            packageBytes.Length.ShouldBeGreaterThan(0);
+        packageBytes.Length.ShouldBeGreaterThan(0);
 
-            using var stream = new MemoryStream(packageBytes);
+        using var stream = new MemoryStream(packageBytes);
 
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
 
-            var nuspecEntry = archive.GetEntry("Squid.nuspec");
+        var nuspecEntry = archive.GetEntry("Squid.nuspec");
 
-            nuspecEntry.ShouldNotBeNull();
+        nuspecEntry.ShouldNotBeNull();
 
-            using var nuspecStream = nuspecEntry.Open();
+        using var nuspecStream = nuspecEntry.Open();
 
-            using var reader = new StreamReader(nuspecStream);
+        using var reader = new StreamReader(nuspecStream);
 
-            var nuspecContent = reader.ReadToEnd();
+        var nuspecContent = reader.ReadToEnd();
 
-            nuspecContent.ShouldContain(version);
+        nuspecContent.ShouldContain(version);
 
-            nuspecContent.ShouldContain(packageId);
+        nuspecContent.ShouldContain(packageId);
 
-            foreach (var yamlFile in yamlFiles.Keys)
-            {
-                var entry = archive.GetEntry($"content/{yamlFile}");
-
-                entry.ShouldNotBeNull();
-            }
-
-            return Task.CompletedTask;
-        }).ConfigureAwait(false);
-    }
-
-    [Fact]
-    public async Task ShouldCreateNugetPackageWithYamlStreams()
-    {
-        await Run<IYamlNuGetPacker>(packer =>
+        foreach (var yamlFile in yamlFiles.Keys)
         {
-            using var yamlStream = new MemoryStream("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config"u8.ToArray());
+            var entry = archive.GetEntry($"content/{yamlFile}");
 
-            var yamlFiles = new Dictionary<string, Stream>
-            {
-                { "deployment.yaml", yamlStream }
-            };
-
-            var version = "1.0.0-stream";
-
-            var packageId = "Squid.Test.Stream.Package";
-
-            var packageBytes = packer.CreateNuGetPackageFromYamlStreams(yamlFiles, version, packageId);
-
-            packageBytes.ShouldNotBeNull();
-
-            packageBytes.Length.ShouldBeGreaterThan(0);
-
-            using var stream = new MemoryStream(packageBytes);
-
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-
-            var nuspecEntry = archive.GetEntry("Squid.nuspec");
-
-            nuspecEntry.ShouldNotBeNull();
-
-            using var nuspecStream = nuspecEntry.Open();
-
-            using var reader = new StreamReader(nuspecStream);
-
-            var nuspecContent = reader.ReadToEnd();
-
-            nuspecContent.ShouldContain(version);
-
-            nuspecContent.ShouldContain(packageId);
-
-            foreach (var yamlFile in yamlFiles.Keys)
-            {
-                var entry = archive.GetEntry($"content/{yamlFile}");
-
-                entry.ShouldNotBeNull();
-            }
-
-            return Task.CompletedTask;
-        }).ConfigureAwait(false);
+            entry.ShouldNotBeNull();
+        }
     }
 }

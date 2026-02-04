@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
+using Autofac;
 using Moq;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Persistence.Db;
@@ -16,25 +17,20 @@ using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 namespace Squid.IntegrationTests;
 
 [Collection("Sequential")]
-public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationDeploymentTaskBackgroundService>>
+public class IntegrationDeploymentTaskBackgroundService : TestBase<IntegrationDeploymentTaskBackgroundService>
 {
-    public IntegrationDeploymentTaskBackgroundService(IntegrationFixture<IntegrationDeploymentTaskBackgroundService> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task RunAsync_ShouldProcessPendingDeploymentTask_AndMarkTaskSuccess()
     {
-        await Run<DeploymentTaskBackgroundService>(async service =>
-        {
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var service = Resolve<DeploymentTaskBackgroundService>(RegisterTestHalibutAndGithubDownloader);
 
-            await PrepareDeploymentDataAsync().ConfigureAwait(false);
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-            await service.RunAsync(cts.Token).ConfigureAwait(false);
+        await PrepareDeploymentDataAsync().ConfigureAwait(false);
 
-            await AssertTaskAndDeploymentCompletionAsync().ConfigureAwait(false);
-        }, RegisterTestHalibutAndGithubDownloader).ConfigureAwait(false);
+        await service.RunAsync(cts.Token).ConfigureAwait(false);
+
+        await AssertTaskAndDeploymentCompletionAsync().ConfigureAwait(false);
     }
 
     private void RegisterTestHalibutAndGithubDownloader(ContainerBuilder builder)
@@ -73,8 +69,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
 
     private async Task PrepareDeploymentDataAsync()
     {
-        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
-        {
+        var repository = Resolve<IRepository>();
+        var unitOfWork = Resolve<IUnitOfWork>();
+
             var variableSet = new VariableSet
             {
                 SpaceId = 1,
@@ -85,9 +82,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 LastModified = DateTimeOffset.UtcNow
             };
 
-            await repository.InsertAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var variables = new List<Variable>
             {
@@ -105,9 +102,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 }
             };
 
-            await repository.InsertAllAsync(variables, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAllAsync(variables, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var project = new Project
             {
@@ -127,15 +124,15 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 AllowIgnoreChannelRules = false
             };
 
-            await repository.InsertAsync(project, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(project, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             variableSet.OwnerId = project.Id;
 
-            await repository.UpdateAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
+        await repository.UpdateAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var process = new DeploymentProcess
             {
@@ -145,15 +142,15 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 LastModifiedBy = "IntegrationTest"
             };
 
-            await repository.InsertAsync(process, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(process, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             project.DeploymentProcessId = process.Id;
 
-            await repository.UpdateAsync(project, CancellationToken.None).ConfigureAwait(false);
+        await repository.UpdateAsync(project, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var channel = new Channel
             {
@@ -166,9 +163,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 IsDefault = true
             };
 
-            await repository.InsertAsync(channel, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(channel, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var environment = new Environment
             {
@@ -183,9 +180,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 LastModifiedBy = "IntegrationTest"
             };
 
-            await repository.InsertAsync(environment, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(environment, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -216,9 +213,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 Slug = "test-machine"
             };
 
-            await repository.InsertAsync(machine, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(machine, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var release = new Release
             {
@@ -231,9 +228,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 LastModified = DateTimeOffset.UtcNow
             };
 
-            await repository.InsertAsync(release, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(release, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var deployment = new Deployment
             {
@@ -248,9 +245,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 Json = string.Empty
             };
 
-            await repository.InsertAsync(deployment, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(deployment, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var serverTask = new ServerTask
             {
@@ -274,42 +271,41 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 DataVersion = Array.Empty<byte>()
             };
 
-            await repository.InsertAsync(serverTask, CancellationToken.None).ConfigureAwait(false);
+        await repository.InsertAsync(serverTask, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             deployment.TaskId = serverTask.Id;
 
-            await repository.UpdateAsync(deployment, CancellationToken.None).ConfigureAwait(false);
+        await repository.UpdateAsync(deployment, CancellationToken.None).ConfigureAwait(false);
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task AssertTaskAndDeploymentCompletionAsync()
     {
-        await Run<IServerTaskDataProvider, IDeploymentCompletionDataProvider>(async (taskDataProvider, completionDataProvider) =>
+        var taskDataProvider = Resolve<IServerTaskDataProvider>();
+        var completionDataProvider = Resolve<IDeploymentCompletionDataProvider>();
+
+        var tasks = await taskDataProvider.GetAllServerTasksAsync(CancellationToken.None).ConfigureAwait(false);
+
+        tasks.ShouldNotBeNull();
+
+        tasks.Count.ShouldBe(1);
+
+        var task = tasks[0];
+
+        task.State.ShouldBe("Success");
+
+        var completions = await completionDataProvider.GetDeploymentCompletionsByDeploymentIdAsync(task.Id, CancellationToken.None).ConfigureAwait(false);
+
+        completions.ShouldNotBeNull();
+
+        completions.ShouldNotBeEmpty();
+
+        foreach (var completion in completions)
         {
-            var tasks = await taskDataProvider.GetAllServerTasksAsync(CancellationToken.None).ConfigureAwait(false);
-
-            tasks.ShouldNotBeNull();
-
-            tasks.Count.ShouldBe(1);
-
-            var task = tasks[0];
-
-            task.State.ShouldBe("Success");
-
-            var completions = await completionDataProvider.GetDeploymentCompletionsByDeploymentIdAsync(task.Id, CancellationToken.None).ConfigureAwait(false);
-
-            completions.ShouldNotBeNull();
-
-            completions.ShouldNotBeEmpty();
-
-            foreach (var completion in completions)
-            {
-                completion.State.ShouldBe("Success");
-            }
-        }).ConfigureAwait(false);
+            completion.State.ShouldBe("Success");
+        }
     }
 }
