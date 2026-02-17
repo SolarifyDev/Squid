@@ -295,6 +295,40 @@ public class DeploymentPipelineFilterTests
             .ShouldBeFalse();
     }
 
+    // ========== Phase 4: Test Hardening ==========
+
+    [Fact]
+    public void DisabledOverridesAlwaysCondition()
+    {
+        var step = MakeStep(isDisabled: true, condition: "Always");
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
+            .ShouldBeFalse();
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ConditionFailure_WithMatchingRoles_PreviousFailed()
+    {
+        var step = MakeStep(condition: "Failure", targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ConditionSuccess_WithNonMatchingRoles()
+    {
+        var step = MakeStep(condition: "Success", targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
+
+        // Role mismatch short-circuits even though condition would pass
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
     // ========== Helpers ==========
 
     private static DeploymentStepDto MakeStep(

@@ -132,6 +132,7 @@ public partial class DeploymentSnapshotService
                 StepType = step.StepType,
                 StepOrder = step.StepOrder,
                 Condition = step.Condition,
+                StartTrigger = step.StartTrigger,
                 IsDisabled = step.IsDisabled,
                 IsRequired = step.IsRequired,
                 CreatedAt = step.CreatedAt,

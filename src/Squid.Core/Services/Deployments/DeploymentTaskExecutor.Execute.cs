@@ -4,6 +4,7 @@ using System.Text.Json;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Tentacle;
+using Squid.Core.VariableSubstitution;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -12,87 +13,181 @@ namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task PrepareAndExecuteStepsAsync(CancellationToken ct)
+    private async Task PrepareAndExecuteStepsAsync(long? taskActivityNodeId, CancellationToken ct)
     {
         var targetRoles = DeploymentTargetFinder.ParseRoles(_ctx.Target.Roles);
         var failureEncountered = false;
+        var variableDictionary = VariableDictionaryFactory.Create(_ctx.Variables);
+        var stepSortOrder = 0;
 
-        foreach (var step in _ctx.Steps.OrderBy(p => p.StepOrder))
+        var orderedSteps = _ctx.Steps.OrderBy(p => p.StepOrder).ToList();
+        var batches = StepBatcher.BatchSteps(orderedSteps);
+
+        foreach (var batch in batches)
         {
-            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !failureEncountered))
+            if (batch.Count == 1)
             {
-                Log.Information("Skipping step {StepName} (disabled, condition, or role mismatch)", step.Name);
+                var step = batch[0];
+                var result = await ExecuteStepAsync(step, variableDictionary, targetRoles, failureEncountered,
+                        taskActivityNodeId, ++stepSortOrder, ct)
+                    .ConfigureAwait(false);
+                failureEncountered = MergeStepResult(result, failureEncountered);
+            }
+            else
+            {
+                var tasks = batch.Select(step =>
+                    ExecuteStepAsync(step, variableDictionary, targetRoles, failureEncountered,
+                        taskActivityNodeId, ++stepSortOrder, ct)).ToList();
+                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                foreach (var result in results)
+                    failureEncountered = MergeStepResult(result, failureEncountered);
+            }
+
+            variableDictionary = VariableDictionaryFactory.Create(_ctx.Variables);
+        }
+    }
+
+    private async Task<StepExecutionResult> ExecuteStepAsync(
+        DeploymentStepDto step,
+        VariableDictionary variableDictionary,
+        HashSet<string> targetRoles,
+        bool failureEncountered,
+        long? parentActivityNodeId,
+        int stepSortOrder,
+        CancellationToken ct)
+    {
+        var result = new StepExecutionResult();
+
+        if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !failureEncountered))
+        {
+            Log.Information("Skipping step {StepName} (disabled, condition, or role mismatch)", step.Name);
+            return result;
+        }
+
+        var stepActivityNode = await CreateActivityNodeAsync(
+            _ctx.Task.Id, parentActivityNodeId, step.Name, "Step", "Running", stepSortOrder, ct)
+            .ConfigureAwait(false);
+
+        var stepResults = new List<ActionExecutionResult>();
+        var actionSortOrder = 0;
+
+        foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+        {
+            if (!ShouldExecuteAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId))
+            {
+                Log.Information("Skipping action {ActionName} (disabled, environment, or channel mismatch)", action.Name);
                 continue;
             }
 
-            var stepResults = new List<ActionExecutionResult>();
+            var handler = _actionHandlerRegistry.Resolve(action);
 
-            foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+            if (handler == null)
             {
-                if (!ShouldExecuteAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId))
-                {
-                    Log.Information("Skipping action {ActionName} (disabled, environment, or channel mismatch)", action.Name);
-                    continue;
-                }
-
-                var handler = _actionHandlerRegistry.Resolve(action);
-
-                if (handler == null)
-                {
-                    Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
-                    continue;
-                }
-
-                var context = new ActionExecutionContext
-                {
-                    Step = step,
-                    Action = action,
-                    Variables = _ctx.Variables,
-                    ReleaseVersion = _ctx.Release?.Version
-                };
-
-                var result = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
-
-                if (result != null)
-                {
-                    if (result.CalamariCommand == null)
-                    {
-                        var wrapper = _scriptWrappers.FirstOrDefault(
-                            w => w.CanWrap(_ctx.CommunicationStyle));
-
-                        if (wrapper != null)
-                        {
-                            result.ScriptBody = wrapper.WrapScript(
-                                result.ScriptBody, _ctx.EndpointJson, _ctx.Account,
-                                result.Syntax, _ctx.Variables);
-                        }
-                    }
-
-                    stepResults.Add(result);
-                }
+                Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
+                continue;
             }
 
-            foreach (var actionResult in stepResults)
+            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionary);
+
+            var context = new ActionExecutionContext
             {
-                try
-                {
-                    if (actionResult.CalamariCommand != null)
-                        await ExecuteCalamariActionAsync(actionResult, ct).ConfigureAwait(false);
-                    else
-                        await ExecuteDirectScriptAsync(actionResult, ct).ConfigureAwait(false);
+                Step = step,
+                Action = expandedAction,
+                Variables = _ctx.Variables,
+                ReleaseVersion = _ctx.Release?.Version
+            };
 
-                    _ctx.ActionResults.Add(actionResult);
-                }
-                catch (Exception ex)
-                {
-                    failureEncountered = true;
-                    Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+            var prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
 
-                    if (step.IsRequired)
-                        throw;
+            if (prepared != null)
+            {
+                if (prepared.ScriptBody != null)
+                    prepared.ScriptBody = VariableExpander.ExpandString(prepared.ScriptBody, variableDictionary);
+
+                if (prepared.CalamariCommand == null)
+                {
+                    var wrapper = _scriptWrappers.FirstOrDefault(
+                        w => w.CanWrap(_ctx.CommunicationStyle));
+
+                    if (wrapper != null)
+                    {
+                        prepared.ScriptBody = wrapper.WrapScript(
+                            prepared.ScriptBody, _ctx.EndpointJson, _ctx.Account,
+                            prepared.Syntax, _ctx.Variables);
+                    }
                 }
+
+                stepResults.Add(prepared);
             }
         }
+
+        foreach (var actionResult in stepResults)
+        {
+            var actionActivityNode = await CreateActivityNodeAsync(
+                _ctx.Task.Id, stepActivityNode?.Id, actionResult.CalamariCommand ?? "Direct Script",
+                "Action", "Running", ++actionSortOrder, ct).ConfigureAwait(false);
+
+            try
+            {
+                if (actionResult.CalamariCommand != null)
+                    await ExecuteCalamariActionAsync(actionResult, ct).ConfigureAwait(false);
+                else
+                    await ExecuteDirectScriptAsync(actionResult, ct).ConfigureAwait(false);
+
+                result.ActionResults.Add(actionResult);
+
+                if (actionActivityNode != null)
+                    await _activityLogDataProvider.UpdateNodeStatusAsync(
+                        actionActivityNode.Id, "Success", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+
+                foreach (var kv in actionResult.OutputVariables)
+                {
+                    var qualifiedName = $"Octopus.Action[{step.Name}].Output.{kv.Key}";
+                    result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value });
+                    result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value });
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Failed = true;
+                Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+
+                if (actionActivityNode != null)
+                    await _activityLogDataProvider.UpdateNodeStatusAsync(
+                        actionActivityNode.Id, "Failed", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+
+                if (step.IsRequired)
+                    throw;
+            }
+        }
+
+        if (stepActivityNode != null)
+            await _activityLogDataProvider.UpdateNodeStatusAsync(
+                stepActivityNode.Id, result.Failed ? "Failed" : "Success", DateTimeOffset.UtcNow, ct: ct)
+                .ConfigureAwait(false);
+
+        return result;
+    }
+
+    private bool MergeStepResult(StepExecutionResult result, bool failureEncountered)
+    {
+        _ctx.ActionResults.AddRange(result.ActionResults);
+
+        if (result.OutputVariables.Count > 0)
+        {
+            _ctx.Variables.AddRange(result.OutputVariables);
+            foreach (var v in result.OutputVariables)
+                Log.Information("Output variable captured: {Name} = {Value}", v.Name, v.Value);
+        }
+
+        return failureEncountered || result.Failed;
+    }
+
+    private class StepExecutionResult
+    {
+        public List<ActionExecutionResult> ActionResults { get; } = new();
+        public List<VariableDto> OutputVariables { get; } = new();
+        public bool Failed { get; set; }
     }
 
     public static bool ShouldExecuteStep(
@@ -201,7 +296,9 @@ public partial class DeploymentTaskExecutor
             _ctx.Release.Version,
             ct).ConfigureAwait(false);
 
-        var executionSuccess = await ObserveDeploymentScriptAsync(scriptExecution, ct).ConfigureAwait(false);
+        var (executionSuccess, logLines) = await ObserveDeploymentScriptAsync(scriptExecution, ct).ConfigureAwait(false);
+
+        CaptureOutputVariables(actionResult, logLines);
 
         if (!executionSuccess)
         {
@@ -238,11 +335,22 @@ public partial class DeploymentTaskExecutor
         Log.Information("Starting direct script on machine {MachineName} with ticket {Ticket}", _ctx.Target.Name, ticket);
 
         var execution = (_ctx.Target, scriptClient, ticket);
-        var executionSuccess = await ObserveDeploymentScriptAsync(execution, ct).ConfigureAwait(false);
+        var (executionSuccess, logLines) = await ObserveDeploymentScriptAsync(execution, ct).ConfigureAwait(false);
+
+        CaptureOutputVariables(actionResult, logLines);
 
         if (!executionSuccess)
         {
             throw new InvalidOperationException("Direct script execution failed");
+        }
+    }
+
+    private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
+    {
+        var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
+        foreach (var kv in outputVars)
+        {
+            actionResult.OutputVariables[kv.Key] = kv.Value.Value;
         }
     }
 
@@ -266,7 +374,7 @@ public partial class DeploymentTaskExecutor
             _ctx.Deployment.Id, success ? "Success" : "Failed");
     }
 
-    private async Task<bool> ObserveDeploymentScriptAsync(
+    private async Task<(bool Success, List<string> LogLines)> ObserveDeploymentScriptAsync(
         (Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket) execution,
         CancellationToken cancellationToken,
         TimeSpan? timeout = null)
@@ -298,7 +406,7 @@ public partial class DeploymentTaskExecutor
 
                     await CancelScriptAsync(execution, scriptStatusResponse.NextLogSequence).ConfigureAwait(false);
 
-                    return false;
+                    return (false, new List<string>());
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -345,6 +453,11 @@ public partial class DeploymentTaskExecutor
             .OrderBy(l => l.Occurred)
             .ToList();
 
+        await PersistTaskLogsAsync(_ctx.Task.Id, orderedLogs, execution.Machine.Name, cancellationToken)
+            .ConfigureAwait(false);
+
+        var logLines = new List<string>();
+
         foreach (var log in orderedLogs)
         {
             Log.Information(
@@ -353,6 +466,9 @@ public partial class DeploymentTaskExecutor
                 log.Occurred,
                 log.Source,
                 log.Text);
+
+            if (!string.IsNullOrEmpty(log.Text))
+                logLines.Add(log.Text);
         }
 
         var success = completeResponse.ExitCode == 0;
@@ -371,7 +487,7 @@ public partial class DeploymentTaskExecutor
                 execution.Machine.Name);
         }
 
-        return success;
+        return (success, logLines);
     }
 
     private static async Task CancelScriptAsync(
@@ -453,5 +569,75 @@ public partial class DeploymentTaskExecutor
         }
 
         return (variableStream, sensitiveStream, password);
+    }
+
+    private async Task<Persistence.Entities.Deployments.ActivityLog> CreateActivityNodeAsync(
+        int serverTaskId, long? parentId, string name, string nodeType,
+        string status, int sortOrder, CancellationToken ct)
+    {
+        try
+        {
+            return await _activityLogDataProvider.AddNodeAsync(
+                new Persistence.Entities.Deployments.ActivityLog
+                {
+                    ServerTaskId = serverTaskId,
+                    ParentId = parentId,
+                    Name = name,
+                    NodeType = nodeType,
+                    Status = status,
+                    StartedAt = DateTimeOffset.UtcNow,
+                    SortOrder = sortOrder
+                }, ct: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to create activity log node: {Name}", name);
+            return null;
+        }
+    }
+
+    private async Task PersistTaskLogAsync(int serverTaskId, string category, string message,
+        string source, CancellationToken ct)
+    {
+        try
+        {
+            var seq = Interlocked.Increment(ref _logSequence);
+            await _serverTaskLogDataProvider.AddLogAsync(new Persistence.Entities.Deployments.ServerTaskLog
+            {
+                ServerTaskId = serverTaskId,
+                Category = category,
+                MessageText = message,
+                Source = source,
+                OccurredAt = DateTimeOffset.UtcNow,
+                SequenceNumber = seq
+            }, ct: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to persist task log entry");
+        }
+    }
+
+    private async Task PersistTaskLogsAsync(int serverTaskId, List<ProcessOutput> logs,
+        string source, CancellationToken ct)
+    {
+        try
+        {
+            var entries = logs.Select(log => new Persistence.Entities.Deployments.ServerTaskLog
+            {
+                ServerTaskId = serverTaskId,
+                Category = log.Source == ProcessOutputSource.StdErr ? "Error" : "Info",
+                MessageText = log.Text,
+                Source = source,
+                OccurredAt = log.Occurred,
+                SequenceNumber = Interlocked.Increment(ref _logSequence)
+            }).ToList();
+
+            await _serverTaskLogDataProvider.AddLogsAsync(entries, ct: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to persist task log batch");
+        }
     }
 }

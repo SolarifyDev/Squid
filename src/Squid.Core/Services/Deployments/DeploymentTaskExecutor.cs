@@ -1,6 +1,7 @@
 using Halibut;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
@@ -31,9 +32,12 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IEnumerable<IScriptContextWrapper> _scriptWrappers;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
+    private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
+    private readonly IActivityLogDataProvider _activityLogDataProvider;
 
     private DeploymentTaskContext _ctx;
     private IEndpointVariableContributor _resolvedContributor;
+    private long _logSequence;
 
     public DeploymentTaskExecutor(
         IYamlNuGetPacker yamlNuGetPacker,
@@ -49,6 +53,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IEnumerable<IEndpointVariableContributor> variableContributors,
         IEnumerable<IScriptContextWrapper> scriptWrappers,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
+        IServerTaskLogDataProvider serverTaskLogDataProvider,
+        IActivityLogDataProvider activityLogDataProvider,
         HalibutRuntime halibutRuntime,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
@@ -67,17 +73,34 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _serverTaskDataProvider = serverTaskDataProvider;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
+        _serverTaskLogDataProvider = serverTaskLogDataProvider;
+        _activityLogDataProvider = activityLogDataProvider;
     }
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         _ctx = new DeploymentTaskContext();
         _resolvedContributor = null;
+        _logSequence = 0;
+
+        Persistence.Entities.Deployments.ActivityLog taskActivityNode = null;
 
         try
         {
             await LoadTaskAsync(serverTaskId, ct);
             await LoadDeploymentAsync(ct);
+
+            taskActivityNode = await _activityLogDataProvider.AddNodeAsync(
+                new Persistence.Entities.Deployments.ActivityLog
+                {
+                    ServerTaskId = serverTaskId,
+                    Name = $"Deploy {_ctx.Deployment?.Name ?? "Unknown"}",
+                    NodeType = "Task",
+                    Status = "Running",
+                    StartedAt = DateTimeOffset.UtcNow,
+                    SortOrder = 0
+                }, ct: ct).ConfigureAwait(false);
+
             await GeneratePlanAsync(ct);
             await ResolveVariablesAsync(ct);
             await FindTargetsAsync(ct);
@@ -92,10 +115,14 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
                 await LoadAccountAsync(ct);
                 await ContributeEndpointVariablesAsync(ct);
                 await ExtractCalamariAsync(ct);
-                await PrepareAndExecuteStepsAsync(ct);
+                await PrepareAndExecuteStepsAsync(taskActivityNode?.Id, ct);
             }
 
             await RecordCompletionAsync(true, "Deployment completed successfully");
+
+            if (taskActivityNode != null)
+                await _activityLogDataProvider.UpdateNodeStatusAsync(
+                    taskActivityNode.Id, "Success", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
 
             await _genericDataProvider.ExecuteInTransactionAsync(
                 async cancellationToken =>
@@ -109,6 +136,12 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         catch (Exception ex)
         {
             Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", serverTaskId, ex.Message);
+
+            if (taskActivityNode != null)
+                await _activityLogDataProvider.UpdateNodeStatusAsync(
+                    taskActivityNode.Id, "Failed", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+
+            await PersistTaskLogAsync(serverTaskId, "Error", ex.Message, "System", ct);
 
             if (_ctx.Deployment != null)
             {

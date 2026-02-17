@@ -131,7 +131,7 @@ public partial class DeploymentTaskExecutor
                 Name = stepSnap.Name,
                 StepType = stepSnap.StepType,
                 Condition = stepSnap.Condition,
-                StartTrigger = "",
+                StartTrigger = stepSnap.StartTrigger ?? "",
                 PackageRequirement = "",
                 IsDisabled = stepSnap.IsDisabled,
                 IsRequired = stepSnap.IsRequired,

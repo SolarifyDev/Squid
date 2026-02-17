@@ -9,6 +9,8 @@ public class ActionExecutionResult
     public string CalamariCommand { get; set; }
 
     public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
+
+    public Dictionary<string, string> OutputVariables { get; set; } = new();
 }
 
 public enum ScriptSyntax

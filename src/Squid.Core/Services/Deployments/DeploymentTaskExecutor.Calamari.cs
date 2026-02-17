@@ -34,7 +34,8 @@ public partial class DeploymentTaskExecutor
             target,
             ct).ConfigureAwait(false);
 
-        return await ObserveDeploymentScriptAsync(extractExecution, ct).ConfigureAwait(false);
+        var (success, _) = await ObserveDeploymentScriptAsync(extractExecution, ct).ConfigureAwait(false);
+        return success;
     }
 
     private async Task<byte[]> DownloadCalamariPackageAsync()

@@ -77,4 +77,14 @@ public class ActionHandlerRegistryTests
         result.ShouldBeNull();
     }
 
+    [Fact]
+    public void Resolve_ActionWithNullActionType_ReturnsNull()
+    {
+        var handler = CreateMockHandler("Squid.KubernetesRunScript");
+        var registry = new ActionHandlerRegistry(new[] { handler });
+
+        var result = registry.Resolve(CreateAction(null));
+
+        result.ShouldBeNull();
+    }
 }
