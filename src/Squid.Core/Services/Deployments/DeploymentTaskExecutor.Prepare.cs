@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
@@ -13,9 +14,9 @@ public partial class DeploymentTaskExecutor
         if (task == null)
             throw new InvalidOperationException($"ServerTask {serverTaskId} not found");
 
-        task.State = "Running";
+        task.State = TaskState.Executing;
         task.StartTime = DateTimeOffset.UtcNow;
-        await _serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, "Running", cancellationToken: ct).ConfigureAwait(false);
+        await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
 
@@ -110,6 +111,25 @@ public partial class DeploymentTaskExecutor
         {
             return null;
         }
+    }
+
+    private void PreFilterTargetsByRoles()
+    {
+        var allRoles = DeploymentTargetFinder.CollectAllTargetRoles(_ctx.Steps);
+
+        if (allRoles.Count == 0)
+            return;
+
+        var before = _ctx.Targets.Count;
+        _ctx.Targets = DeploymentTargetFinder.FilterByRoles(_ctx.Targets, allRoles);
+
+        if (_ctx.Targets.Count < before)
+            Log.Information("Pre-filtered targets by roles: {Before} → {After} (roles: {Roles})",
+                before, _ctx.Targets.Count, string.Join(", ", allRoles));
+
+        if (_ctx.Targets.Count == 0)
+            throw new InvalidOperationException(
+                $"No target machines match the required roles [{string.Join(", ", allRoles)}] for deployment {_ctx.Deployment.Id}");
     }
 
     private void ConvertSnapshotToSteps()

@@ -329,6 +329,184 @@ public class DeploymentPipelineFilterTests
             .ShouldBeFalse();
     }
 
+    // ========== Target Role Edge Cases (Octopus Alignment) ==========
+
+    [Fact]
+    public void ShouldExecuteStep_MultipleTargetRoles_AnyMatchSuffices()
+    {
+        // Octopus OR logic: machine needs ANY of the step's target roles
+        var step = MakeStep(targetRoles: "web,api,worker");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_MachineHasEmptyRoles_StepRequiresRoles_ReturnsFalse()
+    {
+        // Machine with no roles cannot execute a step that requires specific roles
+        var step = MakeStep(targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_RoleSubstringDoesNotFalseMatch()
+    {
+        // "web" must NOT match "web-server" — exact role matching, not substring
+        var step = MakeStep(targetRoles: "web-server");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_RoleSubstringReverse_DoesNotFalseMatch()
+    {
+        // "web-server" must NOT match step role "web"
+        var step = MakeStep(targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web-server" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_RolesWithSpecialCharacters_MatchCorrectly()
+    {
+        // Roles can contain dashes, dots, underscores
+        var step = MakeStep(targetRoles: "k8s-worker.us-east-1");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "k8s-worker.us-east-1" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_EmptyStringTargetRolesValue_ExecutesOnAll()
+    {
+        // Step has the property but empty value → no filter, executes on all machines
+        var step = MakeStep(targetRoles: "");
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "any" }, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_DisabledWithMatchingRoles_ReturnsFalse()
+    {
+        // Disabled takes precedence over role match
+        var step = MakeStep(isDisabled: true, targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_ConditionFailsButRolesMatch_ReturnsFalse()
+    {
+        // Condition check runs before role check — both must pass
+        var step = MakeStep(condition: "Success", targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_AllThreeChecksPass_ReturnsTrue()
+    {
+        // Enabled + condition passes + roles match → execute
+        var step = MakeStep(isDisabled: false, condition: "Always", targetRoles: "web,api");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_MultiplePropertiesOnStep_OnlyTargetRolesChecked()
+    {
+        // Other properties don't interfere with role matching
+        var step = MakeStep(targetRoles: "web");
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = "Octopus.Action.MaxParallelism", PropertyValue = "5"
+        });
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = "Octopus.Action.RunOnServer", PropertyValue = "false"
+        });
+
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_NullStepProperties_ReturnsTrue()
+    {
+        // Null Properties list → no role filter → execute on all
+        var step = new DeploymentStepDto
+        {
+            Id = 1, StepOrder = 1, Name = "Test Step", StepType = "Action",
+            Condition = "Success", IsDisabled = false, IsRequired = true,
+            Properties = null
+        };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" }, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_MachineHasMultipleRoles_OneMatches_ReturnsTrue()
+    {
+        // Machine has many roles, step only requires one — OR logic
+        var step = MakeStep(targetRoles: "database");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web", "api", "database", "cache" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_BothStepAndMachineHaveMultipleRoles_OverlapExists()
+    {
+        // Multiple roles on both sides, overlap on "api"
+        var step = MakeStep(targetRoles: "web,api,worker");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database", "api", "cache" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_BothStepAndMachineHaveMultipleRoles_NoOverlap()
+    {
+        var step = MakeStep(targetRoles: "web,worker");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database", "api", "cache" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_WhitespaceInTargetRoles_TrimmedCorrectly()
+    {
+        // Whitespace around role names should be trimmed
+        var step = MakeStep(targetRoles: " web , api ");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
     // ========== Helpers ==========
 
     private static DeploymentStepDto MakeStep(
@@ -353,7 +531,7 @@ public class DeploymentPipelineFilterTests
             step.Properties.Add(new DeploymentStepPropertyDto
             {
                 StepId = 1,
-                PropertyName = "Octopus.Action.TargetRoles",
+                PropertyName = DeploymentVariables.Action.TargetRoles,
                 PropertyValue = targetRoles
             });
         }

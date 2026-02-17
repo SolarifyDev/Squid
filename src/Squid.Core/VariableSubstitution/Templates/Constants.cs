@@ -4,9 +4,9 @@ namespace Squid.Core.VariableSubstitution.Templates
     {
         public static class Each
         {
-            public static readonly string First = "Octopus.Template.Each.First";
-            public static readonly string Last = "Octopus.Template.Each.Last";
-            public static readonly string Index = "Octopus.Template.Each.Index";
+            public static readonly string First = "Squid.Template.Each.First";
+            public static readonly string Last = "Squid.Template.Each.Last";
+            public static readonly string Index = "Squid.Template.Each.Index";
         }
     }
 }

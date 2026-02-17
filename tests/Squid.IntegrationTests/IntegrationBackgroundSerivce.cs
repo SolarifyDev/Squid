@@ -159,7 +159,7 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
                 Name = "Test Deployment Task",
                 Description = "Integration test deployment task",
                 QueueTime = DateTimeOffset.UtcNow,
-                State = "Pending",
+                State = TaskState.Pending,
                 ServerTaskType = "Deploy",
                 ProjectId = project.Id,
                 EnvironmentId = environment.Id,
@@ -198,7 +198,7 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
 
             var task = tasks[0];
 
-            task.State.ShouldBe("Success");
+            task.State.ShouldBe(TaskState.Success);
 
             var completions = await completionDataProvider.GetDeploymentCompletionsByDeploymentIdAsync(task.Id, CancellationToken.None).ConfigureAwait(false);
 
@@ -208,7 +208,7 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
 
             foreach (var completion in completions)
             {
-                completion.State.ShouldBe("Success");
+                completion.State.ShouldBe(TaskState.Success);
             }
         }).ConfigureAwait(false);
     }

@@ -1,4 +1,5 @@
 using System.Data;
+using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
@@ -12,6 +13,8 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task<Persistence.Entities.Deployments.ServerTask> GetAndLockPendingTaskAsync(CancellationToken cancellationToken = default);
 
     Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default);
 
@@ -31,6 +34,8 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task AddServerTaskAsync(Persistence.Entities.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default)
     {
+        task.DataVersion ??= Guid.NewGuid().ToByteArray();
+
         await _repository.InsertAsync(task, cancellationToken).ConfigureAwait(false);
 
         if (forceSave)
@@ -41,7 +46,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task<Persistence.Entities.Deployments.ServerTask> GetPendingTaskAsync(CancellationToken cancellationToken = default)
     {
-        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.State == "Pending")
+        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.State == TaskState.Pending)
             .OrderBy(t => t.QueueTime)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -52,14 +57,17 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
         try
         {
-            var task = await _repository.Query<Persistence.Entities.Deployments.ServerTask>(t => t.State == "Pending")
+            var task = await _repository.Query<Persistence.Entities.Deployments.ServerTask>(t => t.State == TaskState.Pending)
                 .OrderBy(t => t.QueueTime)
                 .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
             if (task != null)
             {
-                task.State = "Running";
+                TaskState.EnsureValidTransition(task.State, TaskState.Executing);
+
+                task.State = TaskState.Executing;
                 task.StartTime = DateTimeOffset.UtcNow;
+                task.DataVersion = Guid.NewGuid().ToByteArray();
                 await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
             }
 
@@ -80,6 +88,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         if (task != null)
         {
             task.State = state;
+            task.DataVersion = Guid.NewGuid().ToByteArray();
             await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
 
             if (forceSave)
@@ -87,6 +96,29 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
                 await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    public async Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default)
+    {
+        TaskState.EnsureValidTransition(expectedCurrentState, newState);
+
+        var task = await _repository.GetByIdAsync<Persistence.Entities.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (task == null)
+            throw new InvalidOperationException($"ServerTask {taskId} not found");
+
+        if (!string.Equals(task.State, expectedCurrentState, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidStateTransitionException(task.State, newState);
+
+        task.State = newState;
+        task.DataVersion = Guid.NewGuid().ToByteArray();
+        task.LastModified = DateTimeOffset.UtcNow;
+
+        if (TaskState.IsTerminal(newState))
+            task.CompletedTime = DateTimeOffset.UtcNow;
+
+        await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<Persistence.Entities.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default)

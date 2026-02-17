@@ -64,7 +64,7 @@ public class DeploymentService : IDeploymentService
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
             Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
             QueueTime = DateTimeOffset.UtcNow,
-            State = "Pending",
+            State = ServerTask.TaskState.Pending,
             ServerTaskType = "Deploy",
             ProjectId = release.ProjectId,
             EnvironmentId = command.EnvironmentId,

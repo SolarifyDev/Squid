@@ -105,6 +105,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
             await ResolveVariablesAsync(ct);
             await FindTargetsAsync(ct);
             ConvertSnapshotToSteps();
+            PreFilterTargetsByRoles();
 
             foreach (var target in _ctx.Targets)
             {
@@ -127,8 +128,9 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
             await _genericDataProvider.ExecuteInTransactionAsync(
                 async cancellationToken =>
                 {
-                    await _serverTaskDataProvider.UpdateServerTaskStateAsync(
-                        _ctx.Task.Id, "Success", cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await _serverTaskDataProvider.TransitionStateAsync(
+                        _ctx.Task.Id, TaskState.Executing, TaskState.Success,
+                        cancellationToken).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
 
             Log.Information("Task {TaskId} completed successfully", serverTaskId);
@@ -151,8 +153,9 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
             await _genericDataProvider.ExecuteInTransactionAsync(
                 async cancellationToken =>
                 {
-                    await _serverTaskDataProvider.UpdateServerTaskStateAsync(
-                        serverTaskId, "Failed", cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await _serverTaskDataProvider.TransitionStateAsync(
+                        serverTaskId, TaskState.Executing, TaskState.Failed,
+                        cancellationToken).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
 
             throw;

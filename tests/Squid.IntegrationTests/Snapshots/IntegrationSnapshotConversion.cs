@@ -23,13 +23,13 @@ public class IntegrationSnapshotConversion : IntegrationTestBase, IClassFixture<
 
             // Step 1 with 1 action
             var step1 = await builder.CreateDeploymentStepAsync(process.Id, 1, "Build Step", "Action", "Success");
-            await builder.CreateStepPropertiesAsync(step1.Id, ("Octopus.Action.TargetRoles", "build-server"));
+            await builder.CreateStepPropertiesAsync(step1.Id, (DeploymentVariables.Action.TargetRoles, "build-server"));
             var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Run Build", "Octopus.Script", isDisabled: false, isRequired: true);
             await builder.CreateActionPropertiesAsync(action1.Id, ("Octopus.Action.Script.ScriptBody", "dotnet build"));
 
             // Step 2 with 2 actions (one disabled)
             var step2 = await builder.CreateDeploymentStepAsync(process.Id, 2, "Deploy Step", "Action", "Variable");
-            await builder.CreateStepPropertiesAsync(step2.Id, ("Octopus.Action.TargetRoles", "web-server"));
+            await builder.CreateStepPropertiesAsync(step2.Id, (DeploymentVariables.Action.TargetRoles, "web-server"));
             var action2a = await builder.CreateDeploymentActionAsync(step2.Id, 1, "Deploy App", "Octopus.KubernetesDeployContainers", isDisabled: false, isRequired: true);
             await builder.CreateActionPropertiesAsync(action2a.Id, ("Octopus.Action.KubernetesContainers.Namespace", "production"));
             var action2b = await builder.CreateDeploymentActionAsync(step2.Id, 2, "Notify Slack", "Octopus.Script", isDisabled: true, isRequired: false);
@@ -49,7 +49,7 @@ public class IntegrationSnapshotConversion : IntegrationTestBase, IClassFixture<
             stepDto1.StepOrder.ShouldBe(1);
             stepDto1.StepType.ShouldBe("Action");
             stepDto1.Condition.ShouldBe("Success");
-            stepDto1.Properties.ShouldContain(p => p.PropertyName == "Octopus.Action.TargetRoles" && p.PropertyValue == "build-server");
+            stepDto1.Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "build-server");
             stepDto1.Actions.Count.ShouldBe(1);
 
             var actionDto1 = stepDto1.Actions[0];
@@ -64,7 +64,7 @@ public class IntegrationSnapshotConversion : IntegrationTestBase, IClassFixture<
             stepDto2.Name.ShouldBe("Deploy Step");
             stepDto2.StepOrder.ShouldBe(2);
             stepDto2.Condition.ShouldBe("Variable");
-            stepDto2.Properties.ShouldContain(p => p.PropertyName == "Octopus.Action.TargetRoles" && p.PropertyValue == "web-server");
+            stepDto2.Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web-server");
             stepDto2.Actions.Count.ShouldBe(2);
 
             var actionDto2a = stepDto2.Actions[0];

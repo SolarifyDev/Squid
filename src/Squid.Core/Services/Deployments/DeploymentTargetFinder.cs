@@ -105,4 +105,46 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             .Where(m => ParseRoles(m.Roles).Overlaps(targetRoles))
             .ToList();
     }
+
+    /// <summary>
+    /// Collects all target roles from all steps (Octopus Level 1 pre-filtering).
+    /// Used to narrow down machines before the per-target execution loop,
+    /// avoiding wasted LoadAccount/ContributeEndpointVariables/ExtractCalamari
+    /// on machines that won't execute any step.
+    /// Returns empty set if no steps define target roles (meaning all machines needed).
+    /// </summary>
+    public static HashSet<string> CollectAllTargetRoles(
+        List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps)
+    {
+        if (steps == null || steps.Count == 0)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var allRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hasStepWithoutRoles = false;
+
+        foreach (var step in steps)
+        {
+            if (step.IsDisabled)
+                continue;
+
+            var rolesProp = step.Properties?
+                .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+
+            if (rolesProp == null || string.IsNullOrEmpty(rolesProp.PropertyValue))
+            {
+                hasStepWithoutRoles = true;
+            }
+            else
+            {
+                var stepRoles = ParseRoles(rolesProp.PropertyValue);
+                allRoles.UnionWith(stepRoles);
+            }
+        }
+
+        // If any enabled step has no target roles, ALL machines are needed
+        if (hasStepWithoutRoles)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return allRoles;
+    }
 }

@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.Machine;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Deployments;
@@ -537,6 +538,320 @@ public class DeploymentTargetFinderTests
 
         result.Count.ShouldBe(1);
         result[0].Id.ShouldBe(2);
+    }
+
+    // ============================
+    // FilterByRoles — Advanced Edge Cases (Octopus Alignment)
+    // ============================
+
+    [Fact]
+    public void FilterByRoles_MachineWithMultipleRoles_OneOverlaps_Included()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web,api,database,cache")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void FilterByRoles_RoleSubstringNoFalsePositive()
+    {
+        // "web" must NOT match target role "web-server" — exact matching, not substring
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web"),
+            CreateMachine(2, roles: "web-server")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web-server" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(1);
+        result[0].Id.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterByRoles_RoleSubstringReverse_NoFalsePositive()
+    {
+        // "web-server" must NOT match target role "web"
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web-server")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void FilterByRoles_AllMachinesMatch_ReturnsAll()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web,api"),
+            CreateMachine(2, roles: "web"),
+            CreateMachine(3, roles: "api,web")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public void FilterByRoles_ManyRolesOnBothSides_CorrectOverlap()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web,api,cache"),
+            CreateMachine(2, roles: "database,queue,scheduler"),
+            CreateMachine(3, roles: "web,database")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api", "queue" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain(m => m.Id == 1); // has "api"
+        result.ShouldContain(m => m.Id == 2); // has "queue"
+    }
+
+    [Fact]
+    public void FilterByRoles_SpecialCharactersInRoles_MatchExactly()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "k8s-worker.us-east-1,aws_ec2"),
+            CreateMachine(2, roles: "k8s-worker.eu-west-1")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "k8s-worker.us-east-1" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(1);
+        result[0].Id.ShouldBe(1);
+    }
+
+    [Fact]
+    public void FilterByRoles_WhitespaceInMachineRoles_TrimmedCorrectly()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: " web , api ")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(1);
+    }
+
+    // ============================
+    // ParseRoles — Advanced Edge Cases
+    // ============================
+
+    [Fact]
+    public void ParseRoles_RolesWithDashes_PreservedCorrectly()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("web-server,api-gateway,k8s-worker");
+
+        result.Count.ShouldBe(3);
+        result.ShouldContain("web-server");
+        result.ShouldContain("api-gateway");
+        result.ShouldContain("k8s-worker");
+    }
+
+    [Fact]
+    public void ParseRoles_RolesWithDots_PreservedCorrectly()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("k8s.cluster,aws.ec2");
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("k8s.cluster");
+        result.ShouldContain("aws.ec2");
+    }
+
+    [Fact]
+    public void ParseRoles_DuplicateRoles_DeduplicatedCaseInsensitive()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("web,Web,WEB,api,Api");
+
+        result.Count.ShouldBe(2); // "web" and "api" (case-insensitive dedup)
+    }
+
+    [Fact]
+    public void ParseRoles_RolesWithUnderscores_PreservedCorrectly()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("web_server,api_gateway");
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("web_server");
+    }
+
+    // ============================
+    // CollectAllTargetRoles (Octopus Level 1 Pre-Filtering)
+    // ============================
+
+    [Fact]
+    public void CollectAllTargetRoles_AllStepsHaveRoles_ReturnsUnion()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web,api"),
+            MakeStepWithRoles("database"),
+            MakeStepWithRoles("api,cache")
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(4); // web, api, database, cache
+        result.ShouldContain("web");
+        result.ShouldContain("api");
+        result.ShouldContain("database");
+        result.ShouldContain("cache");
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_OneStepHasNoRoles_ReturnsEmpty()
+    {
+        // If any enabled step has no target roles, ALL machines are needed
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web"),
+            MakeStepWithRoles(null), // No roles → runs on all machines
+            MakeStepWithRoles("api")
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.ShouldBeEmpty(); // Empty = no pre-filtering
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_DisabledStepWithNoRoles_Ignored()
+    {
+        // Disabled step should not force "all machines" mode
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web"),
+            MakeStepWithRoles(null, isDisabled: true), // Disabled, no roles — ignored
+            MakeStepWithRoles("api")
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("web");
+        result.ShouldContain("api");
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_EmptyStepList_ReturnsEmpty()
+    {
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(new List<DeploymentStepDto>());
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_NullStepList_ReturnsEmpty()
+    {
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(null);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_AllStepsDisabled_ReturnsEmpty()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web", isDisabled: true),
+            MakeStepWithRoles("api", isDisabled: true)
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_DuplicateRoles_Deduplicated()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web,api"),
+            MakeStepWithRoles("Web,API") // Same roles, different case
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(2); // web, api (case-insensitive dedup)
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_EmptyRolesValue_TreatedAsNoRoles()
+    {
+        // Empty string value = step has no role filter = all machines needed
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web"),
+            MakeStepWithRoles("") // Empty = no filter
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.ShouldBeEmpty(); // Must load all machines
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_SingleStep_ReturnsItsRoles()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithRoles("web-server,frontend")
+        };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("web-server");
+        result.ShouldContain("frontend");
+    }
+
+    private static DeploymentStepDto MakeStepWithRoles(string targetRoles, bool isDisabled = false)
+    {
+        var step = new DeploymentStepDto
+        {
+            Id = 1,
+            StepOrder = 1,
+            Name = "Test Step",
+            StepType = "Action",
+            Condition = "Success",
+            IsDisabled = isDisabled,
+            IsRequired = true,
+            Properties = new List<DeploymentStepPropertyDto>()
+        };
+
+        if (targetRoles != null)
+        {
+            step.Properties.Add(new DeploymentStepPropertyDto
+            {
+                StepId = 1,
+                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyValue = targetRoles
+            });
+        }
+
+        return step;
     }
 
     // ============================

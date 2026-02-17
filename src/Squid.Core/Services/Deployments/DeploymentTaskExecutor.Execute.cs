@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Tentacle;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Models.Deployments.Execution;
@@ -142,7 +143,7 @@ public partial class DeploymentTaskExecutor
 
                 foreach (var kv in actionResult.OutputVariables)
                 {
-                    var qualifiedName = $"Octopus.Action[{step.Name}].Output.{kv.Key}";
+                    var qualifiedName = DeploymentVariables.Action.OutputVariable(step.Name, kv.Key);
                     result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value });
                     result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value });
                 }
@@ -260,7 +261,7 @@ public partial class DeploymentTaskExecutor
             return true;
 
         var stepRolesProperty = step.Properties?
-            .FirstOrDefault(p => p.PropertyName == "Octopus.Action.TargetRoles");
+            .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
 
         if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
             return true;
@@ -362,7 +363,7 @@ public partial class DeploymentTaskExecutor
         {
             DeploymentId = _ctx.Deployment.Id,
             CompletedTime = DateTimeOffset.UtcNow,
-            State = success ? "Success" : "Failed",
+            State = success ? TaskState.Success : TaskState.Failed,
             SpaceId = deployment?.SpaceId ?? 1,
             SequenceNumber = 0
         };

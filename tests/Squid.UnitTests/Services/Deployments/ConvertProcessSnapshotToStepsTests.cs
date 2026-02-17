@@ -46,7 +46,7 @@ public class ConvertProcessSnapshotToStepsTests
     public void StepAndActionProperties_CorrectlyConverted()
     {
         var stepSnap = MakeStep(1, "Step", condition: "Variable");
-        stepSnap.Properties = new Dictionary<string, string> { { "Octopus.Action.TargetRoles", "web" } };
+        stepSnap.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "web" } };
         stepSnap.ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
         {
             new()
@@ -59,7 +59,7 @@ public class ConvertProcessSnapshotToStepsTests
         var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
 
         steps[0].Condition.ShouldBe("Variable");
-        steps[0].Properties.ShouldContain(p => p.PropertyName == "Octopus.Action.TargetRoles" && p.PropertyValue == "web");
+        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
         steps[0].Actions[0].Properties.ShouldContain(p => p.PropertyName == "Key1" && p.PropertyValue == "Val1");
     }
 
@@ -90,6 +90,93 @@ public class ConvertProcessSnapshotToStepsTests
         var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(snapshot);
 
         steps.ShouldBeEmpty();
+    }
+
+    // ========== Target Roles Flow Through Snapshot ==========
+
+    [Fact]
+    public void TargetRoles_PreservedThroughSnapshotConversion()
+    {
+        var stepSnap = MakeStep(1, "Deploy Web");
+        stepSnap.Properties = new Dictionary<string, string>
+        {
+            { DeploymentVariables.Action.TargetRoles, "web-server,frontend" }
+        };
+
+        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+
+        steps[0].Properties.Count.ShouldBe(1);
+        var rolesProp = steps[0].Properties.First(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+        rolesProp.PropertyValue.ShouldBe("web-server,frontend");
+    }
+
+    [Fact]
+    public void TargetRoles_MultipleStepsWithDifferentRoles()
+    {
+        var step1 = MakeStep(1, "Deploy Web");
+        step1.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "web" } };
+
+        var step2 = MakeStep(2, "Deploy API");
+        step2.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "api" } };
+
+        var step3 = MakeStep(3, "Run Smoke Tests");
+        // No target roles — runs on all machines
+
+        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(step1, step2, step3));
+
+        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
+        steps[1].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "api");
+        steps[2].Properties.ShouldNotContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+    }
+
+    [Fact]
+    public void ActionEnvironmentsAndChannels_PreservedFromSnapshot()
+    {
+        var stepSnap = MakeStep(1, "Step");
+        stepSnap.ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
+        {
+            new()
+            {
+                Id = 1, Name = "A", ActionType = "T", ActionOrder = 1,
+                Environments = new List<int> { 1, 2 },
+                ExcludedEnvironments = new List<int> { 3 },
+                Channels = new List<int> { 10, 20 }
+            }
+        };
+
+        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+
+        var action = steps[0].Actions[0];
+        action.Environments.ShouldBe(new List<int> { 1, 2 });
+        action.ExcludedEnvironments.ShouldBe(new List<int> { 3 });
+        action.Channels.ShouldBe(new List<int> { 10, 20 });
+    }
+
+    [Fact]
+    public void StartTrigger_PreservedFromSnapshot()
+    {
+        var stepSnap = MakeStep(1, "First");
+        var stepSnap2 = MakeStep(2, "Second");
+        stepSnap2.StartTrigger = "StartWithPrevious";
+
+        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap, stepSnap2));
+
+        steps[0].StartTrigger.ShouldBe("");
+        steps[1].StartTrigger.ShouldBe("StartWithPrevious");
+    }
+
+    [Fact]
+    public void EmptyTargetRoles_PreservedAsProperty()
+    {
+        var stepSnap = MakeStep(1, "Step");
+        stepSnap.Properties = new Dictionary<string, string>
+        {
+            { DeploymentVariables.Action.TargetRoles, "" }
+        };
+
+        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+
+        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "");
     }
 
     private static DeploymentStepSnapshotDataDto MakeStep(
