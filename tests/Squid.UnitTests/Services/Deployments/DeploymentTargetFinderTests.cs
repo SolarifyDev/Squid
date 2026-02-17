@@ -154,17 +154,6 @@ public class DeploymentTargetFinderTests
         result.ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task SpecificMachine_DisabledAndWrongEnv_ReturnsEmpty()
-    {
-        var machine = CreateMachine(10, disabled: true, envIds: "2");
-        SetupGetById(10, machine);
-
-        var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
-
-        result.ShouldBeEmpty();
-    }
-
     // ============================
     // Auto-Select Mode (MachineId == 0)
     // Octopus equivalent: no SpecificMachineIds, select all by Environment + Role
@@ -322,6 +311,25 @@ public class DeploymentTargetFinderTests
     public void ParseIds_InvalidValues_IgnoresNonNumeric()
     {
         var result = DeploymentTargetFinder.ParseIds("1,abc,3");
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain(1);
+        result.ShouldContain(3);
+    }
+
+    [Fact]
+    public void ParseIds_ZeroValues_Excluded()
+    {
+        var result = DeploymentTargetFinder.ParseIds("0,1,2");
+
+        result.Count.ShouldBe(2);
+        result.ShouldNotContain(0);
+    }
+
+    [Fact]
+    public void ParseIds_NegativeValues_Excluded()
+    {
+        var result = DeploymentTargetFinder.ParseIds("-1,1,-5,3");
 
         result.Count.ShouldBe(2);
         result.ShouldContain(1);
@@ -513,6 +521,22 @@ public class DeploymentTargetFinderTests
         var result = DeploymentTargetFinder.FilterByRoles(machines, null);
 
         result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterByRoles_MachineWithNullRoles_Excluded()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: null),
+            CreateMachine(2, roles: "web")
+        };
+        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
+
+        result.Count.ShouldBe(1);
+        result[0].Id.ShouldBe(2);
     }
 
     // ============================

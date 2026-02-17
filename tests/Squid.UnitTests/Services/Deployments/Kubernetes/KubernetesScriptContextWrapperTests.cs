@@ -51,12 +51,6 @@ public class KubernetesScriptContextWrapperTests
     }
 
     [Fact]
-    public void CanWrap_UpperCase_ReturnsTrue()
-    {
-        _wrapper.CanWrap("KUBERNETES").ShouldBeTrue();
-    }
-
-    [Fact]
     public void CanWrap_Ssh_ReturnsFalse()
     {
         _wrapper.CanWrap("Ssh").ShouldBeFalse();

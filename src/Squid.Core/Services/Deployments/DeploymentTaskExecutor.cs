@@ -3,7 +3,6 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Settings.GithubPackage;
@@ -27,7 +26,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
-    private readonly IExternalFeedDataProvider _externalFeedDataProvider;
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly IEnumerable<IEndpointVariableContributor> _variableContributors;
     private readonly IEnumerable<IScriptContextWrapper> _scriptWrappers;
@@ -47,7 +45,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IDeploymentVariableResolver variableResolver,
         IServerTaskDataProvider serverTaskDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
-        IExternalFeedDataProvider externalFeedDataProvider,
         IActionHandlerRegistry actionHandlerRegistry,
         IEnumerable<IEndpointVariableContributor> variableContributors,
         IEnumerable<IScriptContextWrapper> scriptWrappers,
@@ -68,7 +65,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _scriptWrappers = scriptWrappers;
         _deploymentDataProvider = deploymentDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
-        _externalFeedDataProvider = externalFeedDataProvider;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
     }
@@ -96,8 +92,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
                 await LoadAccountAsync(ct);
                 await ContributeEndpointVariablesAsync(ct);
                 await ExtractCalamariAsync(ct);
-                await PrepareActionsAsync(ct);
-                await ExecuteActionsAsync(ct);
+                await PrepareAndExecuteStepsAsync(ct);
             }
 
             await RecordCompletionAsync(true, "Deployment completed successfully");

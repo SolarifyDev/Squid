@@ -28,6 +28,8 @@ public class DeploymentActionSnapshotDataDto
 
     public List<int> Environments { get; set; } = new List<int>();
 
+    public List<int> ExcludedEnvironments { get; set; } = new List<int>();
+
     public List<int> Channels { get; set; } = new List<int>();
 
     public List<string> MachineRoles { get; set; } = new List<string>();

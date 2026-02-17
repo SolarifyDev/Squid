@@ -76,6 +76,13 @@ public class KubernetesRunScriptActionHandlerTests
     }
 
     [Fact]
+    public void CanHandle_NullActionType_ReturnsFalse()
+    {
+        var action = new DeploymentActionDto { ActionType = null };
+        _handler.CanHandle(action).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
         _handler.ActionType.ShouldBe("Squid.KubernetesRunScript");
@@ -182,5 +189,31 @@ public class KubernetesRunScriptActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FilesAlwaysEmpty()
+    {
+        var action = CreateAction(scriptBody: "kubectl get pods");
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NullProperties_ReturnsEmptyScriptBody()
+    {
+        var action = new DeploymentActionDto
+        {
+            ActionType = "Squid.KubernetesRunScript",
+            Properties = null
+        };
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldBe(string.Empty);
     }
 }

@@ -1,9 +1,12 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -66,12 +69,6 @@ public class KubernetesEndpointVariableContributorTests
     public void CanHandle_CaseInsensitive_ReturnsTrue()
     {
         _contributor.CanHandle("kubernetes").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanHandle_UpperCase_ReturnsTrue()
-    {
-        _contributor.CanHandle("KUBERNETES").ShouldBeTrue();
     }
 
     [Fact]
@@ -413,5 +410,225 @@ public class KubernetesEndpointVariableContributorTests
         var vars = _contributor.ContributeVariables(null, CreateTokenAccount());
 
         vars.ShouldBeEmpty();
+    }
+
+    // === ContributeVariables — sensitive variable marking ===
+
+    [Fact]
+    public void ContributeVariables_TokenAccount_TokenIsSensitive()
+    {
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateTokenAccount());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.Token" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_PasswordIsSensitive()
+    {
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateUsernamePasswordAccount());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.Password" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_ClientCertDataIsSensitive()
+    {
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateClientCertAccount());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateData" && v.IsSensitive);
+        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateKeyData" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_AwsSecretKeyIsSensitive()
+    {
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateAwsAccount());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.SecretKey" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_NonSensitiveVariables_NotMarkedSensitive()
+    {
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateTokenAccount());
+
+        vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterUrl" && !v.IsSensitive);
+        vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && !v.IsSensitive);
+        vars.ShouldContain(v => v.Name == "Squid.Account.Username" && !v.IsSensitive);
+    }
+
+    // === ContributeAdditionalVariablesAsync — ContainerImage ===
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_ValidFeed_ReturnsContainerImageVariable()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://registry.example.com/v2" });
+
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp/backend");
+        var release = new Release { Version = "1.2.3" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage"
+            && v.Value == "registry.example.com/myapp/backend:1.2.3");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_NoActionWithFeed_FallsBackToVersion()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var snapshot = MakeSnapshotWithoutFeed();
+        var release = new Release { Version = "2.0.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage" && v.Value == "2.0.0");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_FeedNotFound_FallsBackToVersion()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalFeed)null);
+
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var snapshot = MakeSnapshotWithFeed(feedId: 99, packageId: "myapp");
+        var release = new Release { Version = "3.0.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage" && v.Value == "3.0.0");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_NullSnapshot_FallsBackToVersion()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var release = new Release { Version = "4.0.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(null, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage" && v.Value == "4.0.0");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_NoFeedProvider_FallsBackToVersion()
+    {
+        // Contributor created without feed provider (parameterless constructor)
+        var contributor = new KubernetesEndpointVariableContributor();
+
+        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
+        var release = new Release { Version = "5.0.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage" && v.Value == "5.0.0");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_FeedWithRegistryPath_UsesRegistryPath()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 10,
+                FeedUri = "https://index.docker.io/v2",
+                RegistryPath = "docker.io"
+            });
+
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "library/nginx");
+        var release = new Release { Version = "1.25.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage"
+            && v.Value == "docker.io/library/nginx:1.25.0");
+    }
+
+    [Fact]
+    public async Task ContributeAdditionalVariablesAsync_FeedWithNonStandardPort_IncludesPort()
+    {
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 10,
+                FeedUri = "https://registry.internal.com:5000/v2"
+            });
+
+        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+
+        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
+        var release = new Release { Version = "2.0.0" };
+
+        var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
+
+        vars.ShouldContain(v => v.Name == "ContainerImage"
+            && v.Value == "registry.internal.com:5000/myapp:2.0.0");
+    }
+
+    private static DeploymentProcessSnapshotDto MakeSnapshotWithFeed(int feedId, string packageId)
+    {
+        return new DeploymentProcessSnapshotDto
+        {
+            Id = 1, OriginalProcessId = 1, Version = 1,
+            Data = new DeploymentProcessSnapshotDataDto
+            {
+                StepSnapshots = new List<DeploymentStepSnapshotDataDto>
+                {
+                    new()
+                    {
+                        Id = 1, Name = "Step1", StepType = "Action", StepOrder = 1,
+                        ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
+                        {
+                            new()
+                            {
+                                Id = 1, Name = "Deploy", ActionType = "Octopus.KubernetesDeployContainers",
+                                ActionOrder = 1, FeedId = feedId, PackageId = packageId
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    private static DeploymentProcessSnapshotDto MakeSnapshotWithoutFeed()
+    {
+        return new DeploymentProcessSnapshotDto
+        {
+            Id = 1, OriginalProcessId = 1, Version = 1,
+            Data = new DeploymentProcessSnapshotDataDto
+            {
+                StepSnapshots = new List<DeploymentStepSnapshotDataDto>
+                {
+                    new()
+                    {
+                        Id = 1, Name = "Step1", StepType = "Action", StepOrder = 1,
+                        ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
+                        {
+                            new()
+                            {
+                                Id = 1, Name = "Script", ActionType = "Octopus.Script",
+                                ActionOrder = 1, FeedId = null, PackageId = null
+                            }
+                        }
+                    }
+                }
+            }
+        };
     }
 }

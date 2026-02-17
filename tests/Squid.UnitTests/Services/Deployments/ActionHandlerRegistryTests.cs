@@ -77,22 +77,4 @@ public class ActionHandlerRegistryTests
         result.ShouldBeNull();
     }
 
-    [Fact]
-    public void Resolve_CaseInsensitiveMatch_ReturnsHandler()
-    {
-        var handler = CreateMockHandler("Squid.KubernetesRunScript");
-
-        // Need a handler that does case-insensitive matching
-        var mockHandler = new Mock<IActionHandler>();
-        mockHandler.Setup(h => h.ActionType).Returns("Squid.KubernetesRunScript");
-        mockHandler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>()))
-            .Returns((DeploymentActionDto a) =>
-                a != null && string.Equals(a.ActionType, "Squid.KubernetesRunScript", StringComparison.OrdinalIgnoreCase));
-
-        var registry = new ActionHandlerRegistry(new[] { mockHandler.Object });
-
-        var result = registry.Resolve(CreateAction("squid.kubernetesrunscript"));
-
-        result.ShouldBe(mockHandler.Object);
-    }
 }

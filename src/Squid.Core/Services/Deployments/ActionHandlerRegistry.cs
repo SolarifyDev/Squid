@@ -18,6 +18,7 @@ public class ActionHandlerRegistry : IActionHandlerRegistry
 
     public IActionHandler Resolve(DeploymentActionDto action)
     {
+        if (action == null) return null;
         return _handlers.FirstOrDefault(h => h.CanHandle(action));
     }
 }

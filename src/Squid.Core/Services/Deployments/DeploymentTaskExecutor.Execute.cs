@@ -5,18 +5,36 @@ using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task PrepareActionsAsync(CancellationToken ct)
+    private async Task PrepareAndExecuteStepsAsync(CancellationToken ct)
     {
+        var targetRoles = DeploymentTargetFinder.ParseRoles(_ctx.Target.Roles);
+        var failureEncountered = false;
+
         foreach (var step in _ctx.Steps.OrderBy(p => p.StepOrder))
         {
+            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !failureEncountered))
+            {
+                Log.Information("Skipping step {StepName} (disabled, condition, or role mismatch)", step.Name);
+                continue;
+            }
+
+            var stepResults = new List<ActionExecutionResult>();
+
             foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
             {
+                if (!ShouldExecuteAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId))
+                {
+                    Log.Information("Skipping action {ActionName} (disabled, environment, or channel mismatch)", action.Name);
+                    continue;
+                }
+
                 var handler = _actionHandlerRegistry.Resolve(action);
 
                 if (handler == null)
@@ -50,25 +68,110 @@ public partial class DeploymentTaskExecutor
                         }
                     }
 
-                    _ctx.ActionResults.Add(result);
+                    stepResults.Add(result);
+                }
+            }
+
+            foreach (var actionResult in stepResults)
+            {
+                try
+                {
+                    if (actionResult.CalamariCommand != null)
+                        await ExecuteCalamariActionAsync(actionResult, ct).ConfigureAwait(false);
+                    else
+                        await ExecuteDirectScriptAsync(actionResult, ct).ConfigureAwait(false);
+
+                    _ctx.ActionResults.Add(actionResult);
+                }
+                catch (Exception ex)
+                {
+                    failureEncountered = true;
+                    Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+
+                    if (step.IsRequired)
+                        throw;
                 }
             }
         }
     }
 
-    private async Task ExecuteActionsAsync(CancellationToken ct)
+    public static bool ShouldExecuteStep(
+        DeploymentStepDto step,
+        HashSet<string> targetRoles,
+        bool previousStepSucceeded)
     {
-        foreach (var actionResult in _ctx.ActionResults)
+        if (step.IsDisabled)
+            return false;
+
+        if (!EvaluateCondition(step.Condition, previousStepSucceeded))
+            return false;
+
+        if (!MatchesTargetRoles(step, targetRoles))
+            return false;
+
+        return true;
+    }
+
+    public static bool ShouldExecuteAction(
+        DeploymentActionDto action,
+        int deploymentEnvironmentId,
+        int deploymentChannelId)
+    {
+        if (action.IsDisabled)
+            return false;
+
+        if (!AppliesToEnvironment(action, deploymentEnvironmentId))
+            return false;
+
+        if (action.Channels != null && action.Channels.Count > 0
+            && !action.Channels.Contains(deploymentChannelId))
+            return false;
+
+        return true;
+    }
+
+    private static bool AppliesToEnvironment(DeploymentActionDto action, int environmentId)
+    {
+        var hasInclusion = action.Environments != null && action.Environments.Count > 0;
+        var hasExclusion = action.ExcludedEnvironments != null && action.ExcludedEnvironments.Count > 0;
+
+        if (!hasInclusion && !hasExclusion)
+            return true;
+
+        if (hasExclusion && action.ExcludedEnvironments.Contains(environmentId))
+            return false;
+
+        if (hasInclusion && !action.Environments.Contains(environmentId))
+            return false;
+
+        return true;
+    }
+
+    private static bool EvaluateCondition(string condition, bool previousStepSucceeded)
+    {
+        return condition switch
         {
-            if (actionResult.CalamariCommand != null)
-            {
-                await ExecuteCalamariActionAsync(actionResult, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                await ExecuteDirectScriptAsync(actionResult, ct).ConfigureAwait(false);
-            }
-        }
+            "Always" => true,
+            "Failure" => !previousStepSucceeded,
+            "Variable" => true,
+            null or "" => previousStepSucceeded,
+            _ => previousStepSucceeded // "Success" and any unknown value
+        };
+    }
+
+    private static bool MatchesTargetRoles(DeploymentStepDto step, HashSet<string> targetRoles)
+    {
+        if (targetRoles == null)
+            return true;
+
+        var stepRolesProperty = step.Properties?
+            .FirstOrDefault(p => p.PropertyName == "Octopus.Action.TargetRoles");
+
+        if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
+            return true;
+
+        var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
+        return stepRoles.Overlaps(targetRoles);
     }
 
     private async Task ExecuteCalamariActionAsync(ActionExecutionResult actionResult, CancellationToken ct)

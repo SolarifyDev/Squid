@@ -76,6 +76,19 @@ public class KubernetesDeployYamlActionHandlerTests
         _handler.CanHandle(null).ShouldBeFalse();
     }
 
+    [Fact]
+    public void CanHandle_NullActionType_ReturnsFalse()
+    {
+        var action = new DeploymentActionDto { ActionType = null };
+        _handler.CanHandle(action).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ActionType_ReturnsExpectedValue()
+    {
+        _handler.ActionType.ShouldBe("Squid.KubernetesDeployRawYaml");
+    }
+
     // === PrepareAsync — Inline YAML Tests ===
 
     [Fact]
@@ -193,5 +206,32 @@ public class KubernetesDeployYamlActionHandlerTests
         fileContent.ShouldContain("---");
         fileContent.ShouldContain("Service");
         fileContent.ShouldContain("Deployment");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NullProperties_FallsBackToContentDir()
+    {
+        var action = new DeploymentActionDto
+        {
+            ActionType = "Squid.KubernetesDeployRawYaml",
+            Properties = null
+        };
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldBeEmpty();
+        result.ScriptBody.ShouldContain("kubectl apply -f");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_BashSyntax_SetsSyntaxToBash()
+    {
+        var action = CreateAction(inlineYaml: "apiVersion: v1", syntax: "Bash");
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 }

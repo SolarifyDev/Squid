@@ -9,6 +9,7 @@ using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Tentacle;
+using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
@@ -73,100 +74,18 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
     {
         await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
-            var variableSet = new VariableSet
-            {
-                SpaceId = 1,
-                OwnerType = VariableSetOwnerType.Project,
-                OwnerId = 0,
-                Version = 1,
-                RelatedDocumentIds = string.Empty,
-                LastModified = DateTimeOffset.UtcNow
-            };
+            var builder = new TestDataBuilder(repository, unitOfWork);
 
-            await repository.InsertAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
+            var variableSet = await builder.CreateVariableSetAsync();
+            await builder.CreateVariableAsync(variableSet.Id, "TestVariable", "TestValue");
 
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            var project = await builder.CreateProjectAsync(variableSet.Id);
+            await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id);
 
-            var variables = new List<Variable>
-            {
-                new()
-                {
-                    VariableSetId = variableSet.Id,
-                    Name = "TestVariable",
-                    Value = "TestValue",
-                    Description = "Variable for integration test",
-                    Type = VariableType.String,
-                    IsSensitive = false,
-                    SortOrder = 0,
-                    LastModifiedOn = DateTimeOffset.UtcNow,
-                    LastModifiedBy = "IntegrationTest"
-                }
-            };
+            var process = await builder.CreateDeploymentProcessAsync();
+            await builder.UpdateProjectProcessIdAsync(project, process.Id);
 
-            await repository.InsertAllAsync(variables, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            var project = new Project
-            {
-                Name = "Test Project",
-                Slug = "test-project",
-                IsDisabled = false,
-                VariableSetId = variableSet.Id,
-                ProjectGroupId = 1,
-                LifecycleId = 1,
-                AutoCreateRelease = false,
-                Json = string.Empty,
-                IncludedLibraryVariableSetIds = string.Empty,
-                DiscreteChannelRelease = false,
-                DataVersion = Array.Empty<byte>(),
-                SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
-                AllowIgnoreChannelRules = false
-            };
-
-            await repository.InsertAsync(project, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            variableSet.OwnerId = project.Id;
-
-            await repository.UpdateAsync(variableSet, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            var process = new DeploymentProcess
-            {
-                Version = 1,
-                SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
-                LastModifiedBy = "IntegrationTest"
-            };
-
-            await repository.InsertAsync(process, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            project.DeploymentProcessId = process.Id;
-
-            await repository.UpdateAsync(project, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-
-            var channel = new Channel
-            {
-                Name = "Default Channel",
-                Description = "Default channel for integration test",
-                ProjectId = project.Id,
-                LifecycleId = project.LifecycleId,
-                SpaceId = 1,
-                Slug = "default-channel",
-                IsDefault = true
-            };
-
-            await repository.InsertAsync(channel, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId);
 
             var environment = new Environment
             {
@@ -182,7 +101,6 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
             };
 
             await repository.InsertAsync(environment, CancellationToken.None).ConfigureAwait(false);
-
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
@@ -216,23 +134,9 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
             };
 
             await repository.InsertAsync(machine, CancellationToken.None).ConfigureAwait(false);
-
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
-            var release = new Release
-            {
-                Version = "1.0.0",
-                ProjectId = project.Id,
-                ProjectVariableSetSnapshotId = 0,
-                ProjectDeploymentProcessSnapshotId = 0,
-                ChannelId = channel.Id,
-                SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow
-            };
-
-            await repository.InsertAsync(release, CancellationToken.None).ConfigureAwait(false);
-
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0");
 
             var deployment = new Deployment
             {
@@ -248,7 +152,6 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
             };
 
             await repository.InsertAsync(deployment, CancellationToken.None).ConfigureAwait(false);
-
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             var serverTask = new ServerTask
@@ -274,13 +177,11 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
             };
 
             await repository.InsertAsync(serverTask, CancellationToken.None).ConfigureAwait(false);
-
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
             deployment.TaskId = serverTask.Id;
 
             await repository.UpdateAsync(deployment, CancellationToken.None).ConfigureAwait(false);
-
             await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
     }

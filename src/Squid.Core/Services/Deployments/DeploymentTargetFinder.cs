@@ -71,7 +71,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
     // === Static utilities for per-step filtering (used by executor) ===
 
-    internal static HashSet<int> ParseIds(string ids)
+    public static HashSet<int> ParseIds(string ids)
     {
         if (string.IsNullOrEmpty(ids)) return new HashSet<int>();
 
@@ -81,7 +81,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             .ToHashSet();
     }
 
-    internal static HashSet<string> ParseRoles(string roles)
+    public static HashSet<string> ParseRoles(string roles)
     {
         if (string.IsNullOrEmpty(roles)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -94,7 +94,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     /// a machine matches if it has ANY of the target roles).
     /// Empty or null targetRoles returns all machines (no filtering).
     /// </summary>
-    internal static List<Persistence.Entities.Deployments.Machine> FilterByRoles(
+    public static List<Persistence.Entities.Deployments.Machine> FilterByRoles(
         List<Persistence.Entities.Deployments.Machine> candidates,
         HashSet<string> targetRoles)
     {

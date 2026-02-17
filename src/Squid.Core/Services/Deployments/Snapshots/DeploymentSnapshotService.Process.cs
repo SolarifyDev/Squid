@@ -132,6 +132,8 @@ public partial class DeploymentSnapshotService
                 StepType = step.StepType,
                 StepOrder = step.StepOrder,
                 Condition = step.Condition,
+                IsDisabled = step.IsDisabled,
+                IsRequired = step.IsRequired,
                 CreatedAt = step.CreatedAt,
                 ActionSnapshots = actionSnapshots,
                 Properties = stepProperties.ToDictionary(p => p.PropertyName, p => p.PropertyValue)

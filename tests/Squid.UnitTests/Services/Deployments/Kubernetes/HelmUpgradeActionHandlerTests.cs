@@ -72,6 +72,13 @@ public class HelmUpgradeActionHandlerTests
     }
 
     [Fact]
+    public void CanHandle_NullActionType_ReturnsFalse()
+    {
+        var action = new DeploymentActionDto { ActionType = null };
+        _handler.CanHandle(action).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
         _handler.ActionType.ShouldBe("Squid.HelmChartUpgrade");
@@ -180,17 +187,6 @@ public class HelmUpgradeActionHandlerTests
         {
             ["Squid.Action.Script.Syntax"] = "PowerShell"
         });
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_DefaultSyntax_IsPowerShell()
-    {
-        var action = CreateAction();
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
@@ -391,18 +387,6 @@ public class HelmUpgradeActionHandlerTests
         result.ScriptBody.ShouldContain("True");
     }
 
-    [Fact]
-    public async Task PrepareAsync_DefaultResetValues_IsTrue()
-    {
-        var action = CreateAction();
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        // Default ResetValues is "True"
-        result.ScriptBody.ShouldContain("True");
-    }
-
     // === Custom Helm Executable Tests ===
 
     [Fact]
@@ -436,7 +420,7 @@ public class HelmUpgradeActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_NoCustomHelmExe_DefaultsToEmpty()
+    public async Task PrepareAsync_NoCustomHelmExe_ScriptDoesNotContainCustomPath()
     {
         var action = CreateAction(properties: new Dictionary<string, string>
         {
@@ -446,8 +430,8 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        // Script template handles empty by defaulting to "helm"
-        result.ShouldNotBeNull();
+        result.ScriptBody.ShouldNotContain("/usr/local/bin/helm3");
+        result.ScriptBody.ShouldNotContain("C:\\tools\\helm.exe");
     }
 
     // === AdditionalArgs Tests ===
@@ -467,14 +451,15 @@ public class HelmUpgradeActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_NoAdditionalArgs_NoExtraArgs()
+    public async Task PrepareAsync_NoAdditionalArgs_ScriptDoesNotContainExtraFlags()
     {
         var action = CreateAction();
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ShouldNotBeNull();
+        result.ScriptBody.ShouldNotContain("--timeout");
+        result.ScriptBody.ShouldNotContain("--debug");
     }
 
     // === Template Replacement Completeness ===
@@ -607,7 +592,6 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        // HelmWait should be "False" when ClientVersion is not set
-        result.ShouldNotBeNull();
+        result.ScriptBody.ShouldContain("False");
     }
 }

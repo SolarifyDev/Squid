@@ -14,8 +14,12 @@ public class DeploymentStepSnapshotDataDto
 
     public string Condition { get; set; }
 
+    public bool IsDisabled { get; set; }
+
+    public bool IsRequired { get; set; } = true;
+
     public DateTimeOffset CreatedAt { get; set; }
-    
+
     public Dictionary<string, string> Properties { get; set; } = new Dictionary<string, string>();
 
     public List<DeploymentActionSnapshotDataDto> ActionSnapshots { get; set; } = new List<DeploymentActionSnapshotDataDto>();

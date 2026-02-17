@@ -1,8 +1,6 @@
 using System.Text.Json;
-using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
-using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
 
@@ -87,9 +85,12 @@ public partial class DeploymentTaskExecutor
         {
             var endpointVars = _resolvedContributor.ContributeVariables(_ctx.EndpointJson, _ctx.Account);
             _ctx.Variables.AddRange(endpointVars);
-        }
 
-        await InsertContainerImageVariableAsync(ct).ConfigureAwait(false);
+            var additionalVars = await _resolvedContributor
+                .ContributeAdditionalVariablesAsync(_ctx.Plan.ProcessSnapshot, _ctx.Release, ct)
+                .ConfigureAwait(false);
+            _ctx.Variables.AddRange(additionalVars);
+        }
     }
 
     private static string ParseCommunicationStyle(string endpointJson)
@@ -111,53 +112,12 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task InsertContainerImageVariableAsync(CancellationToken ct)
-    {
-        try
-        {
-            var containerImage = await BuildContainerImageAsync(_ctx.Plan, _ctx.Release, ct).ConfigureAwait(false);
-            _ctx.Variables.Add(MakeVariable("ContainerImage", containerImage));
-        }
-        catch
-        {
-            _ctx.Variables.Add(MakeVariable("ContainerImage", _ctx.Release?.Version ?? string.Empty));
-        }
-    }
-
     private void ConvertSnapshotToSteps()
     {
         _ctx.Steps = ConvertProcessSnapshotToSteps(_ctx.Plan.ProcessSnapshot);
     }
 
-    private static VariableDto MakeVariable(string name, string value) => new()
-    {
-        Name = name,
-        Value = value,
-        Description = string.Empty,
-        Type = VariableType.String,
-        IsSensitive = false,
-        LastModifiedOn = DateTimeOffset.UtcNow,
-        LastModifiedBy = "System"
-    };
-
-    private async Task<string> BuildContainerImageAsync(DeploymentPlanDto plan, Persistence.Entities.Deployments.Release release, CancellationToken ct)
-    {
-        var firstAction = plan.ProcessSnapshot?.Data.StepSnapshots?
-            .SelectMany(s => s.ActionSnapshots)
-            .FirstOrDefault(a => a.FeedId.HasValue && !string.IsNullOrEmpty(a.PackageId));
-
-        if (firstAction == null) return release.Version;
-
-        var feed = await _externalFeedDataProvider.GetFeedByIdAsync(firstAction.FeedId.Value, ct).ConfigureAwait(false);
-
-        if (feed == null) return release.Version;
-
-        var uri = new Uri(feed.FeedUri ?? string.Empty);
-
-        return $"{uri.Host}/{firstAction.PackageId ?? string.Empty}:{release.Version ?? string.Empty}";
-    }
-
-    private List<DeploymentStepDto> ConvertProcessSnapshotToSteps(DeploymentProcessSnapshotDto processSnapshot)
+    public static List<DeploymentStepDto> ConvertProcessSnapshotToSteps(DeploymentProcessSnapshotDto processSnapshot)
     {
         var steps = new List<DeploymentStepDto>();
 
@@ -173,8 +133,8 @@ public partial class DeploymentTaskExecutor
                 Condition = stepSnap.Condition,
                 StartTrigger = "",
                 PackageRequirement = "",
-                IsDisabled = false,
-                IsRequired = true,
+                IsDisabled = stepSnap.IsDisabled,
+                IsRequired = stepSnap.IsRequired,
                 CreatedAt = stepSnap.CreatedAt,
                 Properties = stepSnap.Properties.Select(
                     kvp =>
@@ -201,7 +161,10 @@ public partial class DeploymentTaskExecutor
                                     new DeploymentActionPropertyDto
                                     {
                                         ActionId = action.Id, PropertyName = kvp.Key, PropertyValue = kvp.Value
-                                    }).ToList()
+                                    }).ToList(),
+                            Environments = action.Environments ?? new List<int>(),
+                            ExcludedEnvironments = action.ExcludedEnvironments ?? new List<int>(),
+                            Channels = action.Channels ?? new List<int>()
                         }).ToList()
             };
 
