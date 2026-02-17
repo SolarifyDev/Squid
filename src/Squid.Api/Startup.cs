@@ -1,6 +1,5 @@
 using Squid.Api.Filters;
 using Squid.Core.Persistence;
-using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Api;
 
@@ -31,7 +30,7 @@ public class Startup
             options.Filters.Add<GlobalExceptionFilter>();
             options.Filters.Add<GlobalSuccessFilter>();
         });
-        
+
         _serviceCollection = services;
     }
 
@@ -41,13 +40,9 @@ public class Startup
     // Don't build the container; that gets done for you by the factory.
     public void ConfigureContainer(ContainerBuilder builder)
     {
-        var serviceProvider = _serviceCollection.BuildServiceProvider();
-
-        var selfCertSetting = Configuration.GetSection("SelfCert").Get<SelfCertSetting>();
-
         var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
 
-        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, Configuration, selfCertSetting);
+        builder.RegisterModule(new SquidModule(Log.Logger, Configuration, storeSetting));
     }
 
     // Configure is where you add middleware. This is called after

@@ -41,18 +41,18 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
             storeSetting.Postgres = CreateIsolatedPostgresSetting(storeSetting.Postgres);
         }
 
-        var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>() ?? new SelfCertSetting
-        {
-            Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64"),
-            Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
-        };
+        containerBuilder.RegisterModule(new SquidModule(logger, configuration, storeSetting!));
 
-        ApplicationStartup.Initialize(
-            containerBuilder,
-            storeSetting!,
-            logger,
-            configuration,
-            selfCertSetting);
+        // Override SelfCertSetting with env var fallback for CI environments
+        var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>();
+        if (string.IsNullOrEmpty(selfCertSetting?.Base64))
+        {
+            containerBuilder.RegisterInstance(new SelfCertSetting
+            {
+                Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64"),
+                Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
+            }).AsSelf().SingleInstance();
+        }
 
         LifetimeScope = containerBuilder.Build();
     }
