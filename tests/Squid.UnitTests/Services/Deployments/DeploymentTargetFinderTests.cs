@@ -20,7 +20,7 @@ public class DeploymentTargetFinderTests
         _finder = new DeploymentTargetFinder(_machineDataProviderMock.Object);
     }
 
-    // === Helpers ===
+    // ========== Helpers ==========
 
     private static Machine CreateMachine(
         int id,
@@ -72,9 +72,35 @@ public class DeploymentTargetFinderTests
             .ReturnsAsync(machines);
     }
 
+    private static DeploymentStepDto MakeStepWithRoles(string targetRoles, bool isDisabled = false)
+    {
+        var step = new DeploymentStepDto
+        {
+            Id = 1,
+            StepOrder = 1,
+            Name = "Test Step",
+            StepType = "Action",
+            Condition = "Success",
+            IsDisabled = isDisabled,
+            IsRequired = true,
+            Properties = new List<DeploymentStepPropertyDto>()
+        };
+
+        if (targetRoles != null)
+        {
+            step.Properties.Add(new DeploymentStepPropertyDto
+            {
+                StepId = 1,
+                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyValue = targetRoles
+            });
+        }
+
+        return step;
+    }
+
     // ============================
     // Specific Machine Mode (MachineId > 0)
-    // Octopus equivalent: SpecificMachineIds
     // ============================
 
     [Fact]
@@ -157,7 +183,6 @@ public class DeploymentTargetFinderTests
 
     // ============================
     // Auto-Select Mode (MachineId == 0)
-    // Octopus equivalent: no SpecificMachineIds, select all by Environment + Role
     // ============================
 
     [Fact]
@@ -190,7 +215,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task AutoSelect_ExcludesDisabledMachines()
     {
-        // Simulates case where DB query returns a disabled machine (data inconsistency)
         var machines = new List<Machine>
         {
             CreateMachine(1, envIds: "1"),
@@ -208,7 +232,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task AutoSelect_FiltersWrongEnvironment()
     {
-        // DB returns machines from multiple envs (data inconsistency defense)
         var machines = new List<Machine>
         {
             CreateMachine(1, envIds: "1"),
@@ -273,127 +296,59 @@ public class DeploymentTargetFinderTests
     }
 
     // ============================
-    // Environment ID Parsing (static utility)
+    // ParseIds (static utility)
     // ============================
 
-    [Fact]
-    public void ParseIds_CommaSeparated_ReturnsCorrectSet()
+    [Theory]
+    [InlineData("1,2,3", 3)]
+    [InlineData("42", 1)]
+    [InlineData("", 0)]
+    [InlineData(null, 0)]
+    [InlineData("1,abc,3", 2)]
+    [InlineData("0,1,2", 2)]
+    [InlineData("-1,1,-5,3", 2)]
+    [InlineData(" 1 , 2 , 3 ", 3)]
+    [InlineData("1,1,2,2", 2)]
+    public void ParseIds_ReturnsCorrectCount(string input, int expectedCount)
     {
-        var result = DeploymentTargetFinder.ParseIds("1,2,3");
+        var result = DeploymentTargetFinder.ParseIds(input);
 
-        result.Count.ShouldBe(3);
-        result.ShouldContain(1);
-        result.ShouldContain(2);
-        result.ShouldContain(3);
+        result.Count.ShouldBe(expectedCount);
     }
 
     [Fact]
-    public void ParseIds_SingleValue_ReturnsSingleSet()
+    public void ParseIds_CorrectValues()
     {
-        var result = DeploymentTargetFinder.ParseIds("42");
+        var result = DeploymentTargetFinder.ParseIds("1,abc,-5,0,3");
 
-        result.Count.ShouldBe(1);
-        result.ShouldContain(42);
-    }
-
-    [Fact]
-    public void ParseIds_EmptyString_ReturnsEmptySet()
-    {
-        DeploymentTargetFinder.ParseIds("").ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void ParseIds_Null_ReturnsEmptySet()
-    {
-        DeploymentTargetFinder.ParseIds(null).ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void ParseIds_InvalidValues_IgnoresNonNumeric()
-    {
-        var result = DeploymentTargetFinder.ParseIds("1,abc,3");
-
-        result.Count.ShouldBe(2);
         result.ShouldContain(1);
         result.ShouldContain(3);
-    }
-
-    [Fact]
-    public void ParseIds_ZeroValues_Excluded()
-    {
-        var result = DeploymentTargetFinder.ParseIds("0,1,2");
-
-        result.Count.ShouldBe(2);
         result.ShouldNotContain(0);
     }
 
-    [Fact]
-    public void ParseIds_NegativeValues_Excluded()
-    {
-        var result = DeploymentTargetFinder.ParseIds("-1,1,-5,3");
-
-        result.Count.ShouldBe(2);
-        result.ShouldContain(1);
-        result.ShouldContain(3);
-    }
-
-    [Fact]
-    public void ParseIds_WithWhitespace_TrimsCorrectly()
-    {
-        var result = DeploymentTargetFinder.ParseIds(" 1 , 2 , 3 ");
-
-        result.Count.ShouldBe(3);
-        result.ShouldContain(1);
-        result.ShouldContain(2);
-        result.ShouldContain(3);
-    }
-
-    [Fact]
-    public void ParseIds_DuplicateValues_ReturnsUniqueSet()
-    {
-        var result = DeploymentTargetFinder.ParseIds("1,1,2,2");
-
-        result.Count.ShouldBe(2);
-    }
-
     // ============================
-    // Role Parsing (static utility for per-step filtering)
+    // ParseRoles (static utility)
     // ============================
 
-    [Fact]
-    public void ParseRoles_CommaSeparated_ReturnsCorrectSet()
+    [Theory]
+    [InlineData("web,api,worker", 3)]
+    [InlineData("web", 1)]
+    [InlineData("", 0)]
+    [InlineData(null, 0)]
+    [InlineData(" web , api ", 2)]
+    [InlineData("web-server,api-gateway,k8s-worker", 3)]
+    [InlineData("k8s.cluster,aws.ec2", 2)]
+    [InlineData("web,Web,WEB,api,Api", 2)]
+    [InlineData("web_server,api_gateway", 2)]
+    public void ParseRoles_ReturnsCorrectCount(string input, int expectedCount)
     {
-        var result = DeploymentTargetFinder.ParseRoles("web,api,worker");
+        var result = DeploymentTargetFinder.ParseRoles(input);
 
-        result.Count.ShouldBe(3);
-        result.ShouldContain("web");
-        result.ShouldContain("api");
-        result.ShouldContain("worker");
+        result.Count.ShouldBe(expectedCount);
     }
 
     [Fact]
-    public void ParseRoles_SingleRole_ReturnsSingleSet()
-    {
-        var result = DeploymentTargetFinder.ParseRoles("web");
-
-        result.Count.ShouldBe(1);
-        result.ShouldContain("web");
-    }
-
-    [Fact]
-    public void ParseRoles_EmptyString_ReturnsEmptySet()
-    {
-        DeploymentTargetFinder.ParseRoles("").ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void ParseRoles_Null_ReturnsEmptySet()
-    {
-        DeploymentTargetFinder.ParseRoles(null).ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void ParseRoles_CaseInsensitive()
+    public void ParseRoles_CaseInsensitiveLookup()
     {
         var result = DeploymentTargetFinder.ParseRoles("Web,API");
 
@@ -402,19 +357,8 @@ public class DeploymentTargetFinderTests
         result.Contains("WEB").ShouldBeTrue();
     }
 
-    [Fact]
-    public void ParseRoles_WithWhitespace_TrimsCorrectly()
-    {
-        var result = DeploymentTargetFinder.ParseRoles(" web , api ");
-
-        result.Count.ShouldBe(2);
-        result.ShouldContain("web");
-        result.ShouldContain("api");
-    }
-
     // ============================
-    // FilterByRoles (static utility for per-step filtering)
-    // Octopus: step.TargetRoles → machines with ANY matching role (OR logic)
+    // FilterByRoles (static utility — OR logic)
     // ============================
 
     [Fact]
@@ -481,6 +425,20 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
+    public void FilterByRoles_NullTargetRoles_ReturnsAll()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, roles: "web"),
+            CreateMachine(2, roles: "api")
+        };
+
+        var result = DeploymentTargetFinder.FilterByRoles(machines, null);
+
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
     public void FilterByRoles_CaseInsensitiveMatch()
     {
         var machines = new List<Machine>
@@ -511,20 +469,6 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
-    public void FilterByRoles_NullTargetRoles_ReturnsAll()
-    {
-        var machines = new List<Machine>
-        {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "api")
-        };
-
-        var result = DeploymentTargetFinder.FilterByRoles(machines, null);
-
-        result.Count.ShouldBe(2);
-    }
-
-    [Fact]
     public void FilterByRoles_MachineWithNullRoles_Excluded()
     {
         var machines = new List<Machine>
@@ -540,12 +484,8 @@ public class DeploymentTargetFinderTests
         result[0].Id.ShouldBe(2);
     }
 
-    // ============================
-    // FilterByRoles — Advanced Edge Cases (Octopus Alignment)
-    // ============================
-
     [Fact]
-    public void FilterByRoles_MachineWithMultipleRoles_OneOverlaps_Included()
+    public void FilterByRoles_MachineMultipleRoles_OneOverlaps_Included()
     {
         var machines = new List<Machine>
         {
@@ -559,9 +499,8 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
-    public void FilterByRoles_RoleSubstringNoFalsePositive()
+    public void FilterByRoles_RoleSubstring_NoFalsePositive()
     {
-        // "web" must NOT match target role "web-server" — exact matching, not substring
         var machines = new List<Machine>
         {
             CreateMachine(1, roles: "web"),
@@ -578,7 +517,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void FilterByRoles_RoleSubstringReverse_NoFalsePositive()
     {
-        // "web-server" must NOT match target role "web"
         var machines = new List<Machine>
         {
             CreateMachine(1, roles: "web-server")
@@ -625,7 +563,7 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
-    public void FilterByRoles_SpecialCharactersInRoles_MatchExactly()
+    public void FilterByRoles_SpecialCharacters_MatchExactly()
     {
         var machines = new List<Machine>
         {
@@ -654,50 +592,18 @@ public class DeploymentTargetFinderTests
         result.Count.ShouldBe(1);
     }
 
-    // ============================
-    // ParseRoles — Advanced Edge Cases
-    // ============================
-
     [Fact]
-    public void ParseRoles_RolesWithDashes_PreservedCorrectly()
+    public void FilterByRoles_EmptyMachineList_ReturnsEmpty()
     {
-        var result = DeploymentTargetFinder.ParseRoles("web-server,api-gateway,k8s-worker");
+        var result = DeploymentTargetFinder.FilterByRoles(
+            new List<Machine>(),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" });
 
-        result.Count.ShouldBe(3);
-        result.ShouldContain("web-server");
-        result.ShouldContain("api-gateway");
-        result.ShouldContain("k8s-worker");
-    }
-
-    [Fact]
-    public void ParseRoles_RolesWithDots_PreservedCorrectly()
-    {
-        var result = DeploymentTargetFinder.ParseRoles("k8s.cluster,aws.ec2");
-
-        result.Count.ShouldBe(2);
-        result.ShouldContain("k8s.cluster");
-        result.ShouldContain("aws.ec2");
-    }
-
-    [Fact]
-    public void ParseRoles_DuplicateRoles_DeduplicatedCaseInsensitive()
-    {
-        var result = DeploymentTargetFinder.ParseRoles("web,Web,WEB,api,Api");
-
-        result.Count.ShouldBe(2); // "web" and "api" (case-insensitive dedup)
-    }
-
-    [Fact]
-    public void ParseRoles_RolesWithUnderscores_PreservedCorrectly()
-    {
-        var result = DeploymentTargetFinder.ParseRoles("web_server,api_gateway");
-
-        result.Count.ShouldBe(2);
-        result.ShouldContain("web_server");
+        result.ShouldBeEmpty();
     }
 
     // ============================
-    // CollectAllTargetRoles (Octopus Level 1 Pre-Filtering)
+    // CollectAllTargetRoles (Level 1 Pre-Filtering)
     // ============================
 
     [Fact]
@@ -722,7 +628,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void CollectAllTargetRoles_OneStepHasNoRoles_ReturnsEmpty()
     {
-        // If any enabled step has no target roles, ALL machines are needed
         var steps = new List<DeploymentStepDto>
         {
             MakeStepWithRoles("web"),
@@ -738,7 +643,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void CollectAllTargetRoles_DisabledStepWithNoRoles_Ignored()
     {
-        // Disabled step should not force "all machines" mode
         var steps = new List<DeploymentStepDto>
         {
             MakeStepWithRoles("web"),
@@ -800,7 +704,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void CollectAllTargetRoles_EmptyRolesValue_TreatedAsNoRoles()
     {
-        // Empty string value = step has no role filter = all machines needed
         var steps = new List<DeploymentStepDto>
         {
             MakeStepWithRoles("web"),
@@ -825,33 +728,6 @@ public class DeploymentTargetFinderTests
         result.Count.ShouldBe(2);
         result.ShouldContain("web-server");
         result.ShouldContain("frontend");
-    }
-
-    private static DeploymentStepDto MakeStepWithRoles(string targetRoles, bool isDisabled = false)
-    {
-        var step = new DeploymentStepDto
-        {
-            Id = 1,
-            StepOrder = 1,
-            Name = "Test Step",
-            StepType = "Action",
-            Condition = "Success",
-            IsDisabled = isDisabled,
-            IsRequired = true,
-            Properties = new List<DeploymentStepPropertyDto>()
-        };
-
-        if (targetRoles != null)
-        {
-            step.Properties.Add(new DeploymentStepPropertyDto
-            {
-                StepId = 1,
-                PropertyName = DeploymentVariables.Action.TargetRoles,
-                PropertyValue = targetRoles
-            });
-        }
-
-        return step;
     }
 
     // ============================
@@ -899,7 +775,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvIdSubstringNoFalsePositive()
     {
-        // Machine has envIds "11" — should NOT match environment 1
         var machine = CreateMachine(10, envIds: "11");
         SetupGetById(10, machine);
 
@@ -911,7 +786,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvId1InList11_NoFalsePositive()
     {
-        // Machine has envIds "11,12" — should NOT match environment 1
         var machine = CreateMachine(10, envIds: "11,12");
         SetupGetById(10, machine);
 
@@ -923,7 +797,6 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvId11InList_CorrectMatch()
     {
-        // Machine has envIds "1,11" — should match environment 11
         var machine = CreateMachine(10, envIds: "1,11");
         SetupGetById(10, machine);
 

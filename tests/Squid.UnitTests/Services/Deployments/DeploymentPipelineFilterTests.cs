@@ -9,151 +9,85 @@ namespace Squid.UnitTests.Services.Deployments;
 /// Tests for static pipeline filter methods on DeploymentTaskExecutor:
 ///   - ShouldExecuteStep: IsDisabled check, Condition evaluation, Role matching
 ///   - ShouldExecuteAction: IsDisabled check, Environment/Channel filtering
+/// Complex combination scenarios (condition + roles + disabled) are in TargetRoleCombinationTests.
 /// </summary>
 public class DeploymentPipelineFilterTests
 {
-    // ========== Fix A: IsDisabled skip ==========
+    // ========== IsDisabled Gate ==========
 
-    [Fact]
-    public void ShouldExecuteStep_DisabledStep_ReturnsFalse()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ShouldExecuteStep_IsDisabled(bool isDisabled, bool expected)
     {
-        var step = MakeStep(isDisabled: true);
+        var step = MakeStep(isDisabled: isDisabled);
 
         DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeFalse();
+            .ShouldBe(expected);
     }
 
-    [Fact]
-    public void ShouldExecuteStep_EnabledStep_ReturnsTrue()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ShouldExecuteAction_IsDisabled(bool isDisabled, bool expected)
     {
-        var step = MakeStep(isDisabled: false);
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteAction_DisabledAction_ReturnsFalse()
-    {
-        var action = MakeAction(isDisabled: true);
+        var action = MakeAction(isDisabled: isDisabled);
 
         DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
-            .ShouldBeFalse();
+            .ShouldBe(expected);
     }
 
-    [Fact]
-    public void ShouldExecuteAction_EnabledAction_ReturnsTrue()
-    {
-        var action = MakeAction(isDisabled: false);
+    // ========== Condition Evaluation ==========
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
-            .ShouldBeTrue();
+    [Theory]
+    [InlineData("Success", true, true)]
+    [InlineData("Success", false, false)]
+    [InlineData("Failure", false, true)]
+    [InlineData("Failure", true, false)]
+    [InlineData("Always", true, true)]
+    [InlineData("Always", false, true)]
+    [InlineData("Variable", true, true)]    // Variable treated as Always (not yet supported)
+    [InlineData("Variable", false, true)]
+    [InlineData(null, true, true)]           // null treated as Success
+    [InlineData(null, false, false)]
+    [InlineData("", true, true)]             // empty treated as Success
+    [InlineData("", false, false)]
+    public void ShouldExecuteStep_ConditionEvaluation(string condition, bool previousSucceeded, bool expected)
+    {
+        var step = MakeStep(condition: condition);
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: previousSucceeded)
+            .ShouldBe(expected);
     }
 
-    // ========== Fix C: Step Condition evaluation ==========
+    // ========== Per-Step Role Matching ==========
 
-    [Fact]
-    public void ShouldExecuteStep_ConditionSuccess_PreviousSucceeded_ReturnsTrue()
+    [Theory]
+    [InlineData("web", "web", true)]                                             // exact single-role match
+    [InlineData("web,api", "web", true)]                                         // multi-step-role, single machine match
+    [InlineData("web,api", "database", false)]                                   // no match
+    [InlineData("Web-Server", "web-server", true)]                               // case insensitive
+    [InlineData("web,api,worker", "api", true)]                                  // OR logic — any match suffices
+    [InlineData("web-server", "web", false)]                                     // substring — no false positive
+    [InlineData("web", "web-server", false)]                                     // reverse substring — no false positive
+    [InlineData("k8s-worker.us-east-1", "k8s-worker.us-east-1", true)]          // special characters
+    [InlineData("database", "web,api,database,cache", true)]                     // machine multi-role, one matches
+    [InlineData("web,api,worker", "database,api,cache", true)]                   // both multi-role, overlap on "api"
+    [InlineData("web,worker", "database,api,cache", false)]                      // both multi-role, no overlap
+    [InlineData(" web , api ", "web", true)]                                     // whitespace trimmed
+    public void ShouldExecuteStep_RoleMatching(string stepRoles, string machineRolesStr, bool expected)
     {
-        var step = MakeStep(condition: "Success");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionSuccess_PreviousFailed_ReturnsFalse()
-    {
-        var step = MakeStep(condition: "Success");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionFailure_PreviousFailed_ReturnsTrue()
-    {
-        var step = MakeStep(condition: "Failure");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionFailure_PreviousSucceeded_ReturnsFalse()
-    {
-        var step = MakeStep(condition: "Failure");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionAlways_PreviousFailed_ReturnsTrue()
-    {
-        var step = MakeStep(condition: "Always");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionAlways_PreviousSucceeded_ReturnsTrue()
-    {
-        var step = MakeStep(condition: "Always");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionVariable_TreatedAsAlways()
-    {
-        // Variable conditions require expression evaluation — not yet supported.
-        // Default: treat as Always (execute).
-        var step = MakeStep(condition: "Variable");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeTrue();
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_NullOrEmptyCondition_TreatedAsSuccess()
-    {
-        var step = MakeStep(condition: null);
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeTrue();
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeFalse();
-    }
-
-    // ========== Fix D: Per-step role filtering ==========
-
-    [Fact]
-    public void ShouldExecuteStep_TargetHasMatchingRole_ReturnsTrue()
-    {
-        var step = MakeStep(targetRoles: "web,api");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
+        var step = MakeStep(targetRoles: stepRoles);
+        var machineRoles = new HashSet<string>(
+            machineRolesStr.Split(',', StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
 
         DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
+            .ShouldBe(expected);
     }
 
     [Fact]
-    public void ShouldExecuteStep_TargetHasNoMatchingRole_ReturnsFalse()
-    {
-        var step = MakeStep(targetRoles: "web,api");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_StepHasNoTargetRoles_ExecutesOnAllTargets()
+    public void ShouldExecuteStep_NoTargetRoles_ExecutesOnAll()
     {
         var step = MakeStep(targetRoles: null);
         var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "anything" };
@@ -163,19 +97,61 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteStep_CaseInsensitiveRoleMatching()
+    public void ShouldExecuteStep_EmptyTargetRoles_ExecutesOnAll()
     {
-        var step = MakeStep(targetRoles: "Web-Server");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web-server" };
+        var step = MakeStep(targetRoles: "");
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "any" }, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_EmptyMachineRoles_StepRequiresRoles_ReturnsFalse()
+    {
+        var step = MakeStep(targetRoles: "web");
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_NullProperties_ExecutesOnAll()
+    {
+        var step = new DeploymentStepDto
+        {
+            Id = 1, StepOrder = 1, Name = "Test Step", StepType = "Action",
+            Condition = "Success", IsDisabled = false, IsRequired = true,
+            Properties = null
+        };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" }, previousStepSucceeded: true)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_OtherProperties_DontInterfereWithRoleMatch()
+    {
+        var step = MakeStep(targetRoles: "web");
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = "Octopus.Action.MaxParallelism", PropertyValue = "5"
+        });
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = "Octopus.Action.RunOnServer", PropertyValue = "false"
+        });
+
+        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
         DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
-    // ========== Fix E: Per-action environment/channel filtering ==========
+    // ========== Per-Action Environment Filtering ==========
 
     [Fact]
-    public void ShouldExecuteAction_ActionHasNoEnvironments_ExecutesInAllEnvironments()
+    public void ShouldExecuteAction_NoEnvironments_ExecutesInAll()
     {
         var action = MakeAction(environments: new List<int>());
 
@@ -184,7 +160,7 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_ActionEnvironmentMatches_ReturnsTrue()
+    public void ShouldExecuteAction_EnvironmentMatches_ReturnsTrue()
     {
         var action = MakeAction(environments: new List<int> { 1, 2, 3 });
 
@@ -193,7 +169,7 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_ActionEnvironmentDoesNotMatch_ReturnsFalse()
+    public void ShouldExecuteAction_EnvironmentNoMatch_ReturnsFalse()
     {
         var action = MakeAction(environments: new List<int> { 1, 2 });
 
@@ -201,8 +177,10 @@ public class DeploymentPipelineFilterTests
             .ShouldBeFalse();
     }
 
+    // ========== Per-Action Channel Filtering ==========
+
     [Fact]
-    public void ShouldExecuteAction_ActionHasNoChannels_ExecutesInAllChannels()
+    public void ShouldExecuteAction_NoChannels_ExecutesInAll()
     {
         var action = MakeAction(channels: new List<int>());
 
@@ -211,7 +189,7 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_ActionChannelMatches_ReturnsTrue()
+    public void ShouldExecuteAction_ChannelMatches_ReturnsTrue()
     {
         var action = MakeAction(channels: new List<int> { 10, 20 });
 
@@ -220,7 +198,7 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_ActionChannelDoesNotMatch_ReturnsFalse()
+    public void ShouldExecuteAction_ChannelNoMatch_ReturnsFalse()
     {
         var action = MakeAction(channels: new List<int> { 10, 20 });
 
@@ -228,27 +206,7 @@ public class DeploymentPipelineFilterTests
             .ShouldBeFalse();
     }
 
-    [Fact]
-    public void ShouldExecuteAction_BothEnvironmentAndChannelMustMatch()
-    {
-        var action = MakeAction(
-            environments: new List<int> { 1 },
-            channels: new List<int> { 10 });
-
-        // Both match
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 10)
-            .ShouldBeTrue();
-
-        // Environment matches, channel doesn't
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 99)
-            .ShouldBeFalse();
-
-        // Channel matches, environment doesn't
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 10)
-            .ShouldBeFalse();
-    }
-
-    // ========== Fix E+: ExcludedEnvironments filtering ==========
+    // ========== ExcludedEnvironments ==========
 
     [Fact]
     public void ShouldExecuteAction_ExcludedEnvironment_ReturnsFalse()
@@ -260,7 +218,7 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_NotInExcludedEnvironments_ReturnsTrue()
+    public void ShouldExecuteAction_NotExcluded_ReturnsTrue()
     {
         var action = MakeAction(excludedEnvironments: new List<int> { 5, 10 });
 
@@ -269,9 +227,8 @@ public class DeploymentPipelineFilterTests
     }
 
     [Fact]
-    public void ShouldExecuteAction_BothInclusionAndExclusion_ExclusionWins()
+    public void ShouldExecuteAction_InclusionAndExclusion_ExclusionWins()
     {
-        // Environment 5 is in both inclusion and exclusion lists — exclusion takes precedence
         var action = MakeAction(
             environments: new List<int> { 1, 5 },
             excludedEnvironments: new List<int> { 5 });
@@ -293,218 +250,6 @@ public class DeploymentPipelineFilterTests
 
         DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
             .ShouldBeFalse();
-    }
-
-    // ========== Phase 4: Test Hardening ==========
-
-    [Fact]
-    public void DisabledOverridesAlwaysCondition()
-    {
-        var step = MakeStep(isDisabled: true, condition: "Always");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
-            .ShouldBeFalse();
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ConditionFailure_WithMatchingRoles_PreviousFailed()
-    {
-        var step = MakeStep(condition: "Failure", targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ConditionSuccess_WithNonMatchingRoles()
-    {
-        var step = MakeStep(condition: "Success", targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
-
-        // Role mismatch short-circuits even though condition would pass
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    // ========== Target Role Edge Cases (Octopus Alignment) ==========
-
-    [Fact]
-    public void ShouldExecuteStep_MultipleTargetRoles_AnyMatchSuffices()
-    {
-        // Octopus OR logic: machine needs ANY of the step's target roles
-        var step = MakeStep(targetRoles: "web,api,worker");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_MachineHasEmptyRoles_StepRequiresRoles_ReturnsFalse()
-    {
-        // Machine with no roles cannot execute a step that requires specific roles
-        var step = MakeStep(targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_RoleSubstringDoesNotFalseMatch()
-    {
-        // "web" must NOT match "web-server" — exact role matching, not substring
-        var step = MakeStep(targetRoles: "web-server");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_RoleSubstringReverse_DoesNotFalseMatch()
-    {
-        // "web-server" must NOT match step role "web"
-        var step = MakeStep(targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web-server" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_RolesWithSpecialCharacters_MatchCorrectly()
-    {
-        // Roles can contain dashes, dots, underscores
-        var step = MakeStep(targetRoles: "k8s-worker.us-east-1");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "k8s-worker.us-east-1" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_EmptyStringTargetRolesValue_ExecutesOnAll()
-    {
-        // Step has the property but empty value → no filter, executes on all machines
-        var step = MakeStep(targetRoles: "");
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "any" }, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_DisabledWithMatchingRoles_ReturnsFalse()
-    {
-        // Disabled takes precedence over role match
-        var step = MakeStep(isDisabled: true, targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_ConditionFailsButRolesMatch_ReturnsFalse()
-    {
-        // Condition check runs before role check — both must pass
-        var step = MakeStep(condition: "Success", targetRoles: "web");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_AllThreeChecksPass_ReturnsTrue()
-    {
-        // Enabled + condition passes + roles match → execute
-        var step = MakeStep(isDisabled: false, condition: "Always", targetRoles: "web,api");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_MultiplePropertiesOnStep_OnlyTargetRolesChecked()
-    {
-        // Other properties don't interfere with role matching
-        var step = MakeStep(targetRoles: "web");
-        step.Properties.Add(new DeploymentStepPropertyDto
-        {
-            StepId = 1, PropertyName = "Octopus.Action.MaxParallelism", PropertyValue = "5"
-        });
-        step.Properties.Add(new DeploymentStepPropertyDto
-        {
-            StepId = 1, PropertyName = "Octopus.Action.RunOnServer", PropertyValue = "false"
-        });
-
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_NullStepProperties_ReturnsTrue()
-    {
-        // Null Properties list → no role filter → execute on all
-        var step = new DeploymentStepDto
-        {
-            Id = 1, StepOrder = 1, Name = "Test Step", StepType = "Action",
-            Condition = "Success", IsDisabled = false, IsRequired = true,
-            Properties = null
-        };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" }, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_MachineHasMultipleRoles_OneMatches_ReturnsTrue()
-    {
-        // Machine has many roles, step only requires one — OR logic
-        var step = MakeStep(targetRoles: "database");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web", "api", "database", "cache" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_BothStepAndMachineHaveMultipleRoles_OverlapExists()
-    {
-        // Multiple roles on both sides, overlap on "api"
-        var step = MakeStep(targetRoles: "web,api,worker");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database", "api", "cache" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_BothStepAndMachineHaveMultipleRoles_NoOverlap()
-    {
-        var step = MakeStep(targetRoles: "web,worker");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database", "api", "cache" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeFalse();
-    }
-
-    [Fact]
-    public void ShouldExecuteStep_WhitespaceInTargetRoles_TrimmedCorrectly()
-    {
-        // Whitespace around role names should be trimmed
-        var step = MakeStep(targetRoles: " web , api ");
-        var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
-            .ShouldBeTrue();
     }
 
     // ========== Helpers ==========

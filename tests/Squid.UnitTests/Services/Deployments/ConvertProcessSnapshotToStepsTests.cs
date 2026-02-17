@@ -95,22 +95,6 @@ public class ConvertProcessSnapshotToStepsTests
     // ========== Target Roles Flow Through Snapshot ==========
 
     [Fact]
-    public void TargetRoles_PreservedThroughSnapshotConversion()
-    {
-        var stepSnap = MakeStep(1, "Deploy Web");
-        stepSnap.Properties = new Dictionary<string, string>
-        {
-            { DeploymentVariables.Action.TargetRoles, "web-server,frontend" }
-        };
-
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
-
-        steps[0].Properties.Count.ShouldBe(1);
-        var rolesProp = steps[0].Properties.First(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
-        rolesProp.PropertyValue.ShouldBe("web-server,frontend");
-    }
-
-    [Fact]
     public void TargetRoles_MultipleStepsWithDifferentRoles()
     {
         var step1 = MakeStep(1, "Deploy Web");
