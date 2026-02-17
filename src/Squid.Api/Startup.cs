@@ -26,7 +26,6 @@ public class Startup
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
         services.AddHangfireInternal(Configuration);
-        services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
         services.AddMvc(options =>
         {
             options.Filters.Add<GlobalExceptionFilter>();

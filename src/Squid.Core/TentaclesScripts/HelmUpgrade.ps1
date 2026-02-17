@@ -1,0 +1,43 @@
+$ErrorActionPreference = "Stop"
+
+# --- Helm upgrade/install ---
+$releaseName = "{{ReleaseName}}"
+$chartPath = "{{ChartPath}}"
+$helmNamespace = "{{Namespace}}"
+$helmExe = "{{HelmExe}}"
+$resetValues = "{{ResetValues}}"
+$helmWait = "{{HelmWait}}"
+$additionalArgs = "{{AdditionalArgs}}"
+
+if ([string]::IsNullOrEmpty($helmExe)) {
+    $helmExe = "helm"
+}
+
+$helmArgs = @("upgrade", "--install", $releaseName, $chartPath, "--namespace", $helmNamespace)
+
+if ($resetValues -eq "True") {
+    $helmArgs += "--reset-values"
+}
+
+if ($helmWait -eq "True") {
+    $helmArgs += "--wait"
+}
+
+# Values files
+{{ValuesFilesBlock}}
+
+# Key-value overrides
+{{SetValuesBlock}}
+
+if (-not [string]::IsNullOrEmpty($additionalArgs)) {
+    $helmArgs += $additionalArgs.Split(" ")
+}
+
+Write-Host "Running: $helmExe $($helmArgs -join ' ')"
+& $helmExe @helmArgs
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Helm upgrade failed with exit code $LASTEXITCODE"
+}
+
+Write-Host "Helm upgrade completed successfully"

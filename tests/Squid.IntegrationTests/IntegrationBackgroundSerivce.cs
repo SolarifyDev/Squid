@@ -25,13 +25,11 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
     [Fact]
     public async Task RunAsync_ShouldProcessPendingDeploymentTask_AndMarkTaskSuccess()
     {
-        await Run<DeploymentTaskBackgroundService>(async service =>
+        await Run<IDeploymentTaskExecutor>(async executor =>
         {
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-
             await PrepareDeploymentDataAsync().ConfigureAwait(false);
 
-            await service.RunAsync(cts.Token).ConfigureAwait(false);
+            await executor.ProcessAsync(1, CancellationToken.None).ConfigureAwait(false);
 
             await AssertTaskAndDeploymentCompletionAsync().ConfigureAwait(false);
         }, RegisterTestHalibutAndGithubDownloader).ConfigureAwait(false);
@@ -189,9 +187,10 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
 
             var endpointJson = JsonSerializer.Serialize(new
             {
+                CommunicationStyle = "Kubernetes",
                 ClusterUrl = "https://172.16.145.222:6443",
-                SkipTlsVerification = true,
-                AccountId = 1,
+                SkipTlsVerification = "True",
+                AccountId = "1",
                 Namespace = "squid"
             });
 

@@ -5,7 +5,7 @@ namespace Squid.Core.Services.Deployments.Kubernetes;
 
 public class KubernetesIngressActionYamlGenerator : IActionYamlGenerator
 {
-    private const string IngressActionType = "Octopus.KubernetesDeployIngress";
+    private const string IngressActionType = "Squid.KubernetesDeployIngress";
 
     public bool CanHandle(DeploymentActionDto action)
     {
@@ -62,7 +62,7 @@ public class KubernetesIngressActionYamlGenerator : IActionYamlGenerator
 
     private string GenerateIngressYaml(Dictionary<string, string> properties)
     {
-        var ingressName = GetProperty(properties, "Octopus.Action.KubernetesContainers.IngressName");
+        var ingressName = GetProperty(properties, "Squid.Action.KubernetesContainers.IngressName");
 
         if (string.IsNullOrWhiteSpace(ingressName))
         {
@@ -71,18 +71,18 @@ public class KubernetesIngressActionYamlGenerator : IActionYamlGenerator
 
         var namespaceName = GetNamespace(properties);
 
-        var annotationsJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.IngressAnnotations");
+        var annotationsJson = GetProperty(properties, "Squid.Action.KubernetesContainers.IngressAnnotations");
 
-        var rulesJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.IngressRules");
+        var rulesJson = GetProperty(properties, "Squid.Action.KubernetesContainers.IngressRules");
 
         if (string.IsNullOrWhiteSpace(rulesJson))
         {
             return string.Empty;
         }
 
-        var tlsJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.IngressTlsCertificates");
+        var tlsJson = GetProperty(properties, "Squid.Action.KubernetesContainers.IngressTlsCertificates");
 
-        var ingressClassName = GetProperty(properties, "Octopus.Action.KubernetesContainers.IngressClassName");
+        var ingressClassName = GetProperty(properties, "Squid.Action.KubernetesContainers.IngressClassName");
 
         var sb = new StringBuilder();
 
@@ -120,7 +120,7 @@ public class KubernetesIngressActionYamlGenerator : IActionYamlGenerator
 
     private static string GetNamespace(Dictionary<string, string> properties)
     {
-        var ns = GetProperty(properties, "Octopus.Action.Kubernetes.Namespace");
+        var ns = GetProperty(properties, "Squid.Action.Kubernetes.Namespace");
 
         if (string.IsNullOrWhiteSpace(ns))
         {

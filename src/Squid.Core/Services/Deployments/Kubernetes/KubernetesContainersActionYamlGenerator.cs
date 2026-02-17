@@ -6,7 +6,7 @@ namespace Squid.Core.Services.Deployments.Kubernetes;
 
 public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 {
-    private const string ContainersActionType = "Octopus.KubernetesDeployContainers";
+    private const string ContainersActionType = "Squid.KubernetesDeployContainers";
 
     public bool CanHandle(DeploymentActionDto action)
     {
@@ -77,7 +77,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
     private string GenerateDeploymentYaml(DeploymentActionDto action, Dictionary<string, string> properties)
     {
-        var deploymentName = GetProperty(properties, "Octopus.Action.KubernetesContainers.DeploymentName");
+        var deploymentName = GetProperty(properties, "Squid.Action.KubernetesContainers.DeploymentName");
 
         if (string.IsNullOrWhiteSpace(deploymentName))
         {
@@ -86,7 +86,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         var namespaceName = GetNamespace(properties);
 
-        var replicasText = GetProperty(properties, "Octopus.Action.KubernetesContainers.Replicas");
+        var replicasText = GetProperty(properties, "Squid.Action.KubernetesContainers.Replicas");
 
         int replicas = 1;
 
@@ -102,7 +102,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             return string.Empty;
         }
 
-        var deploymentStrategy = GetProperty(properties, "Octopus.Action.KubernetesContainers.DeploymentStyle");
+        var deploymentStrategy = GetProperty(properties, "Squid.Action.KubernetesContainers.DeploymentStyle");
 
         if (string.IsNullOrWhiteSpace(deploymentStrategy))
         {
@@ -113,15 +113,15 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         var deploymentAnnotations = ParseStringDictionaryProperty(
             properties,
-            "Octopus.Action.KubernetesContainers.DeploymentAnnotations");
+            "Squid.Action.KubernetesContainers.DeploymentAnnotations");
 
         var deploymentLabels = ParseStringDictionaryProperty(
             properties,
-            "Octopus.Action.KubernetesContainers.DeploymentLabels");
+            "Squid.Action.KubernetesContainers.DeploymentLabels");
 
         var podAnnotations = ParseStringDictionaryProperty(
             properties,
-            "Octopus.Action.KubernetesContainers.PodAnnotations");
+            "Squid.Action.KubernetesContainers.PodAnnotations");
 
         var sb = new StringBuilder();
 
@@ -213,19 +213,19 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             "      ",
             "tolerations",
             properties,
-            "Octopus.Action.KubernetesContainers.Tolerations");
+            "Squid.Action.KubernetesContainers.Tolerations");
 
-        var hasNodeAffinity = properties.TryGetValue("Octopus.Action.KubernetesContainers.NodeAffinity", out var nodeAffinityRaw)
+        var hasNodeAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.NodeAffinity", out var nodeAffinityRaw)
             && !string.IsNullOrWhiteSpace(nodeAffinityRaw)
             && !string.Equals(nodeAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(nodeAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
 
-        var hasPodAffinity = properties.TryGetValue("Octopus.Action.KubernetesContainers.PodAffinity", out var podAffinityRaw)
+        var hasPodAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.PodAffinity", out var podAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAffinityRaw)
             && !string.Equals(podAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(podAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
 
-        var hasPodAntiAffinity = properties.TryGetValue("Octopus.Action.KubernetesContainers.PodAntiAffinity", out var podAntiAffinityRaw)
+        var hasPodAntiAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.PodAntiAffinity", out var podAntiAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAntiAffinityRaw)
             && !string.Equals(podAntiAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(podAntiAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
@@ -280,7 +280,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             }
         }
 
-        if (properties.TryGetValue("Octopus.Action.KubernetesContainers.DnsConfigOptions", out var dnsConfigRaw)
+        if (properties.TryGetValue("Squid.Action.KubernetesContainers.DnsConfigOptions", out var dnsConfigRaw)
             && !string.IsNullOrWhiteSpace(dnsConfigRaw))
         {
             dnsConfigRaw = dnsConfigRaw.Trim();
@@ -303,7 +303,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             }
         }
 
-        if (properties.TryGetValue("Octopus.Action.KubernetesContainers.PodSecuritySysctls", out var podSecuritySysctlsRaw)
+        if (properties.TryGetValue("Squid.Action.KubernetesContainers.PodSecuritySysctls", out var podSecuritySysctlsRaw)
             && !string.IsNullOrWhiteSpace(podSecuritySysctlsRaw))
         {
             podSecuritySysctlsRaw = podSecuritySysctlsRaw.Trim();
@@ -326,7 +326,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             }
         }
 
-        if (properties.TryGetValue("Octopus.Action.KubernetesContainers.PodSecurityImagePullSecrets", out var imagePullSecretsRaw)
+        if (properties.TryGetValue("Squid.Action.KubernetesContainers.PodSecurityImagePullSecrets", out var imagePullSecretsRaw)
             && !string.IsNullOrWhiteSpace(imagePullSecretsRaw))
         {
             imagePullSecretsRaw = imagePullSecretsRaw.Trim();
@@ -526,7 +526,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
     private string GenerateServiceYaml(DeploymentActionDto action, Dictionary<string, string> properties)
     {
-        var serviceName = GetProperty(properties, "Octopus.Action.KubernetesContainers.ServiceName");
+        var serviceName = GetProperty(properties, "Squid.Action.KubernetesContainers.ServiceName");
 
         if (string.IsNullOrWhiteSpace(serviceName))
         {
@@ -535,7 +535,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         var namespaceName = GetNamespace(properties);
 
-        var deploymentName = GetProperty(properties, "Octopus.Action.KubernetesContainers.DeploymentName");
+        var deploymentName = GetProperty(properties, "Squid.Action.KubernetesContainers.DeploymentName");
 
         if (string.IsNullOrWhiteSpace(deploymentName))
         {
@@ -544,13 +544,13 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         var deploymentLabels = ParseStringDictionaryProperty(
             properties,
-            "Octopus.Action.KubernetesContainers.DeploymentLabels");
+            "Squid.Action.KubernetesContainers.DeploymentLabels");
 
         var selectorLabels = deploymentLabels.Count > 0
             ? deploymentLabels
             : new Dictionary<string, string> { ["app"] = deploymentName };
 
-        var serviceType = GetProperty(properties, "Octopus.Action.KubernetesContainers.ServiceType");
+        var serviceType = GetProperty(properties, "Squid.Action.KubernetesContainers.ServiceType");
 
         if (string.IsNullOrWhiteSpace(serviceType))
         {
@@ -613,9 +613,9 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
     private string GenerateConfigMapYaml(DeploymentActionDto action, Dictionary<string, string> properties)
     {
-        var configMapName = GetProperty(properties, "Octopus.Action.KubernetesContainers.ConfigMapName");
+        var configMapName = GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapName");
 
-        var configValues = GetProperty(properties, "Octopus.Action.KubernetesContainers.ConfigMapValues");
+        var configValues = GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
 
         if (string.IsNullOrWhiteSpace(configMapName) || string.IsNullOrWhiteSpace(configValues))
         {
@@ -682,11 +682,11 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
     private static string GetNamespace(Dictionary<string, string> properties)
     {
-        var ns = GetProperty(properties, "Octopus.Action.KubernetesContainers.Namespace");
+        var ns = GetProperty(properties, "Squid.Action.KubernetesContainers.Namespace");
 
         if (string.IsNullOrWhiteSpace(ns))
         {
-            ns = GetProperty(properties, "Octopus.Action.Kubernetes.Namespace");
+            ns = GetProperty(properties, "Squid.Action.Kubernetes.Namespace");
         }
 
         if (string.IsNullOrWhiteSpace(ns))
@@ -776,7 +776,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     {
         var result = new List<ServicePortSpec>();
 
-        var portsJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.ServicePorts");
+        var portsJson = GetProperty(properties, "Squid.Action.KubernetesContainers.ServicePorts");
 
         if (string.IsNullOrWhiteSpace(portsJson))
         {
@@ -840,7 +840,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     {
         var result = new List<ContainerSpec>();
 
-        var containersJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.Containers");
+        var containersJson = GetProperty(properties, "Squid.Action.KubernetesContainers.Containers");
 
         if (string.IsNullOrWhiteSpace(containersJson))
         {
@@ -889,7 +889,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     {
         var result = new List<VolumeSpec>();
 
-        var combinedVolumesJson = GetProperty(properties, "Octopus.Action.KubernetesContainers.CombinedVolumes");
+        var combinedVolumesJson = GetProperty(properties, "Squid.Action.KubernetesContainers.CombinedVolumes");
 
         if (string.IsNullOrWhiteSpace(combinedVolumesJson))
         {

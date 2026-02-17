@@ -6,7 +6,7 @@ namespace Squid.Core.Services.Common;
 public class CalamariCompatibleEncryption
 {
     const int PasswordSaltIterations = 1000;
-    const string SaltRaw = "Octopuss";
+    const string SaltRaw = "SquidDep";
     static readonly byte[] PasswordPaddingSalt = Encoding.UTF8.GetBytes(SaltRaw);
     static readonly byte[] IvPrefix = "IV__"u8.ToArray();
 

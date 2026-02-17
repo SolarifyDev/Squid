@@ -4,6 +4,7 @@ using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Machine;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Jobs;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Events.Deployments.Deployment;
 using Squid.Message.Models.Deployments.Deployment;
@@ -18,6 +19,7 @@ public class DeploymentService : IDeploymentService
     private readonly IEnvironmentDataProvider _environmentDataProvider;
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
+    private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
     public DeploymentService(
         IMapper mapper,
@@ -25,7 +27,8 @@ public class DeploymentService : IDeploymentService
         IReleaseDataProvider releaseDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
         IMachineDataProvider machineDataProvider,
-        IServerTaskDataProvider serverTaskDataProvider)
+        IServerTaskDataProvider serverTaskDataProvider,
+        ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
         _deploymentDataProvider = deploymentDataProvider;
@@ -33,6 +36,7 @@ public class DeploymentService : IDeploymentService
         _environmentDataProvider = environmentDataProvider;
         _machineDataProvider = machineDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
@@ -99,7 +103,18 @@ public class DeploymentService : IDeploymentService
 
         await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        Log.Information("Created deployment {DeploymentId} with task {TaskId}", deployment.Id, serverTask.Id);
+        // Enqueue deployment execution via Hangfire
+        var jobId = _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(
+            executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None),
+            queue: "deployment");
+
+        if (!string.IsNullOrEmpty(jobId))
+        {
+            serverTask.JobId = jobId;
+            await _serverTaskDataProvider.UpdateServerTaskStateAsync(serverTask.Id, serverTask.State, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        Log.Information("Created deployment {DeploymentId} with task {TaskId}, job {JobId}", deployment.Id, serverTask.Id, jobId);
 
         return new DeploymentCreatedEvent
         {

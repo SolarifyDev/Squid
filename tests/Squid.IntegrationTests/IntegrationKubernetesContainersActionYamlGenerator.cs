@@ -31,42 +31,42 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
                 Id = 1,
                 StepId = step.Id,
                 Name = "Deploy postboyweb",
-                ActionType = "Octopus.KubernetesDeployContainers"
+                ActionType = "Squid.KubernetesDeployContainers"
             };
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.DeploymentName",
+                PropertyName = "Squid.Action.KubernetesContainers.DeploymentName",
                 PropertyValue = "postboyweb-deployment"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Namespace",
+                PropertyName = "Squid.Action.KubernetesContainers.Namespace",
                 PropertyValue = "postboyweb-namespace"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Replicas",
+                PropertyName = "Squid.Action.KubernetesContainers.Replicas",
                 PropertyValue = "1"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.DeploymentStyle",
+                PropertyName = "Squid.Action.KubernetesContainers.DeploymentStyle",
                 PropertyValue = "RollingUpdate"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServiceName",
+                PropertyName = "Squid.Action.KubernetesContainers.ServiceName",
                 PropertyValue = "postboyweb-service"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServiceType",
+                PropertyName = "Squid.Action.KubernetesContainers.ServiceType",
                 PropertyValue = "ClusterIP"
             });
 
@@ -74,7 +74,7 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServicePorts",
+                PropertyName = "Squid.Action.KubernetesContainers.ServicePorts",
                 PropertyValue = servicePortsJson
             });
 
@@ -99,7 +99,7 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Containers",
+                PropertyName = "Squid.Action.KubernetesContainers.Containers",
                 PropertyValue = containersJson
             });
 
@@ -115,7 +115,7 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.CombinedVolumes",
+                PropertyName = "Squid.Action.KubernetesContainers.CombinedVolumes",
                 PropertyValue = combinedVolumesJson
             });
 
@@ -128,13 +128,13 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ConfigMapName",
+                PropertyName = "Squid.Action.KubernetesContainers.ConfigMapName",
                 PropertyValue = "postboyweb-config"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ConfigMapValues",
+                PropertyName = "Squid.Action.KubernetesContainers.ConfigMapValues",
                 PropertyValue = configValuesJson
             });
 
@@ -191,42 +191,42 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
                 Id = 2,
                 StepId = step.Id,
                 Name = "Deploy squid-api",
-                ActionType = "Octopus.KubernetesDeployContainers"
+                ActionType = "Squid.KubernetesDeployContainers"
             };
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.DeploymentName",
+                PropertyName = "Squid.Action.KubernetesContainers.DeploymentName",
                 PropertyValue = "squid-api-deployment"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Namespace",
+                PropertyName = "Squid.Action.KubernetesContainers.Namespace",
                 PropertyValue = "squid-backend-namespace"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Replicas",
+                PropertyName = "Squid.Action.KubernetesContainers.Replicas",
                 PropertyValue = "2"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.DeploymentStyle",
+                PropertyName = "Squid.Action.KubernetesContainers.DeploymentStyle",
                 PropertyValue = "RollingUpdate"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServiceName",
+                PropertyName = "Squid.Action.KubernetesContainers.ServiceName",
                 PropertyValue = "squid-api-service"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServiceType",
+                PropertyName = "Squid.Action.KubernetesContainers.ServiceType",
                 PropertyValue = "ClusterIP"
             });
 
@@ -234,7 +234,7 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ServicePorts",
+                PropertyName = "Squid.Action.KubernetesContainers.ServicePorts",
                 PropertyValue = servicePortsJson
             });
 
@@ -259,7 +259,7 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.Containers",
+                PropertyName = "Squid.Action.KubernetesContainers.Containers",
                 PropertyValue = containersJson
             });
 
@@ -273,13 +273,13 @@ public class IntegrationKubernetesContainersActionYamlGenerator : IntegrationTes
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ConfigMapName",
+                PropertyName = "Squid.Action.KubernetesContainers.ConfigMapName",
                 PropertyValue = "squid-api-config-variables"
             });
 
             action.Properties.Add(new DeploymentActionPropertyDto
             {
-                PropertyName = "Octopus.Action.KubernetesContainers.ConfigMapValues",
+                PropertyName = "Squid.Action.KubernetesContainers.ConfigMapValues",
                 PropertyValue = configValuesJson
             });
 

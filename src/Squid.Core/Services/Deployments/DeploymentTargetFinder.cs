@@ -1,43 +1,108 @@
-using Squid.Core.Services.Deployments.Channels;
-using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Machine;
 
 namespace Squid.Core.Services.Deployments;
 
+/// <summary>
+/// Selects deployment target machines using an Octopus-aligned filtering pipeline:
+///   1. Get candidate pool (specific machine or auto-select by environment)
+///   2. Filter by environment (validate machine belongs to target environment)
+///   3. Filter disabled (exclude IsDisabled machines)
+///   4. (Future) Filter by health status
+///   5. (Future) Apply exclusion list
+/// Per-step role filtering is provided as a static utility for the executor.
+/// </summary>
 public class DeploymentTargetFinder : IDeploymentTargetFinder
 {
-    private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IMachineDataProvider _machineDataProvider;
-    private readonly IChannelDataProvider _channelDataProvider;
-    private readonly IEnvironmentDataProvider _environmentDataProvider;
 
-    public DeploymentTargetFinder(
-        IDeploymentDataProvider deploymentDataProvider,
-        IMachineDataProvider machineDataProvider,
-        IChannelDataProvider channelDataProvider,
-        IEnvironmentDataProvider environmentDataProvider)
+    public DeploymentTargetFinder(IMachineDataProvider machineDataProvider)
     {
-        _deploymentDataProvider = deploymentDataProvider;
         _machineDataProvider = machineDataProvider;
-        _channelDataProvider = channelDataProvider;
-        _environmentDataProvider = environmentDataProvider;
     }
 
-    public async Task<Persistence.Entities.Deployments.Machine> FindTargetsAsync(Persistence.Entities.Deployments.Deployment deployment, CancellationToken cancellationToken)
+    public async Task<List<Persistence.Entities.Deployments.Machine>> FindTargetsAsync(
+        Persistence.Entities.Deployments.Deployment deployment,
+        CancellationToken cancellationToken)
     {
-        Log.Information("Finding target machines for deployment {@Deployment} in environment {EnvironmentId}",
-            deployment, deployment.EnvironmentId);
+        if (deployment == null) throw new ArgumentNullException(nameof(deployment));
 
-        // 基于部署的环境筛选目标机器
-        // var targetEnvironmentIds = new HashSet<int> { deployment.EnvironmentId };
-        // var targetMachineRoles = new HashSet<string>(); // 暂时不使用角色筛选
+        var candidates = await GetCandidatePoolAsync(deployment, cancellationToken).ConfigureAwait(false);
+        candidates = FilterByEnvironment(candidates, deployment.EnvironmentId);
+        candidates = FilterDisabled(candidates);
 
-        // 筛选机器
-        var machine = await _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, cancellationToken).ConfigureAwait(false);
+        Log.Information("Found {Count} target machines for deployment {DeploymentId}",
+            candidates.Count, deployment.Id);
 
-        Log.Information("Found {@Machine} target machines for deployment {Deployment}", machine, deployment);
+        return candidates;
+    }
 
-        return machine;
+    private async Task<List<Persistence.Entities.Deployments.Machine>> GetCandidatePoolAsync(
+        Persistence.Entities.Deployments.Deployment deployment,
+        CancellationToken ct)
+    {
+        if (deployment.MachineId > 0)
+        {
+            var machine = await _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, ct).ConfigureAwait(false);
+            return machine != null
+                ? new List<Persistence.Entities.Deployments.Machine> { machine }
+                : new List<Persistence.Entities.Deployments.Machine>();
+        }
+
+        var environmentIds = new HashSet<int> { deployment.EnvironmentId };
+        return await _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), ct).ConfigureAwait(false);
+    }
+
+    private static List<Persistence.Entities.Deployments.Machine> FilterByEnvironment(
+        List<Persistence.Entities.Deployments.Machine> candidates,
+        int environmentId)
+    {
+        return candidates
+            .Where(m => ParseIds(m.EnvironmentIds).Contains(environmentId))
+            .ToList();
+    }
+
+    private static List<Persistence.Entities.Deployments.Machine> FilterDisabled(
+        List<Persistence.Entities.Deployments.Machine> candidates)
+    {
+        return candidates
+            .Where(m => !m.IsDisabled)
+            .ToList();
+    }
+
+    // === Static utilities for per-step filtering (used by executor) ===
+
+    internal static HashSet<int> ParseIds(string ids)
+    {
+        if (string.IsNullOrEmpty(ids)) return new HashSet<int>();
+
+        return ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, out var id) ? id : 0)
+            .Where(id => id > 0)
+            .ToHashSet();
+    }
+
+    internal static HashSet<string> ParseRoles(string roles)
+    {
+        if (string.IsNullOrEmpty(roles)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Filters machines by target roles using OR logic (Octopus pattern:
+    /// a machine matches if it has ANY of the target roles).
+    /// Empty or null targetRoles returns all machines (no filtering).
+    /// </summary>
+    internal static List<Persistence.Entities.Deployments.Machine> FilterByRoles(
+        List<Persistence.Entities.Deployments.Machine> candidates,
+        HashSet<string> targetRoles)
+    {
+        if (targetRoles == null || targetRoles.Count == 0)
+            return candidates;
+
+        return candidates
+            .Where(m => ParseRoles(m.Roles).Overlaps(targetRoles))
+            .ToList();
     }
 }
