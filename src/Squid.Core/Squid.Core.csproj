@@ -48,11 +48,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Authentication\" />
-    <Folder Include="Configuration\" />
-    <Folder Include="Enums\" />
     <Folder Include="Jobs\RecurringJobs\" />
-    <Folder Include="Services\System\" />
     <Folder Include="Persistence\Db\MySql\Scripts\" />
   </ItemGroup>
 
