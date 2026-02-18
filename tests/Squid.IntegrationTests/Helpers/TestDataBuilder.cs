@@ -273,6 +273,39 @@ public class TestDataBuilder
         return entity;
     }
 
+    public async Task<Squid.Core.Persistence.Entities.Deployments.Environment> CreateEnvironmentAsync(string name = "Test Environment")
+    {
+        var entity = new Squid.Core.Persistence.Entities.Deployments.Environment
+        {
+            Name = name,
+            Slug = name.ToLowerInvariant().Replace(" ", "-"),
+            SpaceId = 1,
+            SortOrder = 0
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
+    public async Task<Machine> CreateMachineAsync(int environmentId, string name = "Test Machine", string roles = "web-server")
+    {
+        var entity = new Machine
+        {
+            Name = name,
+            IsDisabled = false,
+            Roles = roles,
+            EnvironmentIds = environmentId.ToString(),
+            SpaceId = 1,
+            Endpoint = "{}",
+            Slug = name.ToLowerInvariant().Replace(" ", "-")
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
     public async Task UpdateProjectProcessIdAsync(Project project, int processId)
     {
         project.DeploymentProcessId = processId;

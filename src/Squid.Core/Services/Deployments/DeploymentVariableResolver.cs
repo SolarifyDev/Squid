@@ -1,7 +1,6 @@
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
-using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments;
@@ -9,18 +8,15 @@ namespace Squid.Core.Services.Deployments;
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {
     private readonly IProjectDataProvider _projectDataProvider;
-    private readonly IVariableDataProvider _variableDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
 
     public DeploymentVariableResolver(
         IProjectDataProvider projectDataProvider,
-        IVariableDataProvider variableDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
         IDeploymentSnapshotService deploymentSnapshotService)
     {
         _projectDataProvider = projectDataProvider;
-        _variableDataProvider = variableDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
     }
@@ -30,44 +26,41 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null)
-        {
             throw new InvalidOperationException($"Deployment {deploymentId} not found.");
-        }
 
-        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, cancellationToken).ConfigureAwait(false);
+        if (deployment.VariableSetSnapshotId.HasValue)
+            return await LoadVariablesFromSnapshotAsync(deployment.VariableSetSnapshotId.Value, cancellationToken).ConfigureAwait(false);
+
+        return await SnapshotVariablesFromProjectAsync(deployment, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<VariableDto>> LoadVariablesFromSnapshotAsync(int snapshotId, CancellationToken ct)
+    {
+        var snapshot = await _deploymentSnapshotService
+            .LoadVariableSetSnapshotAsync(snapshotId, ct).ConfigureAwait(false);
+
+        return snapshot.Data.Variables;
+    }
+
+    private async Task<List<VariableDto>> SnapshotVariablesFromProjectAsync(
+        Persistence.Entities.Deployments.Deployment deployment, CancellationToken ct)
+    {
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
 
         if (project == null)
-        {
             throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
-        }
 
-        List<VariableDto> variables;
+        var variableSetIds = project.GetIncludedLibraryVariableSetIdList();
 
-        // 获取或创建变量快照
-        if (deployment.VariableSetSnapshotId.HasValue)
-        {
-            variables = (await _deploymentSnapshotService.LoadVariableSetSnapshotAsync(deployment.VariableSetSnapshotId.Value, cancellationToken).ConfigureAwait(false)).Data.Variables;
-        }
-        else
-        {
-            // 如果没有快照ID，查找项目的变量集并创建快照
-            var projectVariableSets = await _variableDataProvider.GetVariableSetsByIdAsync([project.VariableSetId], cancellationToken).ConfigureAwait(false);
-            var libraryVariableSets = await _variableDataProvider.GetVariableSetsByIdAsync(project.IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).ToList(), cancellationToken).ConfigureAwait(false);
+        if (variableSetIds.Count == 0)
+            throw new InvalidOperationException($"Variable set not found on project {project.Id}.");
 
-            var allVariableSetIds = libraryVariableSets.ConvertAll(x => x.Id);
+        var snapshot = await _deploymentSnapshotService
+            .SnapshotVariableSetFromIdsAsync(variableSetIds, ct).ConfigureAwait(false);
 
-            if (projectVariableSets != null) allVariableSetIds.AddRange(projectVariableSets.ConvertAll(x => x.Id));
+        deployment.VariableSetSnapshotId = snapshot.Id;
+        await _deploymentDataProvider.UpdateDeploymentAsync(deployment, cancellationToken: ct).ConfigureAwait(false);
 
-            if (allVariableSetIds.Count == 0) throw new InvalidOperationException($"Variable set not found on project {project.Id}.");
-
-            var variableSetSnapshot = await _deploymentSnapshotService.SnapshotVariableSetFromIdsAsync(allVariableSetIds, cancellationToken).ConfigureAwait(false);
-            variables = variableSetSnapshot.Data.Variables;
-
-            // 更新Deployment记录快照ID
-            deployment.VariableSetSnapshotId = variableSetSnapshot.Id;
-            await _deploymentDataProvider.UpdateDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        return variables;
+        return snapshot.Data.Variables;
     }
 }

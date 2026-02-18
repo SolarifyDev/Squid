@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -7,6 +8,23 @@ namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
+    private async Task LoadDeploymentDataAsync(int serverTaskId, CancellationToken ct)
+    {
+        await LoadTaskAsync(serverTaskId, ct).ConfigureAwait(false);
+        await LoadDeploymentAsync(ct).ConfigureAwait(false);
+        await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
+        await ResolveVariablesAsync(ct).ConfigureAwait(false);
+        await FindTargetsAsync(ct).ConfigureAwait(false);
+        ConvertSnapshotToSteps();
+        PreFilterTargetsByRoles();
+    }
+
+    private async Task LoadTargetDataAsync(CancellationToken ct)
+    {
+        await LoadAccountAsync(ct).ConfigureAwait(false);
+        await ContributeEndpointVariablesAsync(ct).ConfigureAwait(false);
+    }
+
     private async Task LoadTaskAsync(int serverTaskId, CancellationToken ct)
     {
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
@@ -36,11 +54,24 @@ public partial class DeploymentTaskExecutor
         _ctx.Release = release;
     }
 
-    private async Task GeneratePlanAsync(CancellationToken ct)
+    private async Task LoadOrSnapshotAsync(CancellationToken ct)
     {
-        Log.Information("Generating deployment plan for deployment {DeploymentId}", _ctx.Deployment.Id);
+        Log.Information("Loading process snapshot for deployment {DeploymentId}", _ctx.Deployment.Id);
 
-        _ctx.Plan = await _planService.GeneratePlanAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
+        if (_ctx.Deployment.ProcessSnapshotId.HasValue)
+        {
+            _ctx.ProcessSnapshot = await _snapshotService
+                .LoadProcessSnapshotAsync(_ctx.Deployment.ProcessSnapshotId.Value, ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        _ctx.ProcessSnapshot = await _snapshotService
+            .SnapshotProcessFromReleaseAsync(_ctx.Release, ct)
+            .ConfigureAwait(false);
+
+        _ctx.Deployment.ProcessSnapshotId = _ctx.ProcessSnapshot.Id;
+        await _deploymentDataProvider.UpdateDeploymentAsync(_ctx.Deployment, cancellationToken: ct).ConfigureAwait(false);
     }
 
     private async Task ResolveVariablesAsync(CancellationToken ct)
@@ -88,7 +119,7 @@ public partial class DeploymentTaskExecutor
             _ctx.Variables.AddRange(endpointVars);
 
             var additionalVars = await _resolvedContributor
-                .ContributeAdditionalVariablesAsync(_ctx.Plan.ProcessSnapshot, _ctx.Release, ct)
+                .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct)
                 .ConfigureAwait(false);
             _ctx.Variables.AddRange(additionalVars);
         }
@@ -134,7 +165,7 @@ public partial class DeploymentTaskExecutor
 
     private void ConvertSnapshotToSteps()
     {
-        _ctx.Steps = ConvertProcessSnapshotToSteps(_ctx.Plan.ProcessSnapshot);
+        _ctx.Steps = ConvertProcessSnapshotToSteps(_ctx.ProcessSnapshot);
     }
 
     public static List<DeploymentStepDto> ConvertProcessSnapshotToSteps(DeploymentProcessSnapshotDto processSnapshot)

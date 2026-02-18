@@ -90,6 +90,8 @@ public class DeploymentService : IDeploymentService
             EnvironmentId = command.EnvironmentId,
             DeployedBy = command.DeployedBy,
             Created = DateTimeOffset.Now,
+            ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
+            VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
             Json = JsonSerializer.Serialize(new
             {
                 command.Comments,

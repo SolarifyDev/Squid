@@ -7,8 +7,6 @@ public class Startup
 {
     private IConfiguration Configuration { get; }
 
-    private IServiceCollection _serviceCollection;
-
     public Startup(IConfiguration configuration)
     {
         Configuration = configuration;
@@ -30,8 +28,6 @@ public class Startup
             options.Filters.Add<GlobalExceptionFilter>();
             options.Filters.Add<GlobalSuccessFilter>();
         });
-
-        _serviceCollection = services;
     }
 
     // ConfigureContainer is where you can register things directly

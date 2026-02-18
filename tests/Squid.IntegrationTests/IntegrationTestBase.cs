@@ -41,6 +41,14 @@ public class IntegrationTestBase : IAsyncLifetime
         await action(scope.Resolve<T1>(), scope.Resolve<T2>(), scope.Resolve<T3>()).ConfigureAwait(false);
     }
 
+    protected async Task Run<T1, T2, T3, T4>(Func<T1, T2, T3, T4, Task> action, Action<ContainerBuilder> extraRegistration = null)
+    {
+        await using var scope = extraRegistration != null
+            ? _lifetimeScope.BeginLifetimeScope(extraRegistration)
+            : _lifetimeScope.BeginLifetimeScope();
+        await action(scope.Resolve<T1>(), scope.Resolve<T2>(), scope.Resolve<T3>(), scope.Resolve<T4>()).ConfigureAwait(false);
+    }
+
     public Task InitializeAsync()
     {
         return Task.CompletedTask;

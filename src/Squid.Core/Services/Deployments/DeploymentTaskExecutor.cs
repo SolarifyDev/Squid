@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Core.Settings.GithubPackage;
 
 namespace Squid.Core.Services.Deployments;
@@ -19,7 +20,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 {
     private readonly HalibutRuntime _halibutRuntime;
     private readonly IYamlNuGetPacker _yamlNuGetPacker;
-    private readonly IDeploymentPlanService _planService;
+    private readonly IDeploymentSnapshotService _snapshotService;
     private readonly IDeploymentTargetFinder _targetFinder;
     private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
@@ -41,7 +42,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     public DeploymentTaskExecutor(
         IYamlNuGetPacker yamlNuGetPacker,
-        IDeploymentPlanService planService,
+        IDeploymentSnapshotService snapshotService,
         IDeploymentTargetFinder targetFinder,
         IDeploymentAccountDataProvider deploymentAccountDataProvider,
         IReleaseDataProvider releaseDataProvider,
@@ -58,7 +59,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         HalibutRuntime halibutRuntime,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
-        _planService = planService;
+        _snapshotService = snapshotService;
         _targetFinder = targetFinder;
         _halibutRuntime = halibutRuntime;
         _yamlNuGetPacker = yamlNuGetPacker;
@@ -83,29 +84,10 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _resolvedContributor = null;
         _logSequence = 0;
 
-        Persistence.Entities.Deployments.ActivityLog taskActivityNode = null;
-
         try
         {
-            await LoadTaskAsync(serverTaskId, ct);
-            await LoadDeploymentAsync(ct);
-
-            taskActivityNode = await _activityLogDataProvider.AddNodeAsync(
-                new Persistence.Entities.Deployments.ActivityLog
-                {
-                    ServerTaskId = serverTaskId,
-                    Name = $"Deploy {_ctx.Deployment?.Name ?? "Unknown"}",
-                    NodeType = "Task",
-                    Status = "Running",
-                    StartedAt = DateTimeOffset.UtcNow,
-                    SortOrder = 0
-                }, ct: ct).ConfigureAwait(false);
-
-            await GeneratePlanAsync(ct);
-            await ResolveVariablesAsync(ct);
-            await FindTargetsAsync(ct);
-            ConvertSnapshotToSteps();
-            PreFilterTargetsByRoles();
+            await LoadDeploymentDataAsync(serverTaskId, ct);
+            await CreateTaskActivityNodeAsync(ct);
 
             foreach (var target in _ctx.Targets)
             {
@@ -113,51 +95,16 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
                 _resolvedContributor = null;
                 _ctx.ActionResults = new();
 
-                await LoadAccountAsync(ct);
-                await ContributeEndpointVariablesAsync(ct);
+                await LoadTargetDataAsync(ct);
                 await ExtractCalamariAsync(ct);
-                await PrepareAndExecuteStepsAsync(taskActivityNode?.Id, ct);
+                await PrepareAndExecuteStepsAsync(ct);
             }
 
-            await RecordCompletionAsync(true, "Deployment completed successfully");
-
-            if (taskActivityNode != null)
-                await _activityLogDataProvider.UpdateNodeStatusAsync(
-                    taskActivityNode.Id, "Success", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
-
-            await _genericDataProvider.ExecuteInTransactionAsync(
-                async cancellationToken =>
-                {
-                    await _serverTaskDataProvider.TransitionStateAsync(
-                        _ctx.Task.Id, TaskState.Executing, TaskState.Success,
-                        cancellationToken).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
-
-            Log.Information("Task {TaskId} completed successfully", serverTaskId);
+            await RecordSuccessAsync(ct);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", serverTaskId, ex.Message);
-
-            if (taskActivityNode != null)
-                await _activityLogDataProvider.UpdateNodeStatusAsync(
-                    taskActivityNode.Id, "Failed", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
-
-            await PersistTaskLogAsync(serverTaskId, "Error", ex.Message, "System", ct);
-
-            if (_ctx.Deployment != null)
-            {
-                await RecordCompletionAsync(false, ex.Message);
-            }
-
-            await _genericDataProvider.ExecuteInTransactionAsync(
-                async cancellationToken =>
-                {
-                    await _serverTaskDataProvider.TransitionStateAsync(
-                        serverTaskId, TaskState.Executing, TaskState.Failed,
-                        cancellationToken).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
-
+            await RecordFailureAsync(serverTaskId, ex, ct);
             throw;
         }
     }
