@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Commands.Deployments.Project;
@@ -141,7 +142,7 @@ public class ProjectService : IProjectService
 
         if (project == null)
         {
-            throw new InvalidOperationException($"Project with id {id} not found");
+            throw new DeploymentEntityNotFoundException("Project", id);
         }
 
         return new GetProjectResponse

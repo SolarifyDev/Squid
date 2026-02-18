@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -26,7 +27,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         var deployment = await _deploymentDataProvider.GetDeploymentByIdAsync(deploymentId, cancellationToken).ConfigureAwait(false);
 
         if (deployment == null)
-            throw new InvalidOperationException($"Deployment {deploymentId} not found.");
+            throw new DeploymentEntityNotFoundException("Deployment", deploymentId);
 
         if (deployment.VariableSetSnapshotId.HasValue)
             return await LoadVariablesFromSnapshotAsync(deployment.VariableSetSnapshotId.Value, cancellationToken).ConfigureAwait(false);
@@ -48,12 +49,12 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
 
         if (project == null)
-            throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
+            throw new DeploymentEntityNotFoundException("Project", deployment.ProjectId);
 
         var variableSetIds = project.GetIncludedLibraryVariableSetIdList();
 
         if (variableSetIds.Count == 0)
-            throw new InvalidOperationException($"Variable set not found on project {project.Id}.");
+            throw new DeploymentEntityNotFoundException("VariableSet", project.Id, $"No variable sets configured on project");
 
         var snapshot = await _deploymentSnapshotService
             .SnapshotVariableSetFromIdsAsync(variableSetIds, ct).ConfigureAwait(false);

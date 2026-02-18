@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Deployments.Exceptions;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
@@ -105,7 +106,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         var task = await _repository.GetByIdAsync<Persistence.Entities.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (task == null)
-            throw new InvalidOperationException($"ServerTask {taskId} not found");
+            throw new DeploymentEntityNotFoundException("ServerTask", taskId);
 
         if (!string.Equals(task.State, expectedCurrentState, StringComparison.OrdinalIgnoreCase))
             throw new InvalidStateTransitionException(task.State, newState);

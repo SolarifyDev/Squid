@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Machine;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -48,14 +49,14 @@ public class DeploymentService : IDeploymentService
         var isValid = await ValidateDeploymentEnvironmentAsync(command.ReleaseId, command.EnvironmentId, cancellationToken).ConfigureAwait(false);
         if (!isValid)
         {
-            throw new InvalidOperationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}");
+            throw new DeploymentValidationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}");
         }
 
         // 2. 获取Release信息
         var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
         if (release == null)
         {
-            throw new InvalidOperationException($"Release {command.ReleaseId} not found");
+            throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
         }
 
         // 3. 创建ServerTask

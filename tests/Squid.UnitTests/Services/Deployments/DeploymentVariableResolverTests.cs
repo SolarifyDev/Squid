@@ -7,6 +7,7 @@ using Shouldly;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -187,7 +188,7 @@ public class DeploymentVariableResolverTests
             .Setup(d => d.GetDeploymentByIdAsync(999, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Deployment)null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<DeploymentEntityNotFoundException>(
             () => _resolver.ResolveVariablesAsync(999, CancellationToken.None));
 
         ex.Message.ShouldContain("999");
@@ -206,7 +207,7 @@ public class DeploymentVariableResolverTests
             .Setup(p => p.GetProjectByIdAsync(5, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Project)null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<DeploymentEntityNotFoundException>(
             () => _resolver.ResolveVariablesAsync(1, CancellationToken.None));
 
         ex.Message.ShouldContain("5");

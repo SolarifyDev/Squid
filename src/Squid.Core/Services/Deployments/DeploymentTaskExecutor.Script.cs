@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Tentacle;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Models.Deployments.Execution;
@@ -41,7 +42,7 @@ public partial class DeploymentTaskExecutor
         CaptureOutputVariables(actionResult, logLines);
 
         if (!executionSuccess)
-            throw new InvalidOperationException("Calamari deployment script failed");
+            throw new DeploymentScriptException("Calamari deployment script failed", _ctx.Deployment.Id);
     }
 
     private async Task ExecuteDirectScriptAsync(ActionExecutionResult actionResult, CancellationToken ct)
@@ -49,7 +50,7 @@ public partial class DeploymentTaskExecutor
         var endpoint = ParseMachineEndpoint(_ctx.Target);
 
         if (endpoint == null)
-            throw new InvalidOperationException($"Endpoint could not be parsed for machine {_ctx.Target.Name}");
+            throw new DeploymentEndpointException(_ctx.Target.Name);
 
         var scriptFiles = actionResult.Files
             .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
@@ -75,7 +76,7 @@ public partial class DeploymentTaskExecutor
         CaptureOutputVariables(actionResult, logLines);
 
         if (!executionSuccess)
-            throw new InvalidOperationException("Direct script execution failed");
+            throw new DeploymentScriptException("Direct script execution failed", _ctx.Deployment.Id);
     }
 
     private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)

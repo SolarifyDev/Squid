@@ -1,6 +1,7 @@
 using System.Threading;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.IntegrationTests;
@@ -240,7 +241,7 @@ public class IntegrationServerTaskState : IntegrationTestBase,
     {
         await Run<IServerTaskDataProvider>(async provider =>
         {
-            await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await Should.ThrowAsync<DeploymentEntityNotFoundException>(async () =>
                 await provider.TransitionStateAsync(999999, TaskState.Pending, TaskState.Executing)
                     .ConfigureAwait(false)).ConfigureAwait(false);
         }).ConfigureAwait(false);

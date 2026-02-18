@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
@@ -51,21 +52,21 @@ public class DeploymentStepPlanner : IDeploymentStepPlanner
 
         if (deployment == null)
         {
-            throw new InvalidOperationException($"Deployment {deploymentId} not found.");
+            throw new DeploymentEntityNotFoundException("Deployment", deploymentId);
         }
 
         var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId).ConfigureAwait(false);
 
         if (project == null)
         {
-            throw new InvalidOperationException($"Project {deployment.ProjectId} not found.");
+            throw new DeploymentEntityNotFoundException("Project", deployment.ProjectId);
         }
 
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId).ConfigureAwait(false);
 
         if (process == null)
         {
-            throw new InvalidOperationException($"DeploymentProcess for Project {project.Id} not found.");
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", project.DeploymentProcessId);
         }
 
         var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(process.Id).ConfigureAwait(false);

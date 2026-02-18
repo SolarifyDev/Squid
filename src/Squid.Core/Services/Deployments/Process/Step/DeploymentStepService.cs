@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Events.Deployments.Step;
@@ -82,7 +83,7 @@ public class DeploymentStepService : IDeploymentStepService
         var step = await _stepDataProvider.GetDeploymentStepByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
         if (step == null)
         {
-            throw new InvalidOperationException($"DeploymentStep with id {command.Id} not found");
+            throw new DeploymentEntityNotFoundException("DeploymentStep", command.Id);
         }
 
         _mapper.Map(command.Step, step);
@@ -131,7 +132,7 @@ public class DeploymentStepService : IDeploymentStepService
         var stepDto = await GetStepWithRelatedDataAsync(id, cancellationToken).ConfigureAwait(false);
         if (stepDto == null)
         {
-            throw new InvalidOperationException($"DeploymentStep with id {id} not found");
+            throw new DeploymentEntityNotFoundException("DeploymentStep", id);
         }
 
         return new GetDeploymentStepResponse { Data = stepDto };

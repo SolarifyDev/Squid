@@ -4,6 +4,7 @@ using Halibut.Diagnostics;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Tentacle;
 
 namespace Squid.Core.Services.Deployments;
@@ -20,7 +21,7 @@ public partial class DeploymentTaskExecutor
 
         if (!extractSuccess)
         {
-            throw new InvalidOperationException($"Calamari package extraction failed on target machine for deployment {_ctx.Deployment.Id}");
+            throw new DeploymentScriptException($"Calamari package extraction failed on target machine for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
         }
 
         Log.Information("Calamari package extraction completed successfully for deployment {DeploymentId}", _ctx.Deployment.Id);
@@ -82,7 +83,7 @@ public partial class DeploymentTaskExecutor
         CancellationToken ct)
     {
         if (target == null)
-            throw new InvalidOperationException("No target machine to execute DeployByCalamari script");
+            throw new DeploymentTargetException("No target machine to execute DeployByCalamari script");
 
         var packageBytes = yamlNuGetPackageBytes ?? Array.Empty<byte>();
         var variableBytes = ReadAllBytes(variableJsonStream);
@@ -108,7 +109,7 @@ public partial class DeploymentTaskExecutor
         var endpoint = ParseMachineEndpoint(target);
 
         if (endpoint == null)
-            throw new InvalidOperationException($"Endpoint could not be parsed for machine {target.Name}");
+            throw new DeploymentEndpointException(target.Name);
 
         var scriptFiles = new[]
         {
@@ -144,7 +145,7 @@ public partial class DeploymentTaskExecutor
         CancellationToken ct)
     {
         if (target == null)
-            throw new InvalidOperationException("No target machine to execute ExtractCalamariPackage script");
+            throw new DeploymentTargetException("No target machine to execute ExtractCalamariPackage script");
 
         var calamariVersion = _calamariGithubPackageSetting.Version;
 
@@ -164,7 +165,7 @@ public partial class DeploymentTaskExecutor
         var endpoint = ParseMachineEndpoint(target);
 
         if (endpoint == null)
-            throw new InvalidOperationException($"Endpoint could not be parsed for machine {target.Name}");
+            throw new DeploymentEndpointException(target.Name);
 
         var scriptFiles = new[]
         {

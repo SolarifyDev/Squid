@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -30,7 +31,7 @@ public partial class DeploymentTaskExecutor
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null)
-            throw new InvalidOperationException($"ServerTask {serverTaskId} not found");
+            throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
 
         task.State = TaskState.Executing;
         task.StartTime = DateTimeOffset.UtcNow;
@@ -46,7 +47,7 @@ public partial class DeploymentTaskExecutor
         var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(_ctx.Task.Id, ct).ConfigureAwait(false);
 
         if (deployment == null)
-            throw new InvalidOperationException($"No deployment found for task {_ctx.Task.Id}");
+            throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
 
         _ctx.Deployment = deployment;
 
@@ -60,17 +61,15 @@ public partial class DeploymentTaskExecutor
 
         if (_ctx.Deployment.ProcessSnapshotId.HasValue)
         {
-            _ctx.ProcessSnapshot = await _snapshotService
-                .LoadProcessSnapshotAsync(_ctx.Deployment.ProcessSnapshotId.Value, ct)
-                .ConfigureAwait(false);
+            _ctx.ProcessSnapshot = await _snapshotService.LoadProcessSnapshotAsync(_ctx.Deployment.ProcessSnapshotId.Value, ct).ConfigureAwait(false);
+            
             return;
         }
 
-        _ctx.ProcessSnapshot = await _snapshotService
-            .SnapshotProcessFromReleaseAsync(_ctx.Release, ct)
-            .ConfigureAwait(false);
+        _ctx.ProcessSnapshot = await _snapshotService.SnapshotProcessFromReleaseAsync(_ctx.Release, ct).ConfigureAwait(false);
 
         _ctx.Deployment.ProcessSnapshotId = _ctx.ProcessSnapshot.Id;
+        
         await _deploymentDataProvider.UpdateDeploymentAsync(_ctx.Deployment, cancellationToken: ct).ConfigureAwait(false);
     }
 
@@ -88,10 +87,9 @@ public partial class DeploymentTaskExecutor
         _ctx.Targets = await _targetFinder.FindTargetsAsync(_ctx.Deployment, ct).ConfigureAwait(false);
 
         if (_ctx.Targets.Count == 0)
-            throw new InvalidOperationException($"No target machines found for deployment {_ctx.Deployment.Id}");
+            throw new DeploymentTargetException($"No target machines found for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
 
-        Log.Information("Found {Count} target machines for deployment {DeploymentId}",
-            _ctx.Targets.Count, _ctx.Deployment.Id);
+        Log.Information("Found {Count} target machines for deployment {DeploymentId}", _ctx.Targets.Count, _ctx.Deployment.Id);
     }
 
     private async Task LoadAccountAsync(CancellationToken ct)
@@ -99,15 +97,14 @@ public partial class DeploymentTaskExecutor
         _ctx.EndpointJson = _ctx.Target.Endpoint;
         _ctx.CommunicationStyle = ParseCommunicationStyle(_ctx.EndpointJson);
 
-        _resolvedContributor = _variableContributors.FirstOrDefault(
-            c => c.CanHandle(_ctx.CommunicationStyle));
+        _resolvedContributor = _variableContributors.FirstOrDefault(c => c.CanHandle(_ctx.CommunicationStyle));
 
         if (_resolvedContributor != null)
         {
             var accountId = _resolvedContributor.ParseAccountId(_ctx.EndpointJson);
+            
             if (accountId.HasValue)
-                _ctx.Account = await _deploymentAccountDataProvider
-                    .GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
+                _ctx.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
         }
     }
 
@@ -116,11 +113,12 @@ public partial class DeploymentTaskExecutor
         if (_resolvedContributor != null)
         {
             var endpointVars = _resolvedContributor.ContributeVariables(_ctx.EndpointJson, _ctx.Account);
+            
             _ctx.Variables.AddRange(endpointVars);
 
             var additionalVars = await _resolvedContributor
-                .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct)
-                .ConfigureAwait(false);
+                .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct).ConfigureAwait(false);
+            
             _ctx.Variables.AddRange(additionalVars);
         }
     }
@@ -152,15 +150,14 @@ public partial class DeploymentTaskExecutor
             return;
 
         var before = _ctx.Targets.Count;
+        
         _ctx.Targets = DeploymentTargetFinder.FilterByRoles(_ctx.Targets, allRoles);
 
         if (_ctx.Targets.Count < before)
-            Log.Information("Pre-filtered targets by roles: {Before} → {After} (roles: {Roles})",
-                before, _ctx.Targets.Count, string.Join(", ", allRoles));
+            Log.Information("Pre-filtered targets by roles: {Before} → {After} (roles: {Roles})", before, _ctx.Targets.Count, string.Join(", ", allRoles));
 
         if (_ctx.Targets.Count == 0)
-            throw new InvalidOperationException(
-                $"No target machines match the required roles [{string.Join(", ", allRoles)}] for deployment {_ctx.Deployment.Id}");
+            throw new DeploymentTargetException($"No target machines match the required roles [{string.Join(", ", allRoles)}] for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
     }
 
     private void ConvertSnapshotToSteps()
