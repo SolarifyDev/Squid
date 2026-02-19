@@ -45,6 +45,7 @@ public class DeploymentTargetContext
     public string EndpointJson { get; set; }
     public string CommunicationStyle { get; set; }
     public IEndpointVariableContributor ResolvedContributor { get; set; }
+    public IExecutionStrategy ResolvedStrategy { get; set; }
     public byte[] CalamariPackageBytes { get; set; }
     public List<ActionExecutionResult> ActionResults { get; set; } = new();
 

@@ -13,7 +13,7 @@ namespace Squid.E2ETests.Deployments.Kubernetes;
 
 public class HelmUpgradeE2ETests : KubernetesE2ETestBase
 {
-    private readonly KubernetesContextScriptBuilder _contextBuilder = new();
+    private readonly KubernetesApiContextScriptBuilder _contextBuilder = new();
     private readonly HelmUpgradeActionHandler _helmHandler = new();
 
     public HelmUpgradeE2ETests(KindClusterFixture cluster) : base(cluster)
@@ -49,7 +49,7 @@ public class HelmUpgradeE2ETests : KubernetesE2ETestBase
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
             // Wrap with K8s context
-            var endpoint = new KubernetesEndpointDto
+            var endpoint = new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = testNs,
@@ -113,7 +113,7 @@ public class HelmUpgradeE2ETests : KubernetesE2ETestBase
             valuesContent.ShouldContain("replicaCount: 1");
 
             // Wrap with K8s context and execute
-            var endpoint = new KubernetesEndpointDto
+            var endpoint = new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = testNs,
@@ -177,7 +177,7 @@ public class HelmUpgradeE2ETests : KubernetesE2ETestBase
             var ctx = new ActionExecutionContext { Action = action };
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
-            var endpoint = new KubernetesEndpointDto
+            var endpoint = new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = testNs,

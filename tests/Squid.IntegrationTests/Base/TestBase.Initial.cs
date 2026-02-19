@@ -89,49 +89,23 @@ public partial class TestBase
         using var scope = CurrentScope.BeginLifetimeScope();
         var context = scope.Resolve<SquidDbContext>();
 
-        var tables = new[]
-        {
-            "action_channels",
-            "action_environments",
-            "action_machine_roles",
-            "activity_log",
-            "channel",
-            "deployment",
-            "deployment_account",
-            "deployment_action",
-            "deployment_action_property",
-            "deployment_completion",
-            "deployment_environment",
-            "deployment_process",
-            "deployment_process_snapshot",
-            "deployment_step",
-            "deployment_step_property",
-            "environment",
-            "external_feed",
-            "library_variable_set",
-            "lifecycle",
-            "machine",
-            "machine_policy",
-            "phase",
-            "project",
-            "release",
-            "release_selected_package",
-            "retention_policy",
-            "server_task",
-            "server_task_log",
-            "space",
-            "variable",
-            "variable_scope",
-            "variable_set",
-            "variable_set_snapshot"
-        };
+        using var connection = context.Database.GetDbConnection();
+        connection.Open();
 
-        var tableList = string.Join(", ", tables);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT string_agg(quote_ident(tablename), ', ')
+            FROM pg_tables
+            WHERE schemaname = 'public' AND tablename <> 'schemaversions'
+            """;
 
-        // Table names are hardcoded constants, not user input — safe to concatenate
-        #pragma warning disable EF1002
-        context.Database.ExecuteSqlRaw($"TRUNCATE TABLE {tableList} RESTART IDENTITY CASCADE");
-        #pragma warning restore EF1002
+        var tableList = command.ExecuteScalar() as string;
+
+        if (string.IsNullOrEmpty(tableList)) return;
+
+        using var truncateCommand = connection.CreateCommand();
+        truncateCommand.CommandText = $"TRUNCATE TABLE {tableList} RESTART IDENTITY CASCADE";
+        truncateCommand.ExecuteNonQuery();
     }
 
     private string GetIsolatedConnectionString(IConfiguration configuration)

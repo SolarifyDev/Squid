@@ -1,3 +1,4 @@
+using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -192,10 +193,19 @@ public partial class DeploymentTaskExecutor
 
             try
             {
-                if (actionResult.CalamariCommand != null)
-                    await ExecuteCalamariActionAsync(actionResult, ct).ConfigureAwait(false);
-                else
-                    await ExecuteDirectScriptAsync(actionResult, ct).ConfigureAwait(false);
+                var strategy = _ctx.CurrentDeployTargetContext.ResolvedStrategy;
+
+                if (strategy == null)
+                    throw new DeploymentTargetException(
+                        $"No execution strategy for {_ctx.CurrentDeployTargetContext.CommunicationStyle}");
+
+                var request = BuildScriptExecutionRequest(actionResult);
+                var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
+
+                CaptureOutputVariables(actionResult, execResult.LogLines);
+
+                if (!execResult.Success)
+                    throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);
 
                 result.ActionResults.Add(actionResult);
 
@@ -218,6 +228,22 @@ public partial class DeploymentTaskExecutor
                     throw;
             }
         }
+    }
+
+    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult)
+    {
+        var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, _ctx.CurrentDeployTargetContext);
+
+        return new ScriptExecutionRequest
+        {
+            ScriptBody = actionResult.ScriptBody,
+            Files = actionResult.Files,
+            CalamariCommand = actionResult.CalamariCommand,
+            Variables = effectiveVariables,
+            Machine = _ctx.CurrentDeployTargetContext.Machine,
+            ReleaseVersion = _ctx.Release?.Version,
+            CalamariPackageBytes = _ctx.CalamariPackageBytes
+        };
     }
 
     private static void CollectOutputVariables(

@@ -7,17 +7,17 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments.Kubernetes;
 
-public class KubernetesEndpointVariableContributor : IEndpointVariableContributor
+public class KubernetesApiEndpointVariableContributor : IEndpointVariableContributor
 {
     private readonly IExternalFeedDataProvider _externalFeedDataProvider;
 
-    public KubernetesEndpointVariableContributor(IExternalFeedDataProvider externalFeedDataProvider = null)
+    public KubernetesApiEndpointVariableContributor(IExternalFeedDataProvider externalFeedDataProvider = null)
     {
         _externalFeedDataProvider = externalFeedDataProvider;
     }
 
     public bool CanHandle(string communicationStyle)
-        => string.Equals(communicationStyle, "Kubernetes", StringComparison.OrdinalIgnoreCase);
+        => string.Equals(communicationStyle, "KubernetesApi", StringComparison.OrdinalIgnoreCase);
 
     public int? ParseAccountId(string endpointJson)
     {
@@ -104,13 +104,13 @@ public class KubernetesEndpointVariableContributor : IEndpointVariableContributo
             : uri.Host;
     }
 
-    private static KubernetesEndpointDto Deserialize(string endpointJson)
+    private static KubernetesApiEndpointDto Deserialize(string endpointJson)
     {
         if (string.IsNullOrEmpty(endpointJson)) return null;
 
         try
         {
-            return JsonSerializer.Deserialize<KubernetesEndpointDto>(endpointJson);
+            return JsonSerializer.Deserialize<KubernetesApiEndpointDto>(endpointJson);
         }
         catch
         {

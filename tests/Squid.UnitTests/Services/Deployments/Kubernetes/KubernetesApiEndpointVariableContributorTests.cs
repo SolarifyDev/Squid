@@ -10,9 +10,9 @@ using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
-public class KubernetesEndpointVariableContributorTests
+public class KubernetesApiEndpointVariableContributorTests
 {
-    private readonly KubernetesEndpointVariableContributor _contributor = new();
+    private readonly KubernetesApiEndpointVariableContributor _contributor = new();
 
     private static string MakeEndpointJson(
         string clusterUrl = "https://k8s.example.com:6443",
@@ -20,9 +20,9 @@ public class KubernetesEndpointVariableContributorTests
         string skipTls = "False",
         string accountId = "42",
         string clusterCert = null) =>
-        JsonSerializer.Serialize(new KubernetesEndpointDto
+        JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
-            CommunicationStyle = "Kubernetes",
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = clusterUrl,
             Namespace = ns,
             SkipTlsVerification = skipTls,
@@ -62,13 +62,13 @@ public class KubernetesEndpointVariableContributorTests
     [Fact]
     public void CanHandle_Kubernetes_ReturnsTrue()
     {
-        _contributor.CanHandle("Kubernetes").ShouldBeTrue();
+        _contributor.CanHandle("KubernetesApi").ShouldBeTrue();
     }
 
     [Fact]
     public void CanHandle_CaseInsensitive_ReturnsTrue()
     {
-        _contributor.CanHandle("kubernetes").ShouldBeTrue();
+        _contributor.CanHandle("kubernetesapi").ShouldBeTrue();
     }
 
     [Fact]
@@ -333,9 +333,9 @@ public class KubernetesEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullNamespace_DefaultsToDefault()
     {
-        var json = JsonSerializer.Serialize(new KubernetesEndpointDto
+        var json = JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
-            CommunicationStyle = "Kubernetes",
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://k8s:6443",
             Namespace = null
         });
@@ -348,9 +348,9 @@ public class KubernetesEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullSkipTls_DefaultsToFalse()
     {
-        var json = JsonSerializer.Serialize(new KubernetesEndpointDto
+        var json = JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
-            CommunicationStyle = "Kubernetes",
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://k8s:6443",
             SkipTlsVerification = null
         });
@@ -466,7 +466,7 @@ public class KubernetesEndpointVariableContributorTests
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://registry.example.com/v2" });
 
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp/backend");
         var release = new Release { Version = "1.2.3" };
@@ -481,7 +481,7 @@ public class KubernetesEndpointVariableContributorTests
     public async Task ContributeAdditionalVariablesAsync_NoActionWithFeed_FallsBackToVersion()
     {
         var feedProvider = new Mock<IExternalFeedDataProvider>();
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithoutFeed();
         var release = new Release { Version = "2.0.0" };
@@ -498,7 +498,7 @@ public class KubernetesEndpointVariableContributorTests
         feedProvider.Setup(f => f.GetFeedByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ExternalFeed)null);
 
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithFeed(feedId: 99, packageId: "myapp");
         var release = new Release { Version = "3.0.0" };
@@ -512,7 +512,7 @@ public class KubernetesEndpointVariableContributorTests
     public async Task ContributeAdditionalVariablesAsync_NullSnapshot_FallsBackToVersion()
     {
         var feedProvider = new Mock<IExternalFeedDataProvider>();
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var release = new Release { Version = "4.0.0" };
 
@@ -525,7 +525,7 @@ public class KubernetesEndpointVariableContributorTests
     public async Task ContributeAdditionalVariablesAsync_NoFeedProvider_FallsBackToVersion()
     {
         // Contributor created without feed provider (parameterless constructor)
-        var contributor = new KubernetesEndpointVariableContributor();
+        var contributor = new KubernetesApiEndpointVariableContributor();
 
         var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
         var release = new Release { Version = "5.0.0" };
@@ -547,7 +547,7 @@ public class KubernetesEndpointVariableContributorTests
                 RegistryPath = "docker.io"
             });
 
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "library/nginx");
         var release = new Release { Version = "1.25.0" };
@@ -569,7 +569,7 @@ public class KubernetesEndpointVariableContributorTests
                 FeedUri = "https://registry.internal.com:5000/v2"
             });
 
-        var contributor = new KubernetesEndpointVariableContributor(feedProvider.Object);
+        var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
         var release = new Release { Version = "2.0.0" };

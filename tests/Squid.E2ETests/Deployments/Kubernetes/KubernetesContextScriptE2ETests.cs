@@ -11,7 +11,7 @@ namespace Squid.E2ETests.Deployments.Kubernetes;
 
 public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
 {
-    private readonly KubernetesContextScriptBuilder _builder = new();
+    private readonly KubernetesApiContextScriptBuilder _builder = new();
 
     public KubernetesContextScriptE2ETests(KindClusterFixture cluster) : base(cluster)
     {
@@ -24,7 +24,7 @@ public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
         var clusterUrl = await GetClusterUrlAsync();
         var token = await GetServiceAccountTokenAsync();
 
-        var endpoint = new KubernetesEndpointDto
+        var endpoint = new KubernetesApiEndpointDto
         {
             ClusterUrl = clusterUrl,
             Namespace = "default",
@@ -56,7 +56,7 @@ public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
         var token = await GetServiceAccountTokenAsync();
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
-        var endpoint = new KubernetesEndpointDto
+        var endpoint = new KubernetesApiEndpointDto
         {
             ClusterUrl = clusterUrl,
             Namespace = testNs,
@@ -91,7 +91,7 @@ public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
         var token = await GetServiceAccountTokenAsync();
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
-        var endpoint = new KubernetesEndpointDto
+        var endpoint = new KubernetesApiEndpointDto
         {
             ClusterUrl = clusterUrl,
             Namespace = testNs,
@@ -136,7 +136,7 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         var clusterUrl = await GetClusterUrlAsync();
         var token = await GetServiceAccountTokenAsync();
 
-        var endpoint = new KubernetesEndpointDto
+        var endpoint = new KubernetesApiEndpointDto
         {
             ClusterUrl = clusterUrl,
             Namespace = "default",

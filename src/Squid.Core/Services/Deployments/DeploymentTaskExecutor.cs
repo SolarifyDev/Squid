@@ -47,7 +47,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     #region Infrastructure
 
-    private readonly IHalibutClientFactory _halibutClientFactory;
+    private readonly IEnumerable<IExecutionStrategy> _executionStrategies;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
 
     #endregion
@@ -69,7 +69,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IActionHandlerRegistry actionHandlerRegistry,
         IEnumerable<IScriptContextWrapper> scriptWrappers,
         IEnumerable<IEndpointVariableContributor> variableContributors,
-        IHalibutClientFactory halibutClientFactory,
+        IEnumerable<IExecutionStrategy> executionStrategies,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _genericDataProvider = genericDataProvider;
@@ -88,7 +88,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _actionHandlerRegistry = actionHandlerRegistry;
         _scriptWrappers = scriptWrappers;
         _variableContributors = variableContributors;
-        _halibutClientFactory = halibutClientFactory;
+        _executionStrategies = executionStrategies;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 
@@ -101,8 +101,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
             await LoadDeploymentDataAsync(serverTaskId, ct);
             await CreateTaskActivityNodeAsync(ct);
             await PrepareAllTargetsAsync(ct);
-            await DownloadCalamariAsync(ct);
-            await ExtractCalamariOnAllTargetsAsync(ct);
+            await PrepareCalamariIfRequiredAsync(ct);
             await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);
         }

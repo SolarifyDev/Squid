@@ -6,21 +6,21 @@ using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.Deployments.Kubernetes;
 
-public interface IKubernetesContextScriptBuilder : IScopedDependency
+public interface IKubernetesApiContextScriptBuilder : IScopedDependency
 {
     string WrapWithContext(
         string userScript,
-        KubernetesEndpointDto endpoint,
+        KubernetesApiEndpointDto endpoint,
         DeploymentAccount account,
         ScriptSyntax syntax,
         string customKubectlPath = null);
 }
 
-public class KubernetesContextScriptBuilder : IKubernetesContextScriptBuilder
+public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuilder
 {
     public string WrapWithContext(
         string userScript,
-        KubernetesEndpointDto endpoint,
+        KubernetesApiEndpointDto endpoint,
         DeploymentAccount account,
         ScriptSyntax syntax,
         string customKubectlPath = null)

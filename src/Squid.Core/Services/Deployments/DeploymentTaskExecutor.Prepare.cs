@@ -120,6 +120,7 @@ public partial class DeploymentTaskExecutor
         tc.EndpointJson = tc.Machine.Endpoint;
         tc.CommunicationStyle = ParseCommunicationStyle(tc.EndpointJson);
         tc.ResolvedContributor = _variableContributors.FirstOrDefault(c => c.CanHandle(tc.CommunicationStyle));
+        tc.ResolvedStrategy = _executionStrategies.FirstOrDefault(s => s.CanHandle(tc.CommunicationStyle));
     }
 
     private async Task LoadAccountCredentialsAsync(DeploymentTargetContext tc, CancellationToken ct)

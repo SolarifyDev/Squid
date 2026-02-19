@@ -1,6 +1,6 @@
 namespace Squid.Message.Models.Deployments.Machine;
 
-public class KubernetesEndpointDto
+public class KubernetesApiEndpointDto
 {
     public string CommunicationStyle { get; set; }
 

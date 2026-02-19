@@ -36,6 +36,8 @@ public class MachineDto : IBaseModel
 
     public string ShellVersion { get; set; }
 
+    public string PollingSubscriptionId { get; set; }
+
     public string LicenseHash { get; set; }
 
     public string Slug { get; set; }

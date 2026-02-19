@@ -93,7 +93,7 @@ public class K8sTestDataSeeder
 
         var endpointJson = JsonSerializer.Serialize(new
         {
-            CommunicationStyle = "Kubernetes",
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://localhost:6443",
             SkipTlsVerification = "True",
             AccountId = "1",

@@ -12,7 +12,7 @@ namespace Squid.E2ETests.Deployments.Kubernetes;
 
 public class KubernetesDeployYamlE2ETests : KubernetesE2ETestBase
 {
-    private readonly KubernetesContextScriptBuilder _contextBuilder = new();
+    private readonly KubernetesApiContextScriptBuilder _contextBuilder = new();
     private readonly KubernetesDeployYamlActionHandler _yamlHandler = new();
 
     public KubernetesDeployYamlE2ETests(KindClusterFixture cluster) : base(cluster)
@@ -64,7 +64,7 @@ data:
 
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
 
-            var endpoint = new KubernetesEndpointDto
+            var endpoint = new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = testNs,
@@ -145,7 +145,7 @@ data:
 
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
 
-            var endpoint = new KubernetesEndpointDto
+            var endpoint = new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = testNs,

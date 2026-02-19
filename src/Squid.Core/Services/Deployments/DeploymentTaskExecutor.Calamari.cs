@@ -1,53 +1,19 @@
 using System.IO.Compression;
-using Halibut;
-using Halibut.Diagnostics;
-using Squid.Core.Commands.Tentacle;
-using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
-using Squid.Core.Services.Deployments.Exceptions;
-using Squid.Core.Services.Tentacle;
 
 namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task DownloadCalamariAsync(CancellationToken ct)
+    private async Task PrepareCalamariIfRequiredAsync(CancellationToken ct)
     {
+        var needsCalamari = _ctx.AllTargetsContext.Any(tc => tc.ResolvedStrategy != null);
+
+        if (!needsCalamari) return;
+
         _ctx.CalamariPackageBytes = await DownloadCalamariPackageAsync().ConfigureAwait(false);
 
         Log.Information("Calamari package downloaded for deployment {DeploymentId}", _ctx.Deployment.Id);
-    }
-
-    private async Task ExtractCalamariOnAllTargetsAsync(CancellationToken ct)
-    {
-        var extractScript = UtilService.GetEmbeddedScriptContent("ExtractCalamariPackage.ps1");
-
-        foreach (var tc in _ctx.AllTargetsContext)
-        {
-            _ctx.CurrentDeployTargetContext = tc;
-            tc.CalamariPackageBytes = _ctx.CalamariPackageBytes;
-
-            var success = await ExtractCalamariPackageOnTargetAsync(
-                ct, extractScript, tc.CalamariPackageBytes, tc.Machine).ConfigureAwait(false);
-
-            if (!success)
-                throw new DeploymentScriptException(
-                    $"Calamari extraction failed on {tc.Machine.Name}", _ctx.Deployment.Id);
-        }
-
-        Log.Information("Calamari package extraction completed on all targets for deployment {DeploymentId}", _ctx.Deployment.Id);
-    }
-
-    private async Task<bool> ExtractCalamariPackageOnTargetAsync(CancellationToken ct, string extractCalamariPackageScript, byte[] calamariPackageBytes, Persistence.Entities.Deployments.Machine target)
-    {
-        var extractExecution = await StartExtractCalamariPackageScriptAsync(
-            extractCalamariPackageScript,
-            calamariPackageBytes,
-            target,
-            ct).ConfigureAwait(false);
-
-        var (success, _) = await ObserveDeploymentScriptAsync(extractExecution, ct).ConfigureAwait(false);
-        return success;
     }
 
     private async Task<byte[]> DownloadCalamariPackageAsync()
@@ -81,143 +47,6 @@ public partial class DeploymentTaskExecutor
         Log.Information("Downloaded and cached Calamari package to {CachePath}", cacheFilePath);
 
         return bytes;
-    }
-
-    private async Task<(Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartDeployByCalamariScriptAsync(
-        string deployByCalamariScript,
-        byte[] yamlNuGetPackageBytes,
-        Stream variableJsonStream,
-        Stream sensitiveVariableJsonStream,
-        string sensitiveVariablesPassword,
-        Persistence.Entities.Deployments.Machine target,
-        string version,
-        CancellationToken ct)
-    {
-        if (target == null)
-            throw new DeploymentTargetException("No target machine to execute DeployByCalamari script");
-
-        var packageBytes = yamlNuGetPackageBytes ?? Array.Empty<byte>();
-        var variableBytes = ReadAllBytes(variableJsonStream);
-        var sensitiveBytes = ReadAllBytes(sensitiveVariableJsonStream);
-
-        var packageFileName = $"squid.{version}.nupkg";
-        const string variableFileName = "variables.json";
-        const string sensitiveVariableFileName = "sensitiveVariables.json";
-
-        var packageFilePath = $".\\{packageFileName}";
-        var variableFilePath = $".\\{variableFileName}";
-        var sensitiveVariableFilePath = string.IsNullOrEmpty(sensitiveVariablesPassword) ? string.Empty : $".\\{sensitiveVariableFileName}";
-
-        var scriptBody = deployByCalamariScript
-            .Replace("{{PackageFilePath}}", packageFilePath, StringComparison.Ordinal)
-            .Replace("{{VariableFilePath}}", variableFilePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariableFile}}", sensitiveVariableFilePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariablePassword}}", sensitiveVariablesPassword, StringComparison.Ordinal)
-            .Replace("{{CalamariVersion}}", GetCalamariVersion() + $"/{target.OperatingSystem.GetDescription()}", StringComparison.Ordinal);
-
-        ct.ThrowIfCancellationRequested();
-
-        var endpoint = ParseMachineEndpoint(target);
-
-        if (endpoint == null)
-            throw new DeploymentEndpointException(target.Name);
-
-        var scriptFiles = new[]
-        {
-            new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null),
-            new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null),
-            new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
-        };
-
-        Log.Information("Starting DeployByCalamari with script {@Script}", scriptBody);
-
-        var command = new StartScriptCommand(
-            scriptBody,
-            ScriptIsolationLevel.FullIsolation,
-            TimeSpan.FromMinutes(30),
-            null,
-            Array.Empty<string>(),
-            null,
-            scriptFiles);
-
-        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
-
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
-        Log.Information("Starting DeployByCalamari script on machine {MachineName} with ticket id: {Ticket}", target.Name, ticket);
-
-        return (target, scriptClient, ticket);
-    }
-
-    private async Task<(Persistence.Entities.Deployments.Machine Machine, IAsyncScriptService ScriptClient, ScriptTicket Ticket)> StartExtractCalamariPackageScriptAsync(
-        string extractCalamariPackageScript,
-        byte[] calamariPackageBytes,
-        Persistence.Entities.Deployments.Machine target,
-        CancellationToken ct)
-    {
-        if (target == null)
-            throw new DeploymentTargetException("No target machine to execute ExtractCalamariPackage script");
-
-        var calamariVersion = _calamariGithubPackageSetting.Version;
-
-        var scriptBody = extractCalamariPackageScript
-            .Replace("{{CalamariPath}}", string.Empty, StringComparison.Ordinal)
-            .Replace("{{CalamariPackageVersion}}", calamariVersion, StringComparison.Ordinal)
-            .Replace("{{CalamariPackage}}", "SolarifyDev.SquidCalamari", StringComparison.Ordinal)
-            .Replace("{{SupportPackage}}", string.Empty, StringComparison.Ordinal)
-            .Replace("{{SupportPackageVersion}}", string.Empty, StringComparison.Ordinal)
-            .Replace("{{UsesCustomPackageDirectory}}", "false", StringComparison.Ordinal)
-            .Replace("{{CalamariPackageVersionsToKeep}}", calamariVersion, StringComparison.Ordinal);
-
-        var calamariPackageFileName = $"SolarifyDev.SquidCalamari.{calamariVersion}.nupkg";
-
-        ct.ThrowIfCancellationRequested();
-
-        var endpoint = ParseMachineEndpoint(target);
-
-        if (endpoint == null)
-            throw new DeploymentEndpointException(target.Name);
-
-        var scriptFiles = new[]
-        {
-            new ScriptFile(calamariPackageFileName, DataStream.FromBytes(calamariPackageBytes), null)
-        };
-
-        var command = new StartScriptCommand(
-            scriptBody,
-            ScriptIsolationLevel.FullIsolation,
-            TimeSpan.FromMinutes(30),
-            null,
-            Array.Empty<string>(),
-            null,
-            scriptFiles);
-
-        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
-
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
-        Log.Information("Starting ExtractCalamariPackage script on machine {MachineName} with ticket id: {Ticket}", target.Name, ticket);
-
-        return (target, scriptClient, ticket);
-    }
-
-    private ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(machine.Uri) || string.IsNullOrEmpty(machine.Thumbprint))
-            {
-                Log.Warning("Machine {MachineName} has missing Uri or Thumbprint", machine.Name);
-                return null;
-            }
-
-            return new ServiceEndPoint(machine.Uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to parse machine endpoint for machine {MachineName}", machine.Name);
-            return null;
-        }
     }
 
     private byte[] CreateYamlNuGetPackage(Dictionary<string, Stream> yamlStreams)

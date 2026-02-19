@@ -1,14 +1,13 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
+using Halibut;
 using Moq;
-using Squid.Core.Commands.Tentacle;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.ServerTask;
-using Squid.Core.Services.Tentacle;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -28,33 +27,28 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
             await executor.ProcessAsync(1, CancellationToken.None).ConfigureAwait(false);
 
             await AssertTaskAndDeploymentCompletionAsync().ConfigureAwait(false);
-        }, RegisterTestHalibutAndGithubDownloader).ConfigureAwait(false);
+        }, RegisterTestDependencies).ConfigureAwait(false);
     }
 
-    private void RegisterTestHalibutAndGithubDownloader(ContainerBuilder builder)
+    private void RegisterTestDependencies(ContainerBuilder builder)
     {
-        var scriptServiceMock = new Mock<IAsyncScriptService>();
+        var executionStrategyMock = new Mock<IExecutionStrategy>();
 
-        scriptServiceMock
-            .Setup(x => x.StartScriptAsync(It.IsAny<StartScriptCommand>()))
-            .ReturnsAsync(new ScriptTicket(Guid.NewGuid().ToString("N")));
+        executionStrategyMock
+            .Setup(x => x.CanHandle(It.IsAny<string>()))
+            .Returns(true);
 
-        scriptServiceMock
-            .SetupSequence(x => x.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
-            .ReturnsAsync(new ScriptStatusResponse(new ScriptTicket("t1"), ProcessState.Running, 0, new List<ProcessOutput>(), 0))
-            .ReturnsAsync(new ScriptStatusResponse(new ScriptTicket("t1"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+        executionStrategyMock
+            .Setup(x => x.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult
+            {
+                Success = true,
+                LogLines = new List<string>(),
+                ExitCode = 0
+            });
 
-        scriptServiceMock
-            .Setup(x => x.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
-            .ReturnsAsync(new ScriptStatusResponse(new ScriptTicket("t1"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
-
-        var halibutFactoryMock = new Mock<IHalibutClientFactory>();
-        halibutFactoryMock
-            .Setup(x => x.CreateClient(It.IsAny<Halibut.ServiceEndPoint>()))
-            .Returns(scriptServiceMock.Object);
-
-        builder.RegisterInstance(halibutFactoryMock.Object)
-            .As<IHalibutClientFactory>()
+        builder.RegisterInstance(executionStrategyMock.Object)
+            .As<IExecutionStrategy>()
             .SingleInstance();
 
         var securitySetting = new Squid.Core.Settings.Security.SecuritySetting
@@ -67,6 +61,11 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
 
         builder.RegisterInstance(securitySetting)
             .As<Squid.Core.Settings.Security.SecuritySetting>()
+            .SingleInstance();
+
+        var halibutFactoryMock = new Mock<IHalibutClientFactory>();
+        builder.RegisterInstance(halibutFactoryMock.Object)
+            .As<IHalibutClientFactory>()
             .SingleInstance();
     }
 
@@ -105,7 +104,7 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
 
             var endpointJson = JsonSerializer.Serialize(new
             {
-                CommunicationStyle = "Kubernetes",
+                CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://172.16.145.222:6443",
                 SkipTlsVerification = "True",
                 AccountId = "1",

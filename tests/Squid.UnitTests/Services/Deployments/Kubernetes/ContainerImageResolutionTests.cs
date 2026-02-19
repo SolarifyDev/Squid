@@ -97,7 +97,7 @@ public class ContainerImageResolutionTests
     {
         var feed = new ExternalFeed { RegistryPath = registryPath, FeedUri = feedUri };
 
-        var result = KubernetesEndpointVariableContributor.ResolveFeedUri(feed);
+        var result = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
 
         result.ShouldBe(expected);
     }

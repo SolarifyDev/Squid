@@ -69,7 +69,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         if (feed == null || !feed.PasswordHasValue)
             return null;
 
-        var registryUri = KubernetesEndpointVariableContributor.ResolveFeedUri(feed);
+        var registryUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
         var secretName = BuildFeedSecretName(feed);
         var namespaceName = GetNamespaceFromAction(ctx.Action);
 
@@ -213,7 +213,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         if (feed == null) return;
 
-        var feedUri = KubernetesEndpointVariableContributor.ResolveFeedUri(feed);
+        var feedUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
         var resolvedImage = $"{feedUri}/{ctx.Action.PackageId}:{packageVersion}";
 
         UpdateContainerImages(ctx.Action, resolvedImage);

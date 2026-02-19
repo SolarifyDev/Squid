@@ -2,6 +2,7 @@ using System.Security.Cryptography.X509Certificates;
 using Halibut;
 using Halibut.Diagnostics;
 using Halibut.ServiceModel;
+using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Core.Halibut;
@@ -31,7 +32,23 @@ public class HalibutModule : Module
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
                 .Build();
 
+            StartPollingListenerIfEnabled(ctx, halibutRuntime);
+
             return halibutRuntime;
         }).As<HalibutRuntime>().SingleInstance();
+    }
+
+    private static void StartPollingListenerIfEnabled(IComponentContext ctx, HalibutRuntime halibutRuntime)
+    {
+        if (!ctx.TryResolve<PollingListenerSetting>(out var pollingSetting))
+            return;
+
+        if (!pollingSetting.Enabled) return;
+
+        var port = pollingSetting.Port;
+
+        halibutRuntime.Listen(port);
+
+        Log.Information("Halibut polling listener started on port {Port}", port);
     }
 }

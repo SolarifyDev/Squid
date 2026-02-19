@@ -7,11 +7,11 @@ using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
-public class KubernetesContextScriptBuilderTests
+public class KubernetesApiContextScriptBuilderTests
 {
-    private readonly KubernetesContextScriptBuilder _builder = new();
+    private readonly KubernetesApiContextScriptBuilder _builder = new();
 
-    private static KubernetesEndpointDto CreateEndpoint(
+    private static KubernetesApiEndpointDto CreateEndpoint(
         string clusterUrl = "https://k8s.example.com:6443",
         string ns = "default",
         string skipTls = "False",

@@ -10,22 +10,22 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
-public class KubernetesScriptContextWrapperTests
+public class KubernetesApiScriptContextWrapperTests
 {
-    private readonly Mock<IKubernetesContextScriptBuilder> _builderMock = new();
-    private readonly KubernetesScriptContextWrapper _wrapper;
+    private readonly Mock<IKubernetesApiContextScriptBuilder> _builderMock = new();
+    private readonly KubernetesApiScriptContextWrapper _wrapper;
 
-    public KubernetesScriptContextWrapperTests()
+    public KubernetesApiScriptContextWrapperTests()
     {
-        _wrapper = new KubernetesScriptContextWrapper(_builderMock.Object);
+        _wrapper = new KubernetesApiScriptContextWrapper(_builderMock.Object);
     }
 
     private static string MakeEndpointJson(
         string clusterUrl = "https://k8s.example.com:6443",
         string ns = "default") =>
-        JsonSerializer.Serialize(new KubernetesEndpointDto
+        JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
-            CommunicationStyle = "Kubernetes",
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = clusterUrl,
             Namespace = ns
         });
@@ -41,13 +41,13 @@ public class KubernetesScriptContextWrapperTests
     [Fact]
     public void CanWrap_Kubernetes_ReturnsTrue()
     {
-        _wrapper.CanWrap("Kubernetes").ShouldBeTrue();
+        _wrapper.CanWrap("KubernetesApi").ShouldBeTrue();
     }
 
     [Fact]
     public void CanWrap_CaseInsensitive_ReturnsTrue()
     {
-        _wrapper.CanWrap("kubernetes").ShouldBeTrue();
+        _wrapper.CanWrap("kubernetesapi").ShouldBeTrue();
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
-                It.IsAny<KubernetesEndpointDto>(),
+                It.IsAny<KubernetesApiEndpointDto>(),
                 account,
                 ScriptSyntax.Bash,
                 null))
@@ -90,7 +90,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("wrapped-bash");
         _builderMock.Verify(b => b.WrapWithContext(
             "echo hi",
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             account,
             ScriptSyntax.Bash,
             null), Times.Once);
@@ -107,7 +107,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "Get-Process",
-                It.IsAny<KubernetesEndpointDto>(),
+                It.IsAny<KubernetesApiEndpointDto>(),
                 account,
                 ScriptSyntax.PowerShell,
                 null))
@@ -118,7 +118,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("wrapped-powershell");
         _builderMock.Verify(b => b.WrapWithContext(
             "Get-Process",
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             account,
             ScriptSyntax.PowerShell,
             null), Times.Once);
@@ -134,7 +134,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 It.IsAny<string>(),
-                It.Is<KubernetesEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
+                It.Is<KubernetesApiEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
                 account,
                 It.IsAny<ScriptSyntax>(),
                 It.IsAny<string>()))
@@ -144,7 +144,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
-            It.Is<KubernetesEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
+            It.Is<KubernetesApiEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
             account,
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Once);
@@ -164,7 +164,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
-                It.IsAny<KubernetesEndpointDto>(),
+                It.IsAny<KubernetesApiEndpointDto>(),
                 account,
                 ScriptSyntax.Bash,
                 "/usr/local/bin/kubectl-1.28"))
@@ -187,7 +187,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
-                It.IsAny<KubernetesEndpointDto>(),
+                It.IsAny<KubernetesApiEndpointDto>(),
                 account,
                 ScriptSyntax.Bash,
                 null))
@@ -198,7 +198,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("wrapped-no-custom");
         _builderMock.Verify(b => b.WrapWithContext(
             "echo hi",
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             account,
             ScriptSyntax.Bash,
             null), Times.Once);
@@ -212,7 +212,7 @@ public class KubernetesScriptContextWrapperTests
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
-                It.IsAny<KubernetesEndpointDto>(),
+                It.IsAny<KubernetesApiEndpointDto>(),
                 account,
                 ScriptSyntax.Bash,
                 null))
@@ -233,7 +233,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             It.IsAny<DeploymentAccount>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
@@ -247,7 +247,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             It.IsAny<DeploymentAccount>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
@@ -261,7 +261,7 @@ public class KubernetesScriptContextWrapperTests
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
-            It.IsAny<KubernetesEndpointDto>(),
+            It.IsAny<KubernetesApiEndpointDto>(),
             It.IsAny<DeploymentAccount>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
