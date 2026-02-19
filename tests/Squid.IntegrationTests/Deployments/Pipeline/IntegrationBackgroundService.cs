@@ -14,7 +14,7 @@ using Squid.Message.Enums;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Deployments.Pipeline;
 
 [Collection("Sequential")]
 public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationDeploymentTaskBackgroundService>>
@@ -53,8 +53,13 @@ public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, I
             .Setup(x => x.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
             .ReturnsAsync(new ScriptStatusResponse(new ScriptTicket("t1"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
 
-        builder.RegisterInstance(scriptServiceMock.Object)
-            .As<IAsyncScriptService>()
+        var halibutFactoryMock = new Mock<IHalibutClientFactory>();
+        halibutFactoryMock
+            .Setup(x => x.CreateClient(It.IsAny<Halibut.ServiceEndPoint>()))
+            .Returns(scriptServiceMock.Object);
+
+        builder.RegisterInstance(halibutFactoryMock.Object)
+            .As<IHalibutClientFactory>()
             .SingleInstance();
 
         var securitySetting = new Squid.Core.Settings.Security.SecuritySetting

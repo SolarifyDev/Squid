@@ -1,6 +1,6 @@
-using Halibut;
 using System.Text;
 using System.Text.Json;
+using Halibut;
 using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Exceptions;
@@ -66,7 +66,7 @@ public partial class DeploymentTaskExecutor
             null,
             scriptFiles);
 
-        var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting direct script on machine {MachineName} with ticket {Ticket}", _ctx.CurrentDeployTargetContext.Machine.Name, ticket);

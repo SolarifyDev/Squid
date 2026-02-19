@@ -1,4 +1,3 @@
-using Halibut;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ActivityLog;
@@ -48,9 +47,11 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     #region Infrastructure
 
-    private readonly HalibutRuntime _halibutRuntime;
+    private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
 
+    #endregion
+    
     public DeploymentTaskExecutor(
         IGenericDataProvider genericDataProvider,
         IReleaseDataProvider releaseDataProvider,
@@ -68,7 +69,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IActionHandlerRegistry actionHandlerRegistry,
         IEnumerable<IScriptContextWrapper> scriptWrappers,
         IEnumerable<IEndpointVariableContributor> variableContributors,
-        HalibutRuntime halibutRuntime,
+        IHalibutClientFactory halibutClientFactory,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _genericDataProvider = genericDataProvider;
@@ -87,12 +88,9 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _actionHandlerRegistry = actionHandlerRegistry;
         _scriptWrappers = scriptWrappers;
         _variableContributors = variableContributors;
-        _halibutRuntime = halibutRuntime;
+        _halibutClientFactory = halibutClientFactory;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
-
-    #endregion
-
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {

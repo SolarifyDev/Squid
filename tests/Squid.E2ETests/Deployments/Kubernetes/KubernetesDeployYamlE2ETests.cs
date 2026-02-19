@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -13,22 +8,15 @@ using Squid.Message.Models.Deployments.Process;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes;
 
-/// <summary>
-/// E2E tests for kubectl apply YAML operations against a real kind cluster.
-/// </summary>
-[Collection("KindCluster")]
-[Trait("Category", "E2E")]
-public class KubernetesDeployYamlE2ETests
+public class KubernetesDeployYamlE2ETests : KubernetesE2ETestBase
 {
-    private readonly KindClusterFixture _cluster;
     private readonly KubernetesContextScriptBuilder _contextBuilder = new();
     private readonly KubernetesDeployYamlActionHandler _yamlHandler = new();
 
-    public KubernetesDeployYamlE2ETests(KindClusterFixture cluster)
+    public KubernetesDeployYamlE2ETests(KindClusterFixture cluster) : base(cluster)
     {
-        _cluster = cluster;
     }
 
     [Fact]
@@ -41,7 +29,7 @@ public class KubernetesDeployYamlE2ETests
         try
         {
             // Create namespace first
-            await _cluster.KubectlAsync($"create namespace {testNs}");
+            await Cluster.KubectlAsync($"create namespace {testNs}");
 
             var yaml = $@"apiVersion: v1
 kind: ConfigMap
@@ -98,13 +86,13 @@ data:
             scriptResult.ExitCode.ShouldBe(0, $"Deploy YAML failed: {scriptResult.StdErr}");
 
             // Verify the ConfigMap was created
-            var configMap = await _cluster.KubectlAsync($"-n {testNs} get configmap e2e-inline-test -o yaml");
+            var configMap = await Cluster.KubectlAsync($"-n {testNs} get configmap e2e-inline-test -o yaml");
             configMap.ShouldContain("debug=true");
             configMap.ShouldContain("port=8080");
         }
         finally
         {
-            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+            await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
 
@@ -117,7 +105,7 @@ data:
 
         try
         {
-            await _cluster.KubectlAsync($"create namespace {testNs}");
+            await Cluster.KubectlAsync($"create namespace {testNs}");
 
             var yaml = $@"apiVersion: v1
 kind: ConfigMap
@@ -179,64 +167,14 @@ data:
             scriptResult.ExitCode.ShouldBe(0, $"Deploy multi-doc YAML failed: {scriptResult.StdErr}");
 
             // Verify both ConfigMaps were created
-            var cm1 = await _cluster.KubectlAsync($"-n {testNs} get configmap e2e-multi-1 -o yaml");
+            var cm1 = await Cluster.KubectlAsync($"-n {testNs} get configmap e2e-multi-1 -o yaml");
             cm1.ShouldContain("value1");
-            var cm2 = await _cluster.KubectlAsync($"-n {testNs} get configmap e2e-multi-2 -o yaml");
+            var cm2 = await Cluster.KubectlAsync($"-n {testNs} get configmap e2e-multi-2 -o yaml");
             cm2.ShouldContain("value2");
         }
         finally
         {
-            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+            await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
-
-    // === Helper Methods ===
-
-    private async Task<string> GetClusterUrlAsync()
-    {
-        var output = await _cluster.KubectlAsync("config view --minify -o jsonpath='{.clusters[0].cluster.server}'");
-        return output.Trim('\'');
-    }
-
-    private async Task<string> GetServiceAccountTokenAsync()
-    {
-        const string sa = "squid-e2e-admin";
-        const string ns = "kube-system";
-        try { await _cluster.KubectlAsync($"create serviceaccount {sa} -n {ns}"); } catch { }
-        try { await _cluster.KubectlAsync($"create clusterrolebinding {sa}-binding --clusterrole=cluster-admin --serviceaccount={ns}:{sa}"); } catch { }
-        var token = await _cluster.KubectlAsync($"create token {sa} -n {ns} --duration=3600s");
-        return token.Trim();
-    }
-
-    private static async Task<ScriptResult> ExecuteBashScriptAsync(string script)
-    {
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"squid-e2e-{Guid.NewGuid():N}.sh");
-        await File.WriteAllTextAsync(scriptPath, script);
-        try
-        {
-            using var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "bash",
-                    Arguments = scriptPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return new ScriptResult(process.ExitCode, stdout, stderr);
-        }
-        finally
-        {
-            File.Delete(scriptPath);
-        }
-    }
-
-    private record ScriptResult(int ExitCode, string StdOut, string StdErr);
 }

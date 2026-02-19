@@ -3,7 +3,7 @@ using Squid.Core.Services.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
 
-namespace Squid.IntegrationTests.Snapshots;
+namespace Squid.IntegrationTests.Deployments.Snapshots;
 
 [Collection("Sequential")]
 public class IntegrationSnapshotConversion : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationSnapshotConversion>>

@@ -4,7 +4,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
 [Collection("Sequential")]
 public class IntegrationServerTaskState : IntegrationTestBase,

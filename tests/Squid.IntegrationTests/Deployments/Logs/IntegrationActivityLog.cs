@@ -6,7 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ActivityLog;
 using ActivityLogEntity = Squid.Core.Persistence.Entities.Deployments.ActivityLog;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Deployments.Logs;
 
 [Collection("Sequential")]
 public class IntegrationActivityLog : IntegrationTestBase,

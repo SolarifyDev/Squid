@@ -61,6 +61,113 @@ public class FeedSecretGenerationTests
         KubernetesYamlActionHandler.HasCreateFeedSecrets(action).ShouldBeFalse();
     }
 
+    [Fact]
+    public void HasCreateFeedSecrets_RealProductionContainerJson_ReturnsTrue()
+    {
+        // Real production container JSON — CreateFeedSecrets is the last field
+        // among ~20+ fields including Ports, Resources, Probes, SecurityContext, Lifecycle, etc.
+        const string realContainerJson = """
+            [
+             {
+              "Name": "smarttalk-webapi",
+              "FeedId": "Feeds-1061",
+              "Ports": [
+               {
+                "key": "http",
+                "value": "8080",
+                "option": "TCP"
+               }
+              ],
+              "EnvironmentVariables": [],
+              "SecretEnvironmentVariables": [],
+              "ConfigMapEnvironmentVariables": [],
+              "FieldRefEnvironmentVariables": [],
+              "ConfigMapEnvFromSource": [
+               {
+                "key": "configurations-smarttalk-#{Squid.Deployment.Id | ToLower}",
+                "value": "",
+                "option": ""
+               }
+              ],
+              "SecretEnvFromSource": [],
+              "VolumeMounts": [
+               {
+                "key": "config",
+                "value": "/root/.ssh",
+                "option": ""
+               }
+              ],
+              "Resources": {
+               "requests": {
+                "memory": "#{MemoryResourceRequest}",
+                "cpu": "#{CpuResourceRequest}",
+                "ephemeralStorage": ""
+               },
+               "limits": {
+                "memory": "#{MemoryResourceLimit}",
+                "cpu": "#{CpuResourceLimit}",
+                "ephemeralStorage": "",
+                "nvidiaGpu": "",
+                "amdGpu": ""
+               }
+              },
+              "LivenessProbe": {
+               "failureThreshold": "",
+               "initialDelaySeconds": "",
+               "periodSeconds": "",
+               "successThreshold": "",
+               "timeoutSeconds": "",
+               "type": null,
+               "exec": { "command": [] },
+               "httpGet": { "host": "", "path": "", "port": "", "scheme": "", "httpHeaders": [] },
+               "tcpSocket": { "host": "", "port": "" }
+              },
+              "ReadinessProbe": {
+               "failureThreshold": "",
+               "initialDelaySeconds": "",
+               "periodSeconds": "",
+               "successThreshold": "",
+               "timeoutSeconds": "",
+               "type": null,
+               "exec": { "command": [] },
+               "httpGet": { "host": "", "path": "", "port": "", "scheme": "", "httpHeaders": [] },
+               "tcpSocket": { "host": "", "port": "" }
+              },
+              "StartupProbe": {
+               "failureThreshold": "",
+               "initialDelaySeconds": "",
+               "periodSeconds": "",
+               "successThreshold": "",
+               "timeoutSeconds": "",
+               "type": null,
+               "exec": { "command": [] },
+               "httpGet": { "host": "", "path": "", "port": "", "scheme": "", "httpHeaders": [] },
+               "tcpSocket": { "host": "", "port": "" }
+              },
+              "Command": [],
+              "Args": [],
+              "InitContainer": "False",
+              "SecurityContext": {
+               "allowPrivilegeEscalation": "",
+               "privileged": "",
+               "readOnlyRootFilesystem": "",
+               "runAsGroup": "",
+               "runAsNonRoot": "",
+               "runAsUser": "",
+               "capabilities": { "add": [], "drop": [] },
+               "seLinuxOptions": { "level": "", "role": "", "type": "", "user": "" }
+              },
+              "Lifecycle": {},
+              "CreateFeedSecrets": "True"
+             }
+            ]
+            """;
+
+        var action = CreateActionWithContainers(realContainerJson);
+
+        KubernetesYamlActionHandler.HasCreateFeedSecrets(action).ShouldBeTrue();
+    }
+
     // === InjectImagePullSecret ===
 
     [Fact]
@@ -176,10 +283,75 @@ public class FeedSecretGenerationTests
         result.ShouldContain($".dockerconfigjson: {expectedData}");
     }
 
+    // === BuildFeedSecretName ===
+
+    [Theory]
+    [InlineData("my-feed", "MyFeed", 10, "my-feed-registry-secret")]
+    [InlineData(null, "MyFeed", 10, "myfeed-registry-secret")]
+    [InlineData(null, null, 42, "feed-42-registry-secret")]
+    public void BuildFeedSecretName_ReturnsExpected(string slug, string name, int id, string expected)
+    {
+        var feed = new ExternalFeed { Id = id, Slug = slug, Name = name };
+
+        KubernetesYamlActionHandler.BuildFeedSecretName(feed).ShouldBe(expected);
+    }
+
+    // === GetNamespaceFromAction ===
+
+    [Theory]
+    [InlineData("Squid.Action.KubernetesContainers.Namespace", "staging", "staging")]
+    [InlineData("Squid.Action.Kubernetes.Namespace", "production", "production")]
+    public void GetNamespaceFromAction_ReturnsExpected(string propName, string propValue, string expected)
+    {
+        var action = new DeploymentActionDto
+        {
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new() { PropertyName = propName, PropertyValue = propValue }
+            }
+        };
+
+        KubernetesYamlActionHandler.GetNamespaceFromAction(action).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void GetNamespaceFromAction_NoNamespaceProperty_ReturnsDefault()
+    {
+        var action = new DeploymentActionDto
+        {
+            Properties = new List<DeploymentActionPropertyDto>()
+        };
+
+        KubernetesYamlActionHandler.GetNamespaceFromAction(action).ShouldBe("default");
+    }
+
+    [Fact]
+    public void GetNamespaceFromAction_ContainersNamespaceTakesPriority()
+    {
+        var action = new DeploymentActionDto
+        {
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new()
+                {
+                    PropertyName = "Squid.Action.KubernetesContainers.Namespace",
+                    PropertyValue = "containers-ns"
+                },
+                new()
+                {
+                    PropertyName = "Squid.Action.Kubernetes.Namespace",
+                    PropertyValue = "k8s-ns"
+                }
+            }
+        };
+
+        KubernetesYamlActionHandler.GetNamespaceFromAction(action).ShouldBe("containers-ns");
+    }
+
     // === Integration: PrepareAsync ===
 
     [Fact]
-    public async Task PrepareAsync_CreateFeedSecretsTrue_GeneratesSecretYaml()
+    public async Task PrepareAsync_CreateFeedSecretsTrue_GeneratesFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -216,9 +388,9 @@ public class FeedSecretGenerationTests
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldContainKey("secret.yaml");
+        result.Files.ShouldContainKey("feedsecrets.yaml");
 
-        var secretYaml = Encoding.UTF8.GetString(result.Files["secret.yaml"]);
+        var secretYaml = Encoding.UTF8.GetString(result.Files["feedsecrets.yaml"]);
         secretYaml.ShouldContain("kind: Secret");
         secretYaml.ShouldContain("name: myregistry-registry-secret");
         secretYaml.ShouldContain("namespace: staging");
@@ -230,7 +402,7 @@ public class FeedSecretGenerationTests
     }
 
     [Fact]
-    public async Task PrepareAsync_CreateFeedSecretsFalse_NoSecretYaml()
+    public async Task PrepareAsync_CreateFeedSecretsFalse_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -251,11 +423,11 @@ public class FeedSecretGenerationTests
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("secret.yaml");
+        result.Files.ShouldNotContainKey("feedsecrets.yaml");
     }
 
     [Fact]
-    public async Task PrepareAsync_FeedNoCredentials_NoSecretYaml()
+    public async Task PrepareAsync_FeedNoCredentials_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -285,7 +457,60 @@ public class FeedSecretGenerationTests
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("secret.yaml");
+        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedNotFound_NoFeedSecretsYaml()
+    {
+        var containerJson = JsonSerializer.Serialize(new[]
+        {
+            new Dictionary<string, object>
+            {
+                ["Name"] = "web",
+                ["Image"] = "myapp",
+                ["CreateFeedSecrets"] = "True"
+            }
+        });
+
+        var action = CreateActionWithContainers(containerJson, feedId: 10, packageId: "myapp");
+        var ctx = CreateContext(action, packageVersion: "1.0.0");
+
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalFeed)null);
+
+        var generator = CreateMockGenerator(canHandle: true);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoFeedId_NoFeedSecretsYaml()
+    {
+        var containerJson = JsonSerializer.Serialize(new[]
+        {
+            new Dictionary<string, object>
+            {
+                ["Name"] = "web",
+                ["Image"] = "myapp",
+                ["CreateFeedSecrets"] = "True"
+            }
+        });
+
+        var action = CreateActionWithContainers(containerJson, feedId: null, packageId: "myapp");
+        var ctx = CreateContext(action, packageVersion: "1.0.0");
+
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        var generator = CreateMockGenerator(canHandle: true);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldNotContainKey("feedsecrets.yaml");
     }
 
     // === Helpers ===

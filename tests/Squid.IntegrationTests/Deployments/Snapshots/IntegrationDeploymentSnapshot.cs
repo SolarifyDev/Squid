@@ -7,7 +7,7 @@ using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
 
-namespace Squid.IntegrationTests.Snapshots;
+namespace Squid.IntegrationTests.Deployments.Snapshots;
 
 [Collection("Sequential")]
 public class IntegrationDeploymentSnapshot : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationDeploymentSnapshot>>

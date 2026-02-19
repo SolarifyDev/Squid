@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -10,25 +7,14 @@ using Squid.Message.Models.Deployments.Machine;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes;
 
-/// <summary>
-/// E2E tests that validate generated kubectl context scripts execute correctly
-/// against a real kind cluster.
-///
-/// Run: SQUID_KEEP_CLUSTER=true dotnet test --filter "Category=E2E"
-/// Requires: Docker + kind + kubectl
-/// </summary>
-[Collection("KindCluster")]
-[Trait("Category", "E2E")]
-public class KubernetesContextScriptE2ETests
+public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
 {
-    private readonly KindClusterFixture _cluster;
     private readonly KubernetesContextScriptBuilder _builder = new();
 
-    public KubernetesContextScriptE2ETests(KindClusterFixture cluster)
+    public KubernetesContextScriptE2ETests(KindClusterFixture cluster) : base(cluster)
     {
-        _cluster = cluster;
     }
 
     [Fact]
@@ -95,7 +81,7 @@ public class KubernetesContextScriptE2ETests
         result.StdOut.ShouldContain(testNs);
 
         // Cleanup
-        await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+        await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
     }
 
     [Fact]
@@ -141,7 +127,7 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         result.StdOut.ShouldContain("squid-e2e-test");
 
         // Cleanup
-        await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+        await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
     }
 
     [Fact]
@@ -173,77 +159,4 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         result.ExitCode.ShouldBe(0, $"Script failed: {result.StdErr}");
         result.StdOut.ShouldContain("Kubernetes");
     }
-
-    // === Helper Methods ===
-
-    private async Task<string> GetClusterUrlAsync()
-    {
-        var output = await _cluster.KubectlAsync("config view --minify -o jsonpath='{.clusters[0].cluster.server}'");
-        return output.Trim('\'');
-    }
-
-    private async Task<string> GetServiceAccountTokenAsync()
-    {
-        // Create a service account with cluster-admin for testing
-        const string sa = "squid-e2e-admin";
-        const string ns = "kube-system";
-
-        try
-        {
-            await _cluster.KubectlAsync($"create serviceaccount {sa} -n {ns}");
-        }
-        catch
-        {
-            // Already exists
-        }
-
-        try
-        {
-            await _cluster.KubectlAsync(
-                $"create clusterrolebinding {sa}-binding --clusterrole=cluster-admin --serviceaccount={ns}:{sa}");
-        }
-        catch
-        {
-            // Already exists
-        }
-
-        // Create a token for the service account
-        var token = await _cluster.KubectlAsync($"create token {sa} -n {ns} --duration=3600s");
-        return token.Trim();
-    }
-
-    private static async Task<ScriptResult> ExecuteBashScriptAsync(string script)
-    {
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"squid-e2e-{Guid.NewGuid():N}.sh");
-        await File.WriteAllTextAsync(scriptPath, script);
-
-        try
-        {
-            using var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "bash",
-                    Arguments = scriptPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            return new ScriptResult(process.ExitCode, stdout, stderr);
-        }
-        finally
-        {
-            File.Delete(scriptPath);
-        }
-    }
-
-    private record ScriptResult(int ExitCode, string StdOut, string StdErr);
 }

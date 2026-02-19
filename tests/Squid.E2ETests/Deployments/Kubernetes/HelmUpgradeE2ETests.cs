@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -14,24 +9,15 @@ using Squid.Message.Models.Deployments.Process;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes;
 
-/// <summary>
-/// E2E tests for Helm upgrade operations against a real kind cluster.
-///
-/// Prerequisites: Docker + kind + kubectl + helm
-/// </summary>
-[Collection("KindCluster")]
-[Trait("Category", "E2E")]
-public class HelmUpgradeE2ETests
+public class HelmUpgradeE2ETests : KubernetesE2ETestBase
 {
-    private readonly KindClusterFixture _cluster;
     private readonly KubernetesContextScriptBuilder _contextBuilder = new();
     private readonly HelmUpgradeActionHandler _helmHandler = new();
 
-    public HelmUpgradeE2ETests(KindClusterFixture cluster)
+    public HelmUpgradeE2ETests(KindClusterFixture cluster) : base(cluster)
     {
-        _cluster = cluster;
     }
 
     [Fact]
@@ -85,14 +71,14 @@ public class HelmUpgradeE2ETests
             scriptResult.ExitCode.ShouldBe(0, $"Helm upgrade failed: {scriptResult.StdErr}");
 
             // Verify the release exists
-            var releases = await _cluster.KubectlAsync($"-n {testNs} get pods");
+            var releases = await Cluster.KubectlAsync($"-n {testNs} get pods");
             releases.ShouldContain("nginx");
         }
         finally
         {
             // Cleanup
             await ExecuteBashAsync($"helm uninstall {releaseName} -n {testNs} 2>/dev/null || true");
-            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+            await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
 
@@ -163,7 +149,7 @@ public class HelmUpgradeE2ETests
         finally
         {
             await ExecuteBashAsync($"helm uninstall {releaseName} -n {testNs} 2>/dev/null || true");
-            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+            await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
 
@@ -216,7 +202,7 @@ public class HelmUpgradeE2ETests
         }
         finally
         {
-            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+            await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
 
@@ -241,70 +227,4 @@ public class HelmUpgradeE2ETests
 
         return action;
     }
-
-    private async Task<string> GetClusterUrlAsync()
-    {
-        var output = await _cluster.KubectlAsync("config view --minify -o jsonpath='{.clusters[0].cluster.server}'");
-        return output.Trim('\'');
-    }
-
-    private async Task<string> GetServiceAccountTokenAsync()
-    {
-        const string sa = "squid-e2e-admin";
-        const string ns = "kube-system";
-        try { await _cluster.KubectlAsync($"create serviceaccount {sa} -n {ns}"); } catch { }
-        try { await _cluster.KubectlAsync($"create clusterrolebinding {sa}-binding --clusterrole=cluster-admin --serviceaccount={ns}:{sa}"); } catch { }
-        var token = await _cluster.KubectlAsync($"create token {sa} -n {ns} --duration=3600s");
-        return token.Trim();
-    }
-
-    private static async Task ExecuteBashAsync(string command)
-    {
-        using var process = new System.Diagnostics.Process
-        {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "bash",
-                Arguments = $"-c \"{command.Replace("\"", "\\\"")}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-        process.Start();
-        await process.WaitForExitAsync();
-    }
-
-    private static async Task<ScriptResult> ExecuteBashScriptAsync(string script)
-    {
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"squid-e2e-{Guid.NewGuid():N}.sh");
-        await File.WriteAllTextAsync(scriptPath, script);
-        try
-        {
-            using var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "bash",
-                    Arguments = scriptPath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return new ScriptResult(process.ExitCode, stdout, stderr);
-        }
-        finally
-        {
-            File.Delete(scriptPath);
-        }
-    }
-
-    private record ScriptResult(int ExitCode, string StdOut, string StdErr);
 }

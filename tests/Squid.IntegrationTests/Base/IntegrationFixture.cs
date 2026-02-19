@@ -7,7 +7,7 @@ using Squid.Core.DbUpFiles;
 using Squid.Core.Settings;
 using Squid.Core.Settings.SelfCert;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Base;
 
 public interface IIntegrationFixture
 {

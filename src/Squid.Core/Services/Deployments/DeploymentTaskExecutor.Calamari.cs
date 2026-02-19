@@ -140,7 +140,7 @@ public partial class DeploymentTaskExecutor
             null,
             scriptFiles);
 
-        var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
@@ -192,7 +192,7 @@ public partial class DeploymentTaskExecutor
             null,
             scriptFiles);
 
-        var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 

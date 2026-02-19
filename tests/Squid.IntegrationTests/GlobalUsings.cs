@@ -7,4 +7,5 @@ global using Mediator.Net;
 global using Shouldly;
 global using Squid.Core;
 global using Squid.Core.Persistence;
+global using Squid.IntegrationTests.Base;
 global using Xunit;

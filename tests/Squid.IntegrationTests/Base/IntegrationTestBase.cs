@@ -1,4 +1,4 @@
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Base;
 
 public class IntegrationTestBase : IAsyncLifetime
 {

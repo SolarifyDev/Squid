@@ -3,7 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using Squid.Core.Services.Common;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Deployments.Pipeline;
 
 [Collection("Sequential")]
 public class IntegrationYamlNugetPacker : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationYamlNugetPacker>>

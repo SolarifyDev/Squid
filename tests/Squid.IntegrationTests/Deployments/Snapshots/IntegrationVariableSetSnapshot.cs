@@ -5,7 +5,7 @@ using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 
-namespace Squid.IntegrationTests.Snapshots;
+namespace Squid.IntegrationTests.Deployments.Snapshots;
 
 [Collection("Sequential")]
 public class IntegrationVariableSetSnapshot : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationVariableSetSnapshot>>

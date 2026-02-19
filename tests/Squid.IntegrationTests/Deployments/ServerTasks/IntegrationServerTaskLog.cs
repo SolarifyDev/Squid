@@ -6,7 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.IntegrationTests.Helpers;
 
-namespace Squid.IntegrationTests;
+namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
 [Collection("Sequential")]
 public class IntegrationServerTaskLog : IntegrationTestBase,

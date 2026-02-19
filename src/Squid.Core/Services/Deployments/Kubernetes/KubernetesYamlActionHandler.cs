@@ -45,7 +45,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             ?? new Dictionary<string, byte[]>();
 
         if (secretYaml != null)
-            yamlFiles["secret.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
+            yamlFiles["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
 
         return new ActionExecutionResult
         {
@@ -178,14 +178,14 @@ public class KubernetesYamlActionHandler : IActionHandler
             """;
     }
 
-    private static string BuildFeedSecretName(ExternalFeed feed)
+    public static string BuildFeedSecretName(ExternalFeed feed)
     {
         var slug = feed.Slug ?? feed.Name ?? $"feed-{feed.Id}";
 
         return $"{slug}-registry-secret".ToLowerInvariant();
     }
 
-    private static string GetNamespaceFromAction(DeploymentActionDto action)
+    public static string GetNamespaceFromAction(DeploymentActionDto action)
     {
         var ns = action.Properties?
             .FirstOrDefault(p => p.PropertyName == "Squid.Action.KubernetesContainers.Namespace")?.PropertyValue;
