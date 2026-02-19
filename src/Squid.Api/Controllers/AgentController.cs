@@ -1,6 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Halibut;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -11,6 +12,7 @@ using Squid.Message.Models.Agent;
 namespace Squid.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/agents")]
 public class AgentController : ControllerBase
 {

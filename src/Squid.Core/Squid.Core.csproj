@@ -53,7 +53,7 @@
   </ItemGroup>
 
   <ItemGroup Label="DbUp">
-    <Content Include="DbUpFiles/**" Exclude="*.cs">
+    <Content Include="Persistence\DbUpFiles\**" Exclude="Persistence\DbUpFiles\*.cs">
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

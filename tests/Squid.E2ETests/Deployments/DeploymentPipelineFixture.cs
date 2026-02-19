@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using Autofac;
+using Autofac.Core;
 using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.Deployments;
 using Squid.Core.Settings.GithubPackage;
@@ -9,15 +10,18 @@ namespace Squid.E2ETests.Deployments;
 
 public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
 {
-    public CapturingHalibutClientFactory ScriptCapture { get; } = new();
+    public CapturingExecutionStrategy ExecutionCapture { get; } = new();
 
     private string _calamariCacheDir;
 
     protected override void RegisterOverrides(ContainerBuilder builder, IConfiguration configuration)
     {
-        builder.RegisterInstance(ScriptCapture)
-            .As<IHalibutClientFactory>()
-            .SingleInstance();
+        builder.RegisterType<DeploymentTaskExecutor>()
+            .As<IDeploymentTaskExecutor>()
+            .WithParameter(new ResolvedParameter(
+                (pi, _) => pi.ParameterType == typeof(IEnumerable<IExecutionStrategy>),
+                (_, _) => new IExecutionStrategy[] { ExecutionCapture }))
+            .InstancePerLifetimeScope();
 
         _calamariCacheDir = Path.Combine(Path.GetTempPath(), $"squid-e2e-calamari-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_calamariCacheDir);

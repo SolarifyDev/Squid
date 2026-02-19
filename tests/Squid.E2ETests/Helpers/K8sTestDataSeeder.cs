@@ -27,6 +27,7 @@ public class K8sTestDataSeeder
         bool createFeedSecrets,
         int replicas = 2,
         string namespaceName = "default",
+        string communicationStyle = "KubernetesApi",
         CancellationToken ct = default)
     {
         var variableSet = await _builder.CreateVariableSetAsync().ConfigureAwait(false);
@@ -91,49 +92,15 @@ public class K8sTestDataSeeder
 
         var environment = await _builder.CreateEnvironmentAsync("E2E Test Environment").ConfigureAwait(false);
 
-        var endpointJson = JsonSerializer.Serialize(new
-        {
-            CommunicationStyle = "KubernetesApi",
-            ClusterUrl = "https://localhost:6443",
-            SkipTlsVerification = "True",
-            AccountId = "1",
-            Namespace = "default"
-        });
-
-        var machine = new Machine
-        {
-            Name = "E2E K8s Target",
-            IsDisabled = false,
-            Roles = "k8s",
-            EnvironmentIds = environment.Id.ToString(),
-            Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
-            Thumbprint = "E2E-THUMBPRINT",
-            Uri = "https://localhost:10933",
-            HasLatestCalamari = false,
-            Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
-            SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Windows,
-            ShellName = "PowerShell",
-            ShellVersion = "7.0",
-            LicenseHash = string.Empty,
-            Slug = "e2e-k8s-target"
-        };
+        var machine = communicationStyle == "KubernetesAgent"
+            ? CreateAgentMachine(environment)
+            : CreateApiMachine(environment);
 
         await _repository.InsertAsync(machine, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
-        var account = new DeploymentAccount
-        {
-            SpaceId = 1,
-            Name = "E2E K8s Account",
-            Slug = "e2e-k8s-account",
-            AccountType = AccountType.Token,
-            Token = "e2e-test-token"
-        };
-
-        await _repository.InsertAsync(account, ct).ConfigureAwait(false);
-        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        if (communicationStyle != "KubernetesAgent")
+            await CreateAccountAsync(ct).ConfigureAwait(false);
 
         var feed = new ExternalFeed
         {
@@ -208,6 +175,87 @@ public class K8sTestDataSeeder
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
         ServerTaskId = serverTask.Id;
+    }
+
+    private static Machine CreateApiMachine(Environment environment)
+    {
+        var endpointJson = JsonSerializer.Serialize(new
+        {
+            CommunicationStyle = "KubernetesApi",
+            ClusterUrl = "https://localhost:6443",
+            SkipTlsVerification = "True",
+            AccountId = "1",
+            Namespace = "default"
+        });
+
+        return new Machine
+        {
+            Name = "E2E K8s Target",
+            IsDisabled = false,
+            Roles = "k8s",
+            EnvironmentIds = environment.Id.ToString(),
+            Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
+            Thumbprint = "E2E-THUMBPRINT",
+            Uri = "https://localhost:10933",
+            HasLatestCalamari = false,
+            Endpoint = endpointJson,
+            DataVersion = Array.Empty<byte>(),
+            SpaceId = 1,
+            OperatingSystem = OperatingSystemType.Windows,
+            ShellName = "PowerShell",
+            ShellVersion = "7.0",
+            LicenseHash = string.Empty,
+            Slug = "e2e-k8s-target"
+        };
+    }
+
+    private static Machine CreateAgentMachine(Environment environment)
+    {
+        var subscriptionId = Guid.NewGuid().ToString("N");
+
+        var endpointJson = JsonSerializer.Serialize(new
+        {
+            CommunicationStyle = "KubernetesAgent",
+            SubscriptionId = subscriptionId,
+            Thumbprint = "E2E-AGENT-THUMBPRINT",
+            Namespace = "default"
+        });
+
+        return new Machine
+        {
+            Name = "E2E K8s Agent",
+            IsDisabled = false,
+            Roles = "k8s",
+            EnvironmentIds = environment.Id.ToString(),
+            Json = string.Empty,
+            Thumbprint = "E2E-AGENT-THUMBPRINT",
+            Uri = string.Empty,
+            HasLatestCalamari = false,
+            Endpoint = endpointJson,
+            DataVersion = Array.Empty<byte>(),
+            SpaceId = 1,
+            OperatingSystem = OperatingSystemType.Linux,
+            ShellName = "Bash",
+            ShellVersion = string.Empty,
+            PollingSubscriptionId = subscriptionId,
+            LicenseHash = string.Empty,
+            Slug = $"e2e-k8s-agent-{subscriptionId[..8]}"
+        };
+    }
+
+    private async Task CreateAccountAsync(CancellationToken ct)
+    {
+        var account = new DeploymentAccount
+        {
+            SpaceId = 1,
+            Name = "E2E K8s Account",
+            Slug = "e2e-k8s-account",
+            AccountType = AccountType.Token,
+            Token = "e2e-test-token"
+        };
+
+        await _repository.InsertAsync(account, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     private static string BuildContainerJson(bool createFeedSecrets)

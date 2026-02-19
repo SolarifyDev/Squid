@@ -1,5 +1,5 @@
 using Autofac.Extensions.DependencyInjection;
-using Squid.Core.DbUpFiles;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Settings;
 using Squid.Core.Settings.Logging;
 
@@ -29,7 +29,7 @@ public class Program
         {
             Log.Information("Configuring api host ({ApplicationContext})...", application);
 
-            new DbUpRunner(new SquidConnectionString(configuration).Value).Run(nameof(Core.DbUpFiles), typeof(DbUpRunner).Assembly);
+            new DbUpRunner(new SquidConnectionString(configuration).Value).Run();
 
             var webHost = CreateHostBuilder(args, configuration).Build();
 

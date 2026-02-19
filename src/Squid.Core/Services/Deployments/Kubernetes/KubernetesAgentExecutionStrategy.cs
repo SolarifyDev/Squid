@@ -211,13 +211,18 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     {
         try
         {
-            if (string.IsNullOrEmpty(machine.Uri) || string.IsNullOrEmpty(machine.Thumbprint))
+            var uri = machine.Uri;
+
+            if (string.IsNullOrEmpty(uri) && !string.IsNullOrEmpty(machine.PollingSubscriptionId))
+                uri = $"poll://{machine.PollingSubscriptionId}/";
+
+            if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(machine.Thumbprint))
             {
                 Log.Warning("Machine {MachineName} has missing Uri or Thumbprint", machine.Name);
                 return null;
             }
 
-            return new ServiceEndPoint(machine.Uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return new ServiceEndPoint(uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
         }
         catch (Exception ex)
         {

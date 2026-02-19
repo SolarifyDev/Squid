@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
-using Squid.Core.DbUpFiles;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Settings;
 using Squid.Core.Settings.SelfCert;
@@ -80,7 +80,7 @@ public partial class TestBase
 
         var isolatedConnectionString = GetIsolatedConnectionString(configuration);
 
-        new DbUpRunner(isolatedConnectionString).Run(nameof(Core.DbUpFiles), typeof(DbUpRunner).Assembly);
+        new DbUpRunner(isolatedConnectionString).Run();
         ShouldRunDbUpDatabases[_databaseName] = true;
     }
 

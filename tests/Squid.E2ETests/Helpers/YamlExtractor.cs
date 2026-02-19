@@ -5,6 +5,28 @@ namespace Squid.E2ETests.Helpers;
 
 public static class YamlExtractor
 {
+    public static Dictionary<string, byte[]> Extract(CapturingExecutionStrategy capture)
+    {
+        var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var request in capture.CapturedRequests)
+        {
+            foreach (var file in request.Files)
+            {
+                if (!file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) &&
+                    !file.Key.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                result[file.Key] = file.Value;
+            }
+        }
+
+        if (result.Count == 0)
+            throw new InvalidOperationException("No YAML files found in captured execution requests");
+
+        return result;
+    }
+
     public static Dictionary<string, byte[]> Extract(CapturingHalibutClientFactory capture)
     {
         var packageFile = FindYamlPackageFile(capture.CapturedFileBytes);

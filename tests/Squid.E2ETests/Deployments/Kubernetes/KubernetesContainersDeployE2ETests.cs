@@ -26,12 +26,14 @@ public class KubernetesContainersDeployE2ETests
         _fixture = fixture;
     }
 
-    private CapturingHalibutClientFactory ScriptCapture => _fixture.ScriptCapture;
+    private CapturingExecutionStrategy ExecutionCapture => _fixture.ExecutionCapture;
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task FullPipeline_DeployContainers(bool createFeedSecrets)
+    [InlineData("KubernetesApi", true)]
+    [InlineData("KubernetesApi", false)]
+    [InlineData("KubernetesAgent", true)]
+    [InlineData("KubernetesAgent", false)]
+    public async Task FullPipeline_DeployContainers(string communicationStyle, bool createFeedSecrets)
     {
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
@@ -40,7 +42,7 @@ public class KubernetesContainersDeployE2ETests
             await _cluster.KubectlAsync($"create namespace {testNs}");
 
             // 1. Seed DB with complete entity graph
-            var serverTaskId = await SeedDatabaseAsync(createFeedSecrets, replicas: 2, testNs);
+            var serverTaskId = await SeedDatabaseAsync(createFeedSecrets, replicas: 2, testNs, communicationStyle);
 
             // 2. Execute full pipeline
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
@@ -51,8 +53,8 @@ public class KubernetesContainersDeployE2ETests
             // 3. Assert DB state
             await AssertTaskSuccessAsync();
 
-            // 4. Extract YAML from captured NuGet package
-            var yamlFiles = YamlExtractor.Extract(ScriptCapture);
+            // 4. Extract YAML from captured execution requests
+            var yamlFiles = YamlExtractor.Extract(ExecutionCapture);
 
             yamlFiles.ShouldContainKey("deployment.yaml");
             yamlFiles.ShouldContainKey("service.yaml");
@@ -124,8 +126,10 @@ public class KubernetesContainersDeployE2ETests
         }
     }
 
-    [Fact]
-    public async Task FullPipeline_DeployContainers_VariablesResolvedFromDb()
+    [Theory]
+    [InlineData("KubernetesApi")]
+    [InlineData("KubernetesAgent")]
+    public async Task FullPipeline_DeployContainers_VariablesResolvedFromDb(string communicationStyle)
     {
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
@@ -133,14 +137,15 @@ public class KubernetesContainersDeployE2ETests
         {
             await _cluster.KubectlAsync($"create namespace {testNs}");
 
-            var serverTaskId = await SeedDatabaseAsync(createFeedSecrets: false, replicas: 3, testNs);
+            var serverTaskId = await SeedDatabaseAsync(
+                createFeedSecrets: false, replicas: 3, testNs, communicationStyle);
 
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
             {
                 await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
             }).ConfigureAwait(false);
 
-            var yamlFiles = YamlExtractor.Extract(ScriptCapture);
+            var yamlFiles = YamlExtractor.Extract(ExecutionCapture);
 
             // Verify YAML contains resolved values, not templates
             var deploymentYaml = Encoding.UTF8.GetString(yamlFiles["deployment.yaml"]);
@@ -175,8 +180,10 @@ public class KubernetesContainersDeployE2ETests
         }
     }
 
-    [Fact]
-    public async Task FullPipeline_DeployContainers_FullPodSpec()
+    [Theory]
+    [InlineData("KubernetesApi")]
+    [InlineData("KubernetesAgent")]
+    public async Task FullPipeline_DeployContainers_FullPodSpec(string communicationStyle)
     {
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
@@ -184,14 +191,15 @@ public class KubernetesContainersDeployE2ETests
         {
             await _cluster.KubectlAsync($"create namespace {testNs}");
 
-            var serverTaskId = await SeedDatabaseAsync(createFeedSecrets: false, replicas: 1, testNs);
+            var serverTaskId = await SeedDatabaseAsync(
+                createFeedSecrets: false, replicas: 1, testNs, communicationStyle);
 
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
             {
                 await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
             }).ConfigureAwait(false);
 
-            var yamlFiles = YamlExtractor.Extract(ScriptCapture);
+            var yamlFiles = YamlExtractor.Extract(ExecutionCapture);
 
             var tempDir = await WriteYamlToTempDirAsync(yamlFiles);
 
@@ -243,18 +251,18 @@ public class KubernetesContainersDeployE2ETests
     // Helpers
     // ========================================================================
 
-    private async Task<int> SeedDatabaseAsync(bool createFeedSecrets, int replicas, string testNs)
+    private async Task<int> SeedDatabaseAsync(
+        bool createFeedSecrets, int replicas, string testNs, string communicationStyle = "KubernetesApi")
     {
         // Clear capture from previous tests
-        ScriptCapture.CapturedCommands.Clear();
-        ScriptCapture.CapturedFileBytes.Clear();
+        ExecutionCapture.Clear();
 
         var serverTaskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
             var seeder = new K8sTestDataSeeder(repository, unitOfWork);
-            await seeder.SeedAsync(createFeedSecrets, replicas, testNs).ConfigureAwait(false);
+            await seeder.SeedAsync(createFeedSecrets, replicas, testNs, communicationStyle).ConfigureAwait(false);
             serverTaskId = seeder.ServerTaskId;
         }).ConfigureAwait(false);
 

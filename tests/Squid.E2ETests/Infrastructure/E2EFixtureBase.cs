@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
 using Squid.Core;
-using Squid.Core.DbUpFiles;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Settings.Security;
 using Squid.Core.Settings.SelfCert;
 using Xunit;
@@ -41,7 +41,7 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         Log.Logger = logger;
 
         _connectionString = CreateIsolatedConnectionString(GetBaseConnectionString());
-        new DbUpRunner(_connectionString).Run(nameof(Core.DbUpFiles), typeof(DbUpRunner).Assembly);
+        new DbUpRunner(_connectionString).Run();
 
         configuration["SquidStore:ConnectionString"] = _connectionString;
 

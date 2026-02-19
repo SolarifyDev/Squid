@@ -1,3 +1,4 @@
+using Squid.Api.Extensions;
 using Squid.Api.Filters;
 
 namespace Squid.Api;
@@ -19,6 +20,7 @@ public class Startup
         services.AddHttpContextAccessor();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
+        services.AddCustomAuthentication(Configuration);
         services.AddHangfireInternal(Configuration);
         services.AddMvc(options =>
         {
@@ -37,6 +39,8 @@ public class Startup
 
         app.UseRouting();
         app.UseCors();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
         app.UseHangfireInternal(Configuration);
     }

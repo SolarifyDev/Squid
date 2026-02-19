@@ -1,10 +1,12 @@
 using DbUp;
 using DbUp.ScriptProviders;
 
-namespace Squid.Core.DbUpFiles;
+namespace Squid.Core.Persistence.Db;
 
 public class DbUpRunner
 {
+    public static readonly string ScriptFolder = Path.Combine("Persistence", "DbUpFiles");
+
     private readonly string _connectionString;
 
     public DbUpRunner(string connectionString)
@@ -12,18 +14,23 @@ public class DbUpRunner
         _connectionString = connectionString;
     }
 
-    public void Run(string scriptFolderName, Assembly assembly)
+    public void Run()
     {
         EnsureDatabase.For.PostgresqlDatabase(_connectionString);
 
+        var assemblyLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty;
+        var embeddedResourcePrefix = ScriptFolder.Replace(Path.DirectorySeparatorChar, '.');
+
         var upgradeEngine = DeployChanges.To.PostgresqlDatabase(_connectionString)
             .WithScriptsFromFileSystem(
-                Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty, scriptFolderName),
+                Path.Combine(assemblyLocation, ScriptFolder),
                 new FileSystemScriptOptions
                 {
                     IncludeSubDirectories = true
                 })
-            .WithScriptsAndCodeEmbeddedInAssembly(assembly, s => s.StartsWith($"{assembly.GetName().Name}.{scriptFolderName}"))
+            .WithScriptsAndCodeEmbeddedInAssembly(
+                typeof(DbUpRunner).Assembly,
+                s => s.StartsWith($"{typeof(DbUpRunner).Assembly.GetName().Name}.{embeddedResourcePrefix}"))
             .WithTransaction()
             .LogToAutodetectedLog()
             .LogToConsole()
