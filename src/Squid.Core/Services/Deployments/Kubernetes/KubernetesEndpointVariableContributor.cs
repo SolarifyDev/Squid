@@ -93,7 +93,7 @@ public class KubernetesEndpointVariableContributor : IEndpointVariableContributo
         }
     }
 
-    private static string ResolveFeedUri(ExternalFeed feed)
+    public static string ResolveFeedUri(ExternalFeed feed)
     {
         if (!string.IsNullOrEmpty(feed.RegistryPath))
             return feed.RegistryPath;

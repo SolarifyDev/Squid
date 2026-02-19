@@ -30,6 +30,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IActivityLogDataProvider _activityLogDataProvider;
     private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
+    private readonly IReleaseSelectedPackageDataProvider _releaseSelectedPackageDataProvider;
 
     #endregion
 
@@ -51,26 +52,28 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
 
     public DeploymentTaskExecutor(
-        IGenericDataProvider genericDataProvider, 
-        IReleaseDataProvider releaseDataProvider, 
-        IServerTaskDataProvider serverTaskDataProvider, 
-        IDeploymentDataProvider deploymentDataProvider, 
-        IDeploymentAccountDataProvider deploymentAccountDataProvider, 
-        IDeploymentCompletionDataProvider deploymentCompletionDataProvider, 
-        IActivityLogDataProvider activityLogDataProvider, 
-        IServerTaskLogDataProvider serverTaskLogDataProvider, 
-        IYamlNuGetPacker yamlNuGetPacker, 
-        IDeploymentTargetFinder targetFinder, 
-        IDeploymentSnapshotService snapshotService, 
-        IDeploymentVariableResolver variableResolver, 
-        IActionHandlerRegistry actionHandlerRegistry, 
-        IEnumerable<IScriptContextWrapper> scriptWrappers, 
-        IEnumerable<IEndpointVariableContributor> variableContributors, 
-        HalibutRuntime halibutRuntime, 
+        IGenericDataProvider genericDataProvider,
+        IReleaseDataProvider releaseDataProvider,
+        IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
+        IServerTaskDataProvider serverTaskDataProvider,
+        IDeploymentDataProvider deploymentDataProvider,
+        IDeploymentAccountDataProvider deploymentAccountDataProvider,
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
+        IActivityLogDataProvider activityLogDataProvider,
+        IServerTaskLogDataProvider serverTaskLogDataProvider,
+        IYamlNuGetPacker yamlNuGetPacker,
+        IDeploymentTargetFinder targetFinder,
+        IDeploymentSnapshotService snapshotService,
+        IDeploymentVariableResolver variableResolver,
+        IActionHandlerRegistry actionHandlerRegistry,
+        IEnumerable<IScriptContextWrapper> scriptWrappers,
+        IEnumerable<IEndpointVariableContributor> variableContributors,
+        HalibutRuntime halibutRuntime,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
+        _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentAccountDataProvider = deploymentAccountDataProvider;

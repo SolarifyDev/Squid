@@ -24,6 +24,7 @@ public class DeploymentTaskContext
 
     // Execution
     public List<DeploymentStepDto> Steps { get; set; }
+    public List<Persistence.Entities.Deployments.ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
 
     // Calamari

@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
@@ -24,13 +25,20 @@ public class ReleaseService : IReleaseService
 {
     private readonly IMapper _mapper;
     private readonly IReleaseDataProvider _releaseDataProvider;
+    private readonly IReleaseSelectedPackageDataProvider _releaseSelectedPackageDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
-    
-    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IDeploymentCompletionDataProvider deploymentCompletionDataProvider, IDeploymentSnapshotService deploymentSnapshotService)
+
+    public ReleaseService(
+        IMapper mapper,
+        IReleaseDataProvider releaseDataProvider,
+        IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
+        IDeploymentSnapshotService deploymentSnapshotService)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
+        _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
     }
@@ -48,6 +56,8 @@ public class ReleaseService : IReleaseService
         release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
         
         await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await PersistSelectedPackagesAsync(release.Id, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
 
         return new ReleaseCreatedEvent
         {
@@ -116,6 +126,23 @@ public class ReleaseService : IReleaseService
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistSelectedPackagesAsync(
+        int releaseId, List<CreateReleaseSelectedPackageDto> selectedPackages, CancellationToken ct)
+    {
+        if (selectedPackages == null || selectedPackages.Count == 0) return;
+
+        var entities = selectedPackages
+            .Where(sp => !string.IsNullOrWhiteSpace(sp.ActionName))
+            .Select(sp => new ReleaseSelectedPackage
+            {
+                ReleaseId = releaseId,
+                ActionName = sp.ActionName,
+                Version = sp.Version ?? string.Empty
+            });
+
+        await _releaseSelectedPackageDataProvider.InsertAllAsync(entities, ct).ConfigureAwait(false);
     }
 
     private async Task<List<int>> GetCurrentDeployedReleaseIdsAsync(int? projectId, CancellationToken cancellationToken)

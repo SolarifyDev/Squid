@@ -1,4 +1,5 @@
 using Squid.Core.VariableSubstitution;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -89,6 +90,24 @@ public partial class DeploymentTaskExecutor
         return variables;
     }
 
+    private List<VariableDto> BuildActionVariables(List<VariableDto> effectiveVariables, DeploymentActionDto action)
+    {
+        var selectedPackage = _ctx.SelectedPackages
+            .FirstOrDefault(sp => string.Equals(sp.ActionName, action.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (selectedPackage == null) return effectiveVariables;
+
+        var variables = new List<VariableDto>(effectiveVariables);
+
+        variables.Add(new VariableDto
+        {
+            Name = SpecialVariables.Action.PackageVersion,
+            Value = selectedPackage.Version
+        });
+
+        return variables;
+    }
+
     private async Task<List<ActionExecutionResult>> PrepareStepActionsAsync(
         DeploymentStepDto step,
         VariableDictionary variableDictionary,
@@ -113,13 +132,15 @@ public partial class DeploymentTaskExecutor
                 continue;
             }
 
-            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionary);
+            var actionVariables = BuildActionVariables(effectiveVariables, action);
+            var variableDictionaryForAction = VariableDictionaryFactory.Create(actionVariables);
+            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionaryForAction);
 
             var context = new ActionExecutionContext
             {
                 Step = step,
                 Action = expandedAction,
-                Variables = effectiveVariables,
+                Variables = actionVariables,
                 ReleaseVersion = _ctx.Release?.Version
             };
 

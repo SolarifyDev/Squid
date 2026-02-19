@@ -12,10 +12,11 @@ public partial class DeploymentTaskExecutor
     {
         await LoadTaskAsync(serverTaskId, ct).ConfigureAwait(false);
         await LoadDeploymentAsync(ct).ConfigureAwait(false);
+        await LoadSelectedPackagesAsync(ct).ConfigureAwait(false);
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
-        
+
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
     }
@@ -67,6 +68,15 @@ public partial class DeploymentTaskExecutor
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
         
         _ctx.Release = release;
+    }
+
+    private async Task LoadSelectedPackagesAsync(CancellationToken ct)
+    {
+        _ctx.SelectedPackages = await _releaseSelectedPackageDataProvider
+            .GetByReleaseIdAsync(_ctx.Release.Id, ct).ConfigureAwait(false);
+
+        Log.Information("Loaded {Count} selected packages for release {ReleaseId}",
+            _ctx.SelectedPackages.Count, _ctx.Release.Id);
     }
 
     private async Task LoadOrSnapshotAsync(CancellationToken ct)
@@ -214,6 +224,8 @@ public partial class DeploymentTaskExecutor
                             Name = action.Name,
                             ActionType = action.ActionType,
                             WorkerPoolId = action.WorkerPoolId,
+                            FeedId = action.FeedId,
+                            PackageId = action.PackageId,
                             IsDisabled = action.IsDisabled,
                             IsRequired = action.IsRequired,
                             CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
