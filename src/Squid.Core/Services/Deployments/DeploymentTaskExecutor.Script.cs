@@ -24,8 +24,9 @@ public partial class DeploymentTaskExecutor
         var yamlNuGetPackageBytes = CreateYamlNuGetPackage(yamlStreams);
         CheckNugetPackage(yamlNuGetPackageBytes);
 
+        var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, _ctx.CurrentDeployTargetContext);
         var (variableJsonStream, sensitiveVariableJsonStream, sensitiveVariablesPassword) =
-            CreateVariableFileStreamsAndPassword(_ctx.Variables);
+            CreateVariableFileStreamsAndPassword(effectiveVariables);
 
         var scriptExecution = await StartDeployByCalamariScriptAsync(
             deployByCalamariScript,
@@ -33,7 +34,7 @@ public partial class DeploymentTaskExecutor
             variableJsonStream,
             sensitiveVariableJsonStream,
             sensitiveVariablesPassword,
-            _ctx.Target,
+            _ctx.CurrentDeployTargetContext.Machine,
             _ctx.Release.Version,
             ct).ConfigureAwait(false);
 
@@ -47,10 +48,10 @@ public partial class DeploymentTaskExecutor
 
     private async Task ExecuteDirectScriptAsync(ActionExecutionResult actionResult, CancellationToken ct)
     {
-        var endpoint = ParseMachineEndpoint(_ctx.Target);
+        var endpoint = ParseMachineEndpoint(_ctx.CurrentDeployTargetContext.Machine);
 
         if (endpoint == null)
-            throw new DeploymentEndpointException(_ctx.Target.Name);
+            throw new DeploymentEndpointException(_ctx.CurrentDeployTargetContext.Machine.Name);
 
         var scriptFiles = actionResult.Files
             .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
@@ -68,9 +69,9 @@ public partial class DeploymentTaskExecutor
         var scriptClient = _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
-        Log.Information("Starting direct script on machine {MachineName} with ticket {Ticket}", _ctx.Target.Name, ticket);
+        Log.Information("Starting direct script on machine {MachineName} with ticket {Ticket}", _ctx.CurrentDeployTargetContext.Machine.Name, ticket);
 
-        var execution = (_ctx.Target, scriptClient, ticket);
+        var execution = (_ctx.CurrentDeployTargetContext.Machine, scriptClient, ticket);
         var (executionSuccess, logLines) = await ObserveDeploymentScriptAsync(execution, ct).ConfigureAwait(false);
 
         CaptureOutputVariables(actionResult, logLines);

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
@@ -16,25 +15,40 @@ public partial class DeploymentTaskExecutor
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
+        
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
     }
 
-    private async Task LoadTargetDataAsync(CancellationToken ct)
+    private async Task PrepareAllTargetsAsync(CancellationToken ct)
     {
-        await LoadAccountAsync(ct).ConfigureAwait(false);
-        await ContributeEndpointVariablesAsync(ct).ConfigureAwait(false);
+        foreach (var target in _ctx.AllTargets)
+        {
+            var tc = new DeploymentTargetContext { Machine = target };
+
+            LoadAccountForTarget(tc);
+
+            if (tc.ResolvedContributor != null)
+                await LoadAccountCredentialsAsync(tc, ct).ConfigureAwait(false);
+
+            ContributeEndpointVariablesForTarget(tc);
+
+            if (tc.ResolvedContributor != null)
+                await ContributeAdditionalVariablesForTargetAsync(tc, ct).ConfigureAwait(false);
+
+            _ctx.AllTargetsContext.Add(tc);
+        }
     }
 
     private async Task LoadTaskAsync(int serverTaskId, CancellationToken ct)
     {
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
-        if (task == null)
-            throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
+        if (task == null) throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
 
         task.State = TaskState.Executing;
         task.StartTime = DateTimeOffset.UtcNow;
+        
         await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
@@ -46,12 +60,12 @@ public partial class DeploymentTaskExecutor
     {
         var deployment = await _deploymentDataProvider.GetDeploymentByTaskIdAsync(_ctx.Task.Id, ct).ConfigureAwait(false);
 
-        if (deployment == null)
-            throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
+        if (deployment == null) throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
 
         _ctx.Deployment = deployment;
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
+        
         _ctx.Release = release;
     }
 
@@ -84,43 +98,43 @@ public partial class DeploymentTaskExecutor
     {
         Log.Information("Finding targets for deployment {DeploymentId}", _ctx.Deployment.Id);
 
-        _ctx.Targets = await _targetFinder.FindTargetsAsync(_ctx.Deployment, ct).ConfigureAwait(false);
+        _ctx.AllTargets = await _targetFinder.FindTargetsAsync(_ctx.Deployment, ct).ConfigureAwait(false);
 
-        if (_ctx.Targets.Count == 0)
-            throw new DeploymentTargetException($"No target machines found for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
+        if (_ctx.AllTargets.Count == 0) throw new DeploymentTargetException($"No target machines found for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
 
-        Log.Information("Found {Count} target machines for deployment {DeploymentId}", _ctx.Targets.Count, _ctx.Deployment.Id);
+        Log.Information("Found {Count} target machines for deployment {DeploymentId}", _ctx.AllTargets.Count, _ctx.Deployment.Id);
     }
 
-    private async Task LoadAccountAsync(CancellationToken ct)
+    private void LoadAccountForTarget(DeploymentTargetContext tc)
     {
-        _ctx.EndpointJson = _ctx.Target.Endpoint;
-        _ctx.CommunicationStyle = ParseCommunicationStyle(_ctx.EndpointJson);
-
-        _resolvedContributor = _variableContributors.FirstOrDefault(c => c.CanHandle(_ctx.CommunicationStyle));
-
-        if (_resolvedContributor != null)
-        {
-            var accountId = _resolvedContributor.ParseAccountId(_ctx.EndpointJson);
-            
-            if (accountId.HasValue)
-                _ctx.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
-        }
+        tc.EndpointJson = tc.Machine.Endpoint;
+        tc.CommunicationStyle = ParseCommunicationStyle(tc.EndpointJson);
+        tc.ResolvedContributor = _variableContributors.FirstOrDefault(c => c.CanHandle(tc.CommunicationStyle));
     }
 
-    private async Task ContributeEndpointVariablesAsync(CancellationToken ct)
+    private async Task LoadAccountCredentialsAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        if (_resolvedContributor != null)
-        {
-            var endpointVars = _resolvedContributor.ContributeVariables(_ctx.EndpointJson, _ctx.Account);
-            
-            _ctx.Variables.AddRange(endpointVars);
+        var accountId = tc.ResolvedContributor.ParseAccountId(tc.EndpointJson);
 
-            var additionalVars = await _resolvedContributor
-                .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct).ConfigureAwait(false);
-            
-            _ctx.Variables.AddRange(additionalVars);
-        }
+        if (accountId.HasValue)
+            tc.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
+    }
+
+    private void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)
+    {
+        if (tc.ResolvedContributor == null) return;
+
+        var endpointVars = tc.ResolvedContributor.ContributeVariables(tc.EndpointJson, tc.Account);
+
+        tc.EndpointVariables.AddRange(endpointVars);
+    }
+
+    private async Task ContributeAdditionalVariablesForTargetAsync(DeploymentTargetContext tc, CancellationToken ct)
+    {
+        var additionalVars = await tc.ResolvedContributor
+            .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct).ConfigureAwait(false);
+
+        tc.EndpointVariables.AddRange(additionalVars);
     }
 
     private static string ParseCommunicationStyle(string endpointJson)
@@ -149,14 +163,14 @@ public partial class DeploymentTaskExecutor
         if (allRoles.Count == 0)
             return;
 
-        var before = _ctx.Targets.Count;
+        var before = _ctx.AllTargets.Count;
         
-        _ctx.Targets = DeploymentTargetFinder.FilterByRoles(_ctx.Targets, allRoles);
+        _ctx.AllTargets = DeploymentTargetFinder.FilterByRoles(_ctx.AllTargets, allRoles);
 
-        if (_ctx.Targets.Count < before)
-            Log.Information("Pre-filtered targets by roles: {Before} → {After} (roles: {Roles})", before, _ctx.Targets.Count, string.Join(", ", allRoles));
+        if (_ctx.AllTargets.Count < before)
+            Log.Information("Pre-filtered targets by roles: {Before} → {After} (roles: {Roles})", before, _ctx.AllTargets.Count, string.Join(", ", allRoles));
 
-        if (_ctx.Targets.Count == 0)
+        if (_ctx.AllTargets.Count == 0)
             throw new DeploymentTargetException($"No target machines match the required roles [{string.Join(", ", allRoles)}] for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
     }
 

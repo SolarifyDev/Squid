@@ -11,20 +11,31 @@ namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task ExtractCalamariAsync(CancellationToken ct)
+    private async Task DownloadCalamariAsync(CancellationToken ct)
     {
-        var extractCalamariPackageScript = UtilService.GetEmbeddedScriptContent("ExtractCalamariPackage.ps1");
-
         _ctx.CalamariPackageBytes = await DownloadCalamariPackageAsync().ConfigureAwait(false);
 
-        var extractSuccess = await ExtractCalamariPackageOnTargetAsync(ct, extractCalamariPackageScript, _ctx.CalamariPackageBytes, _ctx.Target).ConfigureAwait(false);
+        Log.Information("Calamari package downloaded for deployment {DeploymentId}", _ctx.Deployment.Id);
+    }
 
-        if (!extractSuccess)
+    private async Task ExtractCalamariOnAllTargetsAsync(CancellationToken ct)
+    {
+        var extractScript = UtilService.GetEmbeddedScriptContent("ExtractCalamariPackage.ps1");
+
+        foreach (var tc in _ctx.AllTargetsContext)
         {
-            throw new DeploymentScriptException($"Calamari package extraction failed on target machine for deployment {_ctx.Deployment.Id}", _ctx.Deployment.Id);
+            _ctx.CurrentDeployTargetContext = tc;
+            tc.CalamariPackageBytes = _ctx.CalamariPackageBytes;
+
+            var success = await ExtractCalamariPackageOnTargetAsync(
+                ct, extractScript, tc.CalamariPackageBytes, tc.Machine).ConfigureAwait(false);
+
+            if (!success)
+                throw new DeploymentScriptException(
+                    $"Calamari extraction failed on {tc.Machine.Name}", _ctx.Deployment.Id);
         }
 
-        Log.Information("Calamari package extraction completed successfully for deployment {DeploymentId}", _ctx.Deployment.Id);
+        Log.Information("Calamari package extraction completed on all targets for deployment {DeploymentId}", _ctx.Deployment.Id);
     }
 
     private async Task<bool> ExtractCalamariPackageOnTargetAsync(CancellationToken ct, string extractCalamariPackageScript, byte[] calamariPackageBytes, Persistence.Entities.Deployments.Machine target)

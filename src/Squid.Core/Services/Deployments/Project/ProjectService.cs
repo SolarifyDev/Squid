@@ -52,7 +52,6 @@ public class ProjectService : IProjectService
             project.IncludedLibraryVariableSetIds = string.Empty;
         }
 
-        // 先保存 Project，拿到数据库生成的 Id
         await _projectDataProvider.AddProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var deploymentProcess = new DeploymentProcess

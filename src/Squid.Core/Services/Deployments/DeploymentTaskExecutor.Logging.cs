@@ -110,7 +110,7 @@ public partial class DeploymentTaskExecutor
     {
         try
         {
-            var seq = Interlocked.Increment(ref _logSequence);
+            var seq = _ctx.NextLogSequence();
             await _serverTaskLogDataProvider.AddLogAsync(new Persistence.Entities.Deployments.ServerTaskLog
             {
                 ServerTaskId = serverTaskId,
@@ -139,7 +139,7 @@ public partial class DeploymentTaskExecutor
                 MessageText = log.Text,
                 Source = source,
                 OccurredAt = log.Occurred,
-                SequenceNumber = Interlocked.Increment(ref _logSequence)
+                SequenceNumber = _ctx.NextLogSequence()
             }).ToList();
 
             await _serverTaskLogDataProvider.AddLogsAsync(entries, ct: ct).ConfigureAwait(false);

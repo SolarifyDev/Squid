@@ -7,74 +7,92 @@ namespace Squid.Core.Services.Deployments;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task PrepareAndExecuteStepsAsync(CancellationToken ct)
+    private async Task ExecuteDeploymentStepsAsync(CancellationToken ct)
     {
-        var targetRoles = DeploymentTargetFinder.ParseRoles(_ctx.Target.Roles);
-        var failureEncountered = false;
-        var variableDictionary = VariableDictionaryFactory.Create(_ctx.Variables);
-        var stepSortOrder = 0;
-
         var orderedSteps = _ctx.Steps.OrderBy(p => p.StepOrder).ToList();
         var batches = StepBatcher.BatchSteps(orderedSteps);
+        var stepSortOrder = 0;
 
         foreach (var batch in batches)
         {
             if (batch.Count == 1)
             {
-                var step = batch[0];
-                var result = await ExecuteStepAsync(step, variableDictionary, targetRoles, failureEncountered,
-                        ++stepSortOrder, ct)
-                    .ConfigureAwait(false);
-                failureEncountered = MergeStepResult(result, failureEncountered);
+                await ExecuteStepAcrossTargetsAsync(batch[0], ++stepSortOrder, ct).ConfigureAwait(false);
             }
             else
             {
                 var tasks = batch.Select(step =>
-                    ExecuteStepAsync(step, variableDictionary, targetRoles, failureEncountered,
-                        ++stepSortOrder, ct)).ToList();
-                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                foreach (var result in results)
-                    failureEncountered = MergeStepResult(result, failureEncountered);
+                    ExecuteStepAcrossTargetsAsync(step, ++stepSortOrder, ct)).ToList();
+                await Task.WhenAll(tasks).ConfigureAwait(false);
             }
-
-            variableDictionary = VariableDictionaryFactory.Create(_ctx.Variables);
         }
     }
 
-    private async Task<StepExecutionResult> ExecuteStepAsync(
-        DeploymentStepDto step,
-        VariableDictionary variableDictionary,
-        HashSet<string> targetRoles,
-        bool failureEncountered,
-        int stepSortOrder,
-        CancellationToken ct)
+    private async Task ExecuteStepAcrossTargetsAsync(
+        DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
     {
-        var result = new StepExecutionResult();
+        var matchingTargets = FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
 
-        if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !failureEncountered))
+        foreach (var tc in matchingTargets)
         {
-            Log.Information("Skipping step {StepName} (disabled, condition, or role mismatch)", step.Name);
-            return result;
+            _ctx.CurrentDeployTargetContext = tc;
+            var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
+
+            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered))
+            {
+                Log.Information("Skipping step {StepName} on target {TargetName}", step.Name, tc.Machine.Name);
+                continue;
+            }
+
+            var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
+            var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
+
+            var stepActivityNode = await CreateActivityNodeAsync(
+                _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, "Step", "Running",
+                stepSortOrder, ct).ConfigureAwait(false);
+
+            var stepResults = await PrepareStepActionsAsync(step, variableDictionary, effectiveVariables, ct).ConfigureAwait(false);
+            var result = new StepExecutionResult();
+            await ExecuteActionResultsAsync(stepResults, step, stepActivityNode, result, ct).ConfigureAwait(false);
+
+            if (stepActivityNode != null)
+                await _activityLogDataProvider.UpdateNodeStatusAsync(
+                    stepActivityNode.Id, result.Failed ? "Failed" : "Success",
+                    DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+
+            MergeStepResult(result);
         }
+    }
 
-        var stepActivityNode = await CreateActivityNodeAsync(
-            _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, "Step", "Running", stepSortOrder, ct)
-            .ConfigureAwait(false);
+    public static List<DeploymentTargetContext> FindMatchingTargetsForStep(
+        DeploymentStepDto step, List<DeploymentTargetContext> allTargets)
+    {
+        var stepRolesProperty = step.Properties?
+            .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
 
-        var stepResults = await PrepareStepActionsAsync(step, variableDictionary, ct).ConfigureAwait(false);
-        await ExecuteActionResultsAsync(stepResults, step, stepActivityNode, result, ct).ConfigureAwait(false);
+        if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
+            return allTargets;
 
-        if (stepActivityNode != null)
-            await _activityLogDataProvider.UpdateNodeStatusAsync(
-                stepActivityNode.Id, result.Failed ? "Failed" : "Success", DateTimeOffset.UtcNow, ct: ct)
-                .ConfigureAwait(false);
+        var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
 
-        return result;
+        return allTargets
+            .Where(tc => DeploymentTargetFinder.ParseRoles(tc.Machine.Roles).Overlaps(stepRoles))
+            .ToList();
+    }
+
+    public static List<VariableDto> BuildEffectiveVariables(
+        List<VariableDto> baseVariables, DeploymentTargetContext target)
+    {
+        var variables = new List<VariableDto>(baseVariables);
+        variables.AddRange(target.EndpointVariables);
+
+        return variables;
     }
 
     private async Task<List<ActionExecutionResult>> PrepareStepActionsAsync(
         DeploymentStepDto step,
         VariableDictionary variableDictionary,
+        List<VariableDto> effectiveVariables,
         CancellationToken ct)
     {
         var stepResults = new List<ActionExecutionResult>();
@@ -101,7 +119,7 @@ public partial class DeploymentTaskExecutor
             {
                 Step = step,
                 Action = expandedAction,
-                Variables = _ctx.Variables,
+                Variables = effectiveVariables,
                 ReleaseVersion = _ctx.Release?.Version
             };
 
@@ -124,12 +142,16 @@ public partial class DeploymentTaskExecutor
 
     private void WrapScriptIfApplicable(ActionExecutionResult prepared)
     {
-        var wrapper = _scriptWrappers.FirstOrDefault(w => w.CanWrap(_ctx.CommunicationStyle));
+        var tc = _ctx.CurrentDeployTargetContext;
+        var wrapper = _scriptWrappers.FirstOrDefault(w => w.CanWrap(tc.CommunicationStyle));
 
-        if (wrapper != null)
-            prepared.ScriptBody = wrapper.WrapScript(
-                prepared.ScriptBody, _ctx.EndpointJson, _ctx.Account,
-                prepared.Syntax, _ctx.Variables);
+        if (wrapper == null) return;
+
+        var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
+
+        prepared.ScriptBody = wrapper.WrapScript(
+            prepared.ScriptBody, tc.EndpointJson, tc.Account,
+            prepared.Syntax, effectiveVariables);
     }
 
     private async Task ExecuteActionResultsAsync(
@@ -188,9 +210,9 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private bool MergeStepResult(StepExecutionResult result, bool failureEncountered)
+    private void MergeStepResult(StepExecutionResult result)
     {
-        _ctx.ActionResults.AddRange(result.ActionResults);
+        _ctx.CurrentDeployTargetContext.ActionResults.AddRange(result.ActionResults);
 
         if (result.OutputVariables.Count > 0)
         {
@@ -199,7 +221,7 @@ public partial class DeploymentTaskExecutor
                 Log.Information("Output variable captured: {Name} = {Value}", v.Name, v.Value);
         }
 
-        return failureEncountered || result.Failed;
+        _ctx.FailureEncountered = _ctx.FailureEncountered || result.Failed;
     }
 
     private class StepExecutionResult

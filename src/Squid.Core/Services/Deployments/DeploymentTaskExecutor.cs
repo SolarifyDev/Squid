@@ -18,88 +18,91 @@ public interface IDeploymentTaskExecutor : IScopedDependency
 
 public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 {
-    private readonly HalibutRuntime _halibutRuntime;
-    private readonly IYamlNuGetPacker _yamlNuGetPacker;
-    private readonly IDeploymentSnapshotService _snapshotService;
-    private readonly IDeploymentTargetFinder _targetFinder;
-    private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
-    private readonly IReleaseDataProvider _releaseDataProvider;
+    private DeploymentTaskContext _ctx;
+
+    #region Data Providers
+
     private readonly IGenericDataProvider _genericDataProvider;
-    private readonly IDeploymentVariableResolver _variableResolver;
+    private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
-    private readonly IActionHandlerRegistry _actionHandlerRegistry;
-    private readonly IEnumerable<IEndpointVariableContributor> _variableContributors;
-    private readonly IEnumerable<IScriptContextWrapper> _scriptWrappers;
-    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
+    private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
-    private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
     private readonly IActivityLogDataProvider _activityLogDataProvider;
+    private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
 
-    private DeploymentTaskContext _ctx;
-    private IEndpointVariableContributor _resolvedContributor;
-    private long _logSequence;
+    #endregion
+
+    #region Services
+
+    private readonly IYamlNuGetPacker _yamlNuGetPacker;
+    private readonly IDeploymentTargetFinder _targetFinder;
+    private readonly IDeploymentSnapshotService _snapshotService;
+    private readonly IDeploymentVariableResolver _variableResolver;
+    private readonly IActionHandlerRegistry _actionHandlerRegistry;
+    private readonly IEnumerable<IScriptContextWrapper> _scriptWrappers;
+    private readonly IEnumerable<IEndpointVariableContributor> _variableContributors;
+
+    #endregion
+
+    #region Infrastructure
+
+    private readonly HalibutRuntime _halibutRuntime;
+    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
 
     public DeploymentTaskExecutor(
-        IYamlNuGetPacker yamlNuGetPacker,
-        IDeploymentSnapshotService snapshotService,
-        IDeploymentTargetFinder targetFinder,
-        IDeploymentAccountDataProvider deploymentAccountDataProvider,
-        IReleaseDataProvider releaseDataProvider,
-        IGenericDataProvider genericDataProvider,
-        IDeploymentVariableResolver variableResolver,
-        IServerTaskDataProvider serverTaskDataProvider,
-        IDeploymentDataProvider deploymentDataProvider,
-        IActionHandlerRegistry actionHandlerRegistry,
-        IEnumerable<IEndpointVariableContributor> variableContributors,
-        IEnumerable<IScriptContextWrapper> scriptWrappers,
-        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
-        IServerTaskLogDataProvider serverTaskLogDataProvider,
-        IActivityLogDataProvider activityLogDataProvider,
-        HalibutRuntime halibutRuntime,
+        IGenericDataProvider genericDataProvider, 
+        IReleaseDataProvider releaseDataProvider, 
+        IServerTaskDataProvider serverTaskDataProvider, 
+        IDeploymentDataProvider deploymentDataProvider, 
+        IDeploymentAccountDataProvider deploymentAccountDataProvider, 
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider, 
+        IActivityLogDataProvider activityLogDataProvider, 
+        IServerTaskLogDataProvider serverTaskLogDataProvider, 
+        IYamlNuGetPacker yamlNuGetPacker, 
+        IDeploymentTargetFinder targetFinder, 
+        IDeploymentSnapshotService snapshotService, 
+        IDeploymentVariableResolver variableResolver, 
+        IActionHandlerRegistry actionHandlerRegistry, 
+        IEnumerable<IScriptContextWrapper> scriptWrappers, 
+        IEnumerable<IEndpointVariableContributor> variableContributors, 
+        HalibutRuntime halibutRuntime, 
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
-        _snapshotService = snapshotService;
-        _targetFinder = targetFinder;
-        _halibutRuntime = halibutRuntime;
-        _yamlNuGetPacker = yamlNuGetPacker;
-        _variableResolver = variableResolver;
-        _deploymentAccountDataProvider = deploymentAccountDataProvider;
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
-        _actionHandlerRegistry = actionHandlerRegistry;
-        _variableContributors = variableContributors;
-        _scriptWrappers = scriptWrappers;
-        _deploymentDataProvider = deploymentDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
-        _calamariGithubPackageSetting = calamariGithubPackageSetting;
+        _deploymentDataProvider = deploymentDataProvider;
+        _deploymentAccountDataProvider = deploymentAccountDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
-        _serverTaskLogDataProvider = serverTaskLogDataProvider;
         _activityLogDataProvider = activityLogDataProvider;
+        _serverTaskLogDataProvider = serverTaskLogDataProvider;
+        _yamlNuGetPacker = yamlNuGetPacker;
+        _targetFinder = targetFinder;
+        _snapshotService = snapshotService;
+        _variableResolver = variableResolver;
+        _actionHandlerRegistry = actionHandlerRegistry;
+        _scriptWrappers = scriptWrappers;
+        _variableContributors = variableContributors;
+        _halibutRuntime = halibutRuntime;
+        _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
+
+    #endregion
+
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         _ctx = new DeploymentTaskContext();
-        _resolvedContributor = null;
-        _logSequence = 0;
 
         try
         {
             await LoadDeploymentDataAsync(serverTaskId, ct);
             await CreateTaskActivityNodeAsync(ct);
-
-            foreach (var target in _ctx.Targets)
-            {
-                _ctx.Target = target;
-                _resolvedContributor = null;
-                _ctx.ActionResults = new();
-
-                await LoadTargetDataAsync(ct);
-                await ExtractCalamariAsync(ct);
-                await PrepareAndExecuteStepsAsync(ct);
-            }
-
+            await PrepareAllTargetsAsync(ct);
+            await DownloadCalamariAsync(ct);
+            await ExtractCalamariOnAllTargetsAsync(ct);
+            await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);
         }
         catch (Exception ex)
