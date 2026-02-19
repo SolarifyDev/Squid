@@ -5,13 +5,8 @@ using Squid.IntegrationTests.Helpers;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
-[Collection("Sequential")]
-public class IntegrationSnapshotConversion : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationSnapshotConversion>>
+public class IntegrationSnapshotConversion : SnapshotFixtureBase
 {
-    public IntegrationSnapshotConversion(IntegrationFixture<IntegrationSnapshotConversion> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task ConvertProcessSnapshotToSteps_FullRoundTrip_ProducesCorrectStepDtos()
     {

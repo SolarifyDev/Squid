@@ -5,13 +5,8 @@ using Squid.Core.Services.Common;
 
 namespace Squid.IntegrationTests.Deployments.Pipeline;
 
-[Collection("Sequential")]
-public class IntegrationYamlNugetPacker : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationYamlNugetPacker>>
+public class IntegrationYamlNugetPacker : DeploymentFixtureBase
 {
-    public IntegrationYamlNugetPacker(IntegrationFixture<IntegrationYamlNugetPacker> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task ShouldCreateNugetPackageWithYamlFiles()
     {

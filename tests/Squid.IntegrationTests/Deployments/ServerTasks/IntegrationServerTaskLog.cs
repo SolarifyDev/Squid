@@ -8,12 +8,8 @@ using Squid.IntegrationTests.Helpers;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
-[Collection("Sequential")]
-public class IntegrationServerTaskLog : IntegrationTestBase,
-    IClassFixture<IntegrationFixture<IntegrationServerTaskLog>>
+public class IntegrationServerTaskLog : ServerTaskFixtureBase
 {
-    public IntegrationServerTaskLog(IntegrationFixture<IntegrationServerTaskLog> fixture) : base(fixture) { }
-
     private async Task<int> CreateServerTaskAsync()
     {
         var taskId = 0;

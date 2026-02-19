@@ -8,12 +8,8 @@ using ActivityLogEntity = Squid.Core.Persistence.Entities.Deployments.ActivityLo
 
 namespace Squid.IntegrationTests.Deployments.Logs;
 
-[Collection("Sequential")]
-public class IntegrationActivityLog : IntegrationTestBase,
-    IClassFixture<IntegrationFixture<IntegrationActivityLog>>
+public class IntegrationActivityLog : ActivityLogFixtureBase
 {
-    public IntegrationActivityLog(IntegrationFixture<IntegrationActivityLog> fixture) : base(fixture) { }
-
     private async Task<int> CreateServerTaskAsync()
     {
         var taskId = 0;

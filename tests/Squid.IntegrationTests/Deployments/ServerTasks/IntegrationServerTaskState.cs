@@ -6,12 +6,8 @@ using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
-[Collection("Sequential")]
-public class IntegrationServerTaskState : IntegrationTestBase,
-    IClassFixture<IntegrationFixture<IntegrationServerTaskState>>
+public class IntegrationServerTaskState : ServerTaskFixtureBase
 {
-    public IntegrationServerTaskState(IntegrationFixture<IntegrationServerTaskState> fixture) : base(fixture) { }
-
     private async Task<int> CreatePendingTaskAsync()
     {
         var taskId = 0;

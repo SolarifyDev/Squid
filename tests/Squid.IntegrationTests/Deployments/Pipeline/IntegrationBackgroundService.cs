@@ -16,13 +16,8 @@ using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 
 namespace Squid.IntegrationTests.Deployments.Pipeline;
 
-[Collection("Sequential")]
-public class IntegrationDeploymentTaskBackgroundService : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationDeploymentTaskBackgroundService>>
+public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
 {
-    public IntegrationDeploymentTaskBackgroundService(IntegrationFixture<IntegrationDeploymentTaskBackgroundService> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task RunAsync_ShouldProcessPendingDeploymentTask_AndMarkTaskSuccess()
     {

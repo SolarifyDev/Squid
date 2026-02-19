@@ -9,13 +9,8 @@ using Squid.Message.Commands.Deployments.Release;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
-[Collection("Sequential")]
-public class IntegrationDeploymentSnapshot : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationDeploymentSnapshot>>
+public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
 {
-    public IntegrationDeploymentSnapshot(IntegrationFixture<IntegrationDeploymentSnapshot> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task CreateDeploymentAsync_InheritsReleaseSnapshotIds()
     {

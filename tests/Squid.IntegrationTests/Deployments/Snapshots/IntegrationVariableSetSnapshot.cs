@@ -7,13 +7,8 @@ using Squid.Message.Enums;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
-[Collection("Sequential")]
-public class IntegrationVariableSetSnapshot : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationVariableSetSnapshot>>
+public class IntegrationVariableSetSnapshot : SnapshotFixtureBase
 {
-    public IntegrationVariableSetSnapshot(IntegrationFixture<IntegrationVariableSetSnapshot> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task SnapshotVariableSetFromIdsAsync_CreatesCompressedSnapshot()
     {

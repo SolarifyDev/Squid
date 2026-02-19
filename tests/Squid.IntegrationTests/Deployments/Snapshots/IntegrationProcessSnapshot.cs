@@ -7,13 +7,8 @@ using Squid.IntegrationTests.Helpers;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
-[Collection("Sequential")]
-public class IntegrationProcessSnapshot : IntegrationTestBase, IClassFixture<IntegrationFixture<IntegrationProcessSnapshot>>
+public class IntegrationProcessSnapshot : SnapshotFixtureBase
 {
-    public IntegrationProcessSnapshot(IntegrationFixture<IntegrationProcessSnapshot> fixture) : base(fixture)
-    {
-    }
-
     [Fact]
     public async Task SnapshotProcessFromIdAsync_SingleStepSingleAction_SavesCompressedSnapshot()
     {
