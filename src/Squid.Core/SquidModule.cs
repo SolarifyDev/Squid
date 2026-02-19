@@ -1,6 +1,8 @@
 using System.Reflection;
 using Squid.Core.Caching;
 using Squid.Core.Halibut;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Settings;
 
 namespace Squid.Core;
 
@@ -8,17 +10,12 @@ public class SquidModule : Module
 {
     private readonly ILogger _logger;
     private readonly IConfiguration _configuration;
-    private readonly SquidStoreSetting _storeSetting;
     private readonly Assembly[] _assemblies;
 
-    public SquidModule(
-        ILogger logger,
-        IConfiguration configuration,
-        SquidStoreSetting storeSetting)
+    public SquidModule(ILogger logger, IConfiguration configuration)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        _storeSetting = storeSetting ?? throw new ArgumentNullException(nameof(storeSetting));
         _assemblies = new[] { typeof(SquidModule).Assembly };
     }
 
@@ -51,7 +48,24 @@ public class SquidModule : Module
 
     private void RegisterPersistence(ContainerBuilder builder)
     {
-        builder.RegisterModule(new PersistenceModule(_storeSetting, _logger));
+        var connectionString = new SquidConnectionString(_configuration).Value;
+
+        builder.Register(_ =>
+            {
+                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
+
+                dbContextBuilder
+                    .UseNpgsql(connectionString)
+                    .UseSnakeCaseNamingConvention();
+
+                return new SquidDbContext(dbContextBuilder.Options);
+            })
+            .AsSelf()
+            .As<DbContext>()
+            .AsImplementedInterfaces()
+            .InstancePerLifetimeScope();
+
+        builder.RegisterType<EfRepository>().As<IRepository>().InstancePerLifetimeScope();
     }
 
     private void RegisterHalibut(ContainerBuilder builder)

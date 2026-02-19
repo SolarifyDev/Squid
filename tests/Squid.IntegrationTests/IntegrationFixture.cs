@@ -1,8 +1,10 @@
-﻿using System.IO;
+using System.IO;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
+using Squid.Core.DbUpFiles;
+using Squid.Core.Settings;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.IntegrationTests;
@@ -34,14 +36,15 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
 
         Log.Logger = logger;
 
-        var storeSetting = configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
+        var connectionString = new SquidConnectionString(configuration).Value;
 
-        if (storeSetting?.Postgres != null)
+        if (!string.IsNullOrEmpty(connectionString))
         {
-            storeSetting.Postgres = CreateIsolatedPostgresSetting(storeSetting.Postgres);
+            connectionString = CreateIsolatedConnectionString(connectionString);
+            new DbUpRunner(connectionString).Run(nameof(Core.DbUpFiles), typeof(DbUpRunner).Assembly);
         }
 
-        containerBuilder.RegisterModule(new SquidModule(logger, configuration, storeSetting!));
+        containerBuilder.RegisterModule(new SquidModule(logger, configuration));
 
         // Override SelfCertSetting with env var fallback for CI environments
         var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>();
@@ -59,18 +62,14 @@ public class IntegrationFixture<TTestClass> : IAsyncLifetime, IIntegrationFixtur
 
     private static string DatabaseName => $"squid_integrationtests_{typeof(TTestClass).Name.ToLowerInvariant()}";
 
-    private static ConnectionSetting CreateIsolatedPostgresSetting(ConnectionSetting original)
+    private static string CreateIsolatedConnectionString(string connectionString)
     {
-        var builder = new NpgsqlConnectionStringBuilder(original.ConnectionString)
+        var builder = new NpgsqlConnectionStringBuilder(connectionString)
         {
             Database = DatabaseName
         };
 
-        return new ConnectionSetting
-        {
-            ConnectionString = builder.ToString(),
-            Version = original.Version
-        };
+        return builder.ToString();
     }
 
     public Task InitializeAsync()
