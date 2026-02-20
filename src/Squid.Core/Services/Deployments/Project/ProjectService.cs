@@ -56,11 +56,11 @@ public class ProjectService : IProjectService
 
         var deploymentProcess = new DeploymentProcess
         {
+            ProjectId = project.Id,
             Version = 1,
             SpaceId = project.SpaceId,
             LastModified = DateTimeOffset.UtcNow,
-            LastModifiedBy = "System",
-            ProjectId = project.Id
+            LastModifiedBy = "System"
         };
 
         await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, cancellationToken: cancellationToken).ConfigureAwait(false);

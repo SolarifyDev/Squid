@@ -90,7 +90,7 @@ public class DeploymentService : IDeploymentService
             ReleaseId = command.ReleaseId,
             EnvironmentId = command.EnvironmentId,
             DeployedBy = command.DeployedBy,
-            Created = DateTimeOffset.Now,
+            Created = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
             Json = JsonSerializer.Serialize(new

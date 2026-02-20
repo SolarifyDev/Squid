@@ -64,8 +64,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
         if (spaceId.HasValue)
             query = query.Where(p => p.SpaceId == spaceId.Value);
-        
-        
+
         if (projectId.HasValue)
             query = query.Where(p => p.ProjectId == projectId.Value);
 
@@ -84,8 +83,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default)
     {
-        var maxVersion = await _repository.Query<DeploymentProcess>()
-            .Where(p => p.ProjectId == projectId)
+        var maxVersion = await _repository.Query<DeploymentProcess>(p => p.ProjectId == projectId)
             .Select(p => (int?)p.Version)
             .MaxAsync(cancellationToken).ConfigureAwait(false);
 

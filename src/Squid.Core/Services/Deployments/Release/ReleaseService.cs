@@ -55,7 +55,7 @@ public class ReleaseService : IReleaseService
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
         
-        await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await PersistSelectedPackagesAsync(release.Id, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
 

@@ -298,6 +298,11 @@ public class TestDataBuilder
             EnvironmentIds = environmentId.ToString(),
             SpaceId = 1,
             Endpoint = "{}",
+            Json = "{}",
+            DataVersion = Array.Empty<byte>(),
+            ShellName = string.Empty,
+            ShellVersion = string.Empty,
+            LicenseHash = string.Empty,
             Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 

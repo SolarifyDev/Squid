@@ -47,10 +47,10 @@ public partial class DeploymentTaskExecutor
 
         if (task == null) throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
 
+        await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
+
         task.State = TaskState.Executing;
         task.StartTime = DateTimeOffset.UtcNow;
-        
-        await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
 

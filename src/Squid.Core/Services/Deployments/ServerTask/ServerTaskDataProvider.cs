@@ -70,6 +70,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
                 task.StartTime = DateTimeOffset.UtcNow;
                 task.DataVersion = Guid.NewGuid().ToByteArray();
                 await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
+                await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
