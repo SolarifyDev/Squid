@@ -13,6 +13,8 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentExecutionStrategy : IExecutionStrategy
 {
+    private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
+
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IYamlNuGetPacker _yamlNuGetPacker;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
@@ -86,10 +88,12 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
             new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
         };
 
+        var scriptTimeout = ScriptExecutionTimeout;
+
         var command = new StartScriptCommand(
             scriptBody,
             ScriptIsolationLevel.FullIsolation,
-            TimeSpan.FromMinutes(30),
+            scriptTimeout,
             null,
             Array.Empty<string>(),
             null,
@@ -100,7 +104,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         Log.Information("Starting DeployByCalamari on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, ct).ConfigureAwait(false);
+        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -110,10 +114,12 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
             .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
             .ToArray();
 
+        var scriptTimeout = ScriptExecutionTimeout;
+
         var command = new StartScriptCommand(
             request.ScriptBody,
             ScriptIsolationLevel.FullIsolation,
-            TimeSpan.FromMinutes(30),
+            scriptTimeout,
             null,
             Array.Empty<string>(),
             null,
@@ -124,17 +130,19 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, ct).ConfigureAwait(false);
+        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
     }
 
     private static async Task<ScriptExecutionResult> ObserveAndCompleteAsync(
         Persistence.Entities.Deployments.Machine machine,
         IAsyncScriptService scriptClient,
         ScriptTicket ticket,
+        TimeSpan scriptTimeout,
         CancellationToken ct)
     {
-        var scriptTimeout = TimeSpan.FromMinutes(3);
         var startTime = DateTime.UtcNow;
+        var pollInterval = TimeSpan.FromSeconds(1);
+        var maxPollInterval = TimeSpan.FromSeconds(10);
         var statusResponse = new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
         var allLogs = new List<ProcessOutput>();
 
@@ -142,10 +150,16 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         {
             if (DateTime.UtcNow - startTime > scriptTimeout)
             {
-                Log.Warning("Script execution timeout on agent {MachineName}, cancelling", machine.Name);
+                Log.Warning("Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
+                    scriptTimeout.TotalMinutes, machine.Name);
                 await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
 
-                return new ScriptExecutionResult { Success = false, ExitCode = -1 };
+                return new ScriptExecutionResult
+                {
+                    Success = false,
+                    ExitCode = -1,
+                    LogLines = new List<string> { $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout" }
+                };
             }
 
             ct.ThrowIfCancellationRequested();
@@ -157,7 +171,10 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
             LogOutput(statusResponse.Logs, machine.Name);
 
             if (statusResponse.State != ProcessState.Complete)
-                await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
+            {
+                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                pollInterval = TimeSpan.FromSeconds(Math.Min(pollInterval.TotalSeconds * 1.5, maxPollInterval.TotalSeconds));
+            }
         }
 
         var completeResponse = await scriptClient.CompleteScriptAsync(

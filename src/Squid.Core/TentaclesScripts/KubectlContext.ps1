@@ -10,6 +10,10 @@ if ([string]::IsNullOrEmpty($kubectlExe)) {
 }
 
 try {
+    $certPath = $null
+    $clientCertPath = $null
+    $clientKeyPath = $null
+
     $clusterUrl = "{{ClusterUrl}}"
     $accountType = "{{AccountType}}"
     $skipTls = "{{SkipTlsVerification}}"
@@ -93,8 +97,10 @@ try {
     {{UserScript}}
 }
 finally {
-    # Cleanup temp kubeconfig
-    if (Test-Path $kubeconfigPath) {
-        Remove-Item $kubeconfigPath -Force -ErrorAction SilentlyContinue
+    # Cleanup temp files (kubeconfig + certificates)
+    foreach ($tempFile in @($kubeconfigPath, $certPath, $clientCertPath, $clientKeyPath)) {
+        if ($tempFile -and (Test-Path $tempFile -ErrorAction SilentlyContinue)) {
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }
