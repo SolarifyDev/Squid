@@ -1,35 +1,30 @@
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Squid.Core.Services.Agents;
 using Squid.Message.Commands.Agent;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Squid.Api.Controllers;
 
-[ApiController]
 [Authorize]
+[ApiController]
 [Route("api/agents")]
 public class AgentController : ControllerBase
 {
-    private readonly IAgentService _agentService;
+    private readonly IMediator _mediator;
 
-    public AgentController(IAgentService agentService)
+    public AgentController(IMediator mediator)
     {
-        _agentService = agentService;
+        _mediator = mediator;
     }
 
     [HttpPost("register")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterAgentResponse))]
-    public async Task<IActionResult> RegisterAsync(
-        [FromBody] RegisterAgentCommand command, CancellationToken ct)
+    public async Task<IActionResult> RegisterAsync([FromBody] RegisterAgentCommand command, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(command.Thumbprint))
-            return BadRequest("Thumbprint is required");
+        if (string.IsNullOrEmpty(command.Thumbprint)) return BadRequest("Thumbprint is required");
 
-        if (string.IsNullOrEmpty(command.SubscriptionId))
-            return BadRequest("SubscriptionId is required");
+        if (string.IsNullOrEmpty(command.SubscriptionId)) return BadRequest("SubscriptionId is required");
 
-        var result = await _agentService.RegisterAgentAsync(command, ct);
+        var response = await _mediator.SendAsync<RegisterAgentCommand, RegisterAgentResponse>(command, ct).ConfigureAwait(false);
 
-        return Ok(new RegisterAgentResponse { Data = result });
+        return Ok(response);
     }
 }

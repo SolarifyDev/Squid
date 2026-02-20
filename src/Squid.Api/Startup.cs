@@ -25,7 +25,6 @@ public class Startup
         services.AddMvc(options =>
         {
             options.Filters.Add<GlobalExceptionFilter>();
-            options.Filters.Add<GlobalSuccessFilter>();
         });
     }
 
