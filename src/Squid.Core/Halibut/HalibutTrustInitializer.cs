@@ -6,18 +6,30 @@ namespace Squid.Core.Halibut;
 
 public class HalibutTrustInitializer : IStartable
 {
-    private readonly HalibutRuntime _halibutRuntime;
-    private readonly IRepository _repository;
+    private readonly ILifetimeScope _scope;
 
-    public HalibutTrustInitializer(HalibutRuntime halibutRuntime, IRepository repository)
+    public HalibutTrustInitializer(ILifetimeScope scope)
     {
-        _halibutRuntime = halibutRuntime;
-        _repository = repository;
+        _scope = scope;
     }
 
     public void Start()
     {
-        var machines = _repository
+        HalibutRuntime halibutRuntime;
+
+        try
+        {
+            halibutRuntime = _scope.Resolve<HalibutRuntime>();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Halibut trust initialization skipped: {Message}", ex.Message);
+            return;
+        }
+
+        var repository = _scope.Resolve<IRepository>();
+
+        var machines = repository
             .QueryNoTracking<Machine>(m =>
                 !string.IsNullOrEmpty(m.PollingSubscriptionId) &&
                 !string.IsNullOrEmpty(m.Thumbprint) &&
@@ -26,7 +38,7 @@ public class HalibutTrustInitializer : IStartable
 
         foreach (var machine in machines)
         {
-            _halibutRuntime.Trust(machine.Thumbprint);
+            halibutRuntime.Trust(machine.Thumbprint);
 
             Log.Information("Trusted agent thumbprint for machine {MachineName} ({SubscriptionId})",
                 machine.Name, machine.PollingSubscriptionId);
