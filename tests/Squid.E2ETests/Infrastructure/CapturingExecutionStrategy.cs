@@ -6,12 +6,17 @@ public class CapturingExecutionStrategy : IExecutionStrategy
 {
     public List<ScriptExecutionRequest> CapturedRequests { get; } = new();
 
+    public Func<ScriptExecutionRequest, ScriptExecutionResult> ResultFactory { get; set; }
+
     public bool CanHandle(string communicationStyle) => true;
 
     public Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
         CapturedRequests.Add(request);
+
+        if (ResultFactory != null)
+            return Task.FromResult(ResultFactory(request));
 
         return Task.FromResult(new ScriptExecutionResult
         {
@@ -20,5 +25,9 @@ public class CapturingExecutionStrategy : IExecutionStrategy
         });
     }
 
-    public void Clear() => CapturedRequests.Clear();
+    public void Clear()
+    {
+        CapturedRequests.Clear();
+        ResultFactory = null;
+    }
 }

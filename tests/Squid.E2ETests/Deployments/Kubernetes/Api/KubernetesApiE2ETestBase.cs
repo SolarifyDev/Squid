@@ -1,15 +1,15 @@
 using Squid.E2ETests.Infrastructure;
 using Xunit;
 
-namespace Squid.E2ETests.Deployments.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes.Api;
 
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]
-public abstract class KubernetesE2ETestBase
+public abstract class KubernetesApiE2ETestBase
 {
     protected readonly KindClusterFixture Cluster;
 
-    protected KubernetesE2ETestBase(KindClusterFixture cluster)
+    protected KubernetesApiE2ETestBase(KindClusterFixture cluster)
     {
         Cluster = cluster;
     }

@@ -8,7 +8,7 @@ using Squid.E2ETests.Infrastructure;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Deployments.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]

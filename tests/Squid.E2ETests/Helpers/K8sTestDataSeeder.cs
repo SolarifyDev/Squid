@@ -28,6 +28,8 @@ public class K8sTestDataSeeder
         int replicas = 2,
         string namespaceName = "default",
         string communicationStyle = "KubernetesApi",
+        string agentSubscriptionId = null,
+        string agentThumbprint = null,
         CancellationToken ct = default)
     {
         var variableSet = await _builder.CreateVariableSetAsync().ConfigureAwait(false);
@@ -93,7 +95,7 @@ public class K8sTestDataSeeder
         var environment = await _builder.CreateEnvironmentAsync("E2E Test Environment").ConfigureAwait(false);
 
         var machine = communicationStyle == "KubernetesAgent"
-            ? CreateAgentMachine(environment)
+            ? CreateAgentMachine(environment, agentSubscriptionId, agentThumbprint)
             : CreateApiMachine(environment);
 
         await _repository.InsertAsync(machine, ct).ConfigureAwait(false);
@@ -209,15 +211,19 @@ public class K8sTestDataSeeder
         };
     }
 
-    private static Machine CreateAgentMachine(Environment environment)
+    private static Machine CreateAgentMachine(
+        Environment environment,
+        string subscriptionId = null,
+        string thumbprint = null)
     {
-        var subscriptionId = Guid.NewGuid().ToString("N");
+        subscriptionId ??= Guid.NewGuid().ToString("N");
+        thumbprint ??= "E2E-AGENT-THUMBPRINT";
 
         var endpointJson = JsonSerializer.Serialize(new
         {
             CommunicationStyle = "KubernetesAgent",
             SubscriptionId = subscriptionId,
-            Thumbprint = "E2E-AGENT-THUMBPRINT",
+            Thumbprint = thumbprint,
             Namespace = "default"
         });
 
@@ -228,7 +234,7 @@ public class K8sTestDataSeeder
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),
             Json = string.Empty,
-            Thumbprint = "E2E-AGENT-THUMBPRINT",
+            Thumbprint = thumbprint,
             Uri = string.Empty,
             HasLatestCalamari = false,
             Endpoint = endpointJson,

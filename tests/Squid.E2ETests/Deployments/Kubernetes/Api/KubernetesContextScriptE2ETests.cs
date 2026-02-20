@@ -7,9 +7,9 @@ using Squid.Message.Models.Deployments.Machine;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Deployments.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes.Api;
 
-public class KubernetesContextScriptE2ETests : KubernetesE2ETestBase
+public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
 {
     private readonly KubernetesApiContextScriptBuilder _builder = new();
 

@@ -9,9 +9,9 @@ using Squid.Message.Models.Deployments.Process;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Deployments.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes.Api;
 
-public class HelmUpgradeE2ETests : KubernetesE2ETestBase
+public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
 {
     private readonly KubernetesApiContextScriptBuilder _contextBuilder = new();
     private readonly HelmUpgradeActionHandler _helmHandler = new();

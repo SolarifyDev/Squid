@@ -8,9 +8,9 @@ using Squid.Message.Models.Deployments.Process;
 using Shouldly;
 using Xunit;
 
-namespace Squid.E2ETests.Deployments.Kubernetes;
+namespace Squid.E2ETests.Deployments.Kubernetes.Api;
 
-public class KubernetesDeployYamlE2ETests : KubernetesE2ETestBase
+public class KubernetesDeployYamlE2ETests : KubernetesApiE2ETestBase
 {
     private readonly KubernetesApiContextScriptBuilder _contextBuilder = new();
     private readonly KubernetesDeployYamlActionHandler _yamlHandler = new();

@@ -129,7 +129,8 @@ public class TestDataBuilder
         int stepOrder,
         string name,
         string stepType = "Action",
-        string condition = "Success")
+        string condition = "Success",
+        bool isRequired = true)
     {
         var entity = new DeploymentStep
         {
@@ -141,7 +142,7 @@ public class TestDataBuilder
             StartTrigger = "",
             PackageRequirement = "",
             IsDisabled = false,
-            IsRequired = true,
+            IsRequired = isRequired,
             CreatedAt = DateTimeOffset.UtcNow
         };
 
