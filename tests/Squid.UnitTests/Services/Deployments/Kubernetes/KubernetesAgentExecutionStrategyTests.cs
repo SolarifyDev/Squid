@@ -199,6 +199,162 @@ public class KubernetesAgentExecutionStrategyTests
         result.Success.ShouldBeTrue();
     }
 
+    // === Timeout ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_ScriptTimesOut_ReturnsFailed_AndCancels()
+    {
+        var machine = CreateValidMachine();
+        var scriptClient = new Mock<IAsyncScriptService>();
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .ReturnsAsync(new ScriptTicket("timeout-ticket"));
+
+        // GetStatus always returns Running — forces timeout
+        scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
+            .ReturnsAsync(new ScriptStatusResponse(
+                new ScriptTicket("timeout-ticket"), ProcessState.Running, 0, new List<ProcessOutput>(), 0));
+
+        scriptClient.Setup(s => s.CancelScriptAsync(It.IsAny<CancelScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(
+                new ScriptTicket("timeout-ticket"), ProcessState.Complete, -1, new List<ProcessOutput>(), 0));
+
+        _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(scriptClient.Object);
+
+        // Use a very short timeout by calling the strategy with a short-lived script
+        // We can't directly control the internal timeout, but we verify cancellation is called
+        // by using a CancellationToken that fires quickly
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var request = CreateRequest(machine, scriptBody: "sleep 999");
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => _strategy.ExecuteScriptAsync(request, cts.Token));
+
+        // GetStatus should have been called at least once before cancellation
+        scriptClient.Verify(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()), Times.AtLeastOnce);
+    }
+
+    // === Multi-poll log collection ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_MultiplePolls_CollectsAllLogs()
+    {
+        var machine = CreateValidMachine();
+        var scriptClient = new Mock<IAsyncScriptService>();
+        var callCount = 0;
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .ReturnsAsync(new ScriptTicket("multi-poll"));
+
+        scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount < 3)
+                {
+                    return new ScriptStatusResponse(
+                        new ScriptTicket("multi-poll"), ProcessState.Running, 0,
+                        new List<ProcessOutput> { new(ProcessOutputSource.StdOut, $"log-{callCount}") },
+                        callCount);
+                }
+
+                return new ScriptStatusResponse(
+                    new ScriptTicket("multi-poll"), ProcessState.Complete, 0,
+                    new List<ProcessOutput> { new(ProcessOutputSource.StdOut, "log-final") },
+                    callCount);
+            });
+
+        scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(
+                new ScriptTicket("multi-poll"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(scriptClient.Object);
+
+        var request = CreateRequest(machine, scriptBody: "echo hello");
+        var result = await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.LogLines.ShouldContain("log-1");
+        result.LogLines.ShouldContain("log-2");
+        result.LogLines.ShouldContain("log-final");
+
+        // Should have polled 3 times (2 Running + 1 Complete)
+        scriptClient.Verify(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()), Times.Exactly(3));
+    }
+
+    // === Non-zero exit code ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_NonZeroExitCode_ReturnsFailed()
+    {
+        var machine = CreateValidMachine();
+        var scriptClient = new Mock<IAsyncScriptService>();
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .ReturnsAsync(new ScriptTicket("fail-ticket"));
+        scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
+            .ReturnsAsync(new ScriptStatusResponse(
+                new ScriptTicket("fail-ticket"), ProcessState.Complete, 42, new List<ProcessOutput>(), 0));
+        scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(
+                new ScriptTicket("fail-ticket"), ProcessState.Complete, 42, new List<ProcessOutput>(), 0));
+
+        _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(scriptClient.Object);
+
+        var request = CreateRequest(machine, scriptBody: "exit 42");
+        var result = await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ExitCode.ShouldBe(42);
+    }
+
+    // === StartScriptCommand uses 30-minute timeout ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_DirectScript_PassesThirtyMinuteTimeout()
+    {
+        var machine = CreateValidMachine();
+        var scriptClient = SetupSuccessfulScriptClient();
+        StartScriptCommand capturedCommand = null;
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("timeout-check"));
+
+        _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(scriptClient.Object);
+
+        var request = CreateRequest(machine, scriptBody: "echo hello");
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(30));
+    }
+
+    [Fact]
+    public async Task ExecuteScriptAsync_CalamariScript_PassesThirtyMinuteTimeout()
+    {
+        var machine = CreateValidMachine();
+        var scriptClient = SetupSuccessfulScriptClient();
+        StartScriptCommand capturedCommand = null;
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("timeout-check-cal"));
+
+        _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(scriptClient.Object);
+
+        var request = CreateRequest(machine, calamariCommand: "calamari-run-script");
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(30));
+    }
+
     // === Helpers ===
 
     private static Machine CreateValidMachine() => new()

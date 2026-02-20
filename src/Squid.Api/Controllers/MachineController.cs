@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Machine;
 using Squid.Message.Requests.Deployments.Machine;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/machines")]
 public class MachineController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class MachineController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateMachineResponse))]
     public async Task<IActionResult> CreateMachineAsync([FromBody] CreateMachineCommand command)
     {
@@ -24,7 +23,7 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateMachineResponse))]
     public async Task<IActionResult> UpdateMachineAsync([FromBody] UpdateMachineCommand command)
     {
@@ -33,7 +32,7 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
     public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command)
     {
@@ -42,7 +41,7 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
     public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request)
     {
@@ -50,4 +49,4 @@ public class MachineController : ControllerBase
 
         return Ok(response);
     }
-} 
+}

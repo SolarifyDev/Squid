@@ -476,6 +476,90 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldNotContain("}}");
     }
 
+    // === Security — No eval in Bash Template ===
+
+    [Fact]
+    public void WrapWithContext_Bash_DoesNotUseEval()
+    {
+        var result = _builder.WrapWithContext(
+            "echo hi",
+            CreateEndpoint(),
+            CreateTokenAccount(),
+            ScriptSyntax.Bash);
+
+        result.ShouldNotContain("eval ");
+    }
+
+    [Fact]
+    public void WrapWithContext_Bash_UsesBashArrayForClusterCmd()
+    {
+        var result = _builder.WrapWithContext(
+            "echo hi",
+            CreateEndpoint(),
+            CreateTokenAccount(),
+            ScriptSyntax.Bash);
+
+        result.ShouldContain("CLUSTER_CMD=(");
+        result.ShouldContain("\"${CLUSTER_CMD[@]}\"");
+    }
+
+    // === Cert Cleanup — Bash ===
+
+    [Fact]
+    public void WrapWithContext_Bash_CleanupTrapRemovesCertFiles()
+    {
+        var result = _builder.WrapWithContext(
+            "echo hi",
+            CreateEndpoint(),
+            CreateTokenAccount(),
+            ScriptSyntax.Bash);
+
+        result.ShouldContain("CERT_PATH=\"\"");
+        result.ShouldContain("CLIENT_CERT_PATH=\"\"");
+        result.ShouldContain("CLIENT_KEY_PATH=\"\"");
+        result.ShouldContain("rm -f \"$CERT_PATH\"");
+        result.ShouldContain("rm -f \"$CLIENT_CERT_PATH\"");
+        result.ShouldContain("rm -f \"$CLIENT_KEY_PATH\"");
+    }
+
+    // === Cert Cleanup — PowerShell ===
+
+    [Fact]
+    public void WrapWithContext_PowerShell_FinallyCleansCertFiles()
+    {
+        var result = _builder.WrapWithContext(
+            "echo hi",
+            CreateEndpoint(),
+            CreateTokenAccount(),
+            ScriptSyntax.PowerShell);
+
+        result.ShouldContain("$certPath = $null");
+        result.ShouldContain("$clientCertPath = $null");
+        result.ShouldContain("$clientKeyPath = $null");
+        result.ShouldContain("finally");
+    }
+
+    // === Error Handling — Bash ===
+
+    [Fact]
+    public void WrapWithContext_Bash_HasErrorHandlingForKubectlCommands()
+    {
+        var result = _builder.WrapWithContext(
+            "echo hi",
+            CreateEndpoint(),
+            CreateTokenAccount(),
+            ScriptSyntax.Bash);
+
+        // set-cluster has error handling via || { ... exit 1; }
+        result.ShouldContain("kubectl config set-cluster failed");
+        // set-credentials has error handling
+        result.ShouldContain("kubectl config set-credentials failed");
+        // set-context has error handling
+        result.ShouldContain("kubectl config set-context failed");
+        // use-context has error handling
+        result.ShouldContain("kubectl config use-context failed");
+    }
+
     // === Kubeconfig Isolation Tests ===
 
     [Fact]

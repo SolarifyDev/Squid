@@ -1,4 +1,3 @@
-using Squid.Api.Extensions;
 using Squid.Api.Filters;
 
 namespace Squid.Api;

@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Requests.Deployments.Project;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/projects")]
 public class ProjectController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class ProjectController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateProjectResponse))]
     public async Task<IActionResult> CreateProjectAsync([FromBody] CreateProjectCommand command)
     {
@@ -24,7 +23,7 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateProjectResponse))]
     public async Task<IActionResult> UpdateProjectAsync([FromBody] UpdateProjectCommand command)
     {
@@ -33,7 +32,7 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteProjectsResponse))]
     public async Task<IActionResult> DeleteProjectsAsync([FromBody] DeleteProjectsCommand command)
     {
@@ -42,7 +41,7 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectsResponse))]
     public async Task<IActionResult> GetProjectsAsync([FromQuery] GetProjectsRequest request)
     {
@@ -51,7 +50,7 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectResponse))]
     public async Task<IActionResult> GetProjectAsync(int id)
     {
@@ -61,4 +60,3 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 }
-

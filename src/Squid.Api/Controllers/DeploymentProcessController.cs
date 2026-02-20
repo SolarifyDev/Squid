@@ -1,11 +1,9 @@
-using Microsoft.AspNetCore.Mvc;
-using Squid.Message.Commands.Deployments.Process;
 using Squid.Message.Requests.Deployments.Process;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/deployment-processes")]
 public class DeploymentProcessController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +13,7 @@ public class DeploymentProcessController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentProcessesResponse))]
     public async Task<IActionResult> GetDeploymentProcessesAsync([FromQuery] GetDeploymentProcessesRequest request)
     {
@@ -24,7 +22,7 @@ public class DeploymentProcessController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentProcessResponse))]
     public async Task<IActionResult> GetDeploymentProcessAsync(int id)
     {

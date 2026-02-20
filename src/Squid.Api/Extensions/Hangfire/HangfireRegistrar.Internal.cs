@@ -1,6 +1,5 @@
 using Hangfire;
 using Hangfire.Throttling;
-using Smarties.Api.Extensions.Hangfire;
 using Squid.Core.Jobs;
 using Squid.Core.Services.Jobs;
 

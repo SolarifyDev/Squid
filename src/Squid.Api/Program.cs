@@ -1,6 +1,5 @@
 using Autofac.Extensions.DependencyInjection;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Settings;
 using Squid.Core.Settings.Logging;
 using Squid.Core.Settings.System;
 

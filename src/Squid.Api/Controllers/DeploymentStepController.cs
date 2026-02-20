@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Requests.Deployments.Process.Step;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/deployment-steps")]
 public class DeploymentStepController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class DeploymentStepController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateDeploymentStepResponse))]
     public async Task<IActionResult> CreateDeploymentStepAsync([FromBody] CreateDeploymentStepCommand command)
     {
@@ -24,7 +23,7 @@ public class DeploymentStepController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateDeploymentStepResponse))]
     public async Task<IActionResult> UpdateDeploymentStepAsync([FromBody] UpdateDeploymentStepCommand command)
     {
@@ -33,7 +32,7 @@ public class DeploymentStepController : ControllerBase
         return Ok(response);
     }
 
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteDeploymentStepResponse))]
     public async Task<IActionResult> DeleteDeploymentStepsAsync([FromBody] DeleteDeploymentStepCommand command)
     {
@@ -42,7 +41,7 @@ public class DeploymentStepController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentStepsResponse))]
     public async Task<IActionResult> GetDeploymentStepsAsync([FromQuery] GetDeploymentStepsRequest request)
     {
@@ -51,7 +50,7 @@ public class DeploymentStepController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentStepResponse))]
     public async Task<IActionResult> GetDeploymentStepAsync(int id)
     {

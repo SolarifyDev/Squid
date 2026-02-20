@@ -1,11 +1,10 @@
-using Squid.Core.Services.Common;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Requests.Deployments.Channel;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/channels")]
 public class ChannelController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class ChannelController : ControllerBase
         _mediator = mediator;
     }
     
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateChannelResponse))]
     public async Task<IActionResult> CreateChannelAsync([FromBody] CreateChannelCommand command)
     {
@@ -24,7 +23,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateChannelResponse))]
     public async Task<IActionResult> UpdateChannelAsync([FromBody] UpdateChannelCommand command)
     {
@@ -33,7 +32,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteChannelsResponse))]
     public async Task<IActionResult> DeleteChannelsAsync([FromBody] DeleteChannelsCommand command)
     {
@@ -42,7 +41,7 @@ public class ChannelController : ControllerBase
         return Ok(response);
     }
     
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetChannelsResponse))]
     public async Task<IActionResult> GetChannelsAsync([FromQuery] GetChannelsRequest request)
     {
