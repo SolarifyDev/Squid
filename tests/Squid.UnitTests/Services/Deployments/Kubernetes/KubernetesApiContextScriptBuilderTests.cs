@@ -1,6 +1,6 @@
 using System;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Deployments.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;

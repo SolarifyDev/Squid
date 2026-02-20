@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using Squid.Core.Services.Deployments;
-using Squid.Core.Services.Deployments.Kubernetes;
+using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 

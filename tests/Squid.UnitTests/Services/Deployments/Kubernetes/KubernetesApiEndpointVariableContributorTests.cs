@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
-using Squid.Core.Services.Deployments.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;

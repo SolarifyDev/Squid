@@ -1,6 +1,6 @@
 using System.Text;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Services.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Helpers;

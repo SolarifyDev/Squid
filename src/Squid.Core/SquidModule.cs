@@ -3,6 +3,7 @@ using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Settings;
+using Squid.Core.Settings.System;
 
 namespace Squid.Core;
 
@@ -38,7 +39,32 @@ public class SquidModule : Module
 
     private void RegisterSettings(ContainerBuilder builder)
     {
-        builder.RegisterModule(new SettingModule(_configuration, _assemblies));
+        builder.RegisterInstance(_configuration)
+            .As<IConfiguration>()
+            .SingleInstance();
+
+        var settingTypes = _assemblies.SelectMany(a => a.GetTypes())
+            .Where(t => t.IsClass && typeof(IConfigurationSetting).IsAssignableFrom(t))
+            .ToArray();
+
+        foreach (var type in settingTypes)
+        {
+            builder.Register(ctx =>
+                {
+                    var cfg = ctx.Resolve<IConfiguration>();
+
+                    var sectionName = type.Name.EndsWith("Setting")
+                        ? type.Name[..^"Setting".Length]
+                        : type.Name;
+
+                    var instance = Activator.CreateInstance(type)!;
+                    cfg.GetSection(sectionName).Bind(instance);
+
+                    return instance;
+                })
+                .As(type)
+                .SingleInstance();
+        }
     }
 
     private void RegisterMediator(ContainerBuilder builder)

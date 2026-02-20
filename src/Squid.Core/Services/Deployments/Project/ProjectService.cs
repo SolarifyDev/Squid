@@ -1,5 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Deployments.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Commands.Deployments.Project;

@@ -1,7 +1,7 @@
 using System.Threading;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Deployments.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;

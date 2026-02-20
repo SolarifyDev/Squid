@@ -7,6 +7,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Settings;
 using Squid.Core.Settings.SelfCert;
+using Squid.Core.Settings.System;
 
 namespace Squid.IntegrationTests.Base;
 

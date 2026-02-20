@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 
 namespace Squid.E2ETests.Infrastructure;
 

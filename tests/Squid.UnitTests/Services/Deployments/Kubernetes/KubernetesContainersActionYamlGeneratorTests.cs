@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using Squid.Core.Services.Deployments.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;

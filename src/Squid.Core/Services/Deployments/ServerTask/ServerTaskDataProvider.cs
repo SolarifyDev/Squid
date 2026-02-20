@@ -1,7 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Services.Deployments.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 

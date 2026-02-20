@@ -2,7 +2,7 @@ using System.IO.Compression;
 using Autofac;
 using Autofac.Core;
 using Microsoft.Extensions.Configuration;
-using Squid.Core.Services.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Settings.GithubPackage;
 using Squid.E2ETests.Infrastructure;
 

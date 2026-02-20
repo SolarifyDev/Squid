@@ -1,5 +1,5 @@
 using Squid.Core.Persistence.Db;
-using Squid.Core.Services.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
 
