@@ -1,3 +1,5 @@
+using Squid.Core.VariableSubstitution;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -8,12 +10,13 @@ public partial class DeploymentTaskExecutor
     public static bool ShouldExecuteStep(
         DeploymentStepDto step,
         HashSet<string> targetRoles,
-        bool previousStepSucceeded)
+        bool previousStepSucceeded,
+        List<VariableDto> effectiveVariables = null)
     {
         if (step.IsDisabled)
             return false;
 
-        if (!EvaluateCondition(step.Condition, previousStepSucceeded))
+        if (!EvaluateCondition(step, previousStepSucceeded, effectiveVariables))
             return false;
 
         if (!MatchesTargetRoles(step, targetRoles))
@@ -57,16 +60,34 @@ public partial class DeploymentTaskExecutor
         return true;
     }
 
-    private static bool EvaluateCondition(string condition, bool previousStepSucceeded)
+    private static bool EvaluateCondition(
+        DeploymentStepDto step, bool previousStepSucceeded, List<VariableDto> effectiveVariables)
     {
-        return condition switch
+        return step.Condition switch
         {
             "Always" => true,
             "Failure" => !previousStepSucceeded,
-            "Variable" => true,
+            "Variable" => EvaluateVariableCondition(step, previousStepSucceeded, effectiveVariables),
             null or "" => previousStepSucceeded,
             _ => previousStepSucceeded // "Success" and any unknown value
         };
+    }
+
+    private static bool EvaluateVariableCondition(
+        DeploymentStepDto step, bool previousStepSucceeded, List<VariableDto> effectiveVariables)
+    {
+        var expressionProperty = step.Properties?
+            .FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.ConditionExpression);
+
+        if (expressionProperty == null || string.IsNullOrWhiteSpace(expressionProperty.PropertyValue))
+            return true;
+
+        if (effectiveVariables == null)
+            return true;
+
+        var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
+
+        return variableDictionary.EvaluateTruthy(expressionProperty.PropertyValue);
     }
 
     private static bool MatchesTargetRoles(DeploymentStepDto step, HashSet<string> targetRoles)

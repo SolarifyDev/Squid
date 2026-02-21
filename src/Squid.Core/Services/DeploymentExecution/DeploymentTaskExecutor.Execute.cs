@@ -39,14 +39,14 @@ public partial class DeploymentTaskExecutor
         {
             _ctx.CurrentDeployTargetContext = tc;
             var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
+            var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
 
-            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered))
+            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVariables))
             {
                 Log.Information("Skipping step {StepName} on target {TargetName}", step.Name, tc.Machine.Name);
                 continue;
             }
 
-            var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
 
             var stepActivityNode = await CreateActivityNodeAsync(

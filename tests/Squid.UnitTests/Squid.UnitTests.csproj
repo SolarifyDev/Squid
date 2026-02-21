@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Squid.Agent\Squid.Agent.csproj" />
     <ProjectReference Include="..\..\src\Squid.Core\Squid.Core.csproj" />
     <ProjectReference Include="..\..\src\Squid.Message\Squid.Message.csproj" />
   </ItemGroup>

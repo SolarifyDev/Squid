@@ -27,6 +27,9 @@ public class AgentSettings
     public string ScriptPodCpuLimit { get; set; } = "500m";
     public string ScriptPodMemoryLimit { get; set; } = "512Mi";
 
+    // Health check
+    public int HealthCheckPort { get; set; } = 8080;
+
     // Execution mode
     public bool UseScriptPods { get; set; } = false;
 }

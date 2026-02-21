@@ -36,11 +36,29 @@ spec:
       - name: squid-agent
         image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
         imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+        ports:
+        - name: health
+          containerPort: {{ .Values.agent.healthCheckPort }}
+          protocol: TCP
         startupProbe:
           exec:
             command: ["test", "-f", "/squid/initialized"]
           failureThreshold: {{ .Values.agent.startupProbe.failureThreshold }}
           periodSeconds: {{ .Values.agent.startupProbe.periodSeconds }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         env:
         - name: Agent__ServerUrl
           value: "{{ .Values.agent.serverUrl }}"
@@ -77,6 +95,8 @@ spec:
           value: "{{ .Values.scriptPod.memoryLimit }}"
         - name: Agent__UseScriptPods
           value: "true"
+        - name: Agent__HealthCheckPort
+          value: "{{ .Values.agent.healthCheckPort }}"
         - name: Agent__WorkspacePath
           value: "/squid/work"
         - name: Agent__CertsPath

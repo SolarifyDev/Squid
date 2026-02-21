@@ -124,9 +124,195 @@ public class KubernetesStepConditionE2ETests
         }
     }
 
+    [Theory]
+    [InlineData("True", true)]
+    [InlineData("False", false)]
+    public async Task Pipeline_VariableCondition_EvaluatesExpression(
+        string variableValue, bool expectStep2Executed)
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedVariableConditionPipelineAsync(
+            conditionExpression: "#{RunCleanup}",
+            variableName: "RunCleanup",
+            variableValue: variableValue);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        var executedScripts = ExecutionCapture.CapturedRequests
+            .Select(r => r.ScriptBody)
+            .ToList();
+
+        if (expectStep2Executed)
+        {
+            executedScripts.ShouldContain(
+                s => s.Contains("step-2-variable"),
+                "Step 2 with Variable condition should execute when expression is truthy");
+        }
+        else
+        {
+            executedScripts.ShouldNotContain(
+                s => s.Contains("step-2-variable"),
+                "Step 2 with Variable condition should be skipped when expression is falsy");
+        }
+    }
+
     // ========================================================================
     // Seeder
     // ========================================================================
+
+    private async Task<int> SeedVariableConditionPipelineAsync(
+        string conditionExpression, string variableName, string variableValue)
+    {
+        var serverTaskId = 0;
+
+        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
+            var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
+            await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            await builder.CreateVariableAsync(variableSet.Id, variableName, variableValue).ConfigureAwait(false);
+
+            var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
+            await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
+
+            // Step 1 — normal success step
+            var step1 = await builder.CreateDeploymentStepAsync(
+                process.Id, 1, "Step 1", "Action", "Success").ConfigureAwait(false);
+            await builder.CreateStepPropertiesAsync(step1.Id,
+                ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
+
+            var action1 = await builder.CreateDeploymentActionAsync(
+                step1.Id, 1, "Step 1 Action",
+                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+
+            await builder.CreateActionMachineRolesAsync(action1.Id, "k8s").ConfigureAwait(false);
+            await builder.CreateActionPropertiesAsync(action1.Id,
+                ("Squid.Action.Script.ScriptBody", "echo 'step-1-script'"),
+                ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
+
+            // Step 2 — Variable condition with expression
+            var step2 = await builder.CreateDeploymentStepAsync(
+                process.Id, 2, "Step 2", "Action", "Variable").ConfigureAwait(false);
+            await builder.CreateStepPropertiesAsync(step2.Id,
+                ("Squid.Action.TargetRoles", "k8s"),
+                ("Squid.Step.ConditionExpression", conditionExpression)).ConfigureAwait(false);
+
+            var action2 = await builder.CreateDeploymentActionAsync(
+                step2.Id, 1, "Step 2 Action",
+                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+
+            await builder.CreateActionMachineRolesAsync(action2.Id, "k8s").ConfigureAwait(false);
+            await builder.CreateActionPropertiesAsync(action2.Id,
+                ("Squid.Action.Script.ScriptBody", "echo 'step-2-variable'"),
+                ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
+
+            // Infrastructure
+            var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync("E2E Variable Condition Env").ConfigureAwait(false);
+
+            var endpointJson = JsonSerializer.Serialize(new
+            {
+                CommunicationStyle = "KubernetesApi",
+                ClusterUrl = "https://localhost:6443",
+                SkipTlsVerification = "True",
+                AccountId = "1",
+                Namespace = "default"
+            });
+
+            var machine = new Machine
+            {
+                Name = "E2E Variable Condition Target",
+                IsDisabled = false,
+                Roles = "k8s",
+                EnvironmentIds = environment.Id.ToString(),
+                Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
+                Thumbprint = "E2E-THUMBPRINT",
+                Uri = "https://localhost:10933",
+                HasLatestCalamari = false,
+                Endpoint = endpointJson,
+                DataVersion = Array.Empty<byte>(),
+                SpaceId = 1,
+                OperatingSystem = OperatingSystemType.Windows,
+                ShellName = "PowerShell",
+                ShellVersion = "7.0",
+                LicenseHash = string.Empty,
+                Slug = "e2e-variable-condition-target"
+            };
+
+            await repository.InsertAsync(machine).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var account = new DeploymentAccount
+            {
+                SpaceId = 1,
+                Name = "E2E Variable Condition Account",
+                Slug = "e2e-variable-condition-account",
+                AccountType = AccountType.Token,
+                Token = "e2e-test-token"
+            };
+
+            await repository.InsertAsync(account).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
+
+            var deployment = new Deployment
+            {
+                Name = "E2E Variable Condition Deployment",
+                SpaceId = 1,
+                ChannelId = channel.Id,
+                ProjectId = project.Id,
+                ReleaseId = release.Id,
+                EnvironmentId = environment.Id,
+                DeployedBy = 1,
+                Created = DateTimeOffset.UtcNow,
+                Json = string.Empty
+            };
+
+            await repository.InsertAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var serverTask = new ServerTask
+            {
+                Name = "E2E Variable Condition Task",
+                Description = "E2E variable condition test",
+                QueueTime = DateTimeOffset.UtcNow,
+                State = TaskState.Pending,
+                ServerTaskType = "Deploy",
+                ProjectId = project.Id,
+                EnvironmentId = environment.Id,
+                SpaceId = 1,
+                LastModified = DateTimeOffset.UtcNow,
+                BusinessProcessState = "Queued",
+                StateOrder = 1,
+                Weight = 1,
+                BatchId = 0,
+                JSON = string.Empty,
+                HasWarningsOrErrors = false,
+                ServerNodeId = Guid.NewGuid(),
+                DurationSeconds = 0,
+                DataVersion = Array.Empty<byte>()
+            };
+
+            await repository.InsertAsync(serverTask).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            deployment.TaskId = serverTask.Id;
+            await repository.UpdateAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            serverTaskId = serverTask.Id;
+        }).ConfigureAwait(false);
+
+        return serverTaskId;
+    }
 
     private async Task<int> SeedTwoStepPipelineAsync(
         string step1Condition, string step2Condition, bool step1ShouldFail)

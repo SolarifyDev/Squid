@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Squid.Agent.Certificate;
 using Squid.Agent.Configuration;
 using Squid.Agent.Halibut;
+using Squid.Agent.Health;
 using Squid.Agent.Kubernetes;
 using Squid.Agent.Registration;
 using Squid.Agent.ScriptExecution;
@@ -52,6 +53,18 @@ try
     await using var halibutHost = new AgentHalibutHost(agentCert, scriptService, settings);
     halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId);
 
+    var isReady = true;
+    await using var healthServer = new HealthCheckServer(settings.HealthCheckPort, () => isReady);
+
+    try
+    {
+        healthServer.Start();
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Failed to start health check server on port {Port}", settings.HealthCheckPort);
+    }
+
     TouchInitializationFlag();
 
     Log.Information("Squid Agent running. SubscriptionId={SubscriptionId}. Press Ctrl+C to stop.", subscriptionId);
@@ -96,8 +109,9 @@ static IScriptService CreateScriptService(AgentSettings settings, out Kubernetes
         : KubernetesClientConfiguration.BuildConfigFromConfigFile();
 
     var k8sClient = new k8s.Kubernetes(k8sConfig);
+    var podOps = new KubernetesPodOperations(k8sClient);
 
-    var podMgr = new KubernetesPodManager(k8sClient, settings);
+    var podMgr = new KubernetesPodManager(podOps, settings);
     var service = new ScriptPodService(settings, podMgr);
 
     podMonitor = new KubernetesPodMonitor(podMgr, service, settings);

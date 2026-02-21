@@ -7,6 +7,7 @@ namespace Squid.Agent.Certificate;
 public class AgentCertificateManager
 {
     private const string CertFileName = "agent-cert.pfx";
+    private const string CertPassword = "squid-agent-cert";
     private const string SubscriptionIdFileName = "subscription-id";
 
     private readonly string _certsPath;
@@ -23,14 +24,14 @@ public class AgentCertificateManager
         if (File.Exists(certPath))
         {
             Log.Information("Loading existing agent certificate from {Path}", certPath);
-            return new X509Certificate2(certPath, string.Empty, X509KeyStorageFlags.MachineKeySet);
+            return new X509Certificate2(certPath, CertPassword, X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
         }
 
         Log.Information("Generating new self-signed agent certificate");
 
         var cert = CreateSelfSignedCert();
         EnsureDirectoryExists(_certsPath);
-        File.WriteAllBytes(certPath, cert.Export(X509ContentType.Pfx, string.Empty));
+        File.WriteAllBytes(certPath, cert.Export(X509ContentType.Pfx, CertPassword));
 
         Log.Information("Agent certificate saved to {Path}, thumbprint={Thumbprint}", certPath, cert.Thumbprint);
 
@@ -78,9 +79,9 @@ public class AgentCertificateManager
 
 #pragma warning disable SYSLIB0057
         return new X509Certificate2(
-            cert.Export(X509ContentType.Pfx, string.Empty),
-            string.Empty,
-            X509KeyStorageFlags.MachineKeySet);
+            cert.Export(X509ContentType.Pfx, CertPassword),
+            CertPassword,
+            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
 #pragma warning restore SYSLIB0057
     }
 

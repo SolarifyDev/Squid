@@ -18,6 +18,8 @@ agent:
       memory: "256Mi"
       cpu: "200m"
 
+  healthCheckPort: 8080
+
   startupProbe:
     failureThreshold: 100
     periodSeconds: 1

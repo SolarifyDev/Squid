@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments;
 
@@ -46,7 +48,7 @@ public class DeploymentPipelineFilterTests
     [InlineData("Failure", true, false)]
     [InlineData("Always", true, true)]
     [InlineData("Always", false, true)]
-    [InlineData("Variable", true, true)]    // Variable treated as Always (not yet supported)
+    [InlineData("Variable", true, true)]    // Variable without expression → always true
     [InlineData("Variable", false, true)]
     [InlineData(null, true, true)]           // null treated as Success
     [InlineData(null, false, false)]
@@ -252,6 +254,60 @@ public class DeploymentPipelineFilterTests
             .ShouldBeFalse();
     }
 
+    // ========== Variable Condition Evaluation ==========
+
+    [Theory]
+    [InlineData("#{IsProduction}", "True", true)]
+    [InlineData("#{IsProduction}", "False", false)]
+    [InlineData("#{IsProduction}", "", false)]
+    [InlineData("#{if IsProduction}true#{/if}", "True", true)]
+    [InlineData("#{if IsProduction}true#{/if}", "False", false)]
+    public void ShouldExecuteStep_VariableCondition_EvaluatesExpression(
+        string expression, string variableValue, bool expected)
+    {
+        var step = MakeStepWithVariableCondition(expression);
+
+        var variables = new List<VariableDto>
+        {
+            new() { Name = "IsProduction", Value = variableValue }
+        };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
+            .ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_VariableCondition_NoExpression_ReturnsTrue()
+    {
+        var step = MakeStep(condition: "Variable");
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_VariableCondition_NullVariables_ReturnsTrue()
+    {
+        var step = MakeStepWithVariableCondition("#{SomeVar}");
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false, effectiveVariables: null)
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldExecuteStep_VariableCondition_MissingVariable_ReturnsFalse()
+    {
+        var step = MakeStepWithVariableCondition("#{NonExistent}");
+
+        var variables = new List<VariableDto>
+        {
+            new() { Name = "OtherVar", Value = "True" }
+        };
+
+        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
+            .ShouldBeFalse();
+    }
+
     // ========== Helpers ==========
 
     private static DeploymentStepDto MakeStep(
@@ -280,6 +336,20 @@ public class DeploymentPipelineFilterTests
                 PropertyValue = targetRoles
             });
         }
+
+        return step;
+    }
+
+    private static DeploymentStepDto MakeStepWithVariableCondition(string expression)
+    {
+        var step = MakeStep(condition: "Variable");
+
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1,
+            PropertyName = SpecialVariables.Step.ConditionExpression,
+            PropertyValue = expression
+        });
 
         return step;
     }

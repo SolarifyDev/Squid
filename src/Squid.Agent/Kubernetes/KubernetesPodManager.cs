@@ -1,4 +1,3 @@
-using k8s;
 using k8s.Models;
 using Squid.Agent.Configuration;
 using Serilog;
@@ -7,12 +6,12 @@ namespace Squid.Agent.Kubernetes;
 
 public partial class KubernetesPodManager
 {
-    private readonly IKubernetes _client;
+    private readonly IKubernetesPodOperations _ops;
     private readonly AgentSettings _settings;
 
-    public KubernetesPodManager(IKubernetes client, AgentSettings settings)
+    public KubernetesPodManager(IKubernetesPodOperations ops, AgentSettings settings)
     {
-        _client = client;
+        _ops = ops;
         _settings = settings;
     }
 
@@ -21,7 +20,7 @@ public partial class KubernetesPodManager
         var podName = $"squid-script-{ticketId[..12]}";
         var pod = BuildPodSpec(podName, ticketId);
 
-        _client.CoreV1.CreateNamespacedPod(pod, _settings.AgentNamespace);
+        _ops.CreatePod(pod, _settings.AgentNamespace);
 
         Log.Information("Created script pod {PodName} for ticket {TicketId}", podName, ticketId);
 
@@ -32,7 +31,7 @@ public partial class KubernetesPodManager
     {
         try
         {
-            var pod = _client.CoreV1.ReadNamespacedPodStatus(podName, _settings.AgentNamespace);
+            var pod = _ops.ReadPodStatus(podName, _settings.AgentNamespace);
             return pod?.Status?.Phase;
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -46,7 +45,7 @@ public partial class KubernetesPodManager
     {
         try
         {
-            var pod = _client.CoreV1.ReadNamespacedPodStatus(podName, _settings.AgentNamespace);
+            var pod = _ops.ReadPodStatus(podName, _settings.AgentNamespace);
 
             var containerStatus = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
 
@@ -62,8 +61,7 @@ public partial class KubernetesPodManager
     {
         try
         {
-            var stream = _client.CoreV1.ReadNamespacedPodLog(
-                podName, _settings.AgentNamespace, container: "script");
+            var stream = _ops.ReadPodLog(podName, _settings.AgentNamespace, "script");
 
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
@@ -78,7 +76,7 @@ public partial class KubernetesPodManager
     {
         try
         {
-            _client.CoreV1.DeleteNamespacedPod(podName, _settings.AgentNamespace);
+            _ops.DeletePod(podName, _settings.AgentNamespace);
 
             Log.Information("Deleted script pod {PodName}", podName);
         }
@@ -111,9 +109,9 @@ public partial class KubernetesPodManager
 
     public List<V1Pod> ListManagedPods()
     {
-        var pods = _client.CoreV1.ListNamespacedPod(
+        var pods = _ops.ListPods(
             _settings.AgentNamespace,
-            labelSelector: "app.kubernetes.io/managed-by=squid-agent");
+            "app.kubernetes.io/managed-by=squid-agent");
 
         return pods.Items.ToList();
     }
