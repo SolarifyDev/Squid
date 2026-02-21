@@ -3,8 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using Halibut;
 using Halibut.Diagnostics;
 using Halibut.ServiceModel;
-using Squid.Core.Commands.Tentacle;
-using Squid.Core.Services.Tentacle;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.E2ETests.Infrastructure;
 

@@ -1,0 +1,12 @@
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+COPY NuGet.Config .
+COPY src/Squid.Message/ Squid.Message/
+COPY src/Squid.Agent/ Squid.Agent/
+RUN dotnet publish Squid.Agent/Squid.Agent.csproj -c Release -o /app
+
+FROM mcr.microsoft.com/dotnet/runtime:9.0
+WORKDIR /app
+RUN mkdir -p /squid/work /squid/certs
+COPY --from=build /app .
+ENTRYPOINT ["dotnet", "Squid.Agent.dll"]

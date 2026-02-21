@@ -33,12 +33,34 @@ public class AgentService : IAgentService
     {
         _halibutRuntime.Trust(command.Thumbprint);
 
-        var machine = BuildAgentMachine(command);
+        var existing = await _agentDataProvider.GetAgentBySubscriptionIdAsync(
+            command.SubscriptionId, cancellationToken).ConfigureAwait(false);
 
-        await _agentDataProvider.AddAgentMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+        Machine machine;
 
-        Log.Information("Registered agent machine {MachineName} ({SubscriptionId})",
-            machine.Name, machine.PollingSubscriptionId);
+        if (existing != null)
+        {
+            existing.Thumbprint = command.Thumbprint;
+            existing.Roles = command.Roles ?? existing.Roles;
+            existing.EnvironmentIds = command.EnvironmentIds ?? existing.EnvironmentIds;
+            existing.Endpoint = BuildEndpointJson(command);
+
+            await _agentDataProvider.UpdateAgentMachineAsync(existing, cancellationToken).ConfigureAwait(false);
+
+            machine = existing;
+
+            Log.Information("Updated existing agent machine {MachineName} ({SubscriptionId})",
+                machine.Name, machine.PollingSubscriptionId);
+        }
+        else
+        {
+            machine = BuildAgentMachine(command);
+
+            await _agentDataProvider.AddAgentMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            Log.Information("Registered new agent machine {MachineName} ({SubscriptionId})",
+                machine.Name, machine.PollingSubscriptionId);
+        }
 
         return new RegisterAgentResponseData
         {
@@ -48,15 +70,20 @@ public class AgentService : IAgentService
         };
     }
 
-    private static Machine BuildAgentMachine(RegisterAgentCommand command)
+    private static string BuildEndpointJson(RegisterAgentCommand command)
     {
-        var endpointJson = JsonSerializer.Serialize(new
+        return JsonSerializer.Serialize(new
         {
             CommunicationStyle = "KubernetesAgent",
             command.SubscriptionId,
             command.Thumbprint,
             command.Namespace
         });
+    }
+
+    private static Machine BuildAgentMachine(RegisterAgentCommand command)
+    {
+        var endpointJson = BuildEndpointJson(command);
 
         return new Machine
         {

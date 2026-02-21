@@ -1,0 +1,10 @@
+{{- if not .Values.scriptPod.rbac.useNamespacedRoles }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "squid-agent.fullname" . }}-script
+  labels:
+    {{- include "squid-agent.labels" . | nindent 4 }}
+rules:
+  {{- toYaml .Values.scriptPod.rbac.clusterRole.rules | nindent 2 }}
+{{- end }}

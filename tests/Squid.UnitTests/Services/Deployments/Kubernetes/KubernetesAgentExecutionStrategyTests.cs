@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
 using Halibut;
-using Squid.Core.Commands.Tentacle;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Services.Tentacle;
 using Squid.Core.Settings.GithubPackage;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

@@ -2,10 +2,8 @@ using System.Text;
 using System.Text.Json;
 using Halibut;
 using Halibut.Diagnostics;
-using Squid.Core.Commands.Tentacle;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
-using Squid.Core.Services.Tentacle;
 using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Models.Deployments.Variable;
 

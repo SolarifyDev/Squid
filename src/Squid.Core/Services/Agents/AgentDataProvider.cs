@@ -7,6 +7,8 @@ public interface IAgentDataProvider : IScopedDependency
 {
     Task AddAgentMachineAsync(Machine machine, bool forceSave = true, CancellationToken cancellationToken = default);
 
+    Task UpdateAgentMachineAsync(Machine machine, CancellationToken cancellationToken = default);
+
     Task<Machine?> GetAgentBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default);
 }
 
@@ -17,6 +19,13 @@ public class AgentDataProvider(IUnitOfWork unitOfWork, IRepository repository) :
         await repository.InsertAsync(machine, cancellationToken).ConfigureAwait(false);
 
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task UpdateAgentMachineAsync(Machine machine, CancellationToken cancellationToken = default)
+    {
+        await repository.UpdateAsync(machine, cancellationToken).ConfigureAwait(false);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<Machine?> GetAgentBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)

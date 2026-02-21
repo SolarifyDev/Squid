@@ -1,7 +1,6 @@
 using Halibut;
-using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.Tentacle;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.E2ETests.Infrastructure;
 

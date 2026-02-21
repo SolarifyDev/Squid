@@ -1,4 +1,3 @@
-using Squid.Core.Commands.Tentacle;
 using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.Core.Services.DeploymentExecution;

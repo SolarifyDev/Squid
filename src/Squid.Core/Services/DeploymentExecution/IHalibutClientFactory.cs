@@ -1,5 +1,4 @@
 using Halibut;
-using Squid.Core.Services.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution;
 

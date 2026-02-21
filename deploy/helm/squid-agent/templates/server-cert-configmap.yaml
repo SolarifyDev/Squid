@@ -1,0 +1,10 @@
+{{- if .Values.agent.serverCertificate }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "squid-agent.fullname" . }}-server-cert
+  labels:
+    {{- include "squid-agent.labels" . | nindent 4 }}
+data:
+  server-cert.pem: {{ .Values.agent.serverCertificate }}
+{{- end }}

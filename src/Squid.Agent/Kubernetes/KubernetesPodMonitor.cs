@@ -1,0 +1,116 @@
+using Squid.Agent.Configuration;
+using Squid.Agent.ScriptExecution;
+using Serilog;
+
+namespace Squid.Agent.Kubernetes;
+
+public class KubernetesPodMonitor
+{
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
+
+    private readonly KubernetesPodManager _podManager;
+    private readonly ScriptPodService _scriptPodService;
+    private readonly AgentSettings _settings;
+
+    public KubernetesPodMonitor(
+        KubernetesPodManager podManager,
+        ScriptPodService scriptPodService,
+        AgentSettings settings)
+    {
+        _podManager = podManager;
+        _scriptPodService = scriptPodService;
+        _settings = settings;
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        Log.Information("Pod monitor started. Cleanup interval={IntervalSeconds}s", CleanupInterval.TotalSeconds);
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
+                CleanupOrphanedPods();
+                CleanupOrphanedWorkspaces();
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Pod monitor cleanup cycle failed");
+            }
+        }
+    }
+
+    private void CleanupOrphanedPods()
+    {
+        var pods = _podManager.ListManagedPods();
+        var activeTickets = _scriptPodService.ActiveScripts;
+
+        foreach (var pod in pods)
+        {
+            var phase = pod.Status?.Phase;
+
+            if (phase is not ("Succeeded" or "Failed"))
+                continue;
+
+            var finishedAt = pod.Status?.ContainerStatuses?
+                .FirstOrDefault()?.State?.Terminated?.FinishedAt;
+
+            if (finishedAt == null)
+                continue;
+
+            var age = DateTime.UtcNow - finishedAt.Value;
+
+            if (age < OrphanAge)
+                continue;
+
+            var podName = pod.Metadata.Name;
+            string ticketId = null;
+            pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
+
+            if (ticketId != null && activeTickets.ContainsKey(ticketId))
+                continue;
+
+            Log.Information("Cleaning up orphaned pod {PodName} (age={AgeMinutes}m)", podName, age.TotalMinutes);
+            _podManager.DeletePod(podName);
+        }
+    }
+
+    private void CleanupOrphanedWorkspaces()
+    {
+        if (!Directory.Exists(_settings.WorkspacePath))
+            return;
+
+        var activeTickets = _scriptPodService.ActiveScripts;
+
+        foreach (var dir in Directory.GetDirectories(_settings.WorkspacePath))
+        {
+            var ticketId = Path.GetFileName(dir);
+
+            if (activeTickets.ContainsKey(ticketId))
+                continue;
+
+            var dirInfo = new DirectoryInfo(dir);
+            var age = DateTime.UtcNow - dirInfo.LastWriteTimeUtc;
+
+            if (age < OrphanAge)
+                continue;
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+
+                Log.Information("Cleaned up orphaned workspace {Dir}", dir);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to cleanup workspace {Dir}", dir);
+            }
+        }
+    }
+}
