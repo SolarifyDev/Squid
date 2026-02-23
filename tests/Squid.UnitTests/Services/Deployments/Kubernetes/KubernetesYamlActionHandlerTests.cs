@@ -160,7 +160,7 @@ public class KubernetesYamlActionHandlerTests
     {
         var handler = new KubernetesYamlActionHandler(Enumerable.Empty<IActionYamlGenerator>());
 
-        handler.ActionType.ShouldBe("Squid.KubernetesDeployContainers");
+        handler.ActionType.ShouldBe(DeploymentActionType.KubernetesDeployContainers);
     }
 
     [Fact]

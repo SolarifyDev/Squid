@@ -5,7 +5,7 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IActionHandler : IScopedDependency
 {
-    string ActionType { get; }
+    DeploymentActionType ActionType { get; }
 
     bool CanHandle(DeploymentActionDto action);
 

@@ -9,15 +9,13 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class HelmUpgradeActionHandler : IActionHandler
 {
-    private const string HelmChartUpgradeActionType = "Squid.HelmChartUpgrade";
-
-    public string ActionType => HelmChartUpgradeActionType;
+    public DeploymentActionType ActionType => DeploymentActionType.HelmChartUpgrade;
 
     public bool CanHandle(DeploymentActionDto action)
     {
         if (action == null) return false;
 
-        return string.Equals(action.ActionType, HelmChartUpgradeActionType, StringComparison.OrdinalIgnoreCase);
+        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
     }
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)

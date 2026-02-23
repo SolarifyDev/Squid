@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -81,7 +82,7 @@ public class HelmUpgradeActionHandlerTests
     [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
-        _handler.ActionType.ShouldBe("Squid.HelmChartUpgrade");
+        _handler.ActionType.ShouldBe(DeploymentActionType.HelmChartUpgrade);
     }
 
     // === PrepareAsync — Basic Script Generation ===

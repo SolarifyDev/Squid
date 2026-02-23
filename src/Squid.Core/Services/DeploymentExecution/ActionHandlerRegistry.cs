@@ -9,16 +9,23 @@ public interface IActionHandlerRegistry : IScopedDependency
 
 public class ActionHandlerRegistry : IActionHandlerRegistry
 {
-    private readonly IEnumerable<IActionHandler> _handlers;
+    private readonly IReadOnlyDictionary<DeploymentActionType, IActionHandler> _handlers;
 
     public ActionHandlerRegistry(IEnumerable<IActionHandler> handlers)
     {
-        _handlers = handlers;
+        ArgumentNullException.ThrowIfNull(handlers);
+
+        _handlers = handlers.ToDictionary(h => h.ActionType);
     }
 
     public IActionHandler Resolve(DeploymentActionDto action)
     {
-        if (action == null) return null;
-        return _handlers.FirstOrDefault(h => h.CanHandle(action));
+        if (action == null || !DeploymentActionTypeParser.TryParse(action.ActionType, out var actionType))
+            return null;
+
+        if (!_handlers.TryGetValue(actionType, out var handler))
+            return null;
+
+        return handler.CanHandle(action) ? handler : null;
     }
 }

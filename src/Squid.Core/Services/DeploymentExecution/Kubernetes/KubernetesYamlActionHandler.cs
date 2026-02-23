@@ -21,13 +21,14 @@ public class KubernetesYamlActionHandler : IActionHandler
         _externalFeedDataProvider = externalFeedDataProvider;
     }
 
-    public string ActionType => "Squid.KubernetesDeployContainers";
+    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployContainers;
 
     public bool CanHandle(DeploymentActionDto action)
     {
         if (action == null) return false;
 
-        return _yamlGenerators.Any(g => g.CanHandle(action));
+        return DeploymentActionTypeParser.Is(action.ActionType, ActionType)
+               && _yamlGenerators.Any(g => g.CanHandle(action));
     }
 
     public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)

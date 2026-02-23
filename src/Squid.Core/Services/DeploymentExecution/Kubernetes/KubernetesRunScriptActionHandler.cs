@@ -6,15 +6,13 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesRunScriptActionHandler : IActionHandler
 {
-    private const string RunScriptActionType = "Squid.KubernetesRunScript";
-
-    public string ActionType => RunScriptActionType;
+    public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
 
     public bool CanHandle(DeploymentActionDto action)
     {
         if (action == null) return false;
 
-        return string.Equals(action.ActionType, RunScriptActionType, StringComparison.OrdinalIgnoreCase);
+        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
     }
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)

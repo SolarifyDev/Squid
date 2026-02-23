@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -86,7 +87,7 @@ public class KubernetesDeployYamlActionHandlerTests
     [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
-        _handler.ActionType.ShouldBe("Squid.KubernetesDeployRawYaml");
+        _handler.ActionType.ShouldBe(DeploymentActionType.KubernetesDeployRawYaml);
     }
 
     // === PrepareAsync — Inline YAML Tests ===

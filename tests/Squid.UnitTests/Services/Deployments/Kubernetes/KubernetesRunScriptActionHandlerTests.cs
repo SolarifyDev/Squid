@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -85,7 +86,7 @@ public class KubernetesRunScriptActionHandlerTests
     [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
-        _handler.ActionType.ShouldBe("Squid.KubernetesRunScript");
+        _handler.ActionType.ShouldBe(DeploymentActionType.KubernetesRunScript);
     }
 
     // === PrepareAsync Tests ===

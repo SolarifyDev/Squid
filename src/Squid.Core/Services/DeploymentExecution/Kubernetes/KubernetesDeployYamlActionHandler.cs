@@ -7,15 +7,13 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesDeployYamlActionHandler : IActionHandler
 {
-    private const string DeployRawYamlActionType = "Squid.KubernetesDeployRawYaml";
-
-    public string ActionType => DeployRawYamlActionType;
+    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployRawYaml;
 
     public bool CanHandle(DeploymentActionDto action)
     {
         if (action == null) return false;
 
-        return string.Equals(action.ActionType, DeployRawYamlActionType, StringComparison.OrdinalIgnoreCase);
+        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
     }
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)

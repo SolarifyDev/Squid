@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.UnitTests.Services.Deployments;
@@ -12,20 +13,20 @@ public class ActionHandlerRegistryTests
         ActionType = actionType
     };
 
-    private static IActionHandler CreateMockHandler(string actionType)
+    private static IActionHandler CreateMockHandler(DeploymentActionType actionType)
     {
         var mock = new Mock<IActionHandler>();
         mock.Setup(h => h.ActionType).Returns(actionType);
-        mock.Setup(h => h.CanHandle(It.Is<DeploymentActionDto>(a =>
-            string.Equals(a.ActionType, actionType, StringComparison.OrdinalIgnoreCase))))
-            .Returns(true);
+        mock.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
+        mock.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ActionExecutionResult());
         return mock.Object;
     }
 
     [Fact]
     public void Resolve_MatchingHandler_ReturnsHandler()
     {
-        var handler = CreateMockHandler("Squid.KubernetesRunScript");
+        var handler = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
         var registry = new ActionHandlerRegistry(new[] { handler });
 
         var result = registry.Resolve(CreateAction("Squid.KubernetesRunScript"));
@@ -36,7 +37,7 @@ public class ActionHandlerRegistryTests
     [Fact]
     public void Resolve_NoMatchingHandler_ReturnsNull()
     {
-        var handler = CreateMockHandler("Squid.KubernetesRunScript");
+        var handler = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
         var registry = new ActionHandlerRegistry(new[] { handler });
 
         var result = registry.Resolve(CreateAction("Squid.UnknownAction"));
@@ -45,10 +46,10 @@ public class ActionHandlerRegistryTests
     }
 
     [Fact]
-    public void Resolve_MultipleHandlers_ReturnsFirstMatch()
+    public void Resolve_MultipleHandlers_ReturnsMatchingHandler()
     {
-        var handler1 = CreateMockHandler("Squid.KubernetesRunScript");
-        var handler2 = CreateMockHandler("Squid.HelmChartUpgrade");
+        var handler1 = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
+        var handler2 = CreateMockHandler(DeploymentActionType.HelmChartUpgrade);
         var registry = new ActionHandlerRegistry(new[] { handler1, handler2 });
 
         var result = registry.Resolve(CreateAction("Squid.HelmChartUpgrade"));
@@ -69,7 +70,7 @@ public class ActionHandlerRegistryTests
     [Fact]
     public void Resolve_NullAction_ReturnsNull()
     {
-        var handler = CreateMockHandler("Squid.KubernetesRunScript");
+        var handler = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
         var registry = new ActionHandlerRegistry(new[] { handler });
 
         var result = registry.Resolve(null);
@@ -80,11 +81,31 @@ public class ActionHandlerRegistryTests
     [Fact]
     public void Resolve_ActionWithNullActionType_ReturnsNull()
     {
-        var handler = CreateMockHandler("Squid.KubernetesRunScript");
+        var handler = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
         var registry = new ActionHandlerRegistry(new[] { handler });
 
         var result = registry.Resolve(CreateAction(null));
 
         result.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Resolve_ActionTypeCaseInsensitive_ReturnsMatchingHandler()
+    {
+        var handler = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
+        var registry = new ActionHandlerRegistry(new[] { handler });
+
+        var result = registry.Resolve(CreateAction("squid.kubernetesrunscript"));
+
+        result.ShouldBe(handler);
+    }
+
+    [Fact]
+    public void Constructor_DuplicateActionType_Throws()
+    {
+        var handler1 = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
+        var handler2 = CreateMockHandler(DeploymentActionType.KubernetesRunScript);
+
+        Should.Throw<ArgumentException>(() => new ActionHandlerRegistry(new[] { handler1, handler2 }));
     }
 }
