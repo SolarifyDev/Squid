@@ -8,7 +8,7 @@ namespace Squid.Calamari.Variables;
 /// </summary>
 public static class VariableBootstrapper
 {
-    public static string GeneratePreamble(IDictionary<string, string> variables)
+    public static string GeneratePreamble(IEnumerable<KeyValuePair<string, string>> variables)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#!/usr/bin/env bash");

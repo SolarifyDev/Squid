@@ -1,5 +1,6 @@
 using Squid.Calamari.Execution;
-using Squid.Calamari.Variables;
+using Squid.Calamari.Pipeline;
+using Squid.Calamari.Scripting;
 
 namespace Squid.Calamari.Commands;
 
@@ -9,36 +10,53 @@ namespace Squid.Calamari.Commands;
 /// </summary>
 public class RunScriptCommand
 {
+    private readonly ExecutionPipeline<RunScriptCommandContext> _pipeline;
+
+    public RunScriptCommand()
+        : this(new ScriptEngine())
+    {
+    }
+
+    public RunScriptCommand(IScriptEngine scriptEngine)
+    {
+        _pipeline = new ExecutionPipeline<RunScriptCommandContext>(
+        [
+            new ResolveWorkingDirectoryStep<RunScriptCommandContext>(),
+            new LoadVariablesFromFilesStep<RunScriptCommandContext>(),
+            new WriteBootstrappedBashScriptStep(),
+            new ExecuteScriptWithEngineStep(scriptEngine),
+            new BuildRunScriptCommandResultStep(),
+            new CleanupTemporaryFilesStep<RunScriptCommandContext>()
+        ]);
+    }
+
     public async Task<int> ExecuteAsync(
         string scriptPath,
         string variablesPath,
         string? sensitivePath,
         string? password,
         CancellationToken ct)
+        => (await ExecuteWithResultAsync(scriptPath, variablesPath, sensitivePath, password, ct)
+            .ConfigureAwait(false)).ExitCode;
+
+    public async Task<CommandExecutionResult> ExecuteWithResultAsync(
+        string scriptPath,
+        string variablesPath,
+        string? sensitivePath,
+        string? password,
+        CancellationToken ct)
     {
-        var workDir = Path.GetDirectoryName(Path.GetFullPath(scriptPath))
-                      ?? Directory.GetCurrentDirectory();
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = scriptPath,
+            VariablesPath = variablesPath,
+            SensitivePath = sensitivePath,
+            Password = password
+        };
 
-        var variables = VariableFileLoader.MergeAll(variablesPath, sensitivePath, password);
-        var bootstrappedScriptPath = WriteBootstrappedScript(workDir, scriptPath, variables);
+        await _pipeline.ExecuteAsync(context, ct).ConfigureAwait(false);
 
-        var outputProcessor = new ScriptOutputProcessor();
-        var executor = new BashScriptExecutor();
-
-        return await executor.ExecuteAsync(bootstrappedScriptPath, workDir, outputProcessor, ct)
-            .ConfigureAwait(false);
-    }
-
-    private static string WriteBootstrappedScript(
-        string workDir, string originalScriptPath, IDictionary<string, string> variables)
-    {
-        var originalScript = File.ReadAllText(originalScriptPath);
-        var preamble = VariableBootstrapper.GeneratePreamble(variables);
-        var bootstrappedScript = preamble + originalScript;
-
-        var bootstrappedPath = Path.Combine(workDir, ".bootstrapped-script.sh");
-        File.WriteAllText(bootstrappedPath, bootstrappedScript);
-
-        return bootstrappedPath;
+        return context.CommandResult
+               ?? throw new InvalidOperationException("Pipeline completed without producing a command result.");
     }
 }

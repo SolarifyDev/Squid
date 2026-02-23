@@ -12,6 +12,7 @@ public class ProgramEntryPointTests
 
         result.ExitCode.ShouldBe(1);
         result.Stdout.ShouldContain("squid-calamari <subcommand> [options]");
+        result.Stdout.ShouldContain("kubernetes-apply-raw-yaml");
         result.Stderr.ShouldBeEmpty();
     }
 
@@ -44,6 +45,15 @@ public class ProgramEntryPointTests
     }
 
     [Fact]
+    public async Task OctopusCompatApplyRawYaml_WithoutPackageArg_Returns1()
+    {
+        var result = await CalamariTestHost.InvokeInProcessAsync("kubernetes-apply-raw-yaml");
+
+        result.ExitCode.ShouldBe(1);
+        result.Stderr.ShouldContain("kubernetes-apply-raw-yaml requires --package=<yaml-file>");
+    }
+
+    [Fact]
     public async Task RunScript_HappyPath_Returns0_AndSuppressesServiceMessage()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "squid-calamari-tests-" + Guid.NewGuid().ToString("N"));
@@ -61,6 +71,30 @@ public class ProgramEntryPointTests
             result.Stdout.ShouldContain("hello-from-inprocess");
             result.Stdout.ShouldNotContain("##squid[setVariable");
             result.Stderr.ShouldBeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunScript_FailureExitCode_IsReturnedByProgram()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "squid-calamari-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var scriptPath = Path.Combine(tempDir, "fail.sh");
+            File.WriteAllText(scriptPath, "exit 7\n");
+
+            var result = await CalamariTestHost.InvokeInProcessAsync("run-script", $"--script={scriptPath}");
+
+            result.ExitCode.ShouldBe(7);
         }
         finally
         {
