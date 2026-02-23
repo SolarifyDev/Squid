@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -68,46 +69,14 @@ public partial class DeploymentTaskExecutor
 
     public static List<DeploymentTargetContext> FindMatchingTargetsForStep(
         DeploymentStepDto step, List<DeploymentTargetContext> allTargets)
-    {
-        var stepRolesProperty = step.Properties?
-            .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
-
-        if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
-            return allTargets;
-
-        var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
-
-        return allTargets
-            .Where(tc => DeploymentTargetFinder.ParseRoles(tc.Machine.Roles).Overlaps(stepRoles))
-            .ToList();
-    }
+        => TargetStepMatcher.FindMatchingTargetsForStep(step, allTargets);
 
     public static List<VariableDto> BuildEffectiveVariables(
         List<VariableDto> baseVariables, DeploymentTargetContext target)
-    {
-        var variables = new List<VariableDto>(baseVariables);
-        variables.AddRange(target.EndpointVariables);
-
-        return variables;
-    }
+        => EffectiveVariableBuilder.BuildEffectiveVariables(baseVariables, target);
 
     private List<VariableDto> BuildActionVariables(List<VariableDto> effectiveVariables, DeploymentActionDto action)
-    {
-        var selectedPackage = _ctx.SelectedPackages
-            .FirstOrDefault(sp => string.Equals(sp.ActionName, action.Name, StringComparison.OrdinalIgnoreCase));
-
-        if (selectedPackage == null) return effectiveVariables;
-
-        var variables = new List<VariableDto>(effectiveVariables);
-
-        variables.Add(new VariableDto
-        {
-            Name = SpecialVariables.Action.PackageVersion,
-            Value = selectedPackage.Version
-        });
-
-        return variables;
-    }
+        => EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, _ctx.SelectedPackages);
 
     private async Task<List<ActionExecutionResult>> PrepareStepActionsAsync(
         DeploymentStepDto step,

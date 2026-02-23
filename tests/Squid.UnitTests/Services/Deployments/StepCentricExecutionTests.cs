@@ -255,6 +255,62 @@ public class StepCentricExecutionTests
         effectiveB.ShouldContain(v => v.Name == "OutputVar" && v.Value == "step1-output");
     }
 
+    [Fact]
+    public void BuildEffectiveVariables_ResultLists_AreIndependentAcrossTargets()
+    {
+        var baseVars = new List<VariableDto>
+        {
+            new() { Name = "SharedVar", Value = "shared" }
+        };
+
+        var targetA = new DeploymentTargetContext
+        {
+            EndpointVariables = new List<VariableDto>
+            {
+                new() { Name = "EndpointA", Value = "a" }
+            }
+        };
+
+        var targetB = new DeploymentTargetContext
+        {
+            EndpointVariables = new List<VariableDto>
+            {
+                new() { Name = "EndpointB", Value = "b" }
+            }
+        };
+
+        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA);
+        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB);
+
+        effectiveA.Add(new VariableDto { Name = "Temp", Value = "A-only" });
+
+        effectiveA.Count.ShouldBe(3);
+        effectiveB.Count.ShouldBe(2);
+        baseVars.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void BuildEffectiveVariables_ReturnsNewListInstance_EachCall()
+    {
+        var baseVars = new List<VariableDto>
+        {
+            new() { Name = "SharedVar", Value = "shared" }
+        };
+
+        var target = new DeploymentTargetContext
+        {
+            EndpointVariables = new List<VariableDto>
+            {
+                new() { Name = "Endpoint", Value = "x" }
+            }
+        };
+
+        var first = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        var second = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+
+        ReferenceEquals(first, second).ShouldBeFalse();
+    }
+
     // ========== Helpers ==========
 
     private static DeploymentStepDto MakeStep(string targetRoles)

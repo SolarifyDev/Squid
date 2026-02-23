@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 
@@ -124,6 +125,24 @@ public class StepBatcherTests
 
         batches.Count.ShouldBe(1);
         batches[0].Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void BatchSteps_ConsecutiveStartWithPrevious_StaysInSameBatch_AndPreservesOrder()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStep(1),
+            MakeStep(2, "StartWithPrevious"),
+            MakeStep(3, "StartWithPrevious"),
+            MakeStep(4)
+        };
+
+        var batches = StepBatcher.BatchSteps(steps);
+
+        batches.Count.ShouldBe(2);
+        batches[0].Select(s => s.Id).ShouldBe(new[] { 1, 2, 3 });
+        batches[1].Select(s => s.Id).ShouldBe(new[] { 4 });
     }
 
     [Fact]
