@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using Squid.Calamari.Execution.Output;
+using Squid.Calamari.Execution.Processes;
 
 namespace Squid.Calamari.Execution;
 
@@ -7,41 +8,32 @@ namespace Squid.Calamari.Execution;
 /// </summary>
 public class BashScriptExecutor
 {
+    private readonly IProcessRunner _processRunner;
+
+    public BashScriptExecutor()
+        : this(new ProcessRunner())
+    {
+    }
+
+    public BashScriptExecutor(IProcessRunner processRunner)
+    {
+        _processRunner = processRunner;
+    }
+
     public async Task<int> ExecuteAsync(
         string scriptPath,
         string workDir,
         ScriptOutputProcessor outputProcessor,
         CancellationToken ct)
     {
-        var process = CreateProcess(scriptPath, workDir);
+        var invocation = new ProcessInvocation(
+            executable: "bash",
+            arguments: [scriptPath],
+            workingDirectory: workDir);
 
-        process.OutputDataReceived += (_, e) => outputProcessor.ProcessLine(e.Data, isError: false);
-        process.ErrorDataReceived += (_, e) => outputProcessor.ProcessLine(e.Data, isError: true);
+        var result = await _processRunner.ExecuteAsync(invocation, outputProcessor.OutputSink, ct)
+            .ConfigureAwait(false);
 
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        await process.WaitForExitAsync(ct).ConfigureAwait(false);
-
-        return process.ExitCode;
-    }
-
-    private static Process CreateProcess(string scriptPath, string workDir)
-    {
-        return new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "bash",
-                Arguments = $"\"{scriptPath}\"",
-                WorkingDirectory = workDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            },
-            EnableRaisingEvents = true
-        };
+        return result.ExitCode;
     }
 }

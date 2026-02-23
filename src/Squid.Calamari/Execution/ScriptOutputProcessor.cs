@@ -1,4 +1,5 @@
 using Squid.Calamari.ServiceMessages;
+using Squid.Calamari.Execution.Output;
 
 namespace Squid.Calamari.Execution;
 
@@ -8,28 +9,30 @@ namespace Squid.Calamari.Execution;
 /// </summary>
 public class ScriptOutputProcessor
 {
-    private readonly List<OutputVariable> _outputVariables = new();
+    private readonly OutputVariableCollectorSink _outputVariableCollector;
+    private readonly CompositeProcessOutputSink _compositeSink;
 
-    public IReadOnlyList<OutputVariable> OutputVariables => _outputVariables;
+    public ScriptOutputProcessor()
+    {
+        _outputVariableCollector = new OutputVariableCollectorSink();
+
+        _compositeSink = new CompositeProcessOutputSink(
+            new SquidServiceMessageOutputSink(_outputVariableCollector),
+            new ConsoleProcessOutputSink());
+    }
+
+    public IReadOnlyList<OutputVariable> OutputVariables => _outputVariableCollector.OutputVariables;
+
+    internal IProcessOutputSink OutputSink => _compositeSink;
 
     public void ProcessLine(string? line, bool isError = false)
     {
         if (line == null)
             return;
 
-        if (!isError && ServiceMessageParser.IsServiceMessage(line))
-        {
-            var variable = ServiceMessageParser.TryParse(line);
-
-            if (variable != null)
-                _outputVariables.Add(variable);
-
-            return;
-        }
-
         if (isError)
-            Console.Error.WriteLine(line);
+            _compositeSink.WriteStderr(line);
         else
-            Console.WriteLine(line);
+            _compositeSink.WriteStdout(line);
     }
 }

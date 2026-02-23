@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Tentacle", "src\Squid
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Calamari", "src\Squid.Calamari\Squid.Calamari.csproj", "{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Calamari.Tests", "tests\Squid.Calamari.Tests\Squid.Calamari.Tests.csproj", "{6016BB13-7A99-4158-A1A7-A38015C155ED}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -127,6 +129,18 @@ Global
 		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x64.Build.0 = Release|Any CPU
 		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x86.ActiveCfg = Release|Any CPU
 		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x86.Build.0 = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|x64.Build.0 = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Debug|x86.Build.0 = Debug|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|x64.ActiveCfg = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|x64.Build.0 = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|x86.ActiveCfg = Release|Any CPU
+		{6016BB13-7A99-4158-A1A7-A38015C155ED}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -140,6 +154,7 @@ Global
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C5} = {39D26C72-1BD3-4793-A455-F651830208E7}
 		{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
 		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
+		{6016BB13-7A99-4158-A1A7-A38015C155ED} = {39D26C72-1BD3-4793-A455-F651830208E7}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {60CBA761-5D3C-4D33-B808-977512C7E6ED}
