@@ -1,24 +1,19 @@
 using System.IO.Compression;
 using System.Text;
-using System.Text.Json;
-using Squid.Core.Services.Common;
-using Squid.Core.Settings.GithubPackage;
-using Squid.Core.VariableSubstitution;
-using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
-public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
+public class KubernetesApiExecutionStrategy : IExecutionStrategy
 {
-    private readonly IYamlNuGetPacker _yamlNuGetPacker;
-    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
+    private readonly ICalamariPayloadBuilder _payloadBuilder;
+    private readonly ILocalProcessRunner _processRunner;
 
     public KubernetesApiExecutionStrategy(
-        IYamlNuGetPacker yamlNuGetPacker,
-        CalamariGithubPackageSetting calamariGithubPackageSetting)
+        ICalamariPayloadBuilder payloadBuilder,
+        ILocalProcessRunner processRunner)
     {
-        _yamlNuGetPacker = yamlNuGetPacker;
-        _calamariGithubPackageSetting = calamariGithubPackageSetting;
+        _payloadBuilder = payloadBuilder;
+        _processRunner = processRunner;
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
@@ -44,19 +39,15 @@ public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
     {
         WriteFilesToDirectory(request.Files, workDir);
 
-        var yamlNuGetPackageBytes = CreateYamlNuGetPackage(request.Files);
-        var (variableJson, sensitiveVariableJson, sensitivePassword) =
-            ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
+        var payload = _payloadBuilder.Build(request);
 
-        var packageFileName = $"squid.{request.ReleaseVersion}.nupkg";
-        var packagePath = Path.Combine(workDir, packageFileName);
-        await File.WriteAllBytesAsync(packagePath, yamlNuGetPackageBytes, ct).ConfigureAwait(false);
-
+        var packagePath = Path.Combine(workDir, payload.PackageFileName);
         var variablePath = Path.Combine(workDir, "variables.json");
-        await File.WriteAllBytesAsync(variablePath, variableJson, ct).ConfigureAwait(false);
-
         var sensitivePath = Path.Combine(workDir, "sensitiveVariables.json");
-        await File.WriteAllBytesAsync(sensitivePath, sensitiveVariableJson, ct).ConfigureAwait(false);
+
+        await File.WriteAllBytesAsync(packagePath, payload.PackageBytes, ct).ConfigureAwait(false);
+        await File.WriteAllBytesAsync(variablePath, payload.VariableBytes, ct).ConfigureAwait(false);
+        await File.WriteAllBytesAsync(sensitivePath, payload.SensitiveBytes, ct).ConfigureAwait(false);
 
         if (request.CalamariPackageBytes is { Length: > 0 })
         {
@@ -64,20 +55,13 @@ public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
             ExtractCalamariPackage(request.CalamariPackageBytes, calamariPath);
         }
 
-        var deployScript = UtilService.GetEmbeddedScriptContent("DeployByCalamari.ps1");
-        var calamariVersion = GetCalamariVersion();
-
-        var scriptBody = deployScript
-            .Replace("{{PackageFilePath}}", packagePath, StringComparison.Ordinal)
-            .Replace("{{VariableFilePath}}", variablePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariableFile}}", string.IsNullOrEmpty(sensitivePassword) ? string.Empty : sensitivePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariablePassword}}", sensitivePassword, StringComparison.Ordinal)
-            .Replace("{{CalamariVersion}}", calamariVersion, StringComparison.Ordinal);
+        var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath, _payloadBuilder.ResolvedVersion);
 
         Log.Information("Executing Calamari locally in {WorkDir}", workDir);
 
-        return await RunProcessAsync("pwsh", $"-NoProfile -NonInteractive -Command \"{EscapeForCommandLine(scriptBody)}\"", workDir, ct)
-            .ConfigureAwait(false);
+        return await _processRunner.RunAsync(
+            "pwsh", $"-NoProfile -NonInteractive -Command \"{EscapeForCommandLine(scriptBody)}\"",
+            workDir, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
@@ -90,20 +74,7 @@ public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
 
         Log.Information("Executing script locally in {WorkDir}", workDir);
 
-        return await RunProcessAsync("bash", scriptPath, workDir, ct).ConfigureAwait(false);
-    }
-
-    private byte[] CreateYamlNuGetPackage(Dictionary<string, byte[]> files)
-    {
-        if (files == null || files.Count == 0)
-            return Array.Empty<byte>();
-
-        var yamlStreams = new Dictionary<string, Stream>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var file in files)
-            yamlStreams[file.Key] = new MemoryStream(file.Value);
-
-        return _yamlNuGetPacker.CreateNuGetPackageFromYamlStreams(yamlStreams);
+        return await _processRunner.RunAsync("bash", scriptPath, workDir, ct).ConfigureAwait(false);
     }
 
     private static void WriteFilesToDirectory(Dictionary<string, byte[]> files, string workDir)
@@ -144,11 +115,6 @@ public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
             entryStream.CopyTo(fileStream);
         }
     }
-
-    private string GetCalamariVersion()
-        => string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.Version)
-            ? "28.2.1"
-            : _calamariGithubPackageSetting.Version;
 
     private static string CreateWorkDirectory()
     {

@@ -1,0 +1,61 @@
+using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Settings.GithubPackage;
+using Squid.Message.Enums;
+
+namespace Squid.UnitTests.Services.Deployments.Kubernetes;
+
+public class TransportCompositionTests
+{
+    [Fact]
+    public void KubernetesApiTransport_ComposesExpectedDependencies()
+    {
+        var builder = new Mock<IKubernetesApiContextScriptBuilder>();
+        var payloadBuilder = new Mock<ICalamariPayloadBuilder>();
+        var processRunner = new Mock<ILocalProcessRunner>();
+
+        var variables = new KubernetesApiEndpointVariableContributor(Mock.Of<IExternalFeedDataProvider>());
+        var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
+        var strategy = new KubernetesApiExecutionStrategy(payloadBuilder.Object, processRunner.Object);
+
+        var transport = new KubernetesApiTransport(variables, wrapper, strategy);
+
+        transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesApi);
+        transport.Variables.ShouldBeSameAs(variables);
+        transport.ScriptWrapper.ShouldBeSameAs(wrapper);
+        transport.Strategy.ShouldBeSameAs(strategy);
+    }
+
+    [Fact]
+    public void KubernetesAgentTransport_ComposesExpectedDependencies()
+    {
+        var halibutFactory = new Mock<IHalibutClientFactory>();
+        var payloadBuilder = new Mock<ICalamariPayloadBuilder>();
+        var observer = new Mock<IHalibutScriptObserver>();
+
+        var variables = new KubernetesAgentEndpointVariableContributor();
+        var wrapper = new KubernetesAgentScriptContextWrapper();
+        var strategy = new KubernetesAgentExecutionStrategy(
+            halibutFactory.Object,
+            payloadBuilder.Object,
+            observer.Object);
+
+        var transport = new KubernetesAgentTransport(variables, wrapper, strategy);
+
+        transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesAgent);
+        transport.Variables.ShouldBeSameAs(variables);
+        transport.ScriptWrapper.ShouldBeSameAs(wrapper);
+        transport.Strategy.ShouldBeSameAs(strategy);
+    }
+
+    [Fact]
+    public void CalamariPayloadBuilder_UsesResolvedVersion_FromSetting()
+    {
+        var setting = new CalamariGithubPackageSetting { Version = null };
+        var builder = new CalamariPayloadBuilder(Mock.Of<IYamlNuGetPacker>(), setting);
+
+        builder.ResolvedVersion.ShouldBe("28.2.1");
+    }
+}

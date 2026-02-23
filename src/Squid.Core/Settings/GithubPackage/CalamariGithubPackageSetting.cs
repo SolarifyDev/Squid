@@ -9,4 +9,6 @@ public class CalamariGithubPackageSetting : IConfigurationSetting
     public string CacheDirectory { get; set; }
 
     public string MirrorUrlTemplate { get; set; }
+
+    public string ResolvedVersion => string.IsNullOrWhiteSpace(Version) ? "28.2.1" : Version;
 }

@@ -1,11 +1,7 @@
-using System.Text;
-using System.Text.Json;
 using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Extensions;
-using Squid.Core.Services.Common;
-using Squid.Core.Settings.GithubPackage;
-using Squid.Message.Models.Deployments.Variable;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -14,17 +10,17 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
 
     private readonly IHalibutClientFactory _halibutClientFactory;
-    private readonly IYamlNuGetPacker _yamlNuGetPacker;
-    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
+    private readonly ICalamariPayloadBuilder _payloadBuilder;
+    private readonly IHalibutScriptObserver _observer;
 
     public KubernetesAgentExecutionStrategy(
         IHalibutClientFactory halibutClientFactory,
-        IYamlNuGetPacker yamlNuGetPacker,
-        CalamariGithubPackageSetting calamariGithubPackageSetting)
+        ICalamariPayloadBuilder payloadBuilder,
+        IHalibutScriptObserver observer)
     {
         _halibutClientFactory = halibutClientFactory;
-        _yamlNuGetPacker = yamlNuGetPacker;
-        _calamariGithubPackageSetting = calamariGithubPackageSetting;
+        _payloadBuilder = payloadBuilder;
+        _observer = observer;
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
@@ -46,41 +42,20 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteCalamariViaHalibutAsync(
         ScriptExecutionRequest request, IAsyncScriptService scriptClient, CancellationToken ct)
     {
-        var deployByCalamariScript = UtilService.GetEmbeddedScriptContent("DeployByCalamari.ps1");
+        var payload = _payloadBuilder.Build(request);
+        var osVersion = $"{_payloadBuilder.ResolvedVersion}/{request.Machine.OperatingSystem.GetDescription()}";
 
-        var yamlNuGetPackageBytes = CreateYamlNuGetPackage(request.Files);
-
-        var (variableJsonStream, sensitiveVariableJsonStream, sensitiveVariablesPassword) =
-            ScriptExecutionHelper.CreateVariableFileStreams(request.Variables);
-
-        var packageBytes = yamlNuGetPackageBytes ?? Array.Empty<byte>();
-        var variableBytes = ReadAllBytes(variableJsonStream);
-        var sensitiveBytes = ReadAllBytes(sensitiveVariableJsonStream);
-
-        var packageFileName = $"squid.{request.ReleaseVersion}.nupkg";
-        const string variableFileName = "variables.json";
-        const string sensitiveVariableFileName = "sensitiveVariables.json";
-
-        var packageFilePath = $".\\{packageFileName}";
-        var variableFilePath = $".\\{variableFileName}";
-        var sensitiveVariableFilePath = string.IsNullOrEmpty(sensitiveVariablesPassword)
-            ? string.Empty
-            : $".\\{sensitiveVariableFileName}";
-
-        var calamariVersion = GetCalamariVersion();
-
-        var scriptBody = deployByCalamariScript
-            .Replace("{{PackageFilePath}}", packageFilePath, StringComparison.Ordinal)
-            .Replace("{{VariableFilePath}}", variableFilePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariableFile}}", sensitiveVariableFilePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariablePassword}}", sensitiveVariablesPassword, StringComparison.Ordinal)
-            .Replace("{{CalamariVersion}}", calamariVersion + $"/{request.Machine.OperatingSystem.GetDescription()}", StringComparison.Ordinal);
+        var scriptBody = payload.FillTemplate(
+            $".\\{payload.PackageFileName}",
+            ".\\variables.json",
+            ".\\sensitiveVariables.json",
+            osVersion);
 
         var scriptFiles = new[]
         {
-            new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes), null),
-            new ScriptFile(variableFileName, DataStream.FromBytes(variableBytes), null),
-            new ScriptFile(sensitiveVariableFileName, DataStream.FromBytes(sensitiveBytes), sensitiveVariablesPassword)
+            new ScriptFile(payload.PackageFileName, DataStream.FromBytes(payload.PackageBytes), null),
+            new ScriptFile("variables.json", DataStream.FromBytes(payload.VariableBytes), null),
+            new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
         var scriptTimeout = ScriptExecutionTimeout;
@@ -99,7 +74,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         Log.Information("Starting DeployByCalamari on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -125,99 +100,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
-    }
-
-    private static async Task<ScriptExecutionResult> ObserveAndCompleteAsync(
-        Persistence.Entities.Deployments.Machine machine,
-        IAsyncScriptService scriptClient,
-        ScriptTicket ticket,
-        TimeSpan scriptTimeout,
-        CancellationToken ct)
-    {
-        var startTime = DateTime.UtcNow;
-        var pollInterval = TimeSpan.FromSeconds(1);
-        var maxPollInterval = TimeSpan.FromSeconds(10);
-        var statusResponse = new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
-        var allLogs = new List<ProcessOutput>();
-
-        while (statusResponse.State != ProcessState.Complete)
-        {
-            if (DateTime.UtcNow - startTime > scriptTimeout)
-            {
-                Log.Warning("Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
-                    scriptTimeout.TotalMinutes, machine.Name);
-                await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
-
-                return new ScriptExecutionResult
-                {
-                    Success = false,
-                    ExitCode = -1,
-                    LogLines = new List<string> { $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout" }
-                };
-            }
-
-            ct.ThrowIfCancellationRequested();
-
-            statusResponse = await scriptClient.GetStatusAsync(
-                new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
-
-            allLogs.AddRange(statusResponse.Logs);
-            LogOutput(statusResponse.Logs, machine.Name);
-
-            if (statusResponse.State != ProcessState.Complete)
-            {
-                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
-                pollInterval = TimeSpan.FromSeconds(Math.Min(pollInterval.TotalSeconds * 1.5, maxPollInterval.TotalSeconds));
-            }
-        }
-
-        var completeResponse = await scriptClient.CompleteScriptAsync(
-            new CompleteScriptCommand(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
-
-        allLogs.AddRange(completeResponse.Logs);
-
-        var logLines = allLogs
-            .OrderBy(l => l.Occurred)
-            .Where(l => !string.IsNullOrEmpty(l.Text))
-            .Select(l => l.Text)
-            .ToList();
-
-        var success = completeResponse.ExitCode == 0;
-
-        if (!success)
-            Log.Error("Script failed on agent {MachineName} with exit code {ExitCode}",
-                machine.Name, completeResponse.ExitCode);
-        else
-            Log.Information("Script completed successfully on agent {MachineName}", machine.Name);
-
-        return new ScriptExecutionResult
-        {
-            Success = success,
-            LogLines = logLines,
-            ExitCode = completeResponse.ExitCode
-        };
-    }
-
-    private static void LogOutput(List<ProcessOutput> logs, string machineName)
-    {
-        foreach (var log in logs)
-            Log.Information("[Agent Script] Machine={MachineName}, Source={Source}, Message={Message}",
-                machineName, log.Source, log.Text);
-    }
-
-    private static async Task TryCancelScriptAsync(
-        IAsyncScriptService scriptClient, ScriptTicket ticket, long lastLogSequence)
-    {
-        try
-        {
-            await scriptClient.CancelScriptAsync(
-                new CancelScriptCommand(ticket, lastLogSequence)).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to cancel script with ticket {Ticket}", ticket.TaskId);
-        }
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(
@@ -260,34 +143,5 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
             Log.Warning(ex, "Failed to parse endpoint for machine {MachineName}", machine.Name);
             return null;
         }
-    }
-
-    private byte[] CreateYamlNuGetPackage(Dictionary<string, byte[]> files)
-    {
-        if (files == null || files.Count == 0)
-            return Array.Empty<byte>();
-
-        var yamlStreams = new Dictionary<string, Stream>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var file in files)
-            yamlStreams[file.Key] = new MemoryStream(file.Value);
-
-        return _yamlNuGetPacker.CreateNuGetPackageFromYamlStreams(yamlStreams);
-    }
-
-    private string GetCalamariVersion()
-        => string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.Version)
-            ? "28.2.1"
-            : _calamariGithubPackageSetting.Version;
-
-    private static byte[] ReadAllBytes(Stream stream)
-    {
-        if (stream == null) return Array.Empty<byte>();
-
-        if (stream.CanSeek) stream.Position = 0;
-
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        return memory.ToArray();
     }
 }

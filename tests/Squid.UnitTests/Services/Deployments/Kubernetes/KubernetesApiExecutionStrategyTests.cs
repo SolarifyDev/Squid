@@ -13,67 +13,55 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 public class KubernetesApiExecutionStrategyTests
 {
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
+    private readonly Mock<ILocalProcessRunner> _processRunner = new();
+    private readonly Mock<ICalamariPayloadBuilder> _payloadBuilder = new();
     private readonly CalamariGithubPackageSetting _calamariSetting = new() { Version = "28.2.1" };
     private readonly KubernetesApiExecutionStrategy _strategy;
 
     public KubernetesApiExecutionStrategyTests()
     {
-        _strategy = new KubernetesApiExecutionStrategy(
-            _yamlNuGetPacker.Object,
-            _calamariSetting);
+        _strategy = new KubernetesApiExecutionStrategy(_payloadBuilder.Object, _processRunner.Object);
+
+        _payloadBuilder.SetupGet(x => x.ResolvedVersion).Returns(_calamariSetting.ResolvedVersion);
+        _payloadBuilder
+            .Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
+            .Returns<ScriptExecutionRequest>(CreatePayloadForRequest);
+
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
     }
 
-    // === Routing — CalamariCommand presence determines execution path ===
+    // === Routing — executable selection ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_WithCalamariCommand_CallsYamlNuGetPacker()
+    public async Task ExecuteScriptAsync_DirectScript_RunsBash()
     {
-        _yamlNuGetPacker.Setup(p => p.CreateNuGetPackageFromYamlStreams(
-                It.IsAny<Dictionary<string, Stream>>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Returns(Array.Empty<byte>());
+        string capturedExecutable = null;
 
-        var files = new Dictionary<string, byte[]>
-        {
-            ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("apiVersion: v1")
-        };
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((exe, _, _, _) => capturedExecutable = exe)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
-        var request = CreateRequest(calamariCommand: "calamari-run-script", files: files);
+        await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: null), CancellationToken.None);
 
-        // ExecuteScriptAsync will attempt to run pwsh, which will fail in test environment.
-        // We verify that the Calamari path was entered by checking NuGet packer was invoked.
-        try
-        {
-            await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
-        }
-        catch
-        {
-            // Expected — pwsh process won't start in unit test environment
-        }
-
-        _yamlNuGetPacker.Verify(
-            p => p.CreateNuGetPackageFromYamlStreams(
-                It.IsAny<Dictionary<string, Stream>>(), It.IsAny<string>(), It.IsAny<string>()),
-            Times.Once);
+        capturedExecutable.ShouldBe("bash");
     }
 
     [Fact]
-    public async Task ExecuteScriptAsync_WithoutCalamariCommand_DoesNotCallYamlNuGetPacker()
+    public async Task ExecuteScriptAsync_CalamariCommand_RunsPwsh()
     {
-        var request = CreateRequest(calamariCommand: null);
+        string capturedExecutable = null;
 
-        try
-        {
-            await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
-        }
-        catch
-        {
-            // Expected — bash process won't start in unit test environment
-        }
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((exe, _, _, _) => capturedExecutable = exe)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
-        _yamlNuGetPacker.Verify(
-            p => p.CreateNuGetPackageFromYamlStreams(
-                It.IsAny<Dictionary<string, Stream>>(), It.IsAny<string>(), It.IsAny<string>()),
-            Times.Never);
+        await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
+
+        capturedExecutable.ShouldBe("pwsh");
     }
 
     // === Work Directory Lifecycle ===
@@ -81,72 +69,159 @@ public class KubernetesApiExecutionStrategyTests
     [Fact]
     public async Task ExecuteScriptAsync_CleansUpWorkDirectory_EvenOnFailure()
     {
-        var request = CreateRequest(calamariCommand: null);
-        string workDirBefore = null;
+        string capturedWorkDir = null;
 
-        // Capture any temp directories that exist before/after
-        var tempBase = Path.Combine(Path.GetTempPath(), "squid-exec");
-        var dirsBefore = Directory.Exists(tempBase)
-            ? new HashSet<string>(Directory.GetDirectories(tempBase))
-            : new HashSet<string>();
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .ThrowsAsync(new Exception("process failed"));
 
         try
         {
-            await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+            await _strategy.ExecuteScriptAsync(CreateRequest(), CancellationToken.None);
         }
         catch
         {
             // Expected
         }
 
-        // After execution (even failed), the work directory should have been cleaned up
-        var dirsAfter = Directory.Exists(tempBase)
-            ? Directory.GetDirectories(tempBase)
-            : Array.Empty<string>();
-
-        var newDirs = dirsAfter.Where(d => !dirsBefore.Contains(d)).ToArray();
-
-        newDirs.ShouldBeEmpty("Work directory should have been cleaned up");
+        capturedWorkDir.ShouldNotBeNull();
+        Directory.Exists(capturedWorkDir).ShouldBeFalse();
     }
 
-    // === File Writing ===
+    [Fact]
+    public async Task ExecuteScriptAsync_CleansUpWorkDirectory_OnSuccess()
+    {
+        string capturedWorkDir = null;
+
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
+
+        await _strategy.ExecuteScriptAsync(CreateRequest(), CancellationToken.None);
+
+        capturedWorkDir.ShouldNotBeNull();
+        Directory.Exists(capturedWorkDir).ShouldBeFalse();
+    }
+
+    // === YamlNuGetPackage ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_WithFiles_WritesFilesToDisk()
+    public async Task ExecuteScriptAsync_WithCalamariCommand_CallsYamlNuGetPacker()
     {
+        var packerCalled = false;
+        var realBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object, _calamariSetting);
+        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
+            .Returns<ScriptExecutionRequest>(req =>
+            {
+                packerCalled = true;
+                return realBuilder.Build(req);
+            });
+
         var files = new Dictionary<string, byte[]>
         {
-            ["manifest.yaml"] = System.Text.Encoding.UTF8.GetBytes("apiVersion: v1")
+            ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("apiVersion: v1")
         };
 
-        var request = CreateRequest(calamariCommand: null, files: files);
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(calamariCommand: "calamari-run-script", files: files), CancellationToken.None);
 
-        // The strategy will create a temp dir, write files, try to execute, then clean up.
-        // We can't verify the files exist during execution, but we can verify no exception
-        // from the file writing phase (exception comes from bash execution instead).
-        var ex = await Record.ExceptionAsync(
-            () => _strategy.ExecuteScriptAsync(request, CancellationToken.None));
+        packerCalled.ShouldBeTrue();
+    }
 
-        // If an exception occurs, it should be from process execution, not file writing
-        if (ex != null)
-            ex.ShouldNotBeOfType<IOException>();
+    [Fact]
+    public async Task ExecuteScriptAsync_WithoutCalamariCommand_DoesNotCallYamlNuGetPacker()
+    {
+        await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: null), CancellationToken.None);
+
+        _payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>()), Times.Never);
+    }
+
+    // === Process runner receives workDir in squid-exec temp path ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_PassesWorkDirInTempPath()
+    {
+        string capturedWorkDir = null;
+
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
+
+        await _strategy.ExecuteScriptAsync(CreateRequest(), CancellationToken.None);
+
+        capturedWorkDir.ShouldContain("squid-exec");
+    }
+
+    [Fact]
+    public async Task ExecuteScriptAsync_CalamariCommand_PassesExpandedScriptWithResolvedPaths()
+    {
+        string capturedExecutable = null;
+        string capturedArguments = null;
+        string capturedWorkDir = null;
+
+        _payloadBuilder.SetupGet(x => x.ResolvedVersion).Returns("28.2.1");
+        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
+            .Returns(new CalamariPayload
+            {
+                PackageFileName = "squid.1.0.0.nupkg",
+                PackageBytes = Array.Empty<byte>(),
+                VariableBytes = Array.Empty<byte>(),
+                SensitiveBytes = Array.Empty<byte>(),
+                SensitivePassword = string.Empty,
+                TemplateBody = "pkg={{PackageFilePath}};var={{VariableFilePath}};sens={{SensitiveVariableFile}};ver={{CalamariVersion}}"
+            });
+
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((exe, args, wd, _) =>
+            {
+                capturedExecutable = exe;
+                capturedArguments = args;
+                capturedWorkDir = wd;
+            })
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
+
+        await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
+
+        capturedExecutable.ShouldBe("pwsh");
+        capturedArguments.ShouldNotContain("{{PackageFilePath}}");
+        capturedArguments.ShouldContain("squid.1.0.0.nupkg");
+        capturedArguments.ShouldContain("variables.json");
+        capturedArguments.ShouldContain("28.2.1");
+        capturedArguments.ShouldContain(capturedWorkDir);
     }
 
     // === Helpers ===
 
     private static ScriptExecutionRequest CreateRequest(
-        string calamariCommand = null,
         string scriptBody = "echo test",
+        string calamariCommand = null,
         Dictionary<string, byte[]> files = null)
     {
         return new ScriptExecutionRequest
         {
-            Machine = new Machine { Name = "local-k8s" },
+            Machine = new Machine { Name = "local" },
             ScriptBody = scriptBody,
             CalamariCommand = calamariCommand,
             ReleaseVersion = "1.0.0",
             Files = files ?? new Dictionary<string, byte[]>(),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
+        };
+    }
+
+    private static CalamariPayload CreatePayloadForRequest(ScriptExecutionRequest request)
+    {
+        return new CalamariPayload
+        {
+            PackageFileName = $"squid.{request.ReleaseVersion}.nupkg",
+            PackageBytes = Array.Empty<byte>(),
+            VariableBytes = System.Text.Encoding.UTF8.GetBytes("{}"),
+            SensitiveBytes = System.Text.Encoding.UTF8.GetBytes("{}"),
+            SensitivePassword = string.Empty,
+            TemplateBody = "pkg={{PackageFilePath}} var={{VariableFilePath}} sens={{SensitiveVariableFile}} ver={{CalamariVersion}}"
         };
     }
 }

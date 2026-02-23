@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using Squid.Core.Services.Common;
 using Squid.Message.Enums;
 
@@ -26,7 +25,7 @@ public partial class DeploymentTaskExecutor
         const string packageId = "Calamari";
         const string githubUserName = "SolarifyDev";
 
-        var version = _calamariGithubPackageSetting.Version;
+        var version = _calamariGithubPackageSetting.ResolvedVersion;
 
         var cacheDirectory = string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.CacheDirectory)
             ? Path.Combine(AppContext.BaseDirectory, "CalamariPackages")
@@ -44,8 +43,9 @@ public partial class DeploymentTaskExecutor
 
         var downloader = new GithubPackageDownloader(githubUserName, _calamariGithubPackageSetting.Token, _calamariGithubPackageSetting.MirrorUrlTemplate);
         var packageStream = await downloader.DownloadPackageAsync(packageId, version).ConfigureAwait(false);
-
-        var bytes = ReadAllBytes(packageStream);
+        using var memory = new MemoryStream();
+        await packageStream.CopyToAsync(memory).ConfigureAwait(false);
+        var bytes = memory.ToArray();
 
         await File.WriteAllBytesAsync(cacheFilePath, bytes).ConfigureAwait(false);
 
@@ -54,58 +54,4 @@ public partial class DeploymentTaskExecutor
         return bytes;
     }
 
-    private byte[] CreateYamlNuGetPackage(Dictionary<string, Stream> yamlStreams)
-    {
-        if (yamlStreams == null || yamlStreams.Count == 0)
-        {
-            Log.Information("No YAML streams to pack into NuGet package");
-            return Array.Empty<byte>();
-        }
-
-        return _yamlNuGetPacker.CreateNuGetPackageFromYamlStreams(yamlStreams);
-    }
-
-    private void CheckNugetPackage(byte[] packageBytes)
-    {
-        if (packageBytes == null || packageBytes.Length == 0) return;
-
-        using var stream = new MemoryStream(packageBytes);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-
-        Log.Information("=== NuGet Package Contents ===");
-        Log.Information("Total entries in package: {Count}", archive.Entries.Count);
-
-        foreach (var entry in archive.Entries)
-        {
-            Log.Information("Entry: {EntryName}, Size: {Size} bytes", entry.FullName, entry.Length);
-
-            if (entry.FullName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
-                entry.FullName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) ||
-                entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
-            {
-                using var entryStream = entry.Open();
-                using var reader = new StreamReader(entryStream);
-                var content = reader.ReadToEnd();
-                Log.Information("=== {FileName} ===\n{Content}", entry.FullName, content);
-            }
-        }
-
-        Log.Information("=== End of Package Contents ===");
-    }
-
-    private string GetCalamariVersion()
-    {
-        return string.IsNullOrWhiteSpace(_calamariGithubPackageSetting.Version) ? "28.2.1" : _calamariGithubPackageSetting.Version;
-    }
-
-    private static byte[] ReadAllBytes(Stream stream)
-    {
-        if (stream == null) return Array.Empty<byte>();
-
-        if (stream.CanSeek) stream.Position = 0;
-
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        return memory.ToArray();
-    }
 }

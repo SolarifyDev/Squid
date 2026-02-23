@@ -52,12 +52,4 @@ public static class ScriptExecutionHelper
 
         return (variableJson, sensitiveBytes, password);
     }
-
-    public static (Stream VariableJsonStream, Stream SensitiveVariableJsonStream, string Password) CreateVariableFileStreams(
-        List<VariableDto> variables)
-    {
-        var (variableJson, sensitiveVariableJson, password) = CreateVariableFileContents(variables);
-
-        return (new MemoryStream(variableJson), new MemoryStream(sensitiveVariableJson), password);
-    }
 }

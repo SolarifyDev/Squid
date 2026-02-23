@@ -1,35 +1,32 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
-public partial class KubernetesApiExecutionStrategy
+public sealed class LocalProcessRunner : ILocalProcessRunner
 {
-    private static async Task<ScriptExecutionResult> RunProcessAsync(
-        string fileName, string arguments, string workingDirectory, CancellationToken ct)
+    public async Task<ScriptExecutionResult> RunAsync(
+        string executable, string arguments, string workDir, CancellationToken ct)
     {
         var logLines = new List<string>();
 
-        var psi = new System.Diagnostics.ProcessStartInfo
+        var psi = new ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = executable,
             Arguments = arguments,
-            WorkingDirectory = workingDirectory,
+            WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
 
-        using var process = new System.Diagnostics.Process { StartInfo = psi };
-
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
+        using var process = new Process { StartInfo = psi };
 
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data == null) return;
 
-            outputBuilder.AppendLine(e.Data);
             logLines.Add(e.Data);
             Log.Information("[LocalExec:stdout] {Line}", e.Data);
         };
@@ -38,7 +35,6 @@ public partial class KubernetesApiExecutionStrategy
         {
             if (e.Data == null) return;
 
-            errorBuilder.AppendLine(e.Data);
             logLines.Add(e.Data);
             Log.Warning("[LocalExec:stderr] {Line}", e.Data);
         };
@@ -69,7 +65,7 @@ public partial class KubernetesApiExecutionStrategy
         };
     }
 
-    private static void TryKillProcess(System.Diagnostics.Process process)
+    private static void TryKillProcess(Process process)
     {
         try
         {
