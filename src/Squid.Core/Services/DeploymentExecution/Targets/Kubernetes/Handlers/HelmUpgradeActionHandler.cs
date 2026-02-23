@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
-using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
@@ -20,7 +20,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var syntaxStr = GetPropertyValue(ctx.Action, "Squid.Action.Script.Syntax");
+        var syntaxStr = ctx.Action.GetProperty("Squid.Action.Script.Syntax");
         var syntax = string.Equals(syntaxStr, "Bash", StringComparison.OrdinalIgnoreCase)
             ? ScriptSyntax.Bash
             : ScriptSyntax.PowerShell;
@@ -28,13 +28,13 @@ public class HelmUpgradeActionHandler : IActionHandler
         var templateName = syntax == ScriptSyntax.Bash ? "HelmUpgrade.sh" : "HelmUpgrade.ps1";
         var template = UtilService.GetEmbeddedScriptContent(templateName);
 
-        var releaseName = GetPropertyValue(ctx.Action, "Squid.Action.Helm.ReleaseName") ?? ctx.Action.Name ?? "release";
-        var chartPath = GetPropertyValue(ctx.Action, "Squid.Action.Helm.ChartPath") ?? ".";
-        var namespace_ = GetPropertyValue(ctx.Action, "Squid.Action.Kubernetes.Namespace") ?? "default";
-        var helmExe = GetPropertyValue(ctx.Action, "Squid.Action.Helm.CustomHelmExecutable") ?? string.Empty;
-        var resetValues = GetPropertyValue(ctx.Action, "Squid.Action.Helm.ResetValues") ?? "True";
-        var helmWait = GetPropertyValue(ctx.Action, "Squid.Action.Helm.ClientVersion") != null ? "True" : "False";
-        var additionalArgs = GetPropertyValue(ctx.Action, "Squid.Action.Helm.AdditionalArgs") ?? string.Empty;
+        var releaseName = ctx.Action.GetProperty("Squid.Action.Helm.ReleaseName") ?? ctx.Action.Name ?? "release";
+        var chartPath = ctx.Action.GetProperty("Squid.Action.Helm.ChartPath") ?? ".";
+        var namespace_ = ctx.Action.GetProperty("Squid.Action.Kubernetes.Namespace") ?? "default";
+        var helmExe = ctx.Action.GetProperty("Squid.Action.Helm.CustomHelmExecutable") ?? string.Empty;
+        var resetValues = ctx.Action.GetProperty("Squid.Action.Helm.ResetValues") ?? "True";
+        var helmWait = ctx.Action.GetProperty("Squid.Action.Helm.ClientVersion") != null ? "True" : "False";
+        var additionalArgs = ctx.Action.GetProperty("Squid.Action.Helm.AdditionalArgs") ?? string.Empty;
 
         var files = new Dictionary<string, byte[]>();
         var valuesFilesBlock = BuildValuesFilesBlock(ctx.Action, syntax, files);
@@ -64,7 +64,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
     private static string BuildValuesFilesBlock(DeploymentActionDto action, ScriptSyntax syntax, Dictionary<string, byte[]> files)
     {
-        var rawYaml = GetPropertyValue(action, "Squid.Action.Helm.YamlValues");
+        var rawYaml = action.GetProperty("Squid.Action.Helm.YamlValues");
 
         if (string.IsNullOrWhiteSpace(rawYaml)) return string.Empty;
 
@@ -83,7 +83,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
     private static string BuildSetValuesBlock(DeploymentActionDto action, ScriptSyntax syntax)
     {
-        var keyValuesRaw = GetPropertyValue(action, "Squid.Action.Helm.KeyValues");
+        var keyValuesRaw = action.GetProperty("Squid.Action.Helm.KeyValues");
 
         if (string.IsNullOrWhiteSpace(keyValuesRaw)) return string.Empty;
 
@@ -119,12 +119,5 @@ public class HelmUpgradeActionHandler : IActionHandler
             sb.AppendLine($"HELM_ARGS=\"$HELM_ARGS --set {setValue}\"");
         else
             sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{setValue}\"");
-    }
-
-    private static string GetPropertyValue(DeploymentActionDto action, string propertyName)
-    {
-        return action.Properties?
-            .FirstOrDefault(p => string.Equals(p.PropertyName, propertyName, StringComparison.OrdinalIgnoreCase))
-            ?.PropertyValue;
     }
 }

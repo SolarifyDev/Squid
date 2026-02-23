@@ -2,14 +2,14 @@ using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution.Pipeline;
+namespace Squid.Core.Services.DeploymentExecution;
 
 public static class EffectiveVariableBuilder
 {
     public static List<VariableDto> BuildEffectiveVariables(List<VariableDto> baseVariables, DeploymentTargetContext target)
     {
         var variables = new List<VariableDto>(baseVariables);
-        
+
         variables.AddRange(target.EndpointVariables);
 
         return variables;

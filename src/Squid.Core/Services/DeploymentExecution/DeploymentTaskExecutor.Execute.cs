@@ -1,5 +1,4 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
-using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
@@ -213,6 +212,14 @@ public partial class DeploymentTaskExecutor
             ReleaseVersion = _ctx.Release?.Version,
             CalamariPackageBytes = _ctx.CalamariPackageBytes
         };
+    }
+
+    private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
+    {
+        var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
+
+        foreach (var kv in outputVars)
+            actionResult.OutputVariables[kv.Key] = kv.Value.Value;
     }
 
     private static void CollectOutputVariables(

@@ -1,5 +1,5 @@
 using System.Text;
-using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Extensions;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
@@ -18,8 +18,8 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var inlineYaml = GetPropertyValue(ctx.Action, "Squid.Action.KubernetesYaml.InlineYaml") ?? string.Empty;
-        var syntaxStr = GetPropertyValue(ctx.Action, "Squid.Action.Script.Syntax");
+        var inlineYaml = ctx.Action.GetProperty("Squid.Action.KubernetesYaml.InlineYaml") ?? string.Empty;
+        var syntaxStr = ctx.Action.GetProperty("Squid.Action.Script.Syntax");
         var syntax = string.Equals(syntaxStr, "Bash", StringComparison.OrdinalIgnoreCase)
             ? ScriptSyntax.Bash
             : ScriptSyntax.PowerShell;
@@ -52,12 +52,5 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
         };
 
         return Task.FromResult(result);
-    }
-
-    private static string GetPropertyValue(DeploymentActionDto action, string propertyName)
-    {
-        return action.Properties?
-            .FirstOrDefault(p => string.Equals(p.PropertyName, propertyName, StringComparison.OrdinalIgnoreCase))
-            ?.PropertyValue;
     }
 }

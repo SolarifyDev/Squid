@@ -1,4 +1,3 @@
-using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Models.Deployments.Machine;
@@ -18,35 +17,35 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
     public int? ParseAccountId(string endpointJson)
     {
-        var endpoint = Deserialize(endpointJson);
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
         if (endpoint == null) return null;
         return int.TryParse(endpoint.AccountId, out var id) ? id : null;
     }
 
     public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)
     {
-        var endpoint = Deserialize(endpointJson);
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
         if (endpoint == null) return new List<VariableDto>();
 
         var accountType = account?.AccountType.ToString() ?? "Token";
 
         return new List<VariableDto>
         {
-            MakeVariable("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
-            MakeVariable("Squid.Account.AccountType", accountType),
-            MakeVariable("Squid.Account.Token", account?.Token ?? string.Empty, isSensitive: true),
-            MakeVariable("Squid.Account.Username", account?.Username ?? string.Empty),
-            MakeVariable("Squid.Account.Password", account?.Password ?? string.Empty, isSensitive: true),
-            MakeVariable("Squid.Account.ClientCertificateData", account?.ClientCertificateData ?? string.Empty, isSensitive: true),
-            MakeVariable("Squid.Account.ClientCertificateKeyData", account?.ClientCertificateKeyData ?? string.Empty, isSensitive: true),
-            MakeVariable("Squid.Account.AccessKey", account?.AccessKey ?? string.Empty),
-            MakeVariable("Squid.Account.SecretKey", account?.SecretKey ?? string.Empty, isSensitive: true),
-            MakeVariable("Squid.Action.Kubernetes.SkipTlsVerification", endpoint.SkipTlsVerification ?? "False"),
-            MakeVariable("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
-            MakeVariable("Squid.Action.Kubernetes.ClusterCertificate", endpoint.ClusterCertificate ?? string.Empty),
-            MakeVariable("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
-            MakeVariable("Squid.Action.Kubernetes.OutputKubectlVersion", "True"),
-            MakeVariable("SquidPrintEvaluatedVariables", "True")
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Account.AccountType", accountType),
+            EndpointVariableFactory.Make("Squid.Account.Token", account?.Token ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.Username", account?.Username ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Account.Password", account?.Password ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.ClientCertificateData", account?.ClientCertificateData ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.ClientCertificateKeyData", account?.ClientCertificateKeyData ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.AccessKey", account?.AccessKey ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Account.SecretKey", account?.SecretKey ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.SkipTlsVerification", endpoint.SkipTlsVerification ?? "False"),
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterCertificate", endpoint.ClusterCertificate ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.OutputKubectlVersion", "True"),
+            EndpointVariableFactory.Make("SquidPrintEvaluatedVariables", "True")
         };
     }
 
@@ -56,7 +55,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         CancellationToken ct)
     {
         var containerImage = await BuildContainerImageAsync(processSnapshot, release, ct).ConfigureAwait(false);
-        return new List<VariableDto> { MakeVariable("ContainerImage", containerImage) };
+        return new List<VariableDto> { EndpointVariableFactory.Make("ContainerImage", containerImage) };
     }
 
     private async Task<string> BuildContainerImageAsync(
@@ -100,29 +99,4 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
             ? $"{uri.Host}:{uri.Port}"
             : uri.Host;
     }
-
-    private static KubernetesApiEndpointDto Deserialize(string endpointJson)
-    {
-        if (string.IsNullOrEmpty(endpointJson)) return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<KubernetesApiEndpointDto>(endpointJson);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static VariableDto MakeVariable(string name, string value, bool isSensitive = false) => new()
-    {
-        Name = name,
-        Value = value,
-        Description = string.Empty,
-        Type = Message.Enums.VariableType.String,
-        IsSensitive = isSensitive,
-        LastModifiedOn = DateTimeOffset.UtcNow,
-        LastModifiedBy = "System"
-    };
 }

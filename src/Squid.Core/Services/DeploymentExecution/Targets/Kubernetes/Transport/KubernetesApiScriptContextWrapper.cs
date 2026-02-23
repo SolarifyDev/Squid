@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
@@ -18,7 +17,7 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
     public string WrapScript(string script, string endpointJson, DeploymentAccount account,
                              ScriptSyntax syntax, List<VariableDto> variables)
     {
-        var endpoint = Deserialize(endpointJson);
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
         if (endpoint == null) return script;
 
         var customKubectl = variables?
@@ -26,19 +25,5 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
             ?.Value;
 
         return _builder.WrapWithContext(script, endpoint, account, syntax, customKubectl);
-    }
-
-    private static KubernetesApiEndpointDto Deserialize(string endpointJson)
-    {
-        if (string.IsNullOrEmpty(endpointJson)) return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<KubernetesApiEndpointDto>(endpointJson);
-        }
-        catch
-        {
-            return null;
-        }
     }
 }

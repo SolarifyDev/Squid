@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.Common;
 using Shouldly;
 using Xunit;
@@ -11,10 +12,19 @@ public class GithubCalamariDownloadE2ETests
     [Fact]
     public async Task DownloadPackageAsync_RealGithubPackagesDownload_ReturnsValidNuGetPackage()
     {
-        var username = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_USERNAME");
-        var token = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_TOKEN");
-        var version = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_CALAMARI_VERSION");
-        var packageId = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_ID");
+        var config = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true)
+            .Build();
+
+        var username = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_USERNAME")
+            ?? config["GithubPackageDownloadE2E:Username"];
+        var token = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_TOKEN")
+            ?? config["GithubPackageDownloadE2E:Token"];
+        var version = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_CALAMARI_VERSION")
+            ?? config["GithubPackageDownloadE2E:CalamariVersion"];
+        var packageId = Environment.GetEnvironmentVariable("SQUID_E2E_GITHUB_PKG_ID")
+            ?? config["GithubPackageDownloadE2E:PackageId"];
 
         if (string.IsNullOrWhiteSpace(packageId))
             packageId = "Calamari";

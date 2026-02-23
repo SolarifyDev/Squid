@@ -2,13 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.UnitTests.Services.Deployments.Pipeline;
+namespace Squid.UnitTests.Services.Deployments;
 
 public class ExtractedPipelineComponentsTests
 {

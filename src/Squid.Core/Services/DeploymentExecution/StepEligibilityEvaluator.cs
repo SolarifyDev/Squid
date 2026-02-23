@@ -3,7 +3,7 @@ using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution.Pipeline;
+namespace Squid.Core.Services.DeploymentExecution;
 
 public static class StepEligibilityEvaluator
 {
@@ -93,6 +93,7 @@ public static class StepEligibilityEvaluator
             return true;
 
         var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
+        
         return stepRoles.Overlaps(targetRoles);
     }
 }
