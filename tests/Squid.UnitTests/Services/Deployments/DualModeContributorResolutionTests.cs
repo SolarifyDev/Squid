@@ -1,98 +1,119 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments;
 
-public class DualModeContributorResolutionTests
+public class TransportRegistryTests
 {
-    private static readonly List<IEndpointVariableContributor> Contributors = new()
-    {
-        new KubernetesApiEndpointVariableContributor(),
-        new KubernetesAgentEndpointVariableContributor()
-    };
-
-    private static readonly List<IExecutionStrategy> Strategies = new();
-
-    private static string MakeEndpointJson(string communicationStyle) =>
-        JsonSerializer.Serialize(new { CommunicationStyle = communicationStyle });
-
-    // === Contributor Resolution ===
+    // ========== CommunicationStyleParser ==========
 
     [Theory]
-    [InlineData("KubernetesApi", typeof(KubernetesApiEndpointVariableContributor))]
-    [InlineData("KubernetesAgent", typeof(KubernetesAgentEndpointVariableContributor))]
-    public void ContributorResolution_CorrectContributor(string style, System.Type expectedType)
+    [InlineData("KubernetesApi", CommunicationStyle.KubernetesApi)]
+    [InlineData("kubernetesapi", CommunicationStyle.KubernetesApi)]
+    [InlineData("KUBERNETESAPI", CommunicationStyle.KubernetesApi)]
+    [InlineData("KubernetesAgent", CommunicationStyle.KubernetesAgent)]
+    [InlineData("kubernetesagent", CommunicationStyle.KubernetesAgent)]
+    public void Parse_KnownStyle_ReturnsMappedEnum(string styleValue, CommunicationStyle expected)
     {
-        var json = MakeEndpointJson(style);
-        var communicationStyle = ParseCommunicationStyle(json);
+        var json = MakeEndpointJson(styleValue);
 
-        var resolved = Contributors.FirstOrDefault(c => c.CanHandle(communicationStyle));
+        CommunicationStyleParser.Parse(json).ShouldBe(expected);
+    }
 
-        resolved.ShouldNotBeNull();
-        resolved.ShouldBeOfType(expectedType);
+    [Theory]
+    [InlineData("Ssh")]
+    [InlineData("Docker")]
+    [InlineData("")]
+    public void Parse_UnknownStyle_ReturnsUnknown(string styleValue)
+    {
+        var json = MakeEndpointJson(styleValue);
+
+        CommunicationStyleParser.Parse(json).ShouldBe(CommunicationStyle.Unknown);
+    }
+
+    [Theory]
+    [InlineData("not-json")]
+    [InlineData("{}")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Parse_MissingOrInvalidInput_ReturnsUnknown(string input)
+    {
+        CommunicationStyleParser.Parse(input).ShouldBe(CommunicationStyle.Unknown);
     }
 
     [Fact]
-    public void ContributorResolution_UnknownStyle_ReturnsNull()
+    public void Parse_LowercasePropertyName_ReturnsMappedEnum()
     {
-        var json = MakeEndpointJson("Ssh");
-        var communicationStyle = ParseCommunicationStyle(json);
+        var json = "{\"communicationStyle\": \"KubernetesApi\"}";
 
-        var resolved = Contributors.FirstOrDefault(c => c.CanHandle(communicationStyle));
+        CommunicationStyleParser.Parse(json).ShouldBe(CommunicationStyle.KubernetesApi);
+    }
 
-        resolved.ShouldBeNull();
+    // ========== TransportRegistry ==========
+
+    [Theory]
+    [InlineData(CommunicationStyle.KubernetesApi)]
+    [InlineData(CommunicationStyle.KubernetesAgent)]
+    public void Resolve_RegisteredStyle_ReturnsCorrectTransport(CommunicationStyle style)
+    {
+        var transport = new StubTransport(style);
+        var registry = new TransportRegistry(new[] { transport });
+
+        registry.Resolve(style).ShouldBe(transport);
     }
 
     [Fact]
-    public void ContributorResolution_InvalidJson_ReturnsNull()
+    public void Resolve_UnknownStyle_ReturnsNull()
     {
-        var communicationStyle = ParseCommunicationStyle("not-json");
+        var registry = new TransportRegistry(new[] { new StubTransport(CommunicationStyle.KubernetesApi) });
 
-        var resolved = Contributors.FirstOrDefault(c => c.CanHandle(communicationStyle));
-
-        resolved.ShouldBeNull();
+        registry.Resolve(CommunicationStyle.Unknown).ShouldBeNull();
     }
 
     [Fact]
-    public void ContributorResolution_EmptyJson_ReturnsNull()
+    public void Resolve_UnregisteredStyle_ReturnsNull()
     {
-        var communicationStyle = ParseCommunicationStyle("{}");
+        var registry = new TransportRegistry(new[] { new StubTransport(CommunicationStyle.KubernetesApi) });
 
-        var resolved = Contributors.FirstOrDefault(c => c.CanHandle(communicationStyle));
-
-        resolved.ShouldBeNull();
-    }
-
-    // === Account Loading Behavior ===
-
-    [Fact]
-    public void ApiMode_ParseAccountId_ReturnsAccountId()
-    {
-        var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesApi", AccountId = "42" });
-        var contributor = Contributors.First(c => c.CanHandle("KubernetesApi"));
-
-        var accountId = contributor.ParseAccountId(json);
-
-        accountId.ShouldBe(42);
+        registry.Resolve(CommunicationStyle.KubernetesAgent).ShouldBeNull();
     }
 
     [Fact]
-    public void AgentMode_ParseAccountId_ReturnsNull()
+    public void Constructor_DuplicateStyle_ThrowsArgumentException()
     {
-        var json = MakeEndpointJson("KubernetesAgent");
-        var contributor = Contributors.First(c => c.CanHandle("KubernetesAgent"));
+        var transports = new[]
+        {
+            new StubTransport(CommunicationStyle.KubernetesApi),
+            new StubTransport(CommunicationStyle.KubernetesApi)
+        };
 
-        var accountId = contributor.ParseAccountId(json);
-
-        accountId.ShouldBeNull();
+        Should.Throw<ArgumentException>(() => new TransportRegistry(transports));
     }
 
-    // === Variable Count Difference ===
+    // ========== Contributor behavior ==========
+
+    [Fact]
+    public void ApiContributor_ParseAccountId_ReturnsId()
+    {
+        var contributor = new KubernetesApiEndpointVariableContributor();
+        var json = JsonSerializer.Serialize(new { AccountId = "42" });
+
+        contributor.ParseAccountId(json).ShouldBe(42);
+    }
+
+    [Fact]
+    public void AgentContributor_ParseAccountId_ReturnsNull()
+    {
+        var contributor = new KubernetesAgentEndpointVariableContributor();
+
+        contributor.ParseAccountId("{}").ShouldBeNull();
+    }
 
     [Theory]
     [InlineData("KubernetesApi", 15)]
@@ -100,56 +121,51 @@ public class DualModeContributorResolutionTests
     public void ContributeVariables_CorrectCount(string style, int expectedCount)
     {
         var json = MakeEndpointJson(style);
-        var contributor = Contributors.First(c => c.CanHandle(style));
-
         var account = style == "KubernetesApi"
             ? new DeploymentAccount { AccountType = Message.Enums.AccountType.Token, Token = "t" }
             : null;
 
-        var vars = contributor.ContributeVariables(json, account);
+        IEndpointVariableContributor contributor = style == "KubernetesApi"
+            ? new KubernetesApiEndpointVariableContributor()
+            : new KubernetesAgentEndpointVariableContributor();
 
-        vars.Count.ShouldBe(expectedCount);
+        contributor.ContributeVariables(json, account).Count.ShouldBe(expectedCount);
     }
 
-    // === Target Context Population ===
+    // ========== DeploymentTargetContext ==========
 
     [Fact]
     public void TargetContext_AgentMode_AccountRemainsNull()
     {
         var tc = new DeploymentTargetContext
         {
-            Machine = new Machine { Endpoint = MakeEndpointJson("KubernetesAgent") }
+            CommunicationStyle = CommunicationStyle.KubernetesAgent,
+            Transport = new StubTransport(CommunicationStyle.KubernetesAgent,
+                variables: new KubernetesAgentEndpointVariableContributor())
         };
 
-        tc.EndpointJson = tc.Machine.Endpoint;
-        tc.CommunicationStyle = ParseCommunicationStyle(tc.EndpointJson);
-        tc.ResolvedContributor = Contributors.FirstOrDefault(c => c.CanHandle(tc.CommunicationStyle));
-
-        var accountId = tc.ResolvedContributor?.ParseAccountId(tc.EndpointJson);
+        var accountId = tc.Transport.Variables.ParseAccountId("{}");
 
         accountId.ShouldBeNull();
         tc.Account.ShouldBeNull();
     }
 
-    private static string ParseCommunicationStyle(string endpointJson)
+    // ========== Helpers ==========
+
+    private static string MakeEndpointJson(string communicationStyle) =>
+        JsonSerializer.Serialize(new { CommunicationStyle = communicationStyle });
+
+    private sealed class StubTransport : IDeploymentTransport
     {
-        if (string.IsNullOrEmpty(endpointJson)) return null;
+        public CommunicationStyle CommunicationStyle { get; }
+        public IEndpointVariableContributor Variables { get; }
+        public IScriptContextWrapper ScriptWrapper => null;
+        public IExecutionStrategy Strategy => null;
 
-        try
+        public StubTransport(CommunicationStyle style, IEndpointVariableContributor variables = null)
         {
-            using var doc = JsonDocument.Parse(endpointJson);
-
-            if (doc.RootElement.TryGetProperty("CommunicationStyle", out var prop))
-                return prop.GetString();
-
-            if (doc.RootElement.TryGetProperty("communicationStyle", out var prop2))
-                return prop2.GetString();
-
-            return null;
-        }
-        catch
-        {
-            return null;
+            CommunicationStyle = style;
+            Variables = variables;
         }
     }
 }

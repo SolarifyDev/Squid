@@ -15,9 +15,6 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
         _builder = builder;
     }
 
-    public bool CanWrap(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesApi", StringComparison.OrdinalIgnoreCase);
-
     public string WrapScript(string script, string endpointJson, DeploymentAccount account,
                              ScriptSyntax syntax, List<VariableDto> variables)
     {

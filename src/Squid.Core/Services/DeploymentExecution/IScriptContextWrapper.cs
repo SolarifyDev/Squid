@@ -6,8 +6,6 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IScriptContextWrapper : IScopedDependency
 {
-    bool CanWrap(string communicationStyle);
-
     string WrapScript(string script, string endpointJson, DeploymentAccount account,
                       ScriptSyntax syntax, List<VariableDto> variables);
 }

@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -134,7 +135,7 @@ public partial class DeploymentTaskExecutor
     private void WrapScriptIfApplicable(ActionExecutionResult prepared)
     {
         var tc = _ctx.CurrentDeployTargetContext;
-        var wrapper = _scriptWrappers.FirstOrDefault(w => w.CanWrap(tc.CommunicationStyle));
+        var wrapper = tc.Transport?.ScriptWrapper;
 
         if (wrapper == null) return;
 
@@ -162,7 +163,7 @@ public partial class DeploymentTaskExecutor
 
             try
             {
-                var strategy = _ctx.CurrentDeployTargetContext.ResolvedStrategy;
+                var strategy = _ctx.CurrentDeployTargetContext.Transport?.Strategy;
 
                 if (strategy == null)
                     throw new DeploymentTargetException(

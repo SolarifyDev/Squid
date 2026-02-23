@@ -16,20 +16,6 @@ public class KubernetesAgentEndpointVariableContributorTests
     private static string MakeEndpointJson(string ns = "production") =>
         JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = ns });
 
-    // === CanHandle ===
-
-    [Theory]
-    [InlineData("KubernetesAgent", true)]
-    [InlineData("kubernetesagent", true)]
-    [InlineData("KubernetesApi", false)]
-    [InlineData("Ssh", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void CanHandle_ReturnsExpected(string communicationStyle, bool expected)
-    {
-        _contributor.CanHandle(communicationStyle).ShouldBe(expected);
-    }
-
     // === ParseAccountId ===
 
     [Fact]

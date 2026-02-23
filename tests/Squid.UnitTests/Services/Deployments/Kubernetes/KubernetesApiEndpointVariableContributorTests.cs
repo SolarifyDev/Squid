@@ -57,38 +57,6 @@ public class KubernetesApiEndpointVariableContributorTests
         SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     };
 
-    // === CanHandle ===
-
-    [Fact]
-    public void CanHandle_Kubernetes_ReturnsTrue()
-    {
-        _contributor.CanHandle("KubernetesApi").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanHandle_CaseInsensitive_ReturnsTrue()
-    {
-        _contributor.CanHandle("kubernetesapi").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanHandle_Ssh_ReturnsFalse()
-    {
-        _contributor.CanHandle("Ssh").ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanHandle_Empty_ReturnsFalse()
-    {
-        _contributor.CanHandle(string.Empty).ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanHandle_Null_ReturnsFalse()
-    {
-        _contributor.CanHandle(null).ShouldBeFalse();
-    }
-
     // === ParseAccountId ===
 
     [Fact]

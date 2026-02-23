@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -43,9 +44,8 @@ public class DeploymentTargetContext
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public DeploymentAccount Account { get; set; }
     public string EndpointJson { get; set; }
-    public string CommunicationStyle { get; set; }
-    public IEndpointVariableContributor ResolvedContributor { get; set; }
-    public IExecutionStrategy ResolvedStrategy { get; set; }
+    public CommunicationStyle CommunicationStyle { get; set; }
+    public IDeploymentTransport Transport { get; set; }
     public byte[] CalamariPackageBytes { get; set; }
     public List<ActionExecutionResult> ActionResults { get; set; } = new();
 

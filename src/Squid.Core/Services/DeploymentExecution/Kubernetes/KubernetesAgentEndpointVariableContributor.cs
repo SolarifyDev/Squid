@@ -7,9 +7,6 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContributor
 {
-    public bool CanHandle(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesAgent", StringComparison.OrdinalIgnoreCase);
-
     public int? ParseAccountId(string endpointJson) => null;
 
     public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)

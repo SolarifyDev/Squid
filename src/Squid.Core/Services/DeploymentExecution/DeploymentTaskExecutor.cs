@@ -41,18 +41,16 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IDeploymentSnapshotService _snapshotService;
     private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
-    private readonly IEnumerable<IScriptContextWrapper> _scriptWrappers;
-    private readonly IEnumerable<IEndpointVariableContributor> _variableContributors;
+    private readonly ITransportRegistry _transportRegistry;
 
     #endregion
 
     #region Infrastructure
 
-    private readonly IEnumerable<IExecutionStrategy> _executionStrategies;
     private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
 
     #endregion
-    
+
     public DeploymentTaskExecutor(
         IGenericDataProvider genericDataProvider,
         IReleaseDataProvider releaseDataProvider,
@@ -68,9 +66,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IDeploymentSnapshotService snapshotService,
         IDeploymentVariableResolver variableResolver,
         IActionHandlerRegistry actionHandlerRegistry,
-        IEnumerable<IScriptContextWrapper> scriptWrappers,
-        IEnumerable<IEndpointVariableContributor> variableContributors,
-        IEnumerable<IExecutionStrategy> executionStrategies,
+        ITransportRegistry transportRegistry,
         CalamariGithubPackageSetting calamariGithubPackageSetting)
     {
         _genericDataProvider = genericDataProvider;
@@ -87,9 +83,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _snapshotService = snapshotService;
         _variableResolver = variableResolver;
         _actionHandlerRegistry = actionHandlerRegistry;
-        _scriptWrappers = scriptWrappers;
-        _variableContributors = variableContributors;
-        _executionStrategies = executionStrategies;
+        _transportRegistry = transportRegistry;
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 

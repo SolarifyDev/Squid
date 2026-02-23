@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using Squid.Core.Services.Common;
+using Squid.Message.Enums;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -10,8 +11,8 @@ public partial class DeploymentTaskExecutor
         // KubernetesAgent targets use squid-calamari bundled in the Tentacle image — no download required.
         // Only KubernetesApi targets need the Octopus Calamari package downloaded at runtime.
         var needsCalamari = _ctx.AllTargetsContext.Any(tc =>
-            tc.ResolvedStrategy != null &&
-            !string.Equals(tc.CommunicationStyle, "KubernetesAgent", StringComparison.OrdinalIgnoreCase));
+            tc.Transport != null &&
+            tc.CommunicationStyle != CommunicationStyle.KubernetesAgent);
 
         if (!needsCalamari) return;
 

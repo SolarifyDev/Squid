@@ -21,9 +21,6 @@ public partial class KubernetesApiExecutionStrategy : IExecutionStrategy
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 
-    public bool CanHandle(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesApi", StringComparison.OrdinalIgnoreCase);
-
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {

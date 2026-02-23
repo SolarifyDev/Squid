@@ -1,9 +1,9 @@
 using System.IO.Compression;
 using Autofac;
-using Autofac.Core;
 using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Settings.GithubPackage;
+using Squid.Message.Enums;
 using Squid.E2ETests.Infrastructure;
 
 namespace Squid.E2ETests.Deployments;
@@ -16,11 +16,11 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override void RegisterOverrides(ContainerBuilder builder, IConfiguration configuration)
     {
-        builder.RegisterType<DeploymentTaskExecutor>()
-            .As<IDeploymentTaskExecutor>()
-            .WithParameter(new ResolvedParameter(
-                (pi, _) => pi.ParameterType == typeof(IEnumerable<IExecutionStrategy>),
-                (_, _) => new IExecutionStrategy[] { ExecutionCapture }))
+        builder.Register(ctx =>
+            new CapturingTransportRegistry(
+                ctx.Resolve<IEnumerable<IDeploymentTransport>>(),
+                ExecutionCapture))
+            .As<ITransportRegistry>()
             .InstancePerLifetimeScope();
 
         _calamariCacheDir = Path.Combine(Path.GetTempPath(), $"squid-e2e-calamari-{Guid.NewGuid():N}");
@@ -72,5 +72,42 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
               </metadata>
             </package>
             """);
+    }
+
+    // Wraps the real registry so each resolved transport uses the capturing strategy
+    // while retaining real variable contribution and script wrapping.
+    private sealed class CapturingTransportRegistry : ITransportRegistry
+    {
+        private readonly Dictionary<CommunicationStyle, IDeploymentTransport> _transports;
+        private readonly CapturingExecutionStrategy _capture;
+
+        public CapturingTransportRegistry(
+            IEnumerable<IDeploymentTransport> transports,
+            CapturingExecutionStrategy capture)
+        {
+            _transports = transports.ToDictionary(t => t.CommunicationStyle);
+            _capture = capture;
+        }
+
+        public IDeploymentTransport Resolve(CommunicationStyle style)
+            => _transports.TryGetValue(style, out var t)
+                ? new StrategyCapturingTransport(t, _capture)
+                : null;
+    }
+
+    private sealed class StrategyCapturingTransport : IDeploymentTransport
+    {
+        private readonly IDeploymentTransport _inner;
+
+        public CommunicationStyle CommunicationStyle => _inner.CommunicationStyle;
+        public IEndpointVariableContributor Variables => _inner.Variables;
+        public IScriptContextWrapper ScriptWrapper => _inner.ScriptWrapper;
+        public IExecutionStrategy Strategy { get; }
+
+        public StrategyCapturingTransport(IDeploymentTransport inner, IExecutionStrategy strategy)
+        {
+            _inner = inner;
+            Strategy = strategy;
+        }
     }
 }

@@ -27,9 +27,6 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 
-    public bool CanHandle(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesAgent", StringComparison.OrdinalIgnoreCase);
-
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {

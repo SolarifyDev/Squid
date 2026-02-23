@@ -7,6 +7,7 @@ using Moq;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.IntegrationTests.Helpers;
@@ -36,10 +37,6 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
         var executionStrategyMock = new Mock<IExecutionStrategy>();
 
         executionStrategyMock
-            .Setup(x => x.CanHandle(It.IsAny<string>()))
-            .Returns(true);
-
-        executionStrategyMock
             .Setup(x => x.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult
             {
@@ -48,9 +45,24 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 ExitCode = 0
             });
 
-        builder.RegisterInstance(executionStrategyMock.Object)
-            .As<IExecutionStrategy>()
-            .SingleInstance();
+        builder.Register(ctx =>
+        {
+            var contributor = ctx.Resolve<KubernetesApiEndpointVariableContributor>();
+            var wrapper = ctx.Resolve<KubernetesApiScriptContextWrapper>();
+
+            var transport = new Mock<IDeploymentTransport>();
+            transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
+            transport.Setup(t => t.Variables).Returns(contributor);
+            transport.Setup(t => t.ScriptWrapper).Returns(wrapper);
+            transport.Setup(t => t.Strategy).Returns(executionStrategyMock.Object);
+
+            var registry = new Mock<ITransportRegistry>();
+            registry.Setup(r => r.Resolve(CommunicationStyle.KubernetesApi)).Returns(transport.Object);
+
+            return registry.Object;
+        })
+        .As<ITransportRegistry>()
+        .InstancePerLifetimeScope();
 
         var securitySetting = new Squid.Core.Settings.Security.SecuritySetting
         {

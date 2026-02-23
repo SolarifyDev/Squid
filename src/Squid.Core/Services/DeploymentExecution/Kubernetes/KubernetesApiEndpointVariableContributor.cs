@@ -16,9 +16,6 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         _externalFeedDataProvider = externalFeedDataProvider;
     }
 
-    public bool CanHandle(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesApi", StringComparison.OrdinalIgnoreCase);
-
     public int? ParseAccountId(string endpointJson)
     {
         var endpoint = Deserialize(endpointJson);

@@ -26,21 +26,6 @@ public class KubernetesAgentExecutionStrategyTests
             _calamariSetting);
     }
 
-    // === CanHandle ===
-
-    [Theory]
-    [InlineData("KubernetesAgent", true)]
-    [InlineData("kubernetesagent", true)]
-    [InlineData("KUBERNETESAGENT", true)]
-    [InlineData("KubernetesApi", false)]
-    [InlineData("Ssh", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void CanHandle_ReturnsExpected(string communicationStyle, bool expected)
-    {
-        _strategy.CanHandle(communicationStyle).ShouldBe(expected);
-    }
-
     // === Endpoint Parsing — invalid machine ===
 
     [Fact]

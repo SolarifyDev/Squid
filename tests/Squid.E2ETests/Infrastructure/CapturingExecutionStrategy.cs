@@ -8,8 +8,6 @@ public class CapturingExecutionStrategy : IExecutionStrategy
 
     public Func<ScriptExecutionRequest, ScriptExecutionResult> ResultFactory { get; set; }
 
-    public bool CanHandle(string communicationStyle) => true;
-
     public Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {

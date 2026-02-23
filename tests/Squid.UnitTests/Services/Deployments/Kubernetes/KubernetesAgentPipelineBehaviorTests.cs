@@ -3,82 +3,29 @@ using System.Linq;
 using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 public class KubernetesAgentPipelineBehaviorTests
 {
-    // === ParseCommunicationStyle ===
+    // === CommunicationStyleParser ===
 
     [Theory]
-    [InlineData("{\"CommunicationStyle\":\"KubernetesAgent\"}", "KubernetesAgent")]
-    [InlineData("{\"CommunicationStyle\":\"KubernetesApi\"}", "KubernetesApi")]
-    [InlineData("{\"communicationStyle\":\"KubernetesApi\"}", "KubernetesApi")]
-    [InlineData("{}", null)]
-    [InlineData("invalid", null)]
-    [InlineData("", null)]
-    [InlineData(null, null)]
-    public void ParseCommunicationStyle_ReturnsExpected(string endpointJson, string expected)
+    [InlineData("{\"CommunicationStyle\":\"KubernetesAgent\"}", CommunicationStyle.KubernetesAgent)]
+    [InlineData("{\"CommunicationStyle\":\"KubernetesApi\"}", CommunicationStyle.KubernetesApi)]
+    [InlineData("{\"communicationStyle\":\"KubernetesApi\"}", CommunicationStyle.KubernetesApi)]
+    [InlineData("{}", CommunicationStyle.Unknown)]
+    [InlineData("invalid", CommunicationStyle.Unknown)]
+    [InlineData("", CommunicationStyle.Unknown)]
+    [InlineData(null, CommunicationStyle.Unknown)]
+    public void ParseCommunicationStyle_ReturnsExpected(string endpointJson, CommunicationStyle expected)
     {
-        var result = ParseCommunicationStyle(endpointJson);
-
-        result.ShouldBe(expected);
+        CommunicationStyleParser.Parse(endpointJson).ShouldBe(expected);
     }
 
-    // === Script Context Wrapping ===
-
-    [Fact]
-    public void KubernetesApiScriptContextWrapper_CannotWrapAgent()
-    {
-        var builder = new Mock<IKubernetesApiContextScriptBuilder>();
-        var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
-
-        wrapper.CanWrap("KubernetesAgent").ShouldBeFalse();
-    }
-
-    [Fact]
-    public void NoScriptContextWrapper_CanWrapAgent_WhenOnlyApiWrapperRegistered()
-    {
-        var wrappers = new List<IScriptContextWrapper>
-        {
-            new KubernetesApiScriptContextWrapper(new Mock<IKubernetesApiContextScriptBuilder>().Object)
-        };
-
-        var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesAgent"));
-
-        match.ShouldBeNull();
-    }
-
-    [Fact]
-    public void AgentScriptContextWrapper_ResolvedForAgent()
-    {
-        var wrappers = new List<IScriptContextWrapper>
-        {
-            new KubernetesApiScriptContextWrapper(new Mock<IKubernetesApiContextScriptBuilder>().Object),
-            new KubernetesAgentScriptContextWrapper()
-        };
-
-        var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesAgent"));
-
-        match.ShouldNotBeNull();
-        match.ShouldBeOfType<KubernetesAgentScriptContextWrapper>();
-    }
-
-    [Fact]
-    public void AgentScriptContextWrapper_NotResolvedForApi()
-    {
-        var wrappers = new List<IScriptContextWrapper>
-        {
-            new KubernetesApiScriptContextWrapper(new Mock<IKubernetesApiContextScriptBuilder>().Object),
-            new KubernetesAgentScriptContextWrapper()
-        };
-
-        var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesApi"));
-
-        match.ShouldNotBeNull();
-        match.ShouldBeOfType<KubernetesApiScriptContextWrapper>();
-    }
+    // === Transport ScriptWrapper wiring ===
 
     [Fact]
     public void AgentWrapper_WrapsScriptWithNamespaceFromEndpointVariables()
@@ -148,31 +95,5 @@ public class KubernetesAgentPipelineBehaviorTests
         names.ShouldContain("Squid.Action.Kubernetes.Namespace");
         names.ShouldContain("Squid.Action.Script.SuppressEnvironmentLogging");
         names.ShouldContain("SquidPrintEvaluatedVariables");
-    }
-
-    /// <summary>
-    /// Mirrors the static ParseCommunicationStyle from DeploymentTaskExecutor.Prepare.cs
-    /// to test the parsing logic without needing the full executor.
-    /// </summary>
-    private static string ParseCommunicationStyle(string endpointJson)
-    {
-        if (string.IsNullOrEmpty(endpointJson)) return null;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(endpointJson);
-
-            if (doc.RootElement.TryGetProperty("CommunicationStyle", out var prop))
-                return prop.GetString();
-
-            if (doc.RootElement.TryGetProperty("communicationStyle", out var prop2))
-                return prop2.GetString();
-
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
     }
 }

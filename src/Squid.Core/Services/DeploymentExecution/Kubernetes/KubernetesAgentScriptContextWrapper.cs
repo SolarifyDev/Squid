@@ -6,9 +6,6 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 {
-    public bool CanWrap(string communicationStyle)
-        => string.Equals(communicationStyle, "KubernetesAgent", StringComparison.OrdinalIgnoreCase);
-
     public string WrapScript(string script, string endpointJson, DeploymentAccount account,
                              ScriptSyntax syntax, List<VariableDto> variables)
     {

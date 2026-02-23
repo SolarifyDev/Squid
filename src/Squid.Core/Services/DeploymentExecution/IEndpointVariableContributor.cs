@@ -6,8 +6,6 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IEndpointVariableContributor : IScopedDependency
 {
-    bool CanHandle(string communicationStyle);
-
     int? ParseAccountId(string endpointJson);
 
     List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account);

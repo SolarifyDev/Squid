@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
@@ -28,14 +29,14 @@ public partial class DeploymentTaskExecutor
         {
             var tc = new DeploymentTargetContext { Machine = target };
 
-            LoadAccountForTarget(tc);
+            LoadTransportForTarget(tc);
 
-            if (tc.ResolvedContributor != null)
+            if (tc.Transport != null)
                 await LoadAccountCredentialsAsync(tc, ct).ConfigureAwait(false);
 
             ContributeEndpointVariablesForTarget(tc);
 
-            if (tc.ResolvedContributor != null)
+            if (tc.Transport != null)
                 await ContributeAdditionalVariablesForTargetAsync(tc, ct).ConfigureAwait(false);
 
             _ctx.AllTargetsContext.Add(tc);
@@ -67,7 +68,7 @@ public partial class DeploymentTaskExecutor
         _ctx.Deployment = deployment;
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
-        
+
         _ctx.Release = release;
     }
 
@@ -87,14 +88,14 @@ public partial class DeploymentTaskExecutor
         if (_ctx.Deployment.ProcessSnapshotId.HasValue)
         {
             _ctx.ProcessSnapshot = await _snapshotService.LoadProcessSnapshotAsync(_ctx.Deployment.ProcessSnapshotId.Value, ct).ConfigureAwait(false);
-            
+
             return;
         }
 
         _ctx.ProcessSnapshot = await _snapshotService.SnapshotProcessFromReleaseAsync(_ctx.Release, ct).ConfigureAwait(false);
 
         _ctx.Deployment.ProcessSnapshotId = _ctx.ProcessSnapshot.Id;
-        
+
         await _deploymentDataProvider.UpdateDeploymentAsync(_ctx.Deployment, cancellationToken: ct).ConfigureAwait(false);
     }
 
@@ -116,17 +117,16 @@ public partial class DeploymentTaskExecutor
         Log.Information("Found {Count} target machines for deployment {DeploymentId}", _ctx.AllTargets.Count, _ctx.Deployment.Id);
     }
 
-    private void LoadAccountForTarget(DeploymentTargetContext tc)
+    private void LoadTransportForTarget(DeploymentTargetContext tc)
     {
         tc.EndpointJson = tc.Machine.Endpoint;
-        tc.CommunicationStyle = ParseCommunicationStyle(tc.EndpointJson);
-        tc.ResolvedContributor = _variableContributors.FirstOrDefault(c => c.CanHandle(tc.CommunicationStyle));
-        tc.ResolvedStrategy = _executionStrategies.FirstOrDefault(s => s.CanHandle(tc.CommunicationStyle));
+        tc.CommunicationStyle = CommunicationStyleParser.Parse(tc.EndpointJson);
+        tc.Transport = _transportRegistry.Resolve(tc.CommunicationStyle);
     }
 
     private async Task LoadAccountCredentialsAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        var accountId = tc.ResolvedContributor.ParseAccountId(tc.EndpointJson);
+        var accountId = tc.Transport.Variables.ParseAccountId(tc.EndpointJson);
 
         if (accountId.HasValue)
             tc.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
@@ -134,38 +134,19 @@ public partial class DeploymentTaskExecutor
 
     private void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)
     {
-        if (tc.ResolvedContributor == null) return;
+        if (tc.Transport == null) return;
 
-        var endpointVars = tc.ResolvedContributor.ContributeVariables(tc.EndpointJson, tc.Account);
+        var endpointVars = tc.Transport.Variables.ContributeVariables(tc.EndpointJson, tc.Account);
 
         tc.EndpointVariables.AddRange(endpointVars);
     }
 
     private async Task ContributeAdditionalVariablesForTargetAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        var additionalVars = await tc.ResolvedContributor
+        var additionalVars = await tc.Transport.Variables
             .ContributeAdditionalVariablesAsync(_ctx.ProcessSnapshot, _ctx.Release, ct).ConfigureAwait(false);
 
         tc.EndpointVariables.AddRange(additionalVars);
-    }
-
-    private static string ParseCommunicationStyle(string endpointJson)
-    {
-        if (string.IsNullOrEmpty(endpointJson)) return null;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(endpointJson);
-            if (doc.RootElement.TryGetProperty("CommunicationStyle", out var prop))
-                return prop.GetString();
-            if (doc.RootElement.TryGetProperty("communicationStyle", out var prop2))
-                return prop2.GetString();
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private void PreFilterTargetsByRoles()
@@ -176,7 +157,7 @@ public partial class DeploymentTaskExecutor
             return;
 
         var before = _ctx.AllTargets.Count;
-        
+
         _ctx.AllTargets = DeploymentTargetFinder.FilterByRoles(_ctx.AllTargets, allRoles);
 
         if (_ctx.AllTargets.Count < before)

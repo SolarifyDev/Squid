@@ -36,38 +36,6 @@ public class KubernetesApiScriptContextWrapperTests
         Token = "test-token"
     };
 
-    // === CanWrap ===
-
-    [Fact]
-    public void CanWrap_Kubernetes_ReturnsTrue()
-    {
-        _wrapper.CanWrap("KubernetesApi").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanWrap_CaseInsensitive_ReturnsTrue()
-    {
-        _wrapper.CanWrap("kubernetesapi").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanWrap_Ssh_ReturnsFalse()
-    {
-        _wrapper.CanWrap("Ssh").ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanWrap_Empty_ReturnsFalse()
-    {
-        _wrapper.CanWrap(string.Empty).ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanWrap_Null_ReturnsFalse()
-    {
-        _wrapper.CanWrap(null).ShouldBeFalse();
-    }
-
     // === WrapScript — valid endpoint, Bash syntax ===
 
     [Fact]

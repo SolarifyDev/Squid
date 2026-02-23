@@ -9,38 +9,6 @@ public class KubernetesAgentScriptContextWrapperTests
 {
     private readonly KubernetesAgentScriptContextWrapper _wrapper = new();
 
-    // === CanWrap ===
-
-    [Fact]
-    public void CanWrap_KubernetesAgent_ReturnsTrue()
-    {
-        _wrapper.CanWrap("KubernetesAgent").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanWrap_CaseInsensitive_ReturnsTrue()
-    {
-        _wrapper.CanWrap("kubernetesagent").ShouldBeTrue();
-    }
-
-    [Fact]
-    public void CanWrap_KubernetesApi_ReturnsFalse()
-    {
-        _wrapper.CanWrap("KubernetesApi").ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanWrap_Empty_ReturnsFalse()
-    {
-        _wrapper.CanWrap(string.Empty).ShouldBeFalse();
-    }
-
-    [Fact]
-    public void CanWrap_Null_ReturnsFalse()
-    {
-        _wrapper.CanWrap(null).ShouldBeFalse();
-    }
-
     // === WrapScript — Bash ===
 
     [Fact]

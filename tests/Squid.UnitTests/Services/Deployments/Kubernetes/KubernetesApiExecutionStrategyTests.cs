@@ -23,21 +23,6 @@ public class KubernetesApiExecutionStrategyTests
             _calamariSetting);
     }
 
-    // === CanHandle ===
-
-    [Theory]
-    [InlineData("KubernetesApi", true)]
-    [InlineData("kubernetesapi", true)]
-    [InlineData("KUBERNETESAPI", true)]
-    [InlineData("KubernetesAgent", false)]
-    [InlineData("Ssh", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void CanHandle_ReturnsExpected(string communicationStyle, bool expected)
-    {
-        _strategy.CanHandle(communicationStyle).ShouldBe(expected);
-    }
-
     // === Routing — CalamariCommand presence determines execution path ===
 
     [Fact]
