@@ -4,7 +4,7 @@ using System.Text;
 namespace Squid.Calamari.Variables;
 
 /// <summary>
-/// Decrypts sensitive variables encrypted with CalamariCompatibleEncryption.
+/// Decrypts Squid encrypted sensitive-variable payloads.
 /// AES-128-CBC, RFC2898 key derivation, IV prefixed with "IV__" marker.
 /// </summary>
 public class SensitiveVariableDecryptor

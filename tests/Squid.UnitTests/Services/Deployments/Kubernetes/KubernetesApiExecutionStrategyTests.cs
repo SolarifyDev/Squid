@@ -6,7 +6,6 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Settings.GithubPackage;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -15,14 +14,12 @@ public class KubernetesApiExecutionStrategyTests
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly Mock<ILocalProcessRunner> _processRunner = new();
     private readonly Mock<ICalamariPayloadBuilder> _payloadBuilder = new();
-    private readonly CalamariGithubPackageSetting _calamariSetting = new() { Version = "28.2.1" };
     private readonly KubernetesApiExecutionStrategy _strategy;
 
     public KubernetesApiExecutionStrategyTests()
     {
         _strategy = new KubernetesApiExecutionStrategy(_payloadBuilder.Object, _processRunner.Object);
 
-        _payloadBuilder.SetupGet(x => x.ResolvedVersion).Returns(_calamariSetting.ResolvedVersion);
         _payloadBuilder
             .Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
             .Returns<ScriptExecutionRequest>(CreatePayloadForRequest);
@@ -111,7 +108,7 @@ public class KubernetesApiExecutionStrategyTests
     public async Task ExecuteScriptAsync_WithCalamariCommand_CallsYamlNuGetPacker()
     {
         var packerCalled = false;
-        var realBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object, _calamariSetting);
+        var realBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object);
         _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
             .Returns<ScriptExecutionRequest>(req =>
             {
@@ -162,7 +159,6 @@ public class KubernetesApiExecutionStrategyTests
         string capturedArguments = null;
         string capturedWorkDir = null;
 
-        _payloadBuilder.SetupGet(x => x.ResolvedVersion).Returns("28.2.1");
         _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
             .Returns(new CalamariPayload
             {
@@ -171,7 +167,7 @@ public class KubernetesApiExecutionStrategyTests
                 VariableBytes = Array.Empty<byte>(),
                 SensitiveBytes = Array.Empty<byte>(),
                 SensitivePassword = string.Empty,
-                TemplateBody = "pkg={{PackageFilePath}};var={{VariableFilePath}};sens={{SensitiveVariableFile}};ver={{CalamariVersion}}"
+                TemplateBody = "pkg={{PackageFilePath}};var={{VariableFilePath}};sens={{SensitiveVariableFile}}"
             });
 
         _processRunner
@@ -190,7 +186,6 @@ public class KubernetesApiExecutionStrategyTests
         capturedArguments.ShouldNotContain("{{PackageFilePath}}");
         capturedArguments.ShouldContain("squid.1.0.0.nupkg");
         capturedArguments.ShouldContain("variables.json");
-        capturedArguments.ShouldContain("28.2.1");
         capturedArguments.ShouldContain(capturedWorkDir);
     }
 
@@ -221,7 +216,7 @@ public class KubernetesApiExecutionStrategyTests
             VariableBytes = System.Text.Encoding.UTF8.GetBytes("{}"),
             SensitiveBytes = System.Text.Encoding.UTF8.GetBytes("{}"),
             SensitivePassword = string.Empty,
-            TemplateBody = "pkg={{PackageFilePath}} var={{VariableFilePath}} sens={{SensitiveVariableFile}} ver={{CalamariVersion}}"
+            TemplateBody = "pkg={{PackageFilePath}} var={{VariableFilePath}} sens={{SensitiveVariableFile}}"
         };
     }
 }

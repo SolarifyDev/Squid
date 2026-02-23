@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -49,15 +48,9 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
         await File.WriteAllBytesAsync(variablePath, payload.VariableBytes, ct).ConfigureAwait(false);
         await File.WriteAllBytesAsync(sensitivePath, payload.SensitiveBytes, ct).ConfigureAwait(false);
 
-        if (request.CalamariPackageBytes is { Length: > 0 })
-        {
-            var calamariPath = Path.Combine(workDir, "Calamari");
-            ExtractCalamariPackage(request.CalamariPackageBytes, calamariPath);
-        }
+        var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
 
-        var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath, _payloadBuilder.ResolvedVersion);
-
-        Log.Information("Executing Calamari locally in {WorkDir}", workDir);
+        Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
         return await _processRunner.RunAsync(
             "pwsh", $"-NoProfile -NonInteractive -Command \"{EscapeForCommandLine(scriptBody)}\"",
@@ -90,29 +83,6 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
                 Directory.CreateDirectory(dir);
 
             File.WriteAllBytes(filePath, file.Value);
-        }
-    }
-
-    private static void ExtractCalamariPackage(byte[] packageBytes, string targetDir)
-    {
-        Directory.CreateDirectory(targetDir);
-
-        using var stream = new MemoryStream(packageBytes);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-
-        foreach (var entry in archive.Entries)
-        {
-            var destinationPath = Path.Combine(targetDir, entry.FullName);
-            var entryDir = Path.GetDirectoryName(destinationPath);
-
-            if (!string.IsNullOrEmpty(entryDir))
-                Directory.CreateDirectory(entryDir);
-
-            if (string.IsNullOrEmpty(entry.Name)) continue;
-
-            using var entryStream = entry.Open();
-            using var fileStream = File.Create(destinationPath);
-            entryStream.CopyTo(fileStream);
         }
     }
 

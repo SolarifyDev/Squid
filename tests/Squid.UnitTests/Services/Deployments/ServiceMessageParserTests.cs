@@ -8,7 +8,7 @@ public class ServiceMessageParserTests
     [Fact]
     public void Parse_StandardMessage_Extracted()
     {
-        var lines = new[] { "##octopus[setVariable name='MyVar' value='Hello']" };
+        var lines = new[] { "##squid[setVariable name='MyVar' value='Hello']" };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);
 
@@ -21,7 +21,7 @@ public class ServiceMessageParserTests
     [Fact]
     public void Parse_SensitiveFlag_Parsed()
     {
-        var lines = new[] { "##octopus[setVariable name='Secret' value='pw123' sensitive='True']" };
+        var lines = new[] { "##squid[setVariable name='Secret' value='pw123' sensitive='True']" };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);
 
@@ -33,8 +33,8 @@ public class ServiceMessageParserTests
     {
         var lines = new[]
         {
-            "##octopus[setVariable name='A' value='1']",
-            "##octopus[setVariable name='B' value='2']"
+            "##squid[setVariable name='A' value='1']",
+            "##squid[setVariable name='B' value='2']"
         };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);
@@ -49,8 +49,8 @@ public class ServiceMessageParserTests
     {
         var lines = new[]
         {
-            "##octopus[setVariable name='X' value='first']",
-            "##octopus[setVariable name='X' value='second']"
+            "##squid[setVariable name='X' value='first']",
+            "##squid[setVariable name='X' value='second']"
         };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);
@@ -62,7 +62,7 @@ public class ServiceMessageParserTests
     [Fact]
     public void Parse_EmptyValue_Parsed()
     {
-        var lines = new[] { "##octopus[setVariable name='Empty' value='']" };
+        var lines = new[] { "##squid[setVariable name='Empty' value='']" };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);
 
@@ -93,7 +93,7 @@ public class ServiceMessageParserTests
         var lines = new[]
         {
             "Starting deployment...",
-            "##octopus[setVariable name='Result' value='OK']",
+            "##squid[setVariable name='Result' value='OK']",
             "Deployment complete."
         };
 
@@ -108,9 +108,9 @@ public class ServiceMessageParserTests
     {
         var lines = new[]
         {
-            "##octopus[setVariable name='Good' value='yes']",
-            "##octopus[setVariable name=]",
-            "##octopus[somethingElse name='X']"
+            "##squid[setVariable name='Good' value='yes']",
+            "##squid[setVariable name=]",
+            "##squid[somethingElse name='X']"
         };
 
         var result = ServiceMessageParser.ParseOutputVariables(lines);

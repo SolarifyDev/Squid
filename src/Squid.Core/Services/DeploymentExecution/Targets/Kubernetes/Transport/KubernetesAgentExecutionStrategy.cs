@@ -43,13 +43,11 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
         ScriptExecutionRequest request, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         var payload = _payloadBuilder.Build(request);
-        var osVersion = $"{_payloadBuilder.ResolvedVersion}/{request.Machine.OperatingSystem.GetDescription()}";
 
         var scriptBody = payload.FillTemplate(
             $".\\{payload.PackageFileName}",
             ".\\variables.json",
-            ".\\sensitiveVariables.json",
-            osVersion);
+            ".\\sensitiveVariables.json");
 
         var scriptFiles = new[]
         {
@@ -71,7 +69,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
-        Log.Information("Starting DeployByCalamari on agent {MachineName} with ticket {Ticket}",
+        Log.Information("Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
         return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);

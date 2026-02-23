@@ -2,7 +2,6 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.Deployments.ExternalFeeds;
-using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Enums;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -51,11 +50,10 @@ public class TransportCompositionTests
     }
 
     [Fact]
-    public void CalamariPayloadBuilder_UsesResolvedVersion_FromSetting()
+    public void CalamariPayloadBuilder_CanBeConstructed_WithYamlPackerOnly()
     {
-        var setting = new CalamariGithubPackageSetting { Version = null };
-        var builder = new CalamariPayloadBuilder(Mock.Of<IYamlNuGetPacker>(), setting);
+        var builder = new CalamariPayloadBuilder(Mock.Of<IYamlNuGetPacker>());
 
-        builder.ResolvedVersion.ShouldBe("28.2.1");
+        builder.ShouldNotBeNull();
     }
 }

@@ -6,7 +6,7 @@ public static partial class ServiceMessageParser
 {
     private static readonly Regex SetVariableRegex = BuildSetVariableRegex();
 
-    [GeneratedRegex(@"^##octopus\[setVariable\s+name='(?<name>[^']*)'\s+value='(?<value>[^']*)'(?:\s+sensitive='(?<sensitive>[^']*)')?\]$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"^##squid\[setVariable\s+name='(?<name>[^']*)'\s+value='(?<value>[^']*)'(?:\s+sensitive='(?<sensitive>[^']*)')?\]$", RegexOptions.Compiled)]
     private static partial Regex BuildSetVariableRegex();
 
     public static Dictionary<string, OutputVariable> ParseOutputVariables(IEnumerable<string> logLines)
@@ -18,7 +18,7 @@ public static partial class ServiceMessageParser
 
         foreach (var line in logLines)
         {
-            if (string.IsNullOrEmpty(line) || !line.StartsWith("##octopus[setVariable"))
+            if (string.IsNullOrEmpty(line) || !line.StartsWith("##squid[setVariable"))
                 continue;
 
             var match = SetVariableRegex.Match(line);

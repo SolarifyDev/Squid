@@ -3,7 +3,7 @@ using Squid.Core.Services.Deployments.Machine;
 namespace Squid.Core.Services.DeploymentExecution;
 
 /// <summary>
-/// Selects deployment target machines using an Octopus-aligned filtering pipeline:
+/// Selects deployment target machines using Squid's role/tenant filtering pipeline:
 ///   1. Get candidate pool (specific machine or auto-select by environment)
 ///   2. Filter by environment (validate machine belongs to target environment)
 ///   3. Filter disabled (exclude IsDisabled machines)
@@ -90,7 +90,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     }
 
     /// <summary>
-    /// Filters machines by target roles using OR logic (Octopus pattern:
+    /// Filters machines by target roles using OR logic (deployment-step pattern:
     /// a machine matches if it has ANY of the target roles).
     /// Empty or null targetRoles returns all machines (no filtering).
     /// </summary>
@@ -107,7 +107,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     }
 
     /// <summary>
-    /// Collects all target roles from all steps (Octopus Level 1 pre-filtering).
+    /// Collects all target roles from all steps (global pre-filtering).
     /// Used to narrow down machines before the per-target execution loop,
     /// avoiding wasted LoadAccount/ContributeEndpointVariables/ExtractCalamari
     /// on machines that won't execute any step.

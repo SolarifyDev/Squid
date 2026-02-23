@@ -3,10 +3,11 @@ using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
+using Squid.Tentacle.Abstractions;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public partial class ScriptPodService : IScriptService
+public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 {
     private readonly TentacleSettings _tentacleSettings;
     private readonly KubernetesSettings _kubernetesSettings;

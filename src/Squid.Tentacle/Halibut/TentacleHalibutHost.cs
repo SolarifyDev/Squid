@@ -32,11 +32,13 @@ public class TentacleHalibutHost : IAsyncDisposable
             .Build();
     }
 
-    public void StartPolling(string serverThumbprint, string subscriptionId)
+    public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
     {
         _runtime.Trust(serverThumbprint);
 
-        var pollUri = new Uri($"poll://{subscriptionId}/");
+        var pollUri = string.IsNullOrWhiteSpace(subscriptionUri)
+            ? new Uri($"poll://{subscriptionId}/")
+            : new Uri(subscriptionUri);
         var serverUri = new Uri(_settings.ServerUrl);
         var pollingEndpointUri = new Uri($"https://{serverUri.Host}:{_settings.ServerPollingPort}/");
 
@@ -47,8 +49,9 @@ public class TentacleHalibutHost : IAsyncDisposable
 
         _runtime.Poll(pollUri, serverEndpoint, CancellationToken.None);
 
-        Log.Information("Halibut polling started. SubscriptionId={SubscriptionId}, ServerEndpoint={ServerEndpoint}",
-            subscriptionId, pollingEndpointUri);
+        Log.Information(
+            "Halibut polling started. SubscriptionId={SubscriptionId}, SubscriptionUri={SubscriptionUri}, ServerEndpoint={ServerEndpoint}",
+            subscriptionId, pollUri, pollingEndpointUri);
     }
 
     public async ValueTask DisposeAsync()

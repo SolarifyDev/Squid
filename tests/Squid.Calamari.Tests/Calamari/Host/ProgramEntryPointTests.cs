@@ -12,7 +12,6 @@ public class ProgramEntryPointTests
 
         result.ExitCode.ShouldBe(1);
         result.Stdout.ShouldContain("squid-calamari <subcommand> [options]");
-        result.Stdout.ShouldContain("kubernetes-apply-raw-yaml");
         result.Stderr.ShouldBeEmpty();
     }
 
@@ -42,15 +41,6 @@ public class ProgramEntryPointTests
 
         result.ExitCode.ShouldBe(1);
         result.Stderr.ShouldContain("apply-yaml requires --file=<path>");
-    }
-
-    [Fact]
-    public async Task OctopusCompatApplyRawYaml_WithoutPackageArg_Returns1()
-    {
-        var result = await CalamariTestHost.InvokeInProcessAsync("kubernetes-apply-raw-yaml");
-
-        result.ExitCode.ShouldBe(1);
-        result.Stderr.ShouldContain("kubernetes-apply-raw-yaml requires --package=<yaml-file>");
     }
 
     [Fact]

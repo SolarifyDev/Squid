@@ -26,9 +26,6 @@ public class DeploymentTaskContext
     public List<Persistence.Entities.Deployments.ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
 
-    // Calamari
-    public byte[] CalamariPackageBytes { get; set; }
-
     // Activity Tracking
     public Persistence.Entities.Deployments.ActivityLog TaskActivityNode { get; set; }
 
@@ -44,7 +41,6 @@ public class DeploymentTargetContext
     public string EndpointJson { get; set; }
     public CommunicationStyle CommunicationStyle { get; set; }
     public IDeploymentTransport Transport { get; set; }
-    public byte[] CalamariPackageBytes { get; set; }
 
     // Isolated endpoint variables (not polluting global _ctx.Variables)
     public List<VariableDto> EndpointVariables { get; set; } = new();

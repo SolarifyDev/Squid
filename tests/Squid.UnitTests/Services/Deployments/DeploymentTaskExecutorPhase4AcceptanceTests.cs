@@ -305,7 +305,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
             var logs = new List<string>();
             if (request.ScriptBody.Contains("ACTION=Action1", StringComparison.Ordinal))
-                logs.Add("##octopus[setVariable name='X' value='1']");
+                logs.Add("##squid[setVariable name='X' value='1']");
 
             var shouldFail = FailActions.Any(actionName =>
                 request.ScriptBody.Contains($"ACTION={actionName}", StringComparison.Ordinal));

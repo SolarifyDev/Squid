@@ -1,18 +1,14 @@
-# 从Server端传递版本信息
-$calamariVersion = "{{CalamariVersion}}"
-$calamariPath = "${env:TentacleHome}\Calamari\$calamariVersion"
-$calamariExe = "$calamariPath\Calamari.exe"
-
-# 检查Calamari是否存在
-if (-not (Test-Path $calamariExe)) {
-    Write-Error "Calamari not found at: $calamariExe"
+# 检查 squid-calamari 是否存在（Kubernetes Agent / host runtime 需提供）
+$squidCalamari = Get-Command "squid-calamari" -ErrorAction SilentlyContinue
+if ($null -eq $squidCalamari) {
+    Write-Error "squid-calamari not found in PATH"
     Exit 1
 }
 
 $sensitiveVariables = ""
 if ("{{SensitiveVariableFile}}" -ne "") {
-    $sensitiveVariables = "--sensitiveVariables={{SensitiveVariableFile}} --sensitiveVariablesPassword={{SensitiveVariablePassword}}"
+    $sensitiveVariables = "--sensitive={{SensitiveVariableFile}} --password={{SensitiveVariablePassword}}"
 }
 
-# 调用Calamari
-& $calamariExe kubernetes-apply-raw-yaml --package={{PackageFilePath}} --variables={{VariableFilePath}} $sensitiveVariables
+# 调用 squid-calamari 原生命令（--file 支持 yaml/zip/nupkg）
+& $squidCalamari.Source apply-yaml --file={{PackageFilePath}} --variables={{VariableFilePath}} $sensitiveVariables

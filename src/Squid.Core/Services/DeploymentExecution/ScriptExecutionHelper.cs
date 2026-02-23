@@ -42,7 +42,7 @@ public static class ScriptExecutionHelper
             password = Guid.NewGuid().ToString("N");
 
             var sensitiveJson = JsonSerializer.Serialize(sensitiveVariables);
-            var encryption = new CalamariCompatibleEncryption(password);
+            var encryption = new SquidVariableEncryption(password);
             sensitiveBytes = encryption.Encrypt(sensitiveJson);
         }
         else

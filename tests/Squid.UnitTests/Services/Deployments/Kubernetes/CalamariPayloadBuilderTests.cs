@@ -4,7 +4,6 @@ using System.Text;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -12,26 +11,11 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 public class CalamariPayloadBuilderTests
 {
     private readonly Mock<IYamlNuGetPacker> _packer = new();
-    private readonly CalamariGithubPackageSetting _setting = new() { Version = "28.2.1" };
     private readonly CalamariPayloadBuilder _builder;
 
     public CalamariPayloadBuilderTests()
     {
-        _builder = new CalamariPayloadBuilder(_packer.Object, _setting);
-    }
-
-    // === ResolvedVersion passthrough ===
-
-    [Theory]
-    [InlineData("1.2.3", "1.2.3")]
-    [InlineData(null, "28.2.1")]
-    [InlineData("", "28.2.1")]
-    public void ResolvedVersion_PassesThroughFromSetting(string version, string expected)
-    {
-        var setting = new CalamariGithubPackageSetting { Version = version };
-        var builder = new CalamariPayloadBuilder(_packer.Object, setting);
-
-        builder.ResolvedVersion.ShouldBe(expected);
+        _builder = new CalamariPayloadBuilder(_packer.Object);
     }
 
     // === PackageFileName ===
@@ -120,12 +104,12 @@ public class CalamariPayloadBuilderTests
             VariableBytes = Array.Empty<byte>(),
             SensitiveBytes = Array.Empty<byte>(),
             SensitivePassword = "secret-pass",
-            TemplateBody = "pkg={{PackageFilePath}} var={{VariableFilePath}} sens={{SensitiveVariableFile}} pw={{SensitiveVariablePassword}} ver={{CalamariVersion}}"
+            TemplateBody = "pkg={{PackageFilePath}} var={{VariableFilePath}} sens={{SensitiveVariableFile}} pw={{SensitiveVariablePassword}}"
         };
 
-        var result = payload.FillTemplate("/pkg.nupkg", "/vars.json", "/sensitive.json", "28.2.1");
+        var result = payload.FillTemplate("/pkg.nupkg", "/vars.json", "/sensitive.json");
 
-        result.ShouldBe("pkg=/pkg.nupkg var=/vars.json sens=/sensitive.json pw=secret-pass ver=28.2.1");
+        result.ShouldBe("pkg=/pkg.nupkg var=/vars.json sens=/sensitive.json pw=secret-pass");
     }
 
     [Fact]
@@ -137,7 +121,7 @@ public class CalamariPayloadBuilderTests
             TemplateBody = "{{SensitiveVariableFile}}"
         };
 
-        var result = payload.FillTemplate("/pkg.nupkg", "/vars.json", "/sensitive.json", "28.2.1");
+        var result = payload.FillTemplate("/pkg.nupkg", "/vars.json", "/sensitive.json");
 
         result.ShouldBe(string.Empty);
     }

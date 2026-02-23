@@ -9,11 +9,10 @@ public sealed class CalamariPayload
     public string SensitivePassword { get; init; }
     public string TemplateBody { get; init; }
 
-    public string FillTemplate(string packagePath, string variablePath, string sensitivePath, string calamariVersion)
+    public string FillTemplate(string packagePath, string variablePath, string sensitivePath)
         => TemplateBody
             .Replace("{{PackageFilePath}}", packagePath, StringComparison.Ordinal)
             .Replace("{{VariableFilePath}}", variablePath, StringComparison.Ordinal)
             .Replace("{{SensitiveVariableFile}}", string.IsNullOrEmpty(SensitivePassword) ? string.Empty : sensitivePath, StringComparison.Ordinal)
-            .Replace("{{SensitiveVariablePassword}}", SensitivePassword, StringComparison.Ordinal)
-            .Replace("{{CalamariVersion}}", calamariVersion, StringComparison.Ordinal);
+            .Replace("{{SensitiveVariablePassword}}", SensitivePassword, StringComparison.Ordinal);
 }

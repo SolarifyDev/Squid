@@ -1,13 +1,10 @@
-using k8s;
 using Microsoft.Extensions.Configuration;
+using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Core;
 using Squid.Tentacle.Halibut;
 using Squid.Tentacle.Health;
-using Squid.Tentacle.Kubernetes;
-using Squid.Tentacle.Registration;
-using Squid.Tentacle.ScriptExecution;
-using Squid.Message.Contracts.Tentacle;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -29,8 +26,9 @@ try
     var kubernetesSettings = new KubernetesSettings();
     config.GetSection("Kubernetes").Bind(kubernetesSettings);
 
-    Log.Information("Squid Tentacle starting. ServerUrl={ServerUrl}, Namespace={Namespace}, UseScriptPods={UseScriptPods}",
-        tentacleSettings.ServerUrl, kubernetesSettings.Namespace, kubernetesSettings.UseScriptPods);
+    Log.Information(
+        "Squid Tentacle starting. Flavor={Flavor}, ServerUrl={ServerUrl}, Namespace={Namespace}, UseScriptPods={UseScriptPods}",
+        tentacleSettings.Flavor, tentacleSettings.ServerUrl, kubernetesSettings.Namespace, kubernetesSettings.UseScriptPods);
 
     var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -43,18 +41,26 @@ try
     Log.Information("Tentacle certificate thumbprint: {Thumbprint}", tentacleCert.Thumbprint);
     Log.Information("Tentacle subscription ID: {SubscriptionId}", subscriptionId);
 
-    var registrationClient = new TentacleRegistrationClient(tentacleSettings, kubernetesSettings);
+    var flavorResolver = new TentacleFlavorResolver(TentacleFlavorCatalog.DiscoverBuiltInFlavors());
+    var flavor = flavorResolver.Resolve(tentacleSettings.Flavor);
+    var runtime = flavor.CreateRuntime(new TentacleFlavorContext
+    {
+        TentacleSettings = tentacleSettings,
+        KubernetesSettings = kubernetesSettings
+    });
 
-    var registration = await registrationClient.RegisterAsync(
-        subscriptionId, tentacleCert.Thumbprint, cts.Token).ConfigureAwait(false);
+    Log.Information("Tentacle flavor selected: {Flavor}", flavor.Id);
+
+    var registration = await runtime.Registrar.RegisterAsync(
+        new TentacleIdentity(subscriptionId, tentacleCert.Thumbprint), cts.Token).ConfigureAwait(false);
 
     Log.Information("Registered with server. MachineId={MachineId}, ServerThumbprint={ServerThumbprint}",
         registration.MachineId, registration.ServerThumbprint);
-
-    var scriptService = CreateScriptService(tentacleSettings, kubernetesSettings, out var podMonitor);
+    
+    var scriptService = new BackendScriptServiceAdapter(runtime.ScriptBackend);
 
     await using var halibutHost = new TentacleHalibutHost(tentacleCert, scriptService, tentacleSettings);
-    halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId);
+    halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId, registration.SubscriptionUri);
 
     var isReady = true;
     await using var healthServer = new HealthCheckServer(tentacleSettings.HealthCheckPort, () => isReady);
@@ -68,15 +74,11 @@ try
         Log.Warning(ex, "Failed to start health check server on port {Port}", tentacleSettings.HealthCheckPort);
     }
 
-    TouchInitializationFlag();
+    await RunStartupHooksAsync(runtime.StartupHooks, cts.Token).ConfigureAwait(false);
 
     Log.Information("Squid Tentacle running. SubscriptionId={SubscriptionId}. Press Ctrl+C to stop.", subscriptionId);
 
-    if (podMonitor != null)
-    {
-        _ = Task.Run(() => podMonitor.RunAsync(cts.Token), cts.Token);
-        Log.Information("Pod monitor started");
-    }
+    StartBackgroundTasks(runtime.BackgroundTasks, cts.Token);
 
     await WaitForShutdownAsync(cts.Token).ConfigureAwait(false);
 
@@ -96,52 +98,6 @@ finally
     await Log.CloseAndFlushAsync().ConfigureAwait(false);
 }
 
-static IScriptService CreateScriptService(
-    TentacleSettings tentacleSettings,
-    KubernetesSettings kubernetesSettings,
-    out KubernetesPodMonitor? podMonitor)
-{
-    if (!kubernetesSettings.UseScriptPods)
-    {
-        Log.Information("Using local script execution mode");
-        podMonitor = null;
-        return new LocalScriptService();
-    }
-
-    Log.Information("Using Script Pod execution mode. Image={Image}", kubernetesSettings.ScriptPodImage);
-
-    var k8sConfig = KubernetesClientConfiguration.IsInCluster()
-        ? KubernetesClientConfiguration.InClusterConfig()
-        : KubernetesClientConfiguration.BuildConfigFromConfigFile();
-
-    var k8sClient = new k8s.Kubernetes(k8sConfig);
-    var podOps = new KubernetesPodOperations(k8sClient);
-
-    var podMgr = new KubernetesPodManager(podOps, kubernetesSettings);
-    var service = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr);
-
-    podMonitor = new KubernetesPodMonitor(podMgr, service, tentacleSettings);
-
-    return service;
-}
-
-static void TouchInitializationFlag()
-{
-    const string flagPath = "/squid/initialized";
-
-    try
-    {
-        var dir = Path.GetDirectoryName(flagPath);
-
-        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-            File.Create(flagPath).Dispose();
-    }
-    catch
-    {
-        // Not running in K8s — skip
-    }
-}
-
 static async Task WaitForShutdownAsync(CancellationToken ct)
 {
     try
@@ -151,5 +107,47 @@ static async Task WaitForShutdownAsync(CancellationToken ct)
     catch (OperationCanceledException)
     {
         // Expected on shutdown
+    }
+}
+
+static async Task RunStartupHooksAsync(
+    IReadOnlyList<ITentacleStartupHook> hooks,
+    CancellationToken ct)
+{
+    foreach (var hook in hooks)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        await hook.RunAsync(ct).ConfigureAwait(false);
+        Log.Information("Tentacle startup hook executed: {HookName}", hook.Name);
+    }
+}
+
+static void StartBackgroundTasks(
+    IReadOnlyList<ITentacleBackgroundTask> tasks,
+    CancellationToken ct)
+{
+    foreach (var task in tasks)
+    {
+        _ = Task.Run(() => RunBackgroundTaskAsync(task, ct), ct);
+        Log.Information("Tentacle background task started: {TaskName}", task.Name);
+    }
+}
+
+static async Task RunBackgroundTaskAsync(
+    ITentacleBackgroundTask task,
+    CancellationToken ct)
+{
+    try
+    {
+        await task.RunAsync(ct).ConfigureAwait(false);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        // Expected on shutdown
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Tentacle background task failed: {TaskName}", task.Name);
     }
 }

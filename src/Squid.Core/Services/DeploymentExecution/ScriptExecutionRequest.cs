@@ -10,5 +10,4 @@ public class ScriptExecutionRequest
     public List<VariableDto> Variables { get; set; }
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public string ReleaseVersion { get; set; }
-    public byte[] CalamariPackageBytes { get; set; }
 }

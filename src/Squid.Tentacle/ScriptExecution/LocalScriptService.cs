@@ -2,10 +2,11 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
+using Squid.Tentacle.Abstractions;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public class LocalScriptService : IScriptService
+public class LocalScriptService : IScriptService, ITentacleScriptBackend
 {
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
 

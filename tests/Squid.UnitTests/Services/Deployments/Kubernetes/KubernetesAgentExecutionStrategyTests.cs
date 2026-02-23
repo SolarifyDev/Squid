@@ -6,7 +6,6 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -15,14 +14,13 @@ public class KubernetesAgentExecutionStrategyTests
 {
     private readonly Mock<IHalibutClientFactory> _halibutClientFactory = new();
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
-    private readonly CalamariGithubPackageSetting _calamariSetting = new() { Version = "28.2.1" };
     private readonly CalamariPayloadBuilder _payloadBuilder;
     private readonly HalibutScriptObserver _observer;
     private readonly KubernetesAgentExecutionStrategy _strategy;
 
     public KubernetesAgentExecutionStrategyTests()
     {
-        _payloadBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object, _calamariSetting);
+        _payloadBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object);
         _observer = new HalibutScriptObserver();
         _strategy = new KubernetesAgentExecutionStrategy(
             _halibutClientFactory.Object,
@@ -141,7 +139,6 @@ public class KubernetesAgentExecutionStrategyTests
         var payloadBuilder = new Mock<ICalamariPayloadBuilder>();
         var observer = new Mock<IHalibutScriptObserver>();
 
-        payloadBuilder.SetupGet(x => x.ResolvedVersion).Returns("28.2.1");
         payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
             .Returns(new CalamariPayload
             {
@@ -150,7 +147,7 @@ public class KubernetesAgentExecutionStrategyTests
                 VariableBytes = Array.Empty<byte>(),
                 SensitiveBytes = Array.Empty<byte>(),
                 SensitivePassword = string.Empty,
-                TemplateBody = "ver={{CalamariVersion}}"
+                TemplateBody = "pkg={{PackageFilePath}}"
             });
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))

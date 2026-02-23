@@ -1,20 +1,15 @@
 using Squid.Core.Services.Common;
-using Squid.Core.Settings.GithubPackage;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
 {
     private readonly IYamlNuGetPacker _yamlNuGetPacker;
-    private readonly CalamariGithubPackageSetting _calamariSetting;
 
-    public CalamariPayloadBuilder(IYamlNuGetPacker yamlNuGetPacker, CalamariGithubPackageSetting calamariSetting)
+    public CalamariPayloadBuilder(IYamlNuGetPacker yamlNuGetPacker)
     {
         _yamlNuGetPacker = yamlNuGetPacker;
-        _calamariSetting = calamariSetting;
     }
-
-    public string ResolvedVersion => _calamariSetting.ResolvedVersion;
 
     public CalamariPayload Build(ScriptExecutionRequest request)
     {

@@ -209,8 +209,7 @@ public partial class DeploymentTaskExecutor
             CalamariCommand = actionResult.CalamariCommand,
             Variables = effectiveVariables,
             Machine = tc.Machine,
-            ReleaseVersion = _ctx.Release?.Version,
-            CalamariPackageBytes = _ctx.CalamariPackageBytes
+            ReleaseVersion = _ctx.Release?.Version
         };
     }
 
