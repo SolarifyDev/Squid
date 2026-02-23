@@ -1,6 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -21,7 +20,6 @@ public class DeploymentTaskContext
     // Targets
     public List<Persistence.Entities.Deployments.Machine> AllTargets { get; set; } = new();
     public List<DeploymentTargetContext> AllTargetsContext { get; set; } = new();
-    public DeploymentTargetContext CurrentDeployTargetContext { get; set; }
 
     // Execution
     public List<DeploymentStepDto> Steps { get; set; }
@@ -47,7 +45,6 @@ public class DeploymentTargetContext
     public CommunicationStyle CommunicationStyle { get; set; }
     public IDeploymentTransport Transport { get; set; }
     public byte[] CalamariPackageBytes { get; set; }
-    public List<ActionExecutionResult> ActionResults { get; set; } = new();
 
     // Isolated endpoint variables (not polluting global _ctx.Variables)
     public List<VariableDto> EndpointVariables { get; set; } = new();

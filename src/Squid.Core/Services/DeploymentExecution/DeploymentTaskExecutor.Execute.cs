@@ -19,27 +19,23 @@ public partial class DeploymentTaskExecutor
 
         foreach (var batch in batches)
         {
-            if (batch.Count == 1)
-            {
-                await ExecuteStepAcrossTargetsAsync(batch[0], ++stepSortOrder, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                var tasks = batch.Select(step =>
-                    ExecuteStepAcrossTargetsAsync(step, ++stepSortOrder, ct)).ToList();
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
+            var batchResults = batch.Count == 1
+                ? [await ExecuteStepAcrossTargetsAsync(batch[0], ++stepSortOrder, ct).ConfigureAwait(false)]
+                : await Task.WhenAll(batch.Select(step =>
+                    ExecuteStepAcrossTargetsAsync(step, ++stepSortOrder, ct))).ConfigureAwait(false);
+
+            ApplyBatchResults(batchResults);
         }
     }
 
-    private async Task ExecuteStepAcrossTargetsAsync(
+    private async Task<StepExecutionResult> ExecuteStepAcrossTargetsAsync(
         DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
     {
+        var stepResult = new StepExecutionResult();
         var matchingTargets = FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
 
         foreach (var tc in matchingTargets)
         {
-            _ctx.CurrentDeployTargetContext = tc;
             var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
             var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
 
@@ -55,17 +51,22 @@ public partial class DeploymentTaskExecutor
                 _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, "Step", "Running",
                 stepSortOrder, ct).ConfigureAwait(false);
 
-            var stepResults = await PrepareStepActionsAsync(step, variableDictionary, effectiveVariables, ct).ConfigureAwait(false);
+            var actionResults = await PrepareStepActionsAsync(
+                step, variableDictionary, effectiveVariables, tc, ct).ConfigureAwait(false);
+
             var result = new StepExecutionResult();
-            await ExecuteActionResultsAsync(stepResults, step, stepActivityNode, result, ct).ConfigureAwait(false);
+            await ExecuteActionResultsAsync(
+                actionResults, step, stepActivityNode, result, tc, effectiveVariables, ct).ConfigureAwait(false);
 
             if (stepActivityNode != null)
                 await _activityLogDataProvider.UpdateNodeStatusAsync(
                     stepActivityNode.Id, result.Failed ? "Failed" : "Success",
                     DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
 
-            MergeStepResult(result);
+            stepResult.Absorb(result);
         }
+
+        return stepResult;
     }
 
     public static List<DeploymentTargetContext> FindMatchingTargetsForStep(
@@ -83,6 +84,7 @@ public partial class DeploymentTaskExecutor
         DeploymentStepDto step,
         VariableDictionary variableDictionary,
         List<VariableDto> effectiveVariables,
+        DeploymentTargetContext tc,
         CancellationToken ct)
     {
         var stepResults = new List<ActionExecutionResult>();
@@ -123,7 +125,7 @@ public partial class DeploymentTaskExecutor
                     prepared.ScriptBody = VariableExpander.ExpandString(prepared.ScriptBody, variableDictionary);
 
                 if (prepared.CalamariCommand == null)
-                    WrapScriptIfApplicable(prepared);
+                    WrapScriptIfApplicable(prepared, tc, effectiveVariables);
 
                 stepResults.Add(prepared);
             }
@@ -132,14 +134,12 @@ public partial class DeploymentTaskExecutor
         return stepResults;
     }
 
-    private void WrapScriptIfApplicable(ActionExecutionResult prepared)
+    private static void WrapScriptIfApplicable(
+        ActionExecutionResult prepared, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)
     {
-        var tc = _ctx.CurrentDeployTargetContext;
         var wrapper = tc.Transport?.ScriptWrapper;
 
         if (wrapper == null) return;
-
-        var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
 
         prepared.ScriptBody = wrapper.WrapScript(
             prepared.ScriptBody, tc.EndpointJson, tc.Account,
@@ -151,6 +151,8 @@ public partial class DeploymentTaskExecutor
         DeploymentStepDto step,
         Persistence.Entities.Deployments.ActivityLog stepActivityNode,
         StepExecutionResult result,
+        DeploymentTargetContext tc,
+        List<VariableDto> effectiveVariables,
         CancellationToken ct)
     {
         var actionSortOrder = 0;
@@ -163,21 +165,19 @@ public partial class DeploymentTaskExecutor
 
             try
             {
-                var strategy = _ctx.CurrentDeployTargetContext.Transport?.Strategy;
+                var strategy = tc.Transport?.Strategy;
 
                 if (strategy == null)
                     throw new DeploymentTargetException(
-                        $"No execution strategy for {_ctx.CurrentDeployTargetContext.CommunicationStyle}");
+                        $"No execution strategy for {tc.CommunicationStyle}");
 
-                var request = BuildScriptExecutionRequest(actionResult);
+                var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
                 var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
 
                 if (!execResult.Success)
                     throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);
-
-                result.ActionResults.Add(actionResult);
 
                 if (actionActivityNode != null)
                     await _activityLogDataProvider.UpdateNodeStatusAsync(
@@ -200,17 +200,16 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult)
+    private ScriptExecutionRequest BuildScriptExecutionRequest(
+        ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)
     {
-        var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, _ctx.CurrentDeployTargetContext);
-
         return new ScriptExecutionRequest
         {
             ScriptBody = actionResult.ScriptBody,
             Files = actionResult.Files,
             CalamariCommand = actionResult.CalamariCommand,
             Variables = effectiveVariables,
-            Machine = _ctx.CurrentDeployTargetContext.Machine,
+            Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version,
             CalamariPackageBytes = _ctx.CalamariPackageBytes
         };
@@ -227,24 +226,30 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private void MergeStepResult(StepExecutionResult result)
+    private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)
     {
-        _ctx.CurrentDeployTargetContext.ActionResults.AddRange(result.ActionResults);
-
-        if (result.OutputVariables.Count > 0)
+        foreach (var result in results)
         {
-            _ctx.Variables.AddRange(result.OutputVariables);
-            foreach (var v in result.OutputVariables)
-                Log.Information("Output variable captured: {Name} = {Value}", v.Name, v.Value);
-        }
+            if (result.OutputVariables.Count > 0)
+            {
+                _ctx.Variables.AddRange(result.OutputVariables);
+                foreach (var v in result.OutputVariables)
+                    Log.Information("Output variable captured: {Name} = {Value}", v.Name, v.Value);
+            }
 
-        _ctx.FailureEncountered = _ctx.FailureEncountered || result.Failed;
+            _ctx.FailureEncountered |= result.Failed;
+        }
     }
 
     private class StepExecutionResult
     {
-        public List<ActionExecutionResult> ActionResults { get; } = new();
         public List<VariableDto> OutputVariables { get; } = new();
         public bool Failed { get; set; }
+
+        public void Absorb(StepExecutionResult other)
+        {
+            OutputVariables.AddRange(other.OutputVariables);
+            Failed |= other.Failed;
+        }
     }
 }
