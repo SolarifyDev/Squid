@@ -108,10 +108,10 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
         ScriptExecutionRequest request, IAsyncScriptService scriptClient, CancellationToken ct)
     {
-        var scriptFiles = request.Files
-            .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
-            .ToArray();
+        var (variableBytes, sensitiveBytes, password) =
+            ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
+        var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
         var scriptTimeout = ScriptExecutionTimeout;
 
         var command = new StartScriptCommand(
@@ -214,12 +214,31 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     {
         try
         {
-            await scriptClient.CancelScriptAsync(new CancelScriptCommand(ticket, lastLogSequence)).ConfigureAwait(false);
+            await scriptClient.CancelScriptAsync(
+                new CancelScriptCommand(ticket, lastLogSequence)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to cancel script with ticket {Ticket}", ticket.TaskId);
         }
+    }
+
+    private static ScriptFile[] BuildDirectScriptFiles(
+        Dictionary<string, byte[]> requestFiles,
+        byte[] variableBytes,
+        byte[] sensitiveBytes,
+        string password)
+    {
+        var files = requestFiles
+            .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
+            .ToList();
+
+        files.Add(new ScriptFile("variables.json", DataStream.FromBytes(variableBytes), null));
+
+        if (!string.IsNullOrEmpty(password))
+            files.Add(new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(sensitiveBytes), password));
+
+        return files.ToArray();
     }
 
     private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)

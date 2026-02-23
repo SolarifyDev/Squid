@@ -3,16 +3,17 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using k8s.Models;
-using Squid.Agent.Configuration;
-using Squid.Agent.Kubernetes;
-using Squid.Agent.ScriptExecution;
+using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Kubernetes;
+using Squid.Tentacle.ScriptExecution;
 using Squid.Message.Contracts.Tentacle;
 
-namespace Squid.UnitTests.Services.Agent;
+namespace Squid.UnitTests.Services.Tentacle;
 
 public class ScriptPodServiceTests : IDisposable
 {
-    private readonly AgentSettings _settings;
+    private readonly TentacleSettings _tentacleSettings;
+    private readonly KubernetesSettings _kubernetesSettings;
     private readonly Mock<IKubernetesPodOperations> _ops;
     private readonly string _tempWorkspace;
 
@@ -21,10 +22,14 @@ public class ScriptPodServiceTests : IDisposable
         _tempWorkspace = Path.Combine(Path.GetTempPath(), $"squid-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempWorkspace);
 
-        _settings = new AgentSettings
+        _tentacleSettings = new TentacleSettings
         {
-            AgentNamespace = "test-ns",
-            WorkspacePath = _tempWorkspace,
+            WorkspacePath = _tempWorkspace
+        };
+
+        _kubernetesSettings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
             ScriptPodImage = "test-image:latest",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
@@ -180,8 +185,8 @@ public class ScriptPodServiceTests : IDisposable
 
     private ScriptPodService CreateService()
     {
-        var podManager = new KubernetesPodManager(_ops.Object, _settings);
-        return new ScriptPodService(_settings, podManager);
+        var podManager = new KubernetesPodManager(_ops.Object, _kubernetesSettings);
+        return new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
     }
 
     private static StartScriptCommand MakeCommand(string scriptBody)

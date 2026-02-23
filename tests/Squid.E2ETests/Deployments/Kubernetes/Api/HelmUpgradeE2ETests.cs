@@ -20,7 +20,7 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
     {
     }
 
-    [Fact]
+    [Fact(Skip = "Requires helm CLI to be installed")]
     public async Task HelmUpgrade_NginxChart_Bash_Succeeds()
     {
         var clusterUrl = await GetClusterUrlAsync();
@@ -82,7 +82,7 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
         }
     }
 
-    [Fact]
+    [Fact(Skip = "Requires helm CLI to be installed")]
     public async Task HelmUpgrade_WithYamlValues_Bash_AppliesValues()
     {
         var clusterUrl = await GetClusterUrlAsync();
@@ -153,7 +153,7 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
         }
     }
 
-    [Fact]
+    [Fact(Skip = "Requires helm CLI to be installed")]
     public async Task HelmUpgrade_DryRun_Bash_ShowsManifest()
     {
         var clusterUrl = await GetClusterUrlAsync();

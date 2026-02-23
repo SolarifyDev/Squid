@@ -19,7 +19,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Message", "src\Squid.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.E2ETests", "tests\Squid.E2ETests\Squid.E2ETests.csproj", "{7B557ED6-760C-4FF4-A720-E5D9D887F2C5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Agent", "src\Squid.Agent\Squid.Agent.csproj", "{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Tentacle", "src\Squid.Tentacle\Squid.Tentacle.csproj", "{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Calamari", "src\Squid.Calamari\Squid.Calamari.csproj", "{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -113,6 +115,18 @@ Global
 		{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96}.Release|x64.Build.0 = Release|Any CPU
 		{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96}.Release|x86.ActiveCfg = Release|Any CPU
 		{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96}.Release|x86.Build.0 = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.Build.0 = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Debug|x86.Build.0 = Debug|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x64.ActiveCfg = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x64.Build.0 = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x86.ActiveCfg = Release|Any CPU
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -125,6 +139,7 @@ Global
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C6} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
 		{7B557ED6-760C-4FF4-A720-E5D9D887F2C5} = {39D26C72-1BD3-4793-A455-F651830208E7}
 		{8C7E285F-CEF2-46D4-802F-E5C71C0D5F96} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
+		{9D4A1B2C-3E5F-4A7B-8C9D-0E1F2A3B4C5D} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {60CBA761-5D3C-4D33-B808-977512C7E6ED}

@@ -1,14 +1,14 @@
 using System;
 using System.IO;
-using Squid.Agent.Certificate;
+using Squid.Tentacle.Certificate;
 
-namespace Squid.UnitTests.Services.Agent;
+namespace Squid.UnitTests.Services.Tentacle;
 
-public class AgentCertificateManagerTests : IDisposable
+public class TentacleCertificateManagerTests : IDisposable
 {
     private readonly string _tempCertsPath;
 
-    public AgentCertificateManagerTests()
+    public TentacleCertificateManagerTests()
     {
         _tempCertsPath = Path.Combine(Path.GetTempPath(), $"squid-cert-test-{Guid.NewGuid():N}");
     }
@@ -16,20 +16,20 @@ public class AgentCertificateManagerTests : IDisposable
     [Fact]
     public void LoadOrCreateCertificate_CreatesNewCert_WhenNoneExists()
     {
-        var manager = new AgentCertificateManager(_tempCertsPath);
+        var manager = new TentacleCertificateManager(_tempCertsPath);
 
         var cert = manager.LoadOrCreateCertificate();
 
         cert.ShouldNotBeNull();
         cert.Thumbprint.ShouldNotBeNullOrEmpty();
-        cert.Subject.ShouldBe("CN=squid-agent");
-        File.Exists(Path.Combine(_tempCertsPath, "agent-cert.pfx")).ShouldBeTrue();
+        cert.Subject.ShouldBe("CN=squid-tentacle");
+        File.Exists(Path.Combine(_tempCertsPath, "tentacle-cert.pfx")).ShouldBeTrue();
     }
 
     [Fact]
     public void LoadOrCreateCertificate_LoadsExistingCert_WhenExists()
     {
-        var manager = new AgentCertificateManager(_tempCertsPath);
+        var manager = new TentacleCertificateManager(_tempCertsPath);
 
         var firstCert = manager.LoadOrCreateCertificate();
         var secondCert = manager.LoadOrCreateCertificate();
@@ -40,7 +40,7 @@ public class AgentCertificateManagerTests : IDisposable
     [Fact]
     public void LoadOrCreateSubscriptionId_GeneratesNewId_WhenNoneExists()
     {
-        var manager = new AgentCertificateManager(_tempCertsPath);
+        var manager = new TentacleCertificateManager(_tempCertsPath);
 
         var id = manager.LoadOrCreateSubscriptionId();
 
@@ -52,7 +52,7 @@ public class AgentCertificateManagerTests : IDisposable
     [Fact]
     public void LoadOrCreateSubscriptionId_ReturnsSameId_OnSubsequentCalls()
     {
-        var manager = new AgentCertificateManager(_tempCertsPath);
+        var manager = new TentacleCertificateManager(_tempCertsPath);
 
         var firstId = manager.LoadOrCreateSubscriptionId();
         var secondId = manager.LoadOrCreateSubscriptionId();
@@ -63,10 +63,10 @@ public class AgentCertificateManagerTests : IDisposable
     [Fact]
     public void LoadOrCreateSubscriptionId_PersistsAcrossInstances()
     {
-        var manager1 = new AgentCertificateManager(_tempCertsPath);
+        var manager1 = new TentacleCertificateManager(_tempCertsPath);
         var id1 = manager1.LoadOrCreateSubscriptionId();
 
-        var manager2 = new AgentCertificateManager(_tempCertsPath);
+        var manager2 = new TentacleCertificateManager(_tempCertsPath);
         var id2 = manager2.LoadOrCreateSubscriptionId();
 
         id2.ShouldBe(id1);
@@ -76,7 +76,7 @@ public class AgentCertificateManagerTests : IDisposable
     public void LoadOrCreateCertificate_CreatesDirectory_WhenNotExists()
     {
         var deepPath = Path.Combine(_tempCertsPath, "nested", "certs");
-        var manager = new AgentCertificateManager(deepPath);
+        var manager = new TentacleCertificateManager(deepPath);
 
         var cert = manager.LoadOrCreateCertificate();
 

@@ -1,0 +1,10 @@
+{{- if .Values.tentacle.serverCertificate }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "squid-tentacle.fullname" . }}-server-cert
+  labels:
+    {{- include "squid-tentacle.labels" . | nindent 4 }}
+data:
+  server-cert.pem: {{ .Values.tentacle.serverCertificate }}
+{{- end }}

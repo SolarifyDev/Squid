@@ -1,17 +1,16 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using k8s.Models;
-using Squid.Agent.Configuration;
-using Squid.Agent.Kubernetes;
+using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Kubernetes;
 
-namespace Squid.UnitTests.Services.Agent;
+namespace Squid.UnitTests.Services.Tentacle;
 
 public class KubernetesPodManagerPodSpecTests
 {
-    private readonly AgentSettings _settings = new()
+    private readonly KubernetesSettings _settings = new()
     {
-        AgentNamespace = "squid-ns",
+        TentacleNamespace = "squid-ns",
         ScriptPodServiceAccount = "squid-script-sa",
         ScriptPodImage = "bitnami/kubectl:1.28",
         ScriptPodTimeoutSeconds = 1800,
@@ -19,8 +18,7 @@ public class KubernetesPodManagerPodSpecTests
         ScriptPodMemoryRequest = "100Mi",
         ScriptPodCpuLimit = "500m",
         ScriptPodMemoryLimit = "512Mi",
-        PvcClaimName = "squid-workspace",
-        WorkspacePath = "/squid/work"
+        PvcClaimName = "squid-workspace"
     };
 
     private const string TicketId = "abcdef123456789000";
@@ -53,7 +51,7 @@ public class KubernetesPodManagerPodSpecTests
     {
         var pod = CaptureCreatedPod();
 
-        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "squid-agent");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "squid-tentacle");
         pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
     }
 
@@ -97,8 +95,13 @@ public class KubernetesPodManagerPodSpecTests
         var container = pod.Spec.Containers.ShouldHaveSingleItem();
         container.Name.ShouldBe("script");
         container.Image.ShouldBe("bitnami/kubectl:1.28");
-        container.Command.ShouldBe(new[] { "bash" });
-        container.Args.ShouldBe(new[] { $"/squid/work/{TicketId}/script.sh" });
+        container.Command.ShouldBe(new[] { "squid-calamari" });
+        container.Args.ShouldBe(new[]
+        {
+            "run-script",
+            $"--script=/squid/work/{TicketId}/script.sh",
+            $"--variables=/squid/work/{TicketId}/variables.json"
+        });
         container.WorkingDir.ShouldBe($"/squid/work/{TicketId}");
     }
 

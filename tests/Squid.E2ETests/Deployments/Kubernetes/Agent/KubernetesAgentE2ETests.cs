@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
@@ -59,8 +60,8 @@ public class KubernetesAgentE2ETests
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("kube-system").ShouldBeTrue(
-            "Expected kube-system pod data in logs");
+        _fixture.LogSink.ContainsMessage("coredns").ShouldBeTrue(
+            "Expected coredns pod in kube-system logs");
     }
 
     [Fact]
@@ -94,6 +95,75 @@ public class KubernetesAgentE2ETests
             var cmValue = await _cluster.KubectlAsync(
                 $"-n {testNs} get configmap agent-e2e-config -o jsonpath='{{.data.test-key}}'");
             cmValue.Trim('\'').ShouldBe("agent-test-value");
+        }
+        finally
+        {
+            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+        }
+    }
+
+    [Fact]
+    public async Task Agent_RunScript_NamespaceWrapping_TargetsCorrectNamespace()
+    {
+        var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
+
+        try
+        {
+            await _cluster.KubectlAsync($"create namespace {testNs}");
+
+            // Create a configmap in the target namespace first
+            await _cluster.KubectlAsync(
+                $"create configmap ns-marker --from-literal=marker=found -n {testNs}");
+
+            // This RunScript doesn't specify namespace explicitly in the command —
+            // it relies on the wrapper setting namespace context via kubectl config
+            var serverTaskId = await SeedRunScriptWithNamespaceAsync(
+                "kubectl get configmap ns-marker -o jsonpath='{.data.marker}'",
+                testNs);
+
+            await ExecutePipelineAsync(serverTaskId);
+
+            await AssertTaskStateAsync(serverTaskId, TaskState.Success);
+            _fixture.LogSink.ContainsMessage("found").ShouldBeTrue(
+                "Expected 'found' from configmap in target namespace — " +
+                "namespace wrapping should have set kubectl context to the correct namespace");
+        }
+        finally
+        {
+            await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
+        }
+    }
+
+    [Fact]
+    public async Task Agent_DeployRawYaml_NamespaceWrapping_AppliesInCorrectNamespace()
+    {
+        var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
+
+        try
+        {
+            await _cluster.KubectlAsync($"create namespace {testNs}");
+
+            // Inline YAML without namespace in metadata — relies on wrapper's namespace context
+            var inlineYaml = """
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: no-ns-config
+                data:
+                  test-key: wrapper-applied
+                """;
+
+            var serverTaskId = await SeedDeployYamlWithNamespaceAsync(inlineYaml, testNs);
+
+            await ExecutePipelineAsync(serverTaskId);
+
+            await AssertTaskStateAsync(serverTaskId, TaskState.Success);
+
+            // Verify the configmap was created in the target namespace (not default)
+            var cmValue = await _cluster.KubectlAsync(
+                $"-n {testNs} get configmap no-ns-config -o jsonpath='{{.data.test-key}}'");
+            cmValue.Trim('\'').ShouldBe("wrapper-applied",
+                "ConfigMap should be created in the wrapper-targeted namespace");
         }
         finally
         {
@@ -160,8 +230,34 @@ public class KubernetesAgentE2ETests
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }
 
+    private async Task<int> SeedRunScriptWithNamespaceAsync(string scriptBody, string ns)
+    {
+        _fixture.LogSink.Clear();
+
+        return await SeedDeploymentAsync(
+            "Squid.KubernetesRunScript", ns,
+            ("Squid.Action.Script.ScriptBody", scriptBody),
+            ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
+    }
+
+    private async Task<int> SeedDeployYamlWithNamespaceAsync(string inlineYaml, string ns)
+    {
+        _fixture.LogSink.Clear();
+
+        return await SeedDeploymentAsync(
+            "Squid.KubernetesDeployRawYaml", ns,
+            ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
+            ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
+    }
+
     private async Task<int> SeedDeploymentAsync(
         string actionType,
+        params (string Name, string Value)[] actionProperties)
+        => await SeedDeploymentAsync(actionType, "default", actionProperties).ConfigureAwait(false);
+
+    private async Task<int> SeedDeploymentAsync(
+        string actionType,
+        string ns,
         params (string Name, string Value)[] actionProperties)
     {
         var serverTaskId = 0;
@@ -193,7 +289,7 @@ public class KubernetesAgentE2ETests
             var environment = await builder.CreateEnvironmentAsync("E2E Agent Environment").ConfigureAwait(false);
 
             var machine = CreateAgentMachine(environment,
-                _fixture.Stub.SubscriptionId, _fixture.Stub.Thumbprint);
+                _fixture.Stub.SubscriptionId, _fixture.Stub.Thumbprint, ns);
             await repository.InsertAsync(machine).ConfigureAwait(false);
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
 
@@ -256,14 +352,14 @@ public class KubernetesAgentE2ETests
     // ========================================================================
 
     private static Machine CreateAgentMachine(
-        Environment environment, string subscriptionId, string thumbprint)
+        Environment environment, string subscriptionId, string thumbprint, string ns = "default")
     {
         var endpointJson = JsonSerializer.Serialize(new
         {
             CommunicationStyle = "KubernetesAgent",
             SubscriptionId = subscriptionId,
             Thumbprint = thumbprint,
-            Namespace = "default"
+            Namespace = ns
         });
 
         return new Machine
@@ -292,7 +388,14 @@ public class KubernetesAgentE2ETests
     {
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
-            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (DeploymentScriptException)
+            {
+                // Controlled script failure — task state already recorded in DB
+            }
         }).ConfigureAwait(false);
     }
 

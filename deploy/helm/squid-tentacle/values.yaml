@@ -1,0 +1,67 @@
+tentacle:
+  image:
+    repository: your-registry/squid-tentacle
+    tag: latest
+    pullPolicy: IfNotPresent
+  serverUrl: ""
+  serverPollingPort: 10943
+  bearerToken: ""
+  serverCertificate: ""
+  roles: "k8s"
+
+  resources:
+    requests:
+      memory: "150Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+  healthCheckPort: 8080
+
+  startupProbe:
+    failureThreshold: 100
+    periodSeconds: 1
+
+  terminationGracePeriodSeconds: 600
+
+  tolerations: []
+  affinity: {}
+  metadata:
+    annotations: {}
+    labels: {}
+
+kubernetes:
+  namespace: "default"
+
+scriptPod:
+  image: bitnami/kubectl:latest
+  serviceAccount: ""
+  cpuRequest: "25m"
+  memoryRequest: "100Mi"
+  cpuLimit: "500m"
+  memoryLimit: "512Mi"
+  timeoutSeconds: 1800
+  disruptionBudgetEnabled: true
+  tolerations: []
+  affinity: {}
+  metadata:
+    annotations: {}
+    labels: {}
+
+  rbac:
+    useNamespacedRoles: false
+    targetNamespaces: []
+    clusterRole:
+      rules:
+      - apiGroups: ["*"]
+        resources: ["*"]
+        verbs: ["*"]
+      - nonResourceURLs: ["*"]
+        verbs: ["*"]
+
+workspace:
+  storageClassName: ""
+  size: 10Gi
+  accessModes:
+    - ReadWriteMany

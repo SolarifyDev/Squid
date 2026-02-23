@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Squid.Api\Squid.Api.csproj" />
+    <ProjectReference Include="..\..\src\Squid.Tentacle\Squid.Tentacle.csproj" />
     <ProjectReference Include="..\Squid.IntegrationTests\Squid.IntegrationTests.csproj" />
   </ItemGroup>
 

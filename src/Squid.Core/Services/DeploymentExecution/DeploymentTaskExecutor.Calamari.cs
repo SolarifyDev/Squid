@@ -7,7 +7,11 @@ public partial class DeploymentTaskExecutor
 {
     private async Task PrepareCalamariIfRequiredAsync(CancellationToken ct)
     {
-        var needsCalamari = _ctx.AllTargetsContext.Any(tc => tc.ResolvedStrategy != null);
+        // KubernetesAgent targets use squid-calamari bundled in the Tentacle image — no download required.
+        // Only KubernetesApi targets need the Octopus Calamari package downloaded at runtime.
+        var needsCalamari = _ctx.AllTargetsContext.Any(tc =>
+            tc.ResolvedStrategy != null &&
+            !string.Equals(tc.CommunicationStyle, "KubernetesAgent", StringComparison.OrdinalIgnoreCase));
 
         if (!needsCalamari) return;
 

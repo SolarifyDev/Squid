@@ -47,7 +47,7 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         var serverThumbprint = GetServerThumbprint();
 
         var kubeconfigPath = Environment.GetEnvironmentVariable("SQUID_E2E_KUBECONFIG")
-                             ?? "/tmp/squid-e2e-kubeconfig.yaml";
+                             ?? KindClusterFixture.DefaultKubeconfigPath;
 
         Stub = new TentacleStub(serverThumbprint, _pollingPort, kubeconfigPath);
 

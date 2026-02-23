@@ -1,0 +1,13 @@
+{{- if .Values.scriptPod.disruptionBudgetEnabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "squid-tentacle.fullname" . }}-script
+  labels:
+    {{- include "squid-tentacle.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: squid-tentacle
+{{- end }}

@@ -20,6 +20,10 @@ public class KindClusterFixture : IAsyncLifetime
     public const string ClusterName = "squid-e2e";
     public string Kubeconfig { get; private set; }
 
+    // Dedicated kubeconfig path for kind — avoids merging into (potentially corrupted) ~/.kube/config
+    private static readonly string KindKubeconfigPath =
+        Path.Combine(Path.GetTempPath(), "squid-e2e-kind.yaml");
+
     public async Task InitializeAsync()
     {
         // Check if cluster already exists
@@ -31,8 +35,12 @@ public class KindClusterFixture : IAsyncLifetime
             return;
         }
 
-        // Create kind cluster
-        var result = await RunProcessAsync("kind", $"create cluster --name {ClusterName} --wait 60s");
+        // Create kind cluster — KUBECONFIG points to a dedicated file to avoid
+        // merging into the system kubeconfig (which may have duplicate keys)
+        var result = await RunProcessAsync(
+            "kind", $"create cluster --name {ClusterName} --wait 60s",
+            ("KUBECONFIG", KindKubeconfigPath));
+
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to create kind cluster: {result.Error}");
 
@@ -60,15 +68,18 @@ public class KindClusterFixture : IAsyncLifetime
         return result.Output;
     }
 
+    // Fixed path consumed by TentacleStub and SquidAgentE2EFixture (SQUID_E2E_KUBECONFIG fallback)
+    public static readonly string DefaultKubeconfigPath =
+        Path.Combine(Path.GetTempPath(), "squid-e2e-kubeconfig.yaml");
+
     private async Task<string> GetKubeconfigAsync()
     {
         var result = await RunProcessAsync("kind", $"get kubeconfig --name {ClusterName}");
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to get kubeconfig: {result.Error}");
 
-        var path = Path.Combine(Path.GetTempPath(), $"squid-e2e-kubeconfig-{Guid.NewGuid():N}.yaml");
-        await File.WriteAllTextAsync(path, result.Output);
-        return path;
+        await File.WriteAllTextAsync(DefaultKubeconfigPath, result.Output);
+        return DefaultKubeconfigPath;
     }
 
     private async Task WaitForClusterReadyAsync()
@@ -96,7 +107,9 @@ public class KindClusterFixture : IAsyncLifetime
         throw new TimeoutException("Kind cluster did not become ready within 120 seconds");
     }
 
-    private static async Task<ProcessResult> RunProcessAsync(string fileName, string arguments)
+    private static async Task<ProcessResult> RunProcessAsync(
+        string fileName, string arguments,
+        params (string Key, string Value)[] envOverrides)
     {
         using var process = new Process
         {
@@ -110,6 +123,9 @@ public class KindClusterFixture : IAsyncLifetime
                 CreateNoWindow = true
             }
         };
+
+        foreach (var (key, value) in envOverrides)
+            process.StartInfo.Environment[key] = value;
 
         process.Start();
         var output = await process.StandardOutput.ReadToEndAsync();

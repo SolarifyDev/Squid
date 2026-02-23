@@ -25,7 +25,7 @@ public partial class TentacleStub : IAsyncDisposable
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptRunner);
 
         var serviceFactory = new DelegateServiceFactory();
-        serviceFactory.Register<IScriptService, IAsyncScriptService>(() => asyncAdapter);
+        serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
 
         _agentRuntime = new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
@@ -73,22 +73,22 @@ public partial class TentacleStub : IAsyncDisposable
 #pragma warning restore SYSLIB0057
     }
 
-    private sealed class AsyncScriptServiceAdapter : IAsyncScriptService
+    private sealed class AsyncScriptServiceAdapter : IScriptServiceAsync
     {
         private readonly IScriptService _inner;
 
         public AsyncScriptServiceAdapter(IScriptService inner) => _inner = inner;
 
-        public Task<ScriptTicket> StartScriptAsync(StartScriptCommand command)
+        public Task<ScriptTicket> StartScriptAsync(StartScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.StartScript(command));
 
-        public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request)
+        public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request, CancellationToken ct)
             => Task.FromResult(_inner.GetStatus(request));
 
-        public Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command)
+        public Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.CompleteScript(command));
 
-        public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command)
+        public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.CancelScript(command));
     }
 }

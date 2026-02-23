@@ -38,7 +38,7 @@ public class KubernetesAgentPipelineBehaviorTests
     }
 
     [Fact]
-    public void NoScriptContextWrapper_CanWrapAgent()
+    public void NoScriptContextWrapper_CanWrapAgent_WhenOnlyApiWrapperRegistered()
     {
         var wrappers = new List<IScriptContextWrapper>
         {
@@ -48,6 +48,52 @@ public class KubernetesAgentPipelineBehaviorTests
         var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesAgent"));
 
         match.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AgentScriptContextWrapper_ResolvedForAgent()
+    {
+        var wrappers = new List<IScriptContextWrapper>
+        {
+            new KubernetesApiScriptContextWrapper(new Mock<IKubernetesApiContextScriptBuilder>().Object),
+            new KubernetesAgentScriptContextWrapper()
+        };
+
+        var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesAgent"));
+
+        match.ShouldNotBeNull();
+        match.ShouldBeOfType<KubernetesAgentScriptContextWrapper>();
+    }
+
+    [Fact]
+    public void AgentScriptContextWrapper_NotResolvedForApi()
+    {
+        var wrappers = new List<IScriptContextWrapper>
+        {
+            new KubernetesApiScriptContextWrapper(new Mock<IKubernetesApiContextScriptBuilder>().Object),
+            new KubernetesAgentScriptContextWrapper()
+        };
+
+        var match = wrappers.FirstOrDefault(w => w.CanWrap("KubernetesApi"));
+
+        match.ShouldNotBeNull();
+        match.ShouldBeOfType<KubernetesApiScriptContextWrapper>();
+    }
+
+    [Fact]
+    public void AgentWrapper_WrapsScriptWithNamespaceFromEndpointVariables()
+    {
+        var contributor = new KubernetesAgentEndpointVariableContributor();
+        var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "production" });
+        var endpointVars = contributor.ContributeVariables(json, null);
+
+        var wrapper = new KubernetesAgentScriptContextWrapper();
+        var result = wrapper.WrapScript(
+            "kubectl get pods", json, null,
+            Message.Models.Deployments.Execution.ScriptSyntax.Bash, endpointVars);
+
+        result.ShouldContain("--namespace=\"production\"");
+        result.ShouldContain("kubectl get pods");
     }
 
     // === Endpoint Variable Isolation ===
