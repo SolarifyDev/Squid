@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using Squid.Core.Services.Account;
+using Squid.Core.Services.Caching;
 using Squid.Message.Constants;
 
 namespace Squid.Api.Authentication.ApiKey;
@@ -10,15 +11,18 @@ namespace Squid.Api.Authentication.ApiKey;
 public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthenticationOptions>
 {
     private readonly IAccountService _accountService;
+    private readonly ICacheManager _cacheManager;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<ApiKeyAuthenticationOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        IAccountService accountService)
+        IAccountService accountService,
+        ICacheManager cacheManager)
         : base(options, logger, encoder)
     {
         _accountService = accountService;
+        _cacheManager = cacheManager;
     }
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -31,7 +35,11 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         if (string.IsNullOrWhiteSpace(apiKey))
             return AuthenticateResult.NoResult();
 
-        var matchedUser = await _accountService.GetByApiKeyAsync(apiKey, Context.RequestAborted).ConfigureAwait(false);
+        var cacheKey = $"auth:apikey:user:{apiKey}";
+        
+        var matchedUser = await _cacheManager.GetOrAddAsync(cacheKey,
+            async _ => await _accountService.GetByApiKeyAsync(apiKey).ConfigureAwait(false),
+            new RedisCachingSetting(expiry: TimeSpan.FromHours(24)), Context.RequestAborted).ConfigureAwait(false);
 
         if (matchedUser == null)
             return AuthenticateResult.NoResult();
