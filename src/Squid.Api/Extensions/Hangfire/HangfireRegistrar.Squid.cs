@@ -5,7 +5,7 @@ using Squid.Core.Services.Jobs;
 
 namespace Squid.Api.Extensions.Hangfire;
 
-public class InternalHangfireRegistrar : HangfireRegistrarBase
+public class SquidHangfireRegistrar : HangfireRegistrarBase
 {
     public override void RegisterHangfire(IServiceCollection services, IConfiguration configuration)
     {

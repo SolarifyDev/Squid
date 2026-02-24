@@ -20,7 +20,7 @@ public class Startup
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
         services.AddCustomAuthentication(Configuration);
-        services.AddHangfireInternal(Configuration);
+        services.AddSquidHangfire(Configuration);
         services.AddMvc(options =>
         {
             options.Filters.Add<GlobalExceptionFilter>();
@@ -40,6 +40,6 @@ public class Startup
         app.UseAuthentication();
         app.UseAuthorization();
         app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
-        app.UseHangfireInternal(Configuration);
+        app.UseSquidHangfire(Configuration);
     }
 }

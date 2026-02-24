@@ -118,7 +118,7 @@ public class SquidModule : Module
     private void RegisterDependency(ContainerBuilder builder)
     {
         foreach (var type in typeof(IDependency).Assembly.GetTypes()
-                     .Where(type => type.IsClass && typeof(IDependency).IsAssignableFrom(type)))
+                     .Where(type => type.IsClass && !type.IsAbstract && typeof(IDependency).IsAssignableFrom(type)))
         {
             if (typeof(IScopedDependency).IsAssignableFrom(type))
                 builder.RegisterType(type).AsSelf().AsImplementedInterfaces().InstancePerLifetimeScope();

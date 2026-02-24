@@ -43,7 +43,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Tentacle service account name
 */}}
 {{- define "squid-tentacle.tentacle-sa-name" -}}
-{{ include "squid-tentacle.fullname" . }}-tentacle
+{{- printf "%s-tentacle" (include "squid-tentacle.fullname" .) -}}
 {{- end }}
 
 {{/*
@@ -53,7 +53,7 @@ Script pod service account name
 {{- if .Values.scriptPod.serviceAccount }}
 {{- .Values.scriptPod.serviceAccount }}
 {{- else }}
-{{ include "squid-tentacle.fullname" . }}-script
+{{- printf "%s-script" (include "squid-tentacle.fullname" .) -}}
 {{- end }}
 {{- end }}
 
@@ -61,5 +61,5 @@ Script pod service account name
 PVC name
 */}}
 {{- define "squid-tentacle.pvc-name" -}}
-{{ include "squid-tentacle.fullname" . }}-workspace
+{{- printf "%s-workspace" (include "squid-tentacle.fullname" .) -}}
 {{- end }}
