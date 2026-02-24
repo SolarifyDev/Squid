@@ -12,7 +12,7 @@ public class ServerTaskLogConfiguration : IEntityTypeConfiguration<ServerTaskLog
         builder.Property(p => p.Id).ValueGeneratedOnAdd();
 
         builder.Property(p => p.ServerTaskId).IsRequired();
-        builder.Property(p => p.Category).HasConversion<string>().HasMaxLength(50);
+        builder.Property(p => p.Category).IsRequired();
         builder.Property(p => p.Source).HasMaxLength(500);
         builder.Property(p => p.SequenceNumber).IsRequired();
 

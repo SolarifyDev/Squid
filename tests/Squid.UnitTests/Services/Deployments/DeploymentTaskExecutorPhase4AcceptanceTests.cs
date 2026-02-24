@@ -14,6 +14,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -160,7 +161,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         activityLogMock
             .Setup(x => x.UpdateNodeStatusAsync(
                 It.IsAny<long>(),
-                It.IsAny<string>(),
+                It.IsAny<DeploymentActivityLogNodeStatus>(),
                 It.IsAny<DateTimeOffset?>(),
                 It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))

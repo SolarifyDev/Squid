@@ -2,30 +2,30 @@ namespace Squid.Message.Enums.Deployments;
 
 public enum DeploymentActivityLogNodeType
 {
-    Task,
-    Step,
-    Action,
-    LogEntry
+    Task = 0,
+    Step = 1,
+    Action = 2,
+    LogEntry = 3
 }
 
 public enum DeploymentActivityLogNodeStatus
 {
-    Pending,
-    Running,
-    Success,
-    Failed
+    Pending = 0,
+    Running = 1,
+    Success = 2,
+    Failed = 3
 }
 
 public enum DeploymentActivityLogCategory
 {
-    Info,
-    Warning,
-    Error
+    Info = 0,
+    Warning = 1,
+    Error = 2
 }
 
 public enum ServerTaskLogCategory
 {
-    Info,
-    Warning,
-    Error
+    Info = 0,
+    Warning = 1,
+    Error = 2
 }

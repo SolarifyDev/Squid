@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.IntegrationTests.Helpers;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
@@ -55,7 +56,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = "Deployment started",
                 Source = "Test Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -67,7 +68,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             logs.ShouldNotBeNull();
             logs.Count.ShouldBe(1);
             logs[0].MessageText.ShouldBe("Deployment started");
-            logs[0].Category.ShouldBe("Info");
+            logs[0].Category.ShouldBe(ServerTaskLogCategory.Info);
             logs[0].Source.ShouldBe("Test Machine");
             logs[0].SequenceNumber.ShouldBe(1);
         }).ConfigureAwait(false);
@@ -83,7 +84,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             var logs = Enumerable.Range(1, 100).Select(i => new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = i % 10 == 0 ? "Warning" : "Info",
+                Category = i % 10 == 0 ? ServerTaskLogCategory.Warning : ServerTaskLogCategory.Info,
                 MessageText = $"Log line {i}",
                 Source = "Test Machine",
                 OccurredAt = DateTimeOffset.UtcNow.AddMilliseconds(i),
@@ -109,7 +110,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = "Third",
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -119,7 +120,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = "First",
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -129,7 +130,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = "Second",
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -153,11 +154,11 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
 
             var logs = new List<ServerTaskLog>
             {
-                new() { ServerTaskId = taskId, Category = "Info", MessageText = "Info 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
-                new() { ServerTaskId = taskId, Category = "Warning", MessageText = "Warning 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 },
-                new() { ServerTaskId = taskId, Category = "Error", MessageText = "Error 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 3 },
-                new() { ServerTaskId = taskId, Category = "Info", MessageText = "Info 2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 4 },
-                new() { ServerTaskId = taskId, Category = "Error", MessageText = "Error 2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 5 }
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Info, MessageText = "Info 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Warning, MessageText = "Warning 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Error, MessageText = "Error 1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 3 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Info, MessageText = "Info 2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 4 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Error, MessageText = "Error 2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 5 }
             };
 
             await provider.AddLogsAsync(logs).ConfigureAwait(false);
@@ -185,7 +186,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             var logs = Enumerable.Range(1, 25).Select(i => new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = $"Log {i}",
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -210,7 +211,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId1,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = "Task 1 log",
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,
@@ -219,8 +220,8 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
 
             await provider.AddLogsAsync(new List<ServerTaskLog>
             {
-                new() { ServerTaskId = taskId2, Category = "Info", MessageText = "Task 2 log A", Source = "Machine", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
-                new() { ServerTaskId = taskId2, Category = "Info", MessageText = "Task 2 log B", Source = "Machine", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 }
+                new() { ServerTaskId = taskId2, Category = ServerTaskLogCategory.Info, MessageText = "Task 2 log A", Source = "Machine", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
+                new() { ServerTaskId = taskId2, Category = ServerTaskLogCategory.Info, MessageText = "Task 2 log B", Source = "Machine", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 }
             }).ConfigureAwait(false);
 
             var task1Logs = await provider.GetLogsByTaskIdAsync(taskId1).ConfigureAwait(false);
@@ -253,7 +254,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             await provider.AddLogAsync(new ServerTaskLog
             {
                 ServerTaskId = taskId,
-                Category = "Info",
+                Category = ServerTaskLogCategory.Info,
                 MessageText = largeText,
                 Source = "Machine",
                 OccurredAt = DateTimeOffset.UtcNow,

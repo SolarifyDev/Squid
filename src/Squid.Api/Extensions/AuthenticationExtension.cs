@@ -1,5 +1,9 @@
 using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
+using Squid.Api.Authentication.ApiKey;
+using Squid.Core.Settings.Authentication;
 using Squid.Message.Constants;
 
 namespace Squid.Api.Extensions;
@@ -8,39 +12,31 @@ public static class AuthenticationExtension
 {
     public static void AddCustomAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
-        var jwtKey = configuration.GetValue<string>("Authentication:Jwt:SymmetricKey");
+        var jwtKey = new JwtSymmetricKeySetting(configuration).Value;
 
         if (string.IsNullOrEmpty(jwtKey)) return;
 
-        services.AddAuthentication(options =>
+        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
             {
-                options.DefaultAuthenticateScheme = AuthenticationSchemeConstants.UserJwtAuthenticationScheme;
-                options.DefaultChallengeScheme = AuthenticationSchemeConstants.UserJwtAuthenticationScheme;
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateLifetime = false,
+                    ValidateAudience = false,
+                    ValidateIssuer = false,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(jwtKey.PadRight(256 / 8, '\0')))
+                };
             })
-            .AddJwtBearer(AuthenticationSchemeConstants.AgentJwtAuthenticationScheme, options =>
-            {
-                options.TokenValidationParameters = BuildTokenValidationParameters(jwtKey, "squid-agent");
-            })
-            .AddJwtBearer(AuthenticationSchemeConstants.UserJwtAuthenticationScheme, options =>
-            {
-                options.TokenValidationParameters = BuildTokenValidationParameters(jwtKey, "squid-api");
-            });
+            .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
+                AuthenticationSchemeConstants.ApiKeyAuthenticationScheme, _ => { });
 
-        services.AddAuthorization();
-    }
-
-    private static TokenValidationParameters BuildTokenValidationParameters(string jwtKey, string audience)
-    {
-        return new TokenValidationParameters
+        services.AddAuthorization(options =>
         {
-            ValidateIssuer = true,
-            ValidIssuer = "squid",
-            ValidateAudience = true,
-            ValidAudience = audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromMinutes(1)
-        };
+            options.DefaultPolicy = new AuthorizationPolicyBuilder(
+                JwtBearerDefaults.AuthenticationScheme,
+                AuthenticationSchemeConstants.ApiKeyAuthenticationScheme).RequireAuthenticatedUser().Build();
+        });
     }
 }

@@ -15,6 +15,8 @@ public interface IAccountService : IScopedDependency
     Task<LoginResponseData> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default);
 
     Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<UserAccountDto?> GetByApiKeyAsync(string apiKey, CancellationToken cancellationToken = default);
 }
 
 public class AccountService : IAccountService
@@ -120,6 +122,18 @@ public class AccountService : IAccountService
         if (user == null || user.IsDisabled) return null;
 
         return ToDto(user);
+    }
+
+    public async Task<UserAccountDto?> GetByApiKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return null;
+
+        var apiKeyEntity = await _repository.FirstOrDefaultAsync<UserAccountApiKey>(
+            x => x.ApiKey == apiKey && !x.IsDisabled, cancellationToken).ConfigureAwait(false);
+
+        if (apiKeyEntity == null) return null;
+
+        return await GetByIdAsync(apiKeyEntity.UserAccountId, cancellationToken).ConfigureAwait(false);
     }
 
     private static string NormalizeUserNameInput(string? userName)

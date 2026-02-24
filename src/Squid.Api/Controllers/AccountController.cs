@@ -51,7 +51,7 @@ public class AccountController : ControllerBase
         }
     }
 
-    [Authorize(AuthenticationSchemes = AuthenticationSchemeConstants.UserJwtAuthenticationScheme)]
+    [Authorize]
     [HttpGet("me")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetCurrentUserResponse))]
     public async Task<IActionResult> MeAsync(CancellationToken cancellationToken)

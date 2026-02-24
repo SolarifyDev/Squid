@@ -24,7 +24,7 @@ public class UserTokenService : IUserTokenService
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("Authentication:Jwt:SymmetricKey is not configured");
 
-        _keyBytes = Encoding.UTF8.GetBytes(key);
+        _keyBytes = Encoding.UTF8.GetBytes(key.PadRight(256 / 8, '\0'));
         _expiryHours = configuration.GetValue<double?>("Authentication:Jwt:UserTokenExpiryHours") ?? 24;
     }
 

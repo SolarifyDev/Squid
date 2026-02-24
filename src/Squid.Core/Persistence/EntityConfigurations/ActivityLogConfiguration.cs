@@ -13,9 +13,7 @@ public class ActivityLogConfiguration : IEntityTypeConfiguration<ActivityLog>
 
         builder.Property(p => p.ServerTaskId).IsRequired();
         builder.Property(p => p.Name).HasMaxLength(500);
-        builder.Property(p => p.NodeType).HasConversion<string>().HasMaxLength(50).IsRequired();
-        builder.Property(p => p.Category).HasConversion<string>().HasMaxLength(50);
-        builder.Property(p => p.Status).HasConversion<string>().HasMaxLength(50);
+        builder.Property(p => p.NodeType).IsRequired();
         builder.Property(p => p.SortOrder).IsRequired();
 
         builder.HasIndex(p => p.ServerTaskId);
