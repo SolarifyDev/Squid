@@ -19,15 +19,17 @@ public sealed class FakeAgentRegistrationServer : IAsyncDisposable
     {
         Port = port;
         BaseAddress = new Uri($"http://127.0.0.1:{port}/");
+        ContainerReachableBaseAddress = new Uri($"http://host.docker.internal:{port}/");
 
         _listener = new HttpListener();
-        _listener.Prefixes.Add(BaseAddress.ToString());
+        _listener.Prefixes.Add($"http://*:{port}/");
         _listener.Start();
         _listenTask = ListenAsync(_cts.Token);
     }
 
     public int Port { get; }
     public Uri BaseAddress { get; }
+    public Uri ContainerReachableBaseAddress { get; }
     public int RequestCount => Volatile.Read(ref _requestCount);
     public string LastRequestBody => Volatile.Read(ref _lastRequestBody);
     public string LastAuthorizationHeader => Volatile.Read(ref _lastAuthorizationHeader);

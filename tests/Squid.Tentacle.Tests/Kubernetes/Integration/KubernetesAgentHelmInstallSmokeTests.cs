@@ -9,6 +9,10 @@ namespace Squid.Tentacle.Tests.Kubernetes.Integration;
 [Trait("Category", TentacleTestCategories.Integration)]
 public class KubernetesAgentHelmInstallSmokeTests : KubernetesAgentIntegrationTestBase
 {
+    public KubernetesAgentHelmInstallSmokeTests() : base(TimeSpan.FromMinutes(5))
+    {
+    }
+
     [Fact]
     public async Task HelmInstallSmoke_Can_Render_And_Optionally_Install_With_Real_Cluster_Config()
     {
@@ -60,13 +64,26 @@ public class KubernetesAgentHelmInstallSmokeTests : KubernetesAgentIntegrationTe
             render.ExitCode.ShouldBe(0, $"helm template failed:{Environment.NewLine}{render.StdOut}{Environment.NewLine}{render.StdErr}");
             render.StdOut.ShouldContain("Tentacle__ServerUrl");
             render.StdOut.ShouldContain(settings.ServerUrl);
+            render.StdOut.ShouldContain("name: Kubernetes__UseScriptPods");
+            render.StdOut.ShouldContain("value: \"true\"");
 
             var install = await helm.UpgradeInstallAsync(settings.ReleaseName, chartPath, settings.Namespace, valuesPath, TestCancellationToken);
             install.ExitCode.ShouldBe(0, $"helm upgrade --install failed:{Environment.NewLine}{install.StdOut}{Environment.NewLine}{install.StdErr}");
 
+            var rollout = await kubectl.RolloutStatusDeploymentAsync(
+                settings.Namespace,
+                settings.ReleaseName,
+                TimeSpan.FromMinutes(5),
+                TestCancellationToken);
+            rollout.ExitCode.ShouldBe(0, $"kubectl rollout status failed:{Environment.NewLine}{rollout.StdOut}{Environment.NewLine}{rollout.StdErr}");
+
             var deployments = await kubectl.GetDeploymentsAsync(settings.Namespace, TestCancellationToken);
             deployments.ExitCode.ShouldBe(0, $"kubectl get deployments failed:{Environment.NewLine}{deployments.StdOut}{Environment.NewLine}{deployments.StdErr}");
             deployments.StdOut.ShouldContain(settings.ReleaseName);
+
+            var pods = await kubectl.GetPodsAsync(settings.Namespace, TestCancellationToken);
+            pods.ExitCode.ShouldBe(0, $"kubectl get pods failed:{Environment.NewLine}{pods.StdOut}{Environment.NewLine}{pods.StdErr}");
+            pods.StdOut.ShouldContain(settings.ReleaseName);
         }
         finally
         {

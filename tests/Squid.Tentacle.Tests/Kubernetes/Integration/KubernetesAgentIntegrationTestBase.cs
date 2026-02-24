@@ -6,6 +6,10 @@ namespace Squid.Tentacle.Tests.Kubernetes.Integration;
 [Trait("Category", TentacleTestCategories.Kubernetes)]
 public abstract class KubernetesAgentIntegrationTestBase : TentacleIntegrationTestBase
 {
+    protected KubernetesAgentIntegrationTestBase(TimeSpan? timeout = null) : base(timeout)
+    {
+    }
+
     protected bool HasKubernetesToolchain()
     {
         return HasKind() && HasHelm() && HasKubectl();

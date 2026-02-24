@@ -8,6 +8,10 @@ namespace Squid.Tentacle.Tests.Integration;
 [Trait("Category", TentacleTestCategories.Integration)]
 public abstract class TentacleIntegrationTestBase : TimedTestBase
 {
+    protected TentacleIntegrationTestBase(TimeSpan? timeout = null) : base(timeout)
+    {
+    }
+
     protected static bool HasHelm() => ExternalToolProbe.HasHelm();
     protected static bool HasKubectl() => ExternalToolProbe.HasKubectl();
     protected static bool HasKind() => ExternalToolProbe.HasKind();

@@ -50,6 +50,9 @@ public sealed class KubectlClient
     public Task<CommandResult> GetPodsAsync(string ns, CancellationToken ct)
         => CommandRunner.RunAsync("kubectl", $"get pods -n {Quote(ns)} -o wide", _workingDirectory, ct);
 
+    public Task<CommandResult> GetPodAsync(string ns, string podName, CancellationToken ct)
+        => CommandRunner.RunAsync("kubectl", $"get pod {Quote(podName)} -n {Quote(ns)} -o yaml", _workingDirectory, ct);
+
     public Task<CommandResult> GetPodsBySelectorAsync(string ns, string selector, CancellationToken ct)
         => CommandRunner.RunAsync(
             "kubectl",
@@ -71,6 +74,20 @@ public sealed class KubectlClient
         => CommandRunner.RunAsync(
             "kubectl",
             $"delete pod {Quote(podName)} -n {Quote(ns)} --wait={(wait ? "true" : "false")}",
+            _workingDirectory,
+            ct);
+
+    public Task<CommandResult> WaitPodPhaseAsync(string ns, string podName, string phase, TimeSpan timeout, CancellationToken ct)
+        => CommandRunner.RunAsync(
+            "kubectl",
+            $"wait --namespace {Quote(ns)} --for=jsonpath={{.status.phase}}={Quote(phase)} pod/{podName} --timeout={(int)timeout.TotalSeconds}s",
+            _workingDirectory,
+            ct);
+
+    public Task<CommandResult> GetPodLogsAsync(string ns, string podName, CancellationToken ct)
+        => CommandRunner.RunAsync(
+            "kubectl",
+            $"logs pod/{podName} -n {Quote(ns)}",
             _workingDirectory,
             ct);
 
