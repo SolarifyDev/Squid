@@ -64,4 +64,15 @@ public class AuthenticationFixture
         currentUser.Id.ShouldBe(CurrentUsers.InternalUser.Id);
         currentUser.Name.ShouldBe(CurrentUsers.InternalUser.Name);
     }
+
+    [Fact]
+    public async Task ShouldSeedInternalUserRecordWithDefaultId()
+    {
+        var user = await _fixture.GetUserByIdAsync(CurrentUsers.InternalUser.Id);
+
+        user.ShouldNotBeNull();
+        user.Id.ShouldBe(CurrentUsers.InternalUser.Id);
+        user.UserName.ShouldBe(CurrentUsers.InternalUser.Name);
+        user.IsSystem.ShouldBeTrue();
+    }
 }

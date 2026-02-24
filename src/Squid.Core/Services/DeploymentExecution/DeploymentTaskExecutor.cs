@@ -86,7 +86,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
             await LoadDeploymentDataAsync(serverTaskId, ct);
             await CreateTaskActivityNodeAsync(ct);
             await PrepareAllTargetsAsync(ct);
-            await PrepareCalamariIfRequiredAsync(ct);
             await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);
         }

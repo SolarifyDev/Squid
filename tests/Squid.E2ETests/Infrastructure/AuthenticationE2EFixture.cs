@@ -69,6 +69,12 @@ public class AuthenticationE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             service.GetByApiKeyAsync(apiKey));
     }
 
+    public Task<Squid.Message.Models.Account.UserAccountDto?> GetUserByIdAsync(int id)
+    {
+        return Run<IAccountService, Squid.Message.Models.Account.UserAccountDto?>(service =>
+            service.GetByIdAsync(id));
+    }
+
     public Task<(int? Id, string Name)> GetCurrentUserSnapshotAsync()
     {
         return Run<ICurrentUser, (int? Id, string Name)>(currentUser =>
