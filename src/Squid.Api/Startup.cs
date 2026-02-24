@@ -1,4 +1,7 @@
+using Correlate.AspNetCore;
+using Correlate.DependencyInjection;
 using Squid.Api.Filters;
+using Squid.Core.Constants;
 
 namespace Squid.Api;
 
@@ -13,10 +16,12 @@ public class Startup
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddCorrelate(options => options.RequestHeaders = SquidApiConstants.CorrelationIdHeaders);
         services.AddControllers();
         services.AddOptions();
         services.AddCustomSwagger();
         services.AddHttpContextAccessor();
+        services.AddHttpClientInternal();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
         services.AddCustomAuthentication(Configuration);
@@ -35,6 +40,8 @@ public class Startup
             app.UseSwaggerUI(c => { c.SwaggerEndpoint("/swagger/v1/swagger.json", "Squid.Api.xml"); });
         }
 
+        app.UseSerilogRequestLogging();
+        app.UseCorrelate();
         app.UseRouting();
         app.UseCors();
         app.UseAuthentication();
