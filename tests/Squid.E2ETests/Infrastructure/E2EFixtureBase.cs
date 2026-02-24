@@ -25,9 +25,6 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
                 ["SquidStore:ConnectionString"] = GetBaseConnectionString(),
                 ["SelfCert:Base64"] = "",
                 ["SelfCert:Password"] = "",
-                ["CalamariGithubPackage:Version"] = "",
-                ["CalamariGithubPackage:Token"] = "",
-                ["CalamariGithubPackage:CacheDirectory"] = "",
                 ["Security:VariableEncryption:MasterKey"] = Convert.ToBase64String(new byte[32])
             })
             .Build();

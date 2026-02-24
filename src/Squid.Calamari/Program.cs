@@ -26,5 +26,4 @@ if (!registry.TryGet(subcommand, out var handler) || handler is null)
 
 return await handler.ExecuteAsync(args[1..], ct).ConfigureAwait(false);
 
-static void PrintUsage(CommandRegistry registry)
-    => UsagePrinter.Print(registry, Console.Out);
+static void PrintUsage(CommandRegistry registry) => UsagePrinter.Print(registry, Console.Out);

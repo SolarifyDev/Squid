@@ -13,7 +13,6 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
-using Squid.Core.Settings.GithubPackage;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -182,8 +181,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IDeploymentSnapshotService>(),
             Mock.Of<IDeploymentVariableResolver>(),
             registry,
-            Mock.Of<ITransportRegistry>(),
-            new CalamariGithubPackageSetting());
+            Mock.Of<ITransportRegistry>());
     }
 
     private static DeploymentTaskContext CreateBaseContext()

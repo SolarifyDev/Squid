@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -6,7 +5,6 @@ using Autofac;
 using Halibut;
 using Microsoft.Extensions.Configuration;
 using Serilog;
-using Squid.Core.Settings.GithubPackage;
 using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.SelfCert;
 using Squid.E2ETests.Infrastructure;
@@ -19,8 +17,6 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     public CapturingLogSink LogSink { get; } = new();
 
     private int _pollingPort;
-    private string _calamariCacheDir;
-
     protected override void RegisterOverrides(ContainerBuilder builder, IConfiguration configuration)
     {
         _pollingPort = GetAvailablePort();
@@ -30,14 +26,10 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             Enabled = true,
             Port = _pollingPort
         }).AsSelf().SingleInstance();
-
-        SetupCalamariCache(builder, configuration);
     }
 
     protected override Task OnInitializedAsync()
     {
-        CreateDummyCalamariPackage();
-
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .WriteTo.Console()
@@ -61,9 +53,6 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     {
         if (Stub != null)
             await Stub.DisposeAsync().ConfigureAwait(false);
-
-        if (Directory.Exists(_calamariCacheDir))
-            Directory.Delete(_calamariCacheDir, recursive: true);
     }
 
     private string GetServerThumbprint()
@@ -76,44 +65,6 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 #pragma warning restore SYSLIB0057
 
         return cert.Thumbprint;
-    }
-
-    private void SetupCalamariCache(ContainerBuilder builder, IConfiguration configuration)
-    {
-        _calamariCacheDir = Path.Combine(Path.GetTempPath(), $"squid-e2e-calamari-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_calamariCacheDir);
-
-        configuration["CalamariGithubPackage:Version"] = "0.0.1-test";
-        configuration["CalamariGithubPackage:CacheDirectory"] = _calamariCacheDir;
-
-        builder.RegisterInstance(new CalamariGithubPackageSetting
-        {
-            Version = "0.0.1-test",
-            CacheDirectory = _calamariCacheDir,
-            Token = string.Empty,
-            MirrorUrlTemplate = string.Empty
-        }).AsSelf().SingleInstance();
-    }
-
-    private void CreateDummyCalamariPackage()
-    {
-        var packagePath = Path.Combine(_calamariCacheDir, "Calamari.0.0.1-test.nupkg");
-
-        using var stream = File.Create(packagePath);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
-
-        var nuspecEntry = archive.CreateEntry("Calamari.nuspec");
-        using var writer = new StreamWriter(nuspecEntry.Open());
-        writer.Write("""
-            <?xml version="1.0" encoding="utf-8"?>
-            <package>
-              <metadata>
-                <id>Calamari</id>
-                <version>0.0.1-test</version>
-                <description>Dummy Calamari for E2E tests</description>
-              </metadata>
-            </package>
-            """);
     }
 
     private static int GetAvailablePort()

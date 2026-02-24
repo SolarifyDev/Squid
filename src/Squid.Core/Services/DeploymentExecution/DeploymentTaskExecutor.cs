@@ -6,7 +6,6 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
-using Squid.Core.Settings.GithubPackage;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -44,12 +43,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     #endregion
 
-    #region Infrastructure
-
-    private readonly CalamariGithubPackageSetting _calamariGithubPackageSetting;
-
-    #endregion
-
     public DeploymentTaskExecutor(
         IGenericDataProvider genericDataProvider,
         IReleaseDataProvider releaseDataProvider,
@@ -65,8 +58,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IDeploymentSnapshotService snapshotService,
         IDeploymentVariableResolver variableResolver,
         IActionHandlerRegistry actionHandlerRegistry,
-        ITransportRegistry transportRegistry,
-        CalamariGithubPackageSetting calamariGithubPackageSetting)
+        ITransportRegistry transportRegistry)
     {
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
@@ -83,7 +75,6 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _variableResolver = variableResolver;
         _actionHandlerRegistry = actionHandlerRegistry;
         _transportRegistry = transportRegistry;
-        _calamariGithubPackageSetting = calamariGithubPackageSetting;
     }
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Text.Json;
 using System.Threading;
 using Halibut;
@@ -81,21 +80,6 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
             .As<IHalibutClientFactory>()
             .SingleInstance();
 
-        var cacheDir = Path.Combine(Path.GetTempPath(), "squid-test-calamari");
-        Directory.CreateDirectory(cacheDir);
-        var fakePackagePath = Path.Combine(cacheDir, "Calamari.1.0.0-test.nupkg");
-        if (!File.Exists(fakePackagePath))
-            File.WriteAllBytes(fakePackagePath, Array.Empty<byte>());
-
-        var calamariSetting = new Squid.Core.Settings.GithubPackage.CalamariGithubPackageSetting
-        {
-            Version = "1.0.0-test",
-            CacheDirectory = cacheDir
-        };
-
-        builder.RegisterInstance(calamariSetting)
-            .As<Squid.Core.Settings.GithubPackage.CalamariGithubPackageSetting>()
-            .SingleInstance();
     }
 
     private async Task PrepareDeploymentDataAsync()

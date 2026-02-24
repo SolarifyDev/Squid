@@ -18,3 +18,4 @@ This project starts with core/generic smoke coverage so future tentacle flavors 
 - Process/network tests use a dedicated xUnit collection with parallelization disabled.
 - Startup smoke tests use unique temp cert/work directories and dynamically allocated localhost ports.
 - Repeated startup smoke runs are included to catch timing/cleanup regressions without relying on repeated `dotnet test` invocations.
+- Kubernetes install/fault scaffold tests are env-gated (toolchain + `SQUID_TENTACLE_K8S_E2E_*` variables) and still perform preflight assertions when disabled.
