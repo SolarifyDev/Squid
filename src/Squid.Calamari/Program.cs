@@ -8,6 +8,12 @@ if (args.Length == 0)
     return 1;
 }
 
+if (args.Length == 1 && CommandLineArguments.IsHelpToken(args[0]))
+{
+    PrintUsage(registry);
+    return 0;
+}
+
 var subcommand = args[0];
 var ct = CancellationToken.None;
 

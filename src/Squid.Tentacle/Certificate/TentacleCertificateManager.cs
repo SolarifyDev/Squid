@@ -4,7 +4,7 @@ using Serilog;
 
 namespace Squid.Tentacle.Certificate;
 
-public class TentacleCertificateManager
+public class TentacleCertificateManager : ITentacleCertificateManager
 {
     private const string CertFileName = "tentacle-cert.pfx";
     private const string CertPassword = "squid-tentacle-cert";

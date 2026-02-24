@@ -5,10 +5,26 @@ if ($null -eq $squidCalamari) {
     Exit 1
 }
 
-$sensitiveVariables = ""
+if ($null -eq (Get-Command "kubectl" -ErrorAction SilentlyContinue)) {
+    Write-Error "kubectl not found in PATH"
+    Exit 1
+}
+
+if ($null -eq (Get-Command "bash" -ErrorAction SilentlyContinue)) {
+    Write-Error "bash not found in PATH (required by squid-calamari script execution)"
+    Exit 1
+}
+
+$commandArgs = @(
+    "apply-yaml",
+    "--file={{PackageFilePath}}",
+    "--variables={{VariableFilePath}}"
+)
+
 if ("{{SensitiveVariableFile}}" -ne "") {
-    $sensitiveVariables = "--sensitive={{SensitiveVariableFile}} --password={{SensitiveVariablePassword}}"
+    $commandArgs += "--sensitive={{SensitiveVariableFile}}"
+    $commandArgs += "--password={{SensitiveVariablePassword}}"
 }
 
 # 调用 squid-calamari 原生命令（--file 支持 yaml/zip/nupkg）
-& $squidCalamari.Source apply-yaml --file={{PackageFilePath}} --variables={{VariableFilePath}} $sensitiveVariables
+& $squidCalamari.Source @commandArgs

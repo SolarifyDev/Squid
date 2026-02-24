@@ -8,7 +8,7 @@ using Serilog;
 
 namespace Squid.Tentacle.Halibut;
 
-public class TentacleHalibutHost : IAsyncDisposable
+public class TentacleHalibutHost : ITentacleHalibutHost
 {
     private readonly HalibutRuntime _runtime;
     private readonly TentacleSettings _settings;
@@ -36,11 +36,8 @@ public class TentacleHalibutHost : IAsyncDisposable
     {
         _runtime.Trust(serverThumbprint);
 
-        var pollUri = string.IsNullOrWhiteSpace(subscriptionUri)
-            ? new Uri($"poll://{subscriptionId}/")
-            : new Uri(subscriptionUri);
-        var serverUri = new Uri(_settings.ServerUrl);
-        var pollingEndpointUri = new Uri($"https://{serverUri.Host}:{_settings.ServerPollingPort}/");
+        var pollUri = ResolvePollUri(subscriptionId, subscriptionUri);
+        var pollingEndpointUri = BuildPollingEndpointUri(_settings.ServerUrl, _settings.ServerPollingPort);
 
         var serverEndpoint = new ServiceEndPoint(
             pollingEndpointUri,
@@ -52,6 +49,19 @@ public class TentacleHalibutHost : IAsyncDisposable
         Log.Information(
             "Halibut polling started. SubscriptionId={SubscriptionId}, SubscriptionUri={SubscriptionUri}, ServerEndpoint={ServerEndpoint}",
             subscriptionId, pollUri, pollingEndpointUri);
+    }
+
+    public static Uri ResolvePollUri(string subscriptionId, string subscriptionUri)
+    {
+        return string.IsNullOrWhiteSpace(subscriptionUri)
+            ? new Uri($"poll://{subscriptionId}/")
+            : new Uri(subscriptionUri);
+    }
+
+    public static Uri BuildPollingEndpointUri(string serverUrl, int serverPollingPort)
+    {
+        var serverUri = new Uri(serverUrl);
+        return new Uri($"https://{serverUri.Host}:{serverPollingPort}/");
     }
 
     public async ValueTask DisposeAsync()

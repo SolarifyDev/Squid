@@ -8,9 +8,39 @@ public class ActionExecutionResult
 
     public string CalamariCommand { get; set; }
 
+    public ExecutionMode ExecutionMode { get; set; } = ExecutionMode.Unspecified;
+
+    public ContextPreparationPolicy ContextPreparationPolicy { get; set; } = ContextPreparationPolicy.Unspecified;
+
+    public ExecutionLocation ExecutionLocation { get; set; } = ExecutionLocation.Unspecified;
+
+    public ExecutionBackend ExecutionBackend { get; set; } = ExecutionBackend.Unspecified;
+
+    public PayloadKind PayloadKind { get; set; } = PayloadKind.Unspecified;
+
+    public RunnerKind RunnerKind { get; set; } = RunnerKind.Unspecified;
+
     public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
 
     public Dictionary<string, string> OutputVariables { get; set; } = new();
+
+    public ExecutionMode ResolveExecutionMode()
+    {
+        if (ExecutionMode == ExecutionMode.Unspecified)
+            throw new InvalidOperationException("ActionExecutionResult.ExecutionMode must be explicitly set.");
+
+        return ExecutionMode;
+    }
+
+    public ContextPreparationPolicy ResolveContextPreparationPolicy()
+    {
+        if (ContextPreparationPolicy != ContextPreparationPolicy.Unspecified)
+            return ContextPreparationPolicy;
+
+        return ResolveExecutionMode() == ExecutionMode.PackagedPayload
+            ? ContextPreparationPolicy.Skip
+            : ContextPreparationPolicy.Apply;
+    }
 }
 
 public enum ScriptSyntax

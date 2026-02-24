@@ -48,6 +48,9 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
             ScriptBody = scriptBody,
             Files = files,
             CalamariCommand = null,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
             Syntax = syntax
         };
 

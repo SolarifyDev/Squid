@@ -27,6 +27,9 @@ public class KubernetesRunScriptActionHandler : IActionHandler
         {
             ScriptBody = userScript,
             CalamariCommand = null,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
             Syntax = syntax
         };
 

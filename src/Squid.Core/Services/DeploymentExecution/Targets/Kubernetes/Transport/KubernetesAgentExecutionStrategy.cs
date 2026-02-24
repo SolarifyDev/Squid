@@ -2,6 +2,8 @@ using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Extensions;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -26,6 +28,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
+        var plan = ScriptExecutionPlanFactory.Create(request);
         var endpoint = ParseMachineEndpoint(request.Machine);
 
         if (endpoint == null)
@@ -33,15 +36,16 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
 
         var scriptClient = _halibutClientFactory.CreateClient(endpoint);
 
-        if (request.CalamariCommand != null)
-            return await ExecuteCalamariViaHalibutAsync(request, scriptClient, ct).ConfigureAwait(false);
+        if (plan is PackagedPayloadExecutionPlan packagedPlan)
+            return await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, ct).ConfigureAwait(false);
 
-        return await ExecuteDirectScriptViaHalibutAsync(request, scriptClient, ct).ConfigureAwait(false);
+        return await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteCalamariViaHalibutAsync(
-        ScriptExecutionRequest request, IAsyncScriptService scriptClient, CancellationToken ct)
+        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
+        var request = plan.Request;
         var payload = _payloadBuilder.Build(request);
 
         var scriptBody = payload.FillTemplate(
@@ -76,8 +80,9 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
-        ScriptExecutionRequest request, IAsyncScriptService scriptClient, CancellationToken ct)
+        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
+        var request = plan.Request;
         var (variableBytes, sensitiveBytes, password) =
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 

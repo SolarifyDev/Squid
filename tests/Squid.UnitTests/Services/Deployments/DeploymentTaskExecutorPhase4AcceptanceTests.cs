@@ -343,7 +343,9 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             return new ActionExecutionResult
             {
                 ScriptBody = $"ACTION={ctx.Action.Name};SEES_X={seesX}",
-                Syntax = ScriptSyntax.Bash
+                Syntax = ScriptSyntax.Bash,
+                ExecutionMode = ExecutionMode.DirectScript,
+                ContextPreparationPolicy = ContextPreparationPolicy.Apply
             };
         }
     }

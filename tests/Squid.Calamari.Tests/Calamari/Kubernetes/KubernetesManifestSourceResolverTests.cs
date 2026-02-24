@@ -17,8 +17,10 @@ public class KubernetesManifestSourceResolverTests
             var resolver = new KubernetesManifestSourceResolver();
             var resolved = await resolver.ResolveAsync(filePath, CancellationToken.None);
 
-            resolved.ManifestFilePath.ShouldBe(Path.GetFullPath(filePath));
+            resolved.ManifestRootDirectory.ShouldBe(tempDir);
+            resolved.ManifestFilePaths.ShouldBe([Path.GetFullPath(filePath)]);
             resolved.CleanupPaths.ShouldBeEmpty();
+            resolved.IsSingleFile.ShouldBeTrue();
         }
         finally
         {
@@ -38,7 +40,35 @@ public class KubernetesManifestSourceResolverTests
             var resolver = new KubernetesManifestSourceResolver();
             var resolved = await resolver.ResolveAsync(tempDir, CancellationToken.None);
 
-            resolved.ManifestFilePath.ShouldBe(Path.Combine(tempDir, "one.yaml"));
+            resolved.ManifestRootDirectory.ShouldBe(tempDir);
+            resolved.ManifestFilePaths.ShouldBe([Path.Combine(tempDir, "one.yaml")]);
+        }
+        finally
+        {
+            DeleteDir(tempDir);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WithDirectory_IncludesNestedYamlFiles()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var nested = Path.Combine(tempDir, "nested");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(tempDir, "root.yaml"), "a");
+            File.WriteAllText(Path.Combine(nested, "child.yml"), "b");
+            File.WriteAllText(Path.Combine(nested, "ignore.txt"), "x");
+
+            var resolver = new KubernetesManifestSourceResolver();
+            var resolved = await resolver.ResolveAsync(tempDir, CancellationToken.None);
+
+            resolved.ManifestRootDirectory.ShouldBe(tempDir);
+            resolved.ManifestFilePaths.ShouldBe([
+                Path.Combine(nested, "child.yml"),
+                Path.Combine(tempDir, "root.yaml")
+            ]);
         }
         finally
         {
@@ -57,7 +87,8 @@ public class KubernetesManifestSourceResolverTests
             var resolver = new KubernetesManifestSourceResolver();
             var resolved = await resolver.ResolveAsync(Path.Combine(tempDir, "*.yaml"), CancellationToken.None);
 
-            resolved.ManifestFilePath.ShouldBe(Path.Combine(tempDir, "app.yaml"));
+            resolved.ManifestRootDirectory.ShouldBe(tempDir);
+            resolved.ManifestFilePaths.ShouldBe([Path.Combine(tempDir, "app.yaml")]);
         }
         finally
         {
@@ -66,20 +97,23 @@ public class KubernetesManifestSourceResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_WithMultipleYamlInDirectory_Throws()
+    public async Task ResolveAsync_WithMultipleYamlInDirectory_ReturnsOrderedManifestSet()
     {
         var tempDir = CreateTempDir();
         try
         {
-            File.WriteAllText(Path.Combine(tempDir, "a.yaml"), "a");
             File.WriteAllText(Path.Combine(tempDir, "b.yml"), "b");
+            File.WriteAllText(Path.Combine(tempDir, "a.yaml"), "a");
 
             var resolver = new KubernetesManifestSourceResolver();
+            var resolved = await resolver.ResolveAsync(tempDir, CancellationToken.None);
 
-            var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
-                resolver.ResolveAsync(tempDir, CancellationToken.None));
-
-            ex.Message.ShouldContain("multiple");
+            resolved.IsSingleFile.ShouldBeFalse();
+            resolved.ManifestRootDirectory.ShouldBe(tempDir);
+            resolved.ManifestFilePaths.ShouldBe([
+                Path.Combine(tempDir, "a.yaml"),
+                Path.Combine(tempDir, "b.yml")
+            ]);
         }
         finally
         {
@@ -88,7 +122,7 @@ public class KubernetesManifestSourceResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_WithZipArchive_ExtractsSingleYaml_AndReturnsCleanupPath()
+    public async Task ResolveAsync_WithZipArchive_ExtractsYamlFiles_AndReturnsCleanupPath()
     {
         var tempDir = CreateTempDir();
         try
@@ -98,19 +132,54 @@ public class KubernetesManifestSourceResolverTests
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {
                 var entry = archive.CreateEntry("manifests/app.yaml");
-                using var writer = new StreamWriter(entry.Open());
-                writer.Write("kind: ConfigMap\n");
+                using (var writer = new StreamWriter(entry.Open()))
+                {
+                    writer.Write("kind: ConfigMap\n");
+                }
+
+                var second = archive.CreateEntry("manifests/svc.yml");
+                using (var writer2 = new StreamWriter(second.Open()))
+                {
+                    writer2.Write("kind: Service\n");
+                }
             }
 
             var resolver = new KubernetesManifestSourceResolver();
             var resolved = await resolver.ResolveAsync(zipPath, CancellationToken.None);
 
-            File.Exists(resolved.ManifestFilePath).ShouldBeTrue();
-            resolved.ManifestFilePath.ShouldEndWith(".yaml");
+            resolved.IsSingleFile.ShouldBeFalse();
+            resolved.ManifestRootDirectory.ShouldContain("squid-calamari-k8s-manifest-");
+            resolved.ManifestFilePaths.Count.ShouldBe(2);
+            foreach (var manifestPath in resolved.ManifestFilePaths)
+                File.Exists(manifestPath).ShouldBeTrue();
             resolved.CleanupPaths.Count.ShouldBe(1);
             Directory.Exists(resolved.CleanupPaths[0]).ShouldBeTrue();
 
             DeleteDir(resolved.CleanupPaths[0]);
+        }
+        finally
+        {
+            DeleteDir(tempDir);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WithGlobMultipleYaml_ReturnsOrderedManifestSet()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "z.yaml"), "z");
+            File.WriteAllText(Path.Combine(tempDir, "a.yml"), "a");
+            File.WriteAllText(Path.Combine(tempDir, "ignore.txt"), "x");
+
+            var resolver = new KubernetesManifestSourceResolver();
+            var resolved = await resolver.ResolveAsync(Path.Combine(tempDir, "*.*"), CancellationToken.None);
+
+            resolved.ManifestFilePaths.ShouldBe([
+                Path.Combine(tempDir, "a.yml"),
+                Path.Combine(tempDir, "z.yaml")
+            ]);
         }
         finally
         {

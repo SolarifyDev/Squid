@@ -4,6 +4,7 @@ using System.Text;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -126,6 +127,18 @@ public class CalamariPayloadBuilderTests
         result.ShouldBe(string.Empty);
     }
 
+    [Fact]
+    public void Build_EmbeddedTemplate_ContainsToolPreflightChecks_AndArgumentSplatting()
+    {
+        var payload = _builder.Build(CreateRequest());
+
+        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
+        payload.TemplateBody.ShouldContain("Get-Command \"kubectl\"");
+        payload.TemplateBody.ShouldContain("Get-Command \"bash\"");
+        payload.TemplateBody.ShouldContain("$commandArgs = @(");
+        payload.TemplateBody.ShouldContain("& $squidCalamari.Source @commandArgs");
+    }
+
     // === Helpers ===
 
     private static ScriptExecutionRequest CreateRequest(
@@ -136,6 +149,7 @@ public class CalamariPayloadBuilderTests
         return new ScriptExecutionRequest
         {
             Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Name = "test" },
+            ExecutionMode = ExecutionMode.PackagedPayload,
             ReleaseVersion = releaseVersion,
             Files = files ?? new Dictionary<string, byte[]>(),
             Variables = variables ?? new List<VariableDto>()

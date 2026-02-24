@@ -35,6 +35,9 @@ public sealed class KubectlClient : IKubectlClient
             arguments.Add(request.Namespace);
         }
 
+        if (request.Recursive)
+            arguments.Add("--recursive");
+
         var invocation = new ProcessInvocation(
             executable: "kubectl",
             arguments: arguments,

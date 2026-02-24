@@ -3,8 +3,8 @@ using System.IO.Compression;
 namespace Squid.Calamari.Kubernetes;
 
 /// <summary>
-/// Resolves a raw YAML manifest source into exactly one concrete file path.
-/// Supports direct file paths, directory paths, and simple glob patterns.
+/// Resolves a raw YAML manifest source into one or more concrete manifest files.
+/// Supports direct file paths, directory paths, simple glob patterns, and archives.
 /// </summary>
 public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSourceResolver
 {
@@ -22,18 +22,12 @@ public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSource
 
         if (Directory.Exists(fullPath))
         {
-            return Task.FromResult(new ResolvedKubernetesManifestSource
-            {
-                ManifestFilePath = ResolveFromDirectory(fullPath)
-            });
+            return Task.FromResult(ResolveFromDirectory(fullPath));
         }
 
         if (LooksLikeGlob(manifestSourcePath))
         {
-            return Task.FromResult(new ResolvedKubernetesManifestSource
-            {
-                ManifestFilePath = ResolveFromGlob(manifestSourcePath)
-            });
+            return Task.FromResult(ResolveFromGlob(manifestSourcePath));
         }
 
         throw new FileNotFoundException("Manifest source path was not found.", fullPath);
@@ -48,7 +42,8 @@ public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSource
         {
             return Task.FromResult(new ResolvedKubernetesManifestSource
             {
-                ManifestFilePath = fullPath
+                ManifestRootDirectory = Path.GetDirectoryName(fullPath) ?? Directory.GetCurrentDirectory(),
+                ManifestFilePaths = [fullPath]
             });
         }
 
@@ -79,11 +74,10 @@ public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSource
                 .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            var manifestFilePath = EnsureSingleYaml(candidates, $"Archive '{archivePath}'");
-
             return Task.FromResult(new ResolvedKubernetesManifestSource
             {
-                ManifestFilePath = manifestFilePath,
+                ManifestRootDirectory = extractionDir,
+                ManifestFilePaths = EnsureYamlFiles(candidates, $"Archive '{archivePath}'"),
                 CleanupPaths = [extractionDir]
             });
         }
@@ -95,18 +89,22 @@ public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSource
         }
     }
 
-    private static string ResolveFromDirectory(string directoryPath)
+    private static ResolvedKubernetesManifestSource ResolveFromDirectory(string directoryPath)
     {
         var candidates = Directory
-            .EnumerateFiles(directoryPath, "*.*", SearchOption.TopDirectoryOnly)
+            .EnumerateFiles(directoryPath, "*.*", SearchOption.AllDirectories)
             .Where(static p => IsYamlExtension(Path.GetExtension(p)))
             .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return EnsureSingleYaml(candidates, $"Directory '{directoryPath}'");
+        return new ResolvedKubernetesManifestSource
+        {
+            ManifestRootDirectory = directoryPath,
+            ManifestFilePaths = EnsureYamlFiles(candidates, $"Directory '{directoryPath}'")
+        };
     }
 
-    private static string ResolveFromGlob(string globPath)
+    private static ResolvedKubernetesManifestSource ResolveFromGlob(string globPath)
     {
         var normalized = Path.GetFullPath(globPath);
         var directoryPath = Path.GetDirectoryName(normalized);
@@ -123,17 +121,19 @@ public sealed class KubernetesManifestSourceResolver : IKubernetesManifestSource
             .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return EnsureSingleYaml(candidates, $"Glob '{globPath}'");
+        return new ResolvedKubernetesManifestSource
+        {
+            ManifestRootDirectory = directoryPath,
+            ManifestFilePaths = EnsureYamlFiles(candidates, $"Glob '{globPath}'")
+        };
     }
 
-    private static string EnsureSingleYaml(string[] candidates, string sourceDescription)
+    private static string[] EnsureYamlFiles(string[] candidates, string sourceDescription)
     {
         if (candidates.Length == 0)
             throw new InvalidOperationException($"{sourceDescription} did not resolve to any .yaml/.yml files.");
-        if (candidates.Length > 1)
-            throw new InvalidOperationException($"{sourceDescription} resolved to multiple .yaml/.yml files; expected exactly one.");
 
-        return candidates[0];
+        return candidates;
     }
 
     private static bool LooksLikeGlob(string path)

@@ -10,24 +10,36 @@ public class TentacleRegistrationClient
 {
     private readonly TentacleSettings _settings;
     private readonly KubernetesSettings _kubernetesSettings;
+    private readonly TentacleRegistrationClientOptions _options;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
 
-    public TentacleRegistrationClient(TentacleSettings settings, KubernetesSettings kubernetesSettings)
+    public TentacleRegistrationClient(
+        TentacleSettings settings,
+        KubernetesSettings kubernetesSettings)
+        : this(settings, kubernetesSettings, options: null)
+    {
+    }
+
+    public TentacleRegistrationClient(
+        TentacleSettings settings,
+        KubernetesSettings kubernetesSettings,
+        TentacleRegistrationClientOptions options = null)
     {
         _settings = settings;
         _kubernetesSettings = kubernetesSettings;
+        _options = options ?? TentacleRegistrationClientOptions.Default;
     }
 
     public async Task<RegistrationResult> RegisterAsync(
         string subscriptionId, string thumbprint, CancellationToken ct)
     {
-        var maxRetries = 10;
-        var delay = TimeSpan.FromSeconds(1);
-        var maxDelay = TimeSpan.FromSeconds(60);
+        var maxRetries = _options.MaxRetries;
+        var delay = _options.InitialDelay;
+        var maxDelay = _options.MaxDelay;
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -45,7 +57,7 @@ public class TentacleRegistrationClient
                 Log.Warning(ex, "Registration attempt {Attempt}/{MaxRetries} failed, retrying in {Delay}s",
                     attempt, maxRetries, delay.TotalSeconds);
 
-                await Task.Delay(delay, ct).ConfigureAwait(false);
+                await _options.DelayAsync(delay, ct).ConfigureAwait(false);
                 delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, maxDelay.TotalSeconds));
             }
         }
@@ -64,7 +76,7 @@ public class TentacleRegistrationClient
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.BearerToken);
 
         var machineName = string.IsNullOrEmpty(_settings.MachineName)
-            ? $"k8s-tentacle-{subscriptionId[..8]}"
+            ? $"k8s-tentacle-{subscriptionId[..Math.Min(8, subscriptionId.Length)]}"
             : _settings.MachineName;
 
         var payload = new
@@ -106,6 +118,17 @@ public class TentacleRegistrationClient
         public string ServerThumbprint { get; set; }
         public string SubscriptionUri { get; set; }
     }
+}
+
+public sealed class TentacleRegistrationClientOptions
+{
+    public int MaxRetries { get; init; } = 10;
+    public TimeSpan InitialDelay { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(60);
+    public Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } =
+        static (delay, ct) => Task.Delay(delay, ct);
+
+    public static TentacleRegistrationClientOptions Default { get; } = new();
 }
 
 public class RegistrationResult

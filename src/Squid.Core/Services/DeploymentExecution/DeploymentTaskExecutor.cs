@@ -1,5 +1,4 @@
 using Squid.Core.Services.Common;
-using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.DeploymentCompletions;

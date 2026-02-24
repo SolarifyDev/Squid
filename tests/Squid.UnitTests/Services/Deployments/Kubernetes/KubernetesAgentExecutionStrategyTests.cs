@@ -7,6 +7,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -253,13 +254,19 @@ public class KubernetesAgentExecutionStrategyTests
         Machine machine,
         string scriptBody = "echo test",
         string calamariCommand = null,
-        string releaseVersion = "1.0.0")
+        string releaseVersion = "1.0.0",
+        ExecutionMode? mode = null)
     {
+        var resolvedMode = mode ?? (string.IsNullOrWhiteSpace(calamariCommand)
+            ? ExecutionMode.DirectScript
+            : ExecutionMode.PackagedPayload);
+
         return new ScriptExecutionRequest
         {
             Machine = machine,
             ScriptBody = scriptBody,
             CalamariCommand = calamariCommand,
+            ExecutionMode = resolvedMode,
             ReleaseVersion = releaseVersion,
             Files = new Dictionary<string, byte[]>(),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()

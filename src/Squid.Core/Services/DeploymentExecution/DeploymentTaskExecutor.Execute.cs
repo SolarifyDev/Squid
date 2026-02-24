@@ -120,10 +120,15 @@ public partial class DeploymentTaskExecutor
 
             if (prepared != null)
             {
+                var executionMode = prepared.ResolveExecutionMode();
+                var contextPreparationPolicy = ResolveContextPreparationPolicy(prepared, tc);
+
                 if (prepared.ScriptBody != null)
                     prepared.ScriptBody = VariableExpander.ExpandString(prepared.ScriptBody, variableDictionary);
 
-                if (prepared.CalamariCommand == null)
+                // Direct script can be wrapped here. Packaged payloads are wrapped later after payload template paths are resolved.
+                if (executionMode == ExecutionMode.DirectScript
+                    && contextPreparationPolicy == ContextPreparationPolicy.Apply)
                     WrapScriptIfApplicable(prepared, tc, effectiveVariables);
 
                 stepResults.Add(prepared);
@@ -202,15 +207,50 @@ public partial class DeploymentTaskExecutor
     private ScriptExecutionRequest BuildScriptExecutionRequest(
         ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)
     {
+        var resolvedMode = actionResult.ResolveExecutionMode();
+        var resolvedContextPreparationPolicy = ResolveContextPreparationPolicy(actionResult, tc);
+
         return new ScriptExecutionRequest
         {
             ScriptBody = actionResult.ScriptBody,
             Files = actionResult.Files,
             CalamariCommand = actionResult.CalamariCommand,
+            ExecutionMode = resolvedMode,
+            ContextPreparationPolicy = resolvedContextPreparationPolicy,
+            ExecutionLocation = tc.CommunicationStyle == CommunicationStyle.KubernetesApi
+                ? ExecutionLocation.ApiWorkerLocal
+                : tc.CommunicationStyle == CommunicationStyle.KubernetesAgent
+                    ? ExecutionLocation.RemoteTentacle
+                    : ExecutionLocation.Unspecified,
+            ExecutionBackend = tc.CommunicationStyle == CommunicationStyle.KubernetesApi
+                ? ExecutionBackend.LocalProcess
+                : tc.CommunicationStyle == CommunicationStyle.KubernetesAgent
+                    ? ExecutionBackend.HalibutScriptService
+                    : ExecutionBackend.Unspecified,
+            PayloadKind = actionResult.PayloadKind,
+            RunnerKind = actionResult.RunnerKind,
+            Syntax = actionResult.Syntax,
+            EndpointJson = tc.EndpointJson,
+            Account = tc.Account,
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version
         };
+    }
+
+    private static ContextPreparationPolicy ResolveContextPreparationPolicy(
+        ActionExecutionResult actionResult, DeploymentTargetContext tc)
+    {
+        if (actionResult.ContextPreparationPolicy != ContextPreparationPolicy.Unspecified)
+            return actionResult.ContextPreparationPolicy;
+
+        var mode = actionResult.ResolveExecutionMode();
+
+        // Kubernetes API packaged payloads need context preparation to configure kubectl against the target cluster.
+        if (mode == ExecutionMode.PackagedPayload && tc.CommunicationStyle == CommunicationStyle.KubernetesApi)
+            return ContextPreparationPolicy.Apply;
+
+        return actionResult.ResolveContextPreparationPolicy();
     }
 
     private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)

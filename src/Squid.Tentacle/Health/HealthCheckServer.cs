@@ -3,7 +3,7 @@ using Serilog;
 
 namespace Squid.Tentacle.Health;
 
-public class HealthCheckServer : IAsyncDisposable
+public class HealthCheckServer : IHealthCheckServer
 {
     private readonly HttpListener _listener;
     private readonly Func<bool> _readinessCheck;

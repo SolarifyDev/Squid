@@ -26,12 +26,32 @@ public class ProgramEntryPointTests
     }
 
     [Fact]
+    public async Task HelpArg_Returns0_AndPrintsUsage()
+    {
+        var result = await CalamariTestHost.InvokeInProcessAsync("--help");
+
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldContain("squid-calamari <subcommand> [options]");
+        result.Stderr.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task RunScript_WithoutScriptArg_Returns1()
     {
         var result = await CalamariTestHost.InvokeInProcessAsync("run-script");
 
         result.ExitCode.ShouldBe(1);
         result.Stderr.ShouldContain("run-script requires --script=<path>");
+    }
+
+    [Fact]
+    public async Task RunScript_Help_Returns0()
+    {
+        var result = await CalamariTestHost.InvokeInProcessAsync("run-script", "--help");
+
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldContain("Usage: squid-calamari run-script");
+        result.Stderr.ShouldBeEmpty();
     }
 
     [Fact]

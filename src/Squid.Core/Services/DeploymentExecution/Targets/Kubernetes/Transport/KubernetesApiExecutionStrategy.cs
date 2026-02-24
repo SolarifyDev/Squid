@@ -1,4 +1,6 @@
 using System.Text;
+using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -6,26 +8,30 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
 {
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly ILocalProcessRunner _processRunner;
+    private readonly KubernetesApiScriptContextWrapper? _scriptContextWrapper;
 
     public KubernetesApiExecutionStrategy(
         ICalamariPayloadBuilder payloadBuilder,
-        ILocalProcessRunner processRunner)
+        ILocalProcessRunner processRunner,
+        KubernetesApiScriptContextWrapper? scriptContextWrapper = null)
     {
         _payloadBuilder = payloadBuilder;
         _processRunner = processRunner;
+        _scriptContextWrapper = scriptContextWrapper;
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
         var workDir = CreateWorkDirectory();
+        var plan = ScriptExecutionPlanFactory.Create(request);
 
         try
         {
-            if (request.CalamariCommand != null)
-                return await ExecuteCalamariLocallyAsync(request, workDir, ct).ConfigureAwait(false);
+            if (plan is PackagedPayloadExecutionPlan packagedPlan)
+                return await ExecuteCalamariLocallyAsync(packagedPlan, workDir, ct).ConfigureAwait(false);
 
-            return await ExecuteScriptLocallyAsync(request, workDir, ct).ConfigureAwait(false);
+            return await ExecuteScriptLocallyAsync((DirectScriptExecutionPlan)plan, workDir, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -34,9 +40,11 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
     }
 
     private async Task<ScriptExecutionResult> ExecuteCalamariLocallyAsync(
-        ScriptExecutionRequest request, string workDir, CancellationToken ct)
+        PackagedPayloadExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(request.Files, workDir);
+        WriteFilesToDirectory(plan.Files, workDir);
+
+        var request = plan.Request;
 
         var payload = _payloadBuilder.Build(request);
 
@@ -49,6 +57,7 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
         await File.WriteAllBytesAsync(sensitivePath, payload.SensitiveBytes, ct).ConfigureAwait(false);
 
         var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
+        scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
 
         Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
@@ -58,16 +67,18 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
-        ScriptExecutionRequest request, string workDir, CancellationToken ct)
+        DirectScriptExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(request.Files, workDir);
+        WriteFilesToDirectory(plan.Files, workDir);
 
-        var scriptPath = Path.Combine(workDir, "script.sh");
-        await File.WriteAllTextAsync(scriptPath, request.ScriptBody, Encoding.UTF8, ct).ConfigureAwait(false);
+        var (executable, arguments, scriptFileName) = BuildDirectScriptInvocation(plan);
+        var scriptPath = Path.Combine(workDir, scriptFileName);
+        await File.WriteAllTextAsync(scriptPath, plan.ScriptBody, Encoding.UTF8, ct).ConfigureAwait(false);
 
         Log.Information("Executing script locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync("bash", scriptPath, workDir, ct).ConfigureAwait(false);
+        return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct)
+            .ConfigureAwait(false);
     }
 
     private static void WriteFilesToDirectory(Dictionary<string, byte[]> files, string workDir)
@@ -108,4 +119,31 @@ public class KubernetesApiExecutionStrategy : IExecutionStrategy
 
     private static string EscapeForCommandLine(string script)
         => script.Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    private static (string Executable, string Arguments, string ScriptFileName) BuildDirectScriptInvocation(
+        DirectScriptExecutionPlan plan)
+    {
+        return plan.Request.Syntax switch
+        {
+            ScriptSyntax.Bash => ("bash", "\"{{ScriptPath}}\"", "script.sh"),
+            ScriptSyntax.PowerShell => ("pwsh", "-NoProfile -NonInteractive -File \"{{ScriptPath}}\"", "script.ps1"),
+            _ => throw new InvalidOperationException($"Unsupported script syntax '{plan.Request.Syntax}'.")
+        };
+    }
+
+    private string ApplyContextPreparationIfRequired(ScriptExecutionRequest request, string scriptBody)
+    {
+        if (_scriptContextWrapper == null)
+            return scriptBody;
+
+        if (request.ResolveContextPreparationPolicy() != ContextPreparationPolicy.Apply)
+            return scriptBody;
+
+        return _scriptContextWrapper.WrapScript(
+            scriptBody,
+            request.EndpointJson,
+            request.Account,
+            request.Syntax,
+            request.Variables);
+    }
 }

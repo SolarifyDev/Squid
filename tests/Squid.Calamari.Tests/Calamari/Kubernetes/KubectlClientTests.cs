@@ -44,4 +44,34 @@ public class KubectlClientTests
         capturedInvocation.WorkingDirectory.ShouldBe("/tmp");
         capturedInvocation.Arguments.ShouldBe(["apply", "-f", "/tmp/manifest.yaml", "--namespace", "demo"]);
     }
+
+    [Fact]
+    public async Task ApplyAsync_AddsRecursiveFlag_WhenRequested()
+    {
+        ProcessInvocation capturedInvocation = null;
+        var runner = new Mock<IProcessRunner>();
+        runner.Setup(r => r.ExecuteAsync(
+                It.IsAny<ProcessInvocation>(),
+                It.IsAny<IProcessOutputSink>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<ProcessInvocation, IProcessOutputSink, CancellationToken>((invocation, _, _) =>
+            {
+                capturedInvocation = invocation;
+            })
+            .ReturnsAsync(new ProcessResult(0));
+
+        var client = new KubectlClient(runner.Object);
+
+        await client.ApplyAsync(
+            new KubectlApplyRequest
+            {
+                WorkingDirectory = "/tmp",
+                ManifestFilePath = "/tmp/manifests",
+                Recursive = true
+            },
+            CancellationToken.None);
+
+        capturedInvocation.ShouldNotBeNull();
+        capturedInvocation.Arguments.ShouldBe(["apply", "-f", "/tmp/manifests", "--recursive"]);
+    }
 }

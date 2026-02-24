@@ -44,24 +44,16 @@ public sealed class RawYamlKubernetesApplyExecutor : IKubernetesApplyExecutor
                 request.TemporaryFiles.Add(path);
         }
 
-        var resolvedRequest = new KubernetesApplyRequest
-        {
-            WorkingDirectory = request.WorkingDirectory,
-            YamlFilePath = resolvedManifestSource.ManifestFilePath,
-            Variables = request.Variables,
-            Namespace = request.Namespace,
-            TemporaryFiles = request.TemporaryFiles
-        };
-
-        var renderedManifestPath = await _manifestRenderer.RenderToFileAsync(resolvedRequest, ct)
+        var renderedManifest = await _manifestRenderer.RenderAsync(request, resolvedManifestSource, ct)
             .ConfigureAwait(false);
 
         return await _kubectlClient.ApplyAsync(
                 new KubectlApplyRequest
                 {
                     WorkingDirectory = request.WorkingDirectory,
-                    ManifestFilePath = renderedManifestPath,
-                    Namespace = request.Namespace
+                    ManifestFilePath = renderedManifest.ApplyPath,
+                    Namespace = request.Namespace,
+                    Recursive = renderedManifest.Recursive
                 },
                 ct)
             .ConfigureAwait(false);

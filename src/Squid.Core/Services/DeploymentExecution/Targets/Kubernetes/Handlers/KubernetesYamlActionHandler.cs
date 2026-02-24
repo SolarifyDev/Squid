@@ -51,6 +51,8 @@ public class KubernetesYamlActionHandler : IActionHandler
         return new ActionExecutionResult
         {
             CalamariCommand = "calamari-kubernetes-deploy",
+            ExecutionMode = ExecutionMode.PackagedPayload,
+            PayloadKind = PayloadKind.YamlBundle,
             Files = yamlFiles,
             Syntax = ScriptSyntax.PowerShell
         };

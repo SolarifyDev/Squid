@@ -7,4 +7,6 @@ public sealed class KubectlApplyRequest
     public required string ManifestFilePath { get; init; }
 
     public string? Namespace { get; init; }
+
+    public bool Recursive { get; init; }
 }

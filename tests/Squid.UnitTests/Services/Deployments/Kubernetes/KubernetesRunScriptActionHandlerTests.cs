@@ -156,6 +156,9 @@ public class KubernetesRunScriptActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.CalamariCommand.ShouldBeNull();
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
+        result.PayloadKind.ShouldBe(PayloadKind.None);
     }
 
     [Fact]

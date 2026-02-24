@@ -11,6 +11,12 @@ public sealed class RunScriptCliCommandHandler : ICommandHandler
 
     public async Task<int> ExecuteAsync(string[] args, CancellationToken ct)
     {
+        if (CommandLineArguments.ContainsHelpToken(args))
+        {
+            UsagePrinter.PrintCommand(Descriptor, Console.Out);
+            return 0;
+        }
+
         var parsed = CommandLineArguments.ParseKeyValueArgs(args);
 
         if (!parsed.TryGetValue("--script", out var scriptPath) || string.IsNullOrEmpty(scriptPath))
