@@ -76,8 +76,7 @@ public partial class DeploymentTaskExecutor
         _ctx.SelectedPackages = await _releaseSelectedPackageDataProvider
             .GetByReleaseIdAsync(_ctx.Release.Id, ct).ConfigureAwait(false);
 
-        Log.Information("Loaded {Count} selected packages for release {ReleaseId}",
-            _ctx.SelectedPackages.Count, _ctx.Release.Id);
+        Log.Information("Loaded {Count} selected packages for release {ReleaseId}", _ctx.SelectedPackages.Count, _ctx.Release.Id);
     }
 
     private async Task LoadOrSnapshotAsync(CancellationToken ct)
@@ -171,6 +170,5 @@ public partial class DeploymentTaskExecutor
         _ctx.Steps = ConvertProcessSnapshotToSteps(_ctx.ProcessSnapshot);
     }
 
-    public static List<DeploymentStepDto> ConvertProcessSnapshotToSteps(DeploymentProcessSnapshotDto processSnapshot)
-        => ProcessSnapshotStepConverter.Convert(processSnapshot);
+    public static List<DeploymentStepDto> ConvertProcessSnapshotToSteps(DeploymentProcessSnapshotDto processSnapshot) => ProcessSnapshotStepConverter.Convert(processSnapshot);
 }

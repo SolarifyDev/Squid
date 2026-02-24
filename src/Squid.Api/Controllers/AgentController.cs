@@ -1,9 +1,10 @@
 using Squid.Message.Commands.Agent;
 using Microsoft.AspNetCore.Authorization;
+using Squid.Message.Constants;
 
 namespace Squid.Api.Controllers;
 
-[Authorize]
+[Authorize(AuthenticationSchemes = AuthenticationSchemeConstants.AgentJwtAuthenticationScheme)]
 [ApiController]
 [Route("api/agents")]
 public class AgentController : ControllerBase

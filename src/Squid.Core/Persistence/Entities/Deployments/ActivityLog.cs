@@ -1,3 +1,5 @@
+using Squid.Message.Enums.Deployments;
+
 namespace Squid.Core.Persistence.Entities.Deployments;
 
 public class ActivityLog : IEntity<long>
@@ -10,11 +12,11 @@ public class ActivityLog : IEntity<long>
 
     public string Name { get; set; }
 
-    public string NodeType { get; set; }
+    public DeploymentActivityLogNodeType NodeType { get; set; }
 
-    public string Category { get; set; }
+    public DeploymentActivityLogCategory? Category { get; set; }
 
-    public string Status { get; set; }
+    public DeploymentActivityLogNodeStatus? Status { get; set; }
 
     public string LogText { get; set; }
 

@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -47,7 +48,7 @@ public partial class DeploymentTaskExecutor
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
 
             var stepActivityNode = await CreateActivityNodeAsync(
-                _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, "Step", "Running",
+                _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running,
                 stepSortOrder, ct).ConfigureAwait(false);
 
             var actionResults = await PrepareStepActionsAsync(
@@ -57,10 +58,10 @@ public partial class DeploymentTaskExecutor
             await ExecuteActionResultsAsync(
                 actionResults, step, stepActivityNode, result, tc, effectiveVariables, ct).ConfigureAwait(false);
 
-            if (stepActivityNode != null)
-                await _activityLogDataProvider.UpdateNodeStatusAsync(
-                    stepActivityNode.Id, result.Failed ? "Failed" : "Success",
-                    DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+            await UpdateActivityNodeStatusAsync(
+                stepActivityNode,
+                result.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success,
+                ct).ConfigureAwait(false);
 
             stepResult.Absorb(result);
         }
@@ -165,7 +166,7 @@ public partial class DeploymentTaskExecutor
         {
             var actionActivityNode = await CreateActivityNodeAsync(
                 _ctx.Task.Id, stepActivityNode?.Id, actionResult.CalamariCommand ?? "Direct Script",
-                "Action", "Running", ++actionSortOrder, ct).ConfigureAwait(false);
+                DeploymentActivityLogNodeType.Action, DeploymentActivityLogNodeStatus.Running, ++actionSortOrder, ct).ConfigureAwait(false);
 
             try
             {
@@ -183,9 +184,8 @@ public partial class DeploymentTaskExecutor
                 if (!execResult.Success)
                     throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);
 
-                if (actionActivityNode != null)
-                    await _activityLogDataProvider.UpdateNodeStatusAsync(
-                        actionActivityNode.Id, "Success", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct)
+                    .ConfigureAwait(false);
 
                 CollectOutputVariables(result, step.Name, actionResult);
             }
@@ -194,9 +194,8 @@ public partial class DeploymentTaskExecutor
                 result.Failed = true;
                 Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
 
-                if (actionActivityNode != null)
-                    await _activityLogDataProvider.UpdateNodeStatusAsync(
-                        actionActivityNode.Id, "Failed", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Failed, ct)
+                    .ConfigureAwait(false);
 
                 if (step.IsRequired)
                     throw;

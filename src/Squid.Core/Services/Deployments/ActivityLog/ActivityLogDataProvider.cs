@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Db;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.ActivityLog;
 
@@ -9,7 +10,7 @@ public interface IActivityLogDataProvider : IScopedDependency
         bool forceSave = true,
         CancellationToken ct = default);
 
-    Task UpdateNodeStatusAsync(long nodeId, string status, DateTimeOffset? endedAt = null,
+    Task UpdateNodeStatusAsync(long nodeId, DeploymentActivityLogNodeStatus status, DateTimeOffset? endedAt = null,
         bool forceSave = true, CancellationToken ct = default);
 
     Task<List<Persistence.Entities.Deployments.ActivityLog>> GetTreeByTaskIdAsync(
@@ -46,7 +47,7 @@ public class ActivityLogDataProvider : IActivityLogDataProvider
         return node;
     }
 
-    public async Task UpdateNodeStatusAsync(long nodeId, string status, DateTimeOffset? endedAt = null,
+    public async Task UpdateNodeStatusAsync(long nodeId, DeploymentActivityLogNodeStatus status, DateTimeOffset? endedAt = null,
         bool forceSave = true, CancellationToken ct = default)
     {
         var node = await _repository.GetByIdAsync<Persistence.Entities.Deployments.ActivityLog>(

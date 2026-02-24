@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -11,8 +12,8 @@ public partial class DeploymentTaskExecutor
             {
                 ServerTaskId = _ctx.Task.Id,
                 Name = $"Deploy {_ctx.Deployment?.Name ?? "Unknown"}",
-                NodeType = "Task",
-                Status = "Running",
+                NodeType = DeploymentActivityLogNodeType.Task,
+                Status = DeploymentActivityLogNodeStatus.Running,
                 StartedAt = DateTimeOffset.UtcNow,
                 SortOrder = 0
             }, ct: ct).ConfigureAwait(false);
@@ -22,9 +23,7 @@ public partial class DeploymentTaskExecutor
     {
         await RecordCompletionAsync(true, "Deployment completed successfully");
 
-        if (_ctx.TaskActivityNode != null)
-            await _activityLogDataProvider.UpdateNodeStatusAsync(
-                _ctx.TaskActivityNode.Id, "Success", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+        await UpdateActivityNodeStatusAsync(_ctx.TaskActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
 
         await _genericDataProvider.ExecuteInTransactionAsync(
             async cancellationToken =>
@@ -41,11 +40,10 @@ public partial class DeploymentTaskExecutor
     {
         Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", serverTaskId, ex.Message);
 
-        if (_ctx.TaskActivityNode != null)
-            await _activityLogDataProvider.UpdateNodeStatusAsync(
-                _ctx.TaskActivityNode.Id, "Failed", DateTimeOffset.UtcNow, ct: ct).ConfigureAwait(false);
+        await UpdateActivityNodeStatusAsync(_ctx.TaskActivityNode, DeploymentActivityLogNodeStatus.Failed, ct)
+            .ConfigureAwait(false);
 
-        await PersistTaskLogAsync(serverTaskId, "Error", ex.Message, "System", ct);
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Error, ex.Message, "System", ct);
 
         if (_ctx.Deployment != null)
             await RecordCompletionAsync(false, ex.Message);
@@ -80,8 +78,8 @@ public partial class DeploymentTaskExecutor
     }
 
     private async Task<Persistence.Entities.Deployments.ActivityLog> CreateActivityNodeAsync(
-        int serverTaskId, long? parentId, string name, string nodeType,
-        string status, int sortOrder, CancellationToken ct)
+        int serverTaskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType,
+        DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken ct)
     {
         try
         {
@@ -104,7 +102,7 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task PersistTaskLogAsync(int serverTaskId, string category, string message,
+    private async Task PersistTaskLogAsync(int serverTaskId, ServerTaskLogCategory category, string message,
         string source, CancellationToken ct)
     {
         try
@@ -134,7 +132,9 @@ public partial class DeploymentTaskExecutor
             var entries = logs.Select(log => new Persistence.Entities.Deployments.ServerTaskLog
             {
                 ServerTaskId = serverTaskId,
-                Category = log.Source == ProcessOutputSource.StdErr ? "Error" : "Info",
+                Category = log.Source == ProcessOutputSource.StdErr
+                    ? ServerTaskLogCategory.Error
+                    : ServerTaskLogCategory.Info,
                 MessageText = log.Text,
                 Source = source,
                 OccurredAt = log.Occurred,
@@ -147,5 +147,17 @@ public partial class DeploymentTaskExecutor
         {
             Log.Warning(ex, "Failed to persist task log batch");
         }
+    }
+
+    private Task UpdateActivityNodeStatusAsync(
+        Persistence.Entities.Deployments.ActivityLog node,
+        DeploymentActivityLogNodeStatus status,
+        CancellationToken ct)
+    {
+        if (node == null)
+            return Task.CompletedTask;
+
+        return _activityLogDataProvider.UpdateNodeStatusAsync(
+            node.Id, status, DateTimeOffset.UtcNow, ct: ct);
     }
 }

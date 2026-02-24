@@ -1,6 +1,6 @@
 using System.Text;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Squid.Message.Constants;
 
 namespace Squid.Api.Extensions;
 
@@ -12,22 +12,35 @@ public static class AuthenticationExtension
 
         if (string.IsNullOrEmpty(jwtKey)) return;
 
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
+        services.AddAuthentication(options =>
             {
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidIssuer = "squid",
-                    ValidateAudience = true,
-                    ValidAudience = "squid-agent",
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-                    ValidateLifetime = true,
-                    ClockSkew = TimeSpan.FromMinutes(1)
-                };
+                options.DefaultAuthenticateScheme = AuthenticationSchemeConstants.UserJwtAuthenticationScheme;
+                options.DefaultChallengeScheme = AuthenticationSchemeConstants.UserJwtAuthenticationScheme;
+            })
+            .AddJwtBearer(AuthenticationSchemeConstants.AgentJwtAuthenticationScheme, options =>
+            {
+                options.TokenValidationParameters = BuildTokenValidationParameters(jwtKey, "squid-agent");
+            })
+            .AddJwtBearer(AuthenticationSchemeConstants.UserJwtAuthenticationScheme, options =>
+            {
+                options.TokenValidationParameters = BuildTokenValidationParameters(jwtKey, "squid-api");
             });
 
         services.AddAuthorization();
+    }
+
+    private static TokenValidationParameters BuildTokenValidationParameters(string jwtKey, string audience)
+    {
+        return new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = "squid",
+            ValidateAudience = true,
+            ValidAudience = audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
     }
 }

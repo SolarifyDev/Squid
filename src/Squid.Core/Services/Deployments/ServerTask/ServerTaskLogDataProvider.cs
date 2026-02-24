@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
@@ -55,8 +56,11 @@ public class ServerTaskLogDataProvider : IServerTaskLogDataProvider
 
     public async Task<List<ServerTaskLog>> GetLogsByTaskIdAndCategoryAsync(int serverTaskId, string category, CancellationToken ct = default)
     {
+        if (!Enum.TryParse<ServerTaskLogCategory>(category, ignoreCase: true, out var parsedCategory))
+            return [];
+
         return await _repository.QueryNoTracking<ServerTaskLog>(l =>
-                l.ServerTaskId == serverTaskId && l.Category == category)
+                l.ServerTaskId == serverTaskId && l.Category == parsedCategory)
             .OrderBy(l => l.SequenceNumber)
             .ToListAsync(ct).ConfigureAwait(false);
     }

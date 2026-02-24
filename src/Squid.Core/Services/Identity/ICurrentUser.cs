@@ -11,7 +11,7 @@ public interface ICurrentUser
     string Name { get; }
 }
 
-public class ApiUser : ICurrentUser
+public class ApiUser : ICurrentUser, IScopedDependency
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
 
@@ -24,7 +24,7 @@ public class ApiUser : ICurrentUser
     {
         get
         {
-            if (_httpContextAccessor?.HttpContext == null) return null;
+            if (_httpContextAccessor?.HttpContext == null) return CurrentUsers.InternalUser.Id;
             
             var currentAuthScheme = _httpContextAccessor.HttpContext.User.Identity?.AuthenticationType;
             
@@ -39,9 +39,12 @@ public class ApiUser : ICurrentUser
     {
         get
         {
+            if (_httpContextAccessor?.HttpContext == null) return CurrentUsers.InternalUser.Name;
+
             var currentAuthScheme = _httpContextAccessor.HttpContext?.User.Identity?.AuthenticationType;
             
-            return _httpContextAccessor?.HttpContext?.User.Claims.SingleOrDefault(x => x.Type == ClaimTypes.Name && x.Subject?.AuthenticationType == currentAuthScheme)?.Value;
+            return _httpContextAccessor?.HttpContext?.User.Claims
+                .SingleOrDefault(x => x.Type == ClaimTypes.Name && x.Subject?.AuthenticationType == currentAuthScheme)?.Value ?? string.Empty;
         }
     }
 }
@@ -50,5 +53,5 @@ public class InternalUser : ICurrentUser
 {
     public int? Id => CurrentUsers.InternalUser.Id;
 
-    public string Name => "internal_user";
+    public string Name => CurrentUsers.InternalUser.Name;
 }

@@ -1,3 +1,5 @@
+using Squid.Message.Enums.Deployments;
+
 namespace Squid.Core.Persistence.Entities.Deployments;
 
 public class ServerTaskLog : IEntity<long>
@@ -6,7 +8,7 @@ public class ServerTaskLog : IEntity<long>
 
     public int ServerTaskId { get; set; }
 
-    public string Category { get; set; }
+    public ServerTaskLogCategory Category { get; set; }
 
     public string MessageText { get; set; }
 

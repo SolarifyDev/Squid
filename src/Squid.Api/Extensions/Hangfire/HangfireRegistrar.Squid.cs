@@ -45,4 +45,5 @@ public class SquidHangfireRegistrar : HangfireRegistrarBase
             backgroundJobClient.AddOrUpdateRecurringJob<IJobSafeRunner>(job.JobId, r => r.Run(job.JobId, type), job.CronExpression, job.TimeZone);
         }
     }
+
 }
