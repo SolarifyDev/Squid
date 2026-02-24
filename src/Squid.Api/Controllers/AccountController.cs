@@ -2,7 +2,6 @@ using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Squid.Message.Commands.Account;
-using Squid.Message.Constants;
 using Squid.Message.Requests.Account;
 using Squid.Message.Response;
 
@@ -24,15 +23,9 @@ public class AccountController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterResponse))]
     public async Task<IActionResult> RegisterAsync([FromBody] RegisterCommand command, CancellationToken cancellationToken)
     {
-        try
-        {
-            var response = await _mediator.SendAsync<RegisterCommand, RegisterResponse>(command, cancellationToken).ConfigureAwait(false);
-            return Ok(response);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new SquidResponse { Code = HttpStatusCode.BadRequest, Msg = ex.Message });
-        }
+        var response = await _mediator.SendAsync<RegisterCommand, RegisterResponse>(command, cancellationToken).ConfigureAwait(false);
+        
+        return Ok(response);
     }
 
     [AllowAnonymous]
@@ -40,15 +33,9 @@ public class AccountController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(LoginResponse))]
     public async Task<IActionResult> LoginAsync([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            var response = await _mediator.RequestAsync<LoginRequest, LoginResponse>(request, cancellationToken).ConfigureAwait(false);
-            return Ok(response);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Unauthorized(new SquidResponse { Code = HttpStatusCode.Unauthorized, Msg = ex.Message });
-        }
+        var response = await _mediator.RequestAsync<LoginRequest, LoginResponse>(request, cancellationToken).ConfigureAwait(false);
+        
+        return Ok(response);
     }
 
     [Authorize]
@@ -57,6 +44,7 @@ public class AccountController : ControllerBase
     public async Task<IActionResult> MeAsync(CancellationToken cancellationToken)
     {
         var idValue = User.Claims.FirstOrDefault(x => x.Type == ClaimTypes.NameIdentifier)?.Value;
+        
         if (!int.TryParse(idValue, out var userId))
         {
             return Unauthorized(new SquidResponse { Code = HttpStatusCode.Unauthorized, Msg = "Invalid token" });
