@@ -63,11 +63,24 @@ public partial class DeploymentSnapshotDataProvider
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
-        if (pageIndex.HasValue && pageSize.HasValue)
-            query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
+        var orderedQuery = query.OrderByDescending(s => s.CreatedAt);
 
-        var results = await query
-            .OrderByDescending(s => s.CreatedAt).ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (pageIndex.HasValue && pageSize.HasValue)
+            orderedQuery = (IOrderedQueryable<DeploymentProcessSnapshot>)orderedQuery.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
+
+        var results = await orderedQuery
+            .Select(s => new DeploymentProcessSnapshot
+            {
+                Id = s.Id,
+                OriginalProcessId = s.OriginalProcessId,
+                Version = s.Version,
+                ContentHash = s.ContentHash,
+                CompressionType = s.CompressionType,
+                UncompressedSize = s.UncompressedSize,
+                CreatedAt = s.CreatedAt,
+                CreatedBy = s.CreatedBy
+            })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return (count, results);
     }

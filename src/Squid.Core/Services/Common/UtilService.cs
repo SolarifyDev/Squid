@@ -20,6 +20,23 @@ public static class UtilService
     {
         var json = JsonConvert.SerializeObject(data);
 
+        return CompressToGzip(json);
+    }
+
+    public static SnapshotBlob BuildSnapshotBlob<T>(T data)
+    {
+        var json = JsonConvert.SerializeObject(data);
+
+        return new SnapshotBlob
+        {
+            CompressedData = CompressToGzip(json),
+            ContentHash = ComputeSha256Hash(json),
+            UncompressedSize = Encoding.UTF8.GetByteCount(json)
+        };
+    }
+
+    private static byte[] CompressToGzip(string json)
+    {
         using var ms = new MemoryStream();
         using (var gzip = new GZipStream(ms, CompressionLevel.Optimal))
         using (var sw = new StreamWriter(gzip))
@@ -84,4 +101,11 @@ public static class UtilService
 
         return string.Empty;
     }
+}
+
+public class SnapshotBlob
+{
+    public byte[] CompressedData { get; init; }
+    public string ContentHash { get; init; }
+    public int UncompressedSize { get; init; }
 }

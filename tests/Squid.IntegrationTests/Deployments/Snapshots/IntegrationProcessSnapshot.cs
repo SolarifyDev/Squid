@@ -259,13 +259,69 @@ public class IntegrationProcessSnapshot : SnapshotFixtureBase
             var snapshot1 = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
             var snapshot2 = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
 
-            snapshot1.Id.ShouldNotBe(snapshot2.Id);
+            snapshot1.Id.ShouldBe(snapshot2.Id);
+            snapshot1.Data.StepSnapshots.Count.ShouldBe(snapshot2.Data.StepSnapshots.Count);
+            snapshot1.Data.StepSnapshots[0].Name.ShouldBe(snapshot2.Data.StepSnapshots[0].Name);
+        }).ConfigureAwait(false);
+    }
 
-            var loaded1 = await snapshotService.LoadProcessSnapshotAsync(snapshot1.Id);
-            var loaded2 = await snapshotService.LoadProcessSnapshotAsync(snapshot2.Id);
+    [Fact]
+    public async Task SnapshotProcessFromIdAsync_Isolation_ModifySourceAfterSnapshot_SnapshotUnchanged()
+    {
+        await Run<IRepository, IUnitOfWork, IDeploymentSnapshotService>(async (repository, unitOfWork, snapshotService) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
 
-            loaded1.Data.StepSnapshots.Count.ShouldBe(loaded2.Data.StepSnapshots.Count);
-            loaded1.Data.StepSnapshots[0].Name.ShouldBe(loaded2.Data.StepSnapshots[0].Name);
+            var process = await builder.CreateDeploymentProcessAsync();
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Original Step");
+            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Original Action");
+            await builder.CreateActionPropertiesAsync(action.Id, ("Script", "echo original"));
+
+            var snapshot = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
+            var snapshotId = snapshot.Id;
+
+            // Modify source: rename step, add new action, change property
+            step.Name = "Modified Step";
+            await repository.UpdateAsync(step).ConfigureAwait(false);
+            await builder.CreateDeploymentActionAsync(step.Id, 2, "New Action After Snapshot");
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            // Reload snapshot — must still reflect original data
+            var reloaded = await snapshotService.LoadProcessSnapshotAsync(snapshotId);
+
+            reloaded.Data.StepSnapshots.Count.ShouldBe(1);
+            reloaded.Data.StepSnapshots[0].Name.ShouldBe("Original Step");
+            reloaded.Data.StepSnapshots[0].ActionSnapshots.Count.ShouldBe(1);
+            reloaded.Data.StepSnapshots[0].ActionSnapshots[0].Name.ShouldBe("Original Action");
+            reloaded.Data.StepSnapshots[0].ActionSnapshots[0].Properties["Script"].ShouldBe("echo original");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SnapshotProcessFromIdAsync_DeduplicationBreaksOnChange_NewSnapshotCreated()
+    {
+        await Run<IRepository, IUnitOfWork, IDeploymentSnapshotService>(async (repository, unitOfWork, snapshotService) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var process = await builder.CreateDeploymentProcessAsync();
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Step V1");
+            await builder.CreateDeploymentActionAsync(step.Id, 1, "Action V1");
+
+            var snapshotV1 = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
+
+            // Modify source data
+            await builder.CreateDeploymentActionAsync(step.Id, 2, "Action V2");
+
+            var snapshotV2 = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
+
+            // Different content → different snapshot
+            snapshotV2.Id.ShouldNotBe(snapshotV1.Id);
+            snapshotV2.Data.StepSnapshots[0].ActionSnapshots.Count.ShouldBe(2);
+
+            // Original snapshot unchanged
+            var reloadedV1 = await snapshotService.LoadProcessSnapshotAsync(snapshotV1.Id);
+            reloadedV1.Data.StepSnapshots[0].ActionSnapshots.Count.ShouldBe(1);
         }).ConfigureAwait(false);
     }
 }

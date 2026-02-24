@@ -113,14 +113,10 @@ public class IntegrationVariableSetSnapshot : SnapshotFixtureBase
             var snapshot1 = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int> { variableSet.Id });
             var snapshot2 = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int> { variableSet.Id });
 
-            snapshot1.Id.ShouldNotBe(snapshot2.Id);
-
-            var loaded1 = await snapshotService.LoadVariableSetSnapshotAsync(snapshot1.Id);
-            var loaded2 = await snapshotService.LoadVariableSetSnapshotAsync(snapshot2.Id);
-
-            loaded1.Data.Variables.Count.ShouldBe(loaded2.Data.Variables.Count);
-            loaded1.Data.Variables[0].Name.ShouldBe(loaded2.Data.Variables[0].Name);
-            loaded1.Data.Variables[0].Value.ShouldBe(loaded2.Data.Variables[0].Value);
+            snapshot1.Id.ShouldBe(snapshot2.Id);
+            snapshot1.Data.Variables.Count.ShouldBe(snapshot2.Data.Variables.Count);
+            snapshot1.Data.Variables[0].Name.ShouldBe(snapshot2.Data.Variables[0].Name);
+            snapshot1.Data.Variables[0].Value.ShouldBe(snapshot2.Data.Variables[0].Value);
         }).ConfigureAwait(false);
     }
 
@@ -144,6 +140,70 @@ public class IntegrationVariableSetSnapshot : SnapshotFixtureBase
 
             snapshot.ShouldNotBeNull();
             snapshot.Data.Variables.ShouldContain(v => v.Name == "ProjectVar" && v.Value == "ProjValue");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SnapshotVariableSetFromIdsAsync_Isolation_ModifySourceAfterSnapshot_SnapshotUnchanged()
+    {
+        await Run<IRepository, IUnitOfWork, IDeploymentSnapshotService>(async (repository, unitOfWork, snapshotService) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var variableSet = await builder.CreateVariableSetAsync();
+            await builder.CreateVariableAsync(variableSet.Id, "Original", "OrigValue");
+
+            var snapshot = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int> { variableSet.Id });
+            var snapshotId = snapshot.Id;
+
+            // Modify source: add new variable, change existing
+            await builder.CreateVariableAsync(variableSet.Id, "NewVar", "NewValue");
+
+            // Reload snapshot — must still reflect original data
+            var reloaded = await snapshotService.LoadVariableSetSnapshotAsync(snapshotId);
+
+            reloaded.Data.Variables.Count.ShouldBe(1);
+            reloaded.Data.Variables[0].Name.ShouldBe("Original");
+            reloaded.Data.Variables[0].Value.ShouldBe("OrigValue");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SnapshotVariableSetFromIdsAsync_DeduplicationBreaksOnChange_NewSnapshotCreated()
+    {
+        await Run<IRepository, IUnitOfWork, IDeploymentSnapshotService>(async (repository, unitOfWork, snapshotService) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var variableSet = await builder.CreateVariableSetAsync();
+            await builder.CreateVariableAsync(variableSet.Id, "V1", "Value1");
+
+            var snapshotV1 = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int> { variableSet.Id });
+
+            // Add a variable → content changes → new hash
+            await builder.CreateVariableAsync(variableSet.Id, "V2", "Value2");
+
+            var snapshotV2 = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int> { variableSet.Id });
+
+            snapshotV2.Id.ShouldNotBe(snapshotV1.Id);
+            snapshotV2.Data.Variables.Count.ShouldBe(2);
+
+            // Original snapshot unchanged
+            var reloadedV1 = await snapshotService.LoadVariableSetSnapshotAsync(snapshotV1.Id);
+            reloadedV1.Data.Variables.Count.ShouldBe(1);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SnapshotVariableSetFromIdsAsync_EmptyVariableSetIds_ReturnsEmptySnapshot()
+    {
+        await Run<IRepository, IUnitOfWork, IDeploymentSnapshotService>(async (_, _, snapshotService) =>
+        {
+            var snapshot = await snapshotService.SnapshotVariableSetFromIdsAsync(new List<int>());
+
+            snapshot.ShouldNotBeNull();
+            snapshot.Id.ShouldBeGreaterThan(0);
+            snapshot.Data.Variables.ShouldBeEmpty();
         }).ConfigureAwait(false);
     }
 }
