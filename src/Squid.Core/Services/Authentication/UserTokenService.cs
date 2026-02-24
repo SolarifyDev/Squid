@@ -17,9 +17,9 @@ public class UserTokenService : IUserTokenService
     private readonly byte[] _keyBytes;
     private readonly double _expiryHours;
 
-    public UserTokenService(JwtSymmetricKeySetting jwtSymmetricKeySetting, IConfiguration configuration)
+    public UserTokenService(IConfiguration configuration)
     {
-        var key = jwtSymmetricKeySetting.Value;
+        var key = new JwtSymmetricKeySetting(configuration).Value;
 
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("Authentication:Jwt:SymmetricKey is not configured");
