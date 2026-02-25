@@ -3,30 +3,54 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.LifeCycle;
 
 public interface IRetentionPolicyEnforcer : IScopedDependency
 {
+    Task<int> EnforceRetentionForAllProjectsAsync(CancellationToken cancellationToken);
+
     Task EnforceRetentionForProjectAsync(int projectId, CancellationToken cancellationToken);
 }
 
 public class RetentionPolicyEnforcer(
     IProjectDataProvider projectDataProvider,
     ILifeCycleDataProvider lifeCycleDataProvider,
-    ILifecycleResolver lifecycleResolver,
     IReleaseDataProvider releaseDataProvider,
     IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
     IRepository repository) : IRetentionPolicyEnforcer
 {
+    public async Task<int> EnforceRetentionForAllProjectsAsync(CancellationToken cancellationToken)
+    {
+        var projectIds = await repository.QueryNoTracking<Persistence.Entities.Deployments.Project>()
+            .Where(p => !p.IsDisabled)
+            .Select(p => p.Id)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (var projectId in projectIds)
+        {
+            try
+            {
+                await EnforceRetentionForProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Retention enforcement failed for project {ProjectId}", projectId);
+            }
+        }
+
+        return projectIds.Count;
+    }
+
     public async Task EnforceRetentionForProjectAsync(int projectId, CancellationToken cancellationToken)
     {
         var project = await projectDataProvider.GetProjectByIdAsync(projectId, cancellationToken).ConfigureAwait(false);
+        
         if (project == null) return;
 
         var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(project.LifecycleId, cancellationToken).ConfigureAwait(false);
+        
         if (lifecycle == null) return;
 
         var phases = await lifeCycleDataProvider.GetPhasesByLifecycleIdAsync(lifecycle.Id, cancellationToken).ConfigureAwait(false);
@@ -40,6 +64,7 @@ public class RetentionPolicyEnforcer(
         foreach (var phase in phases)
         {
             var effectiveKeepForever = phase.ReleaseRetentionKeepForever ?? lifecycle.ReleaseRetentionKeepForever;
+            
             if (effectiveKeepForever) continue;
 
             var effectiveUnit = phase.ReleaseRetentionUnit ?? lifecycle.ReleaseRetentionUnit;
@@ -53,37 +78,24 @@ public class RetentionPolicyEnforcer(
         }
     }
 
-    private async Task EnforceForEnvironmentsAsync(
-        int projectId,
-        List<int> environmentIds,
-        RetentionPolicyUnit unit,
-        int quantity,
-        HashSet<int> currentlyDeployedReleaseIds,
-        CancellationToken cancellationToken)
+    private async Task EnforceForEnvironmentsAsync(int projectId, List<int> environmentIds, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
     {
         foreach (var environmentId in environmentIds)
         {
-            var deployments = await repository.QueryNoTracking<Deployment>(d =>
-                    d.ProjectId == projectId && d.EnvironmentId == environmentId)
+            var deployments = await repository
+                .QueryNoTracking<Deployment>(d => d.ProjectId == projectId && d.EnvironmentId == environmentId)
                 .OrderByDescending(d => d.Created)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-            var deploymentsToDelete = GetDeploymentsExceedingRetention(
-                deployments, unit, quantity, currentlyDeployedReleaseIds);
+            var deploymentsToDelete = GetDeploymentsExceedingRetention(deployments, unit, quantity, currentlyDeployedReleaseIds);
 
             if (deploymentsToDelete.Count == 0) continue;
 
-            Log.Information(
-                "Retention: deleting {Count} deployments for project {ProjectId} environment {EnvironmentId}",
-                deploymentsToDelete.Count, projectId, environmentId);
+            Log.Information("Retention: deleting {Count} deployments for project {ProjectId} environment {EnvironmentId}", deploymentsToDelete.Count, projectId, environmentId);
         }
     }
 
-    public static List<Deployment> GetDeploymentsExceedingRetention(
-        List<Deployment> deployments,
-        RetentionPolicyUnit unit,
-        int quantity,
-        HashSet<int> currentlyDeployedReleaseIds)
+    public static List<Deployment> GetDeploymentsExceedingRetention(List<Deployment> deployments, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds)
     {
         var result = new List<Deployment>();
 
@@ -95,6 +107,7 @@ public class RetentionPolicyEnforcer(
             foreach (var deployment in deployments)
             {
                 if (currentlyDeployedReleaseIds.Contains(deployment.ReleaseId)) continue;
+                
                 if (deployment.Created >= cutoff) continue;
 
                 result.Add(deployment);
