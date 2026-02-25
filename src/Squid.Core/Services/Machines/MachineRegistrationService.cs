@@ -3,37 +3,37 @@ using System.Text.Json;
 using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Settings.SelfCert;
-using Squid.Message.Commands.Agent;
+using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 
-namespace Squid.Core.Services.Agents;
+namespace Squid.Core.Services.Machines;
 
-public interface IAgentService : IScopedDependency
+public interface IMachineRegistrationService : IScopedDependency
 {
-    Task<RegisterAgentResponseData> RegisterAgentAsync(RegisterAgentCommand command, CancellationToken cancellationToken = default);
+    Task<RegisterMachineResponseData> RegisterMachineAsync(RegisterMachineCommand command, CancellationToken cancellationToken = default);
 }
 
-public class AgentService : IAgentService
+public class MachineRegistrationService : IMachineRegistrationService
 {
-    private readonly IAgentDataProvider _agentDataProvider;
+    private readonly IMachineRegistrationDataProvider _dataProvider;
     private readonly HalibutRuntime _halibutRuntime;
     private readonly SelfCertSetting _selfCertSetting;
 
-    public AgentService(
-        IAgentDataProvider agentDataProvider,
+    public MachineRegistrationService(
+        IMachineRegistrationDataProvider dataProvider,
         HalibutRuntime halibutRuntime,
         SelfCertSetting selfCertSetting)
     {
-        _agentDataProvider = agentDataProvider;
+        _dataProvider = dataProvider;
         _halibutRuntime = halibutRuntime;
         _selfCertSetting = selfCertSetting;
     }
 
-    public async Task<RegisterAgentResponseData> RegisterAgentAsync(RegisterAgentCommand command, CancellationToken cancellationToken = default)
+    public async Task<RegisterMachineResponseData> RegisterMachineAsync(RegisterMachineCommand command, CancellationToken cancellationToken = default)
     {
         _halibutRuntime.Trust(command.Thumbprint);
 
-        var existing = await _agentDataProvider.GetAgentBySubscriptionIdAsync(
+        var existing = await _dataProvider.GetMachineBySubscriptionIdAsync(
             command.SubscriptionId, cancellationToken).ConfigureAwait(false);
 
         Machine machine;
@@ -45,24 +45,24 @@ public class AgentService : IAgentService
             existing.EnvironmentIds = command.EnvironmentIds ?? existing.EnvironmentIds;
             existing.Endpoint = BuildEndpointJson(command);
 
-            await _agentDataProvider.UpdateAgentMachineAsync(existing, cancellationToken).ConfigureAwait(false);
+            await _dataProvider.UpdateMachineAsync(existing, cancellationToken).ConfigureAwait(false);
 
             machine = existing;
 
-            Log.Information("Updated existing agent machine {MachineName} ({SubscriptionId})",
+            Log.Information("Updated existing machine {MachineName} ({SubscriptionId})",
                 machine.Name, machine.PollingSubscriptionId);
         }
         else
         {
-            machine = BuildAgentMachine(command);
+            machine = BuildMachine(command);
 
-            await _agentDataProvider.AddAgentMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            Log.Information("Registered new agent machine {MachineName} ({SubscriptionId})",
+            Log.Information("Registered new machine {MachineName} ({SubscriptionId})",
                 machine.Name, machine.PollingSubscriptionId);
         }
 
-        return new RegisterAgentResponseData
+        return new RegisterMachineResponseData
         {
             MachineId = machine.Id,
             ServerThumbprint = GetServerThumbprint(),
@@ -70,7 +70,7 @@ public class AgentService : IAgentService
         };
     }
 
-    private static string BuildEndpointJson(RegisterAgentCommand command)
+    private static string BuildEndpointJson(RegisterMachineCommand command)
     {
         return JsonSerializer.Serialize(new
         {
@@ -81,13 +81,13 @@ public class AgentService : IAgentService
         });
     }
 
-    private static Machine BuildAgentMachine(RegisterAgentCommand command)
+    private static Machine BuildMachine(RegisterMachineCommand command)
     {
         var endpointJson = BuildEndpointJson(command);
 
         return new Machine
         {
-            Name = command.MachineName ?? $"k8s-agent-{command.SubscriptionId[..8]}",
+            Name = command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
             IsDisabled = false,
             Roles = command.Roles ?? string.Empty,
             EnvironmentIds = command.EnvironmentIds ?? string.Empty,
@@ -102,7 +102,7 @@ public class AgentService : IAgentService
             ShellName = "Bash",
             ShellVersion = string.Empty,
             LicenseHash = string.Empty,
-            Slug = $"k8s-agent-{Guid.NewGuid():N}",
+            Slug = $"machine-{Guid.NewGuid():N}",
             PollingSubscriptionId = command.SubscriptionId
         };
     }

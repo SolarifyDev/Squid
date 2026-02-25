@@ -54,10 +54,13 @@ public class SquidTentacleHelmChartContractTests
     }
 
     [Fact]
-    public void DeploymentTemplate_Does_Not_Require_Tentacle_Flavor_Env_For_Current_Default()
+    public void DeploymentTemplate_Injects_Flavor_And_Registration_EnvVars()
     {
         var yaml = File.ReadAllText(DeploymentTemplatePath);
 
-        yaml.ShouldNotContain("Tentacle__Flavor");
+        yaml.ShouldContain("Tentacle__Flavor");
+        yaml.ShouldContain("Tentacle__MachineName");
+        yaml.ShouldContain("Tentacle__EnvironmentIds");
+        yaml.ShouldContain("Tentacle__SpaceId");
     }
 }

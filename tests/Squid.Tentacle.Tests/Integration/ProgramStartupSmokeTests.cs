@@ -94,7 +94,7 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
     private async Task RunSuccessfulStartupSmokeOnceAsync(string machineName)
     {
         using var sandbox = new TemporaryTentacleDirectory();
-        await using var registrationServer = FakeAgentRegistrationServer.Start();
+        await using var registrationServer = FakeMachineRegistrationServer.Start();
 
         var pollingPort = TcpPortAllocator.GetEphemeralPort();
         var healthPort = TcpPortAllocator.GetEphemeralPort();

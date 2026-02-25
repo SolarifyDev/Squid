@@ -1,8 +1,8 @@
 using Squid.Message.Response;
 
-namespace Squid.Message.Commands.Agent;
+namespace Squid.Message.Commands.Machine;
 
-public class RegisterAgentCommand : ICommand
+public class RegisterMachineCommand : ICommand
 {
     public string MachineName { get; set; }
     public string Thumbprint { get; set; }
@@ -13,11 +13,11 @@ public class RegisterAgentCommand : ICommand
     public string Namespace { get; set; } = "default";
 }
 
-public class RegisterAgentResponse : SquidResponse<RegisterAgentResponseData>
+public class RegisterMachineResponse : SquidResponse<RegisterMachineResponseData>
 {
 }
 
-public class RegisterAgentResponseData
+public class RegisterMachineResponseData
 {
     public int MachineId { get; set; }
     public string ServerThumbprint { get; set; }

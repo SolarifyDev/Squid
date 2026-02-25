@@ -12,19 +12,19 @@ using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
-public class KubernetesAgentExecutionStrategyTests
+public class HalibutMachineExecutionStrategyTests
 {
     private readonly Mock<IHalibutClientFactory> _halibutClientFactory = new();
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly CalamariPayloadBuilder _payloadBuilder;
     private readonly HalibutScriptObserver _observer;
-    private readonly HalibutAgentExecutionStrategy _strategy;
+    private readonly HalibutMachineExecutionStrategy _strategy;
 
-    public KubernetesAgentExecutionStrategyTests()
+    public HalibutMachineExecutionStrategyTests()
     {
         _payloadBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object);
         _observer = new HalibutScriptObserver();
-        _strategy = new HalibutAgentExecutionStrategy(
+        _strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             _payloadBuilder,
             _observer);
@@ -165,7 +165,7 @@ public class KubernetesAgentExecutionStrategyTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
-        var strategy = new HalibutAgentExecutionStrategy(
+        var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
             observer.Object);
@@ -205,7 +205,7 @@ public class KubernetesAgentExecutionStrategyTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
-        var strategy = new HalibutAgentExecutionStrategy(
+        var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
             observer.Object);

@@ -7,7 +7,7 @@ using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
-public class HalibutAgentExecutionStrategy : IExecutionStrategy
+public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
     private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
 
@@ -15,7 +15,7 @@ public class HalibutAgentExecutionStrategy : IExecutionStrategy
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
 
-    public HalibutAgentExecutionStrategy(
+    public HalibutMachineExecutionStrategy(
         IHalibutClientFactory halibutClientFactory,
         ICalamariPayloadBuilder payloadBuilder,
         IHalibutScriptObserver observer)

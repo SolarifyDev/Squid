@@ -7,7 +7,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 public sealed class KubernetesAgentTransport(
     KubernetesAgentEndpointVariableContributor variables,
     KubernetesAgentScriptContextWrapper scriptWrapper,
-    HalibutAgentExecutionStrategy strategy)
+    HalibutMachineExecutionStrategy strategy)
     : DeploymentTransport(
         CommunicationStyle.KubernetesAgent, variables, scriptWrapper, strategy,
         ExecutionLocation.RemoteTentacle, ExecutionBackend.HalibutScriptService,

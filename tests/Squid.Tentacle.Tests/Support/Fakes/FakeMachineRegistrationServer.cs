@@ -5,7 +5,7 @@ using Squid.Tentacle.Tests.Support.Environment;
 
 namespace Squid.Tentacle.Tests.Support.Fakes;
 
-public sealed class FakeAgentRegistrationServer : IAsyncDisposable
+public sealed class FakeMachineRegistrationServer : IAsyncDisposable
 {
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
@@ -15,7 +15,7 @@ public sealed class FakeAgentRegistrationServer : IAsyncDisposable
     private string _lastRequestBody = string.Empty;
     private string _lastAuthorizationHeader = string.Empty;
 
-    private FakeAgentRegistrationServer(int port)
+    private FakeMachineRegistrationServer(int port)
     {
         Port = port;
         BaseAddress = new Uri($"http://127.0.0.1:{port}/");
@@ -34,7 +34,7 @@ public sealed class FakeAgentRegistrationServer : IAsyncDisposable
     public string LastRequestBody => Volatile.Read(ref _lastRequestBody);
     public string LastAuthorizationHeader => Volatile.Read(ref _lastAuthorizationHeader);
 
-    public static FakeAgentRegistrationServer Start(int? port = null)
+    public static FakeMachineRegistrationServer Start(int? port = null)
         => new(port ?? TcpPortAllocator.GetEphemeralPort());
 
     public async Task<string> WaitForFirstRegistrationAsync(CancellationToken ct)
@@ -85,7 +85,7 @@ public sealed class FakeAgentRegistrationServer : IAsyncDisposable
         var path = context.Request.Url?.AbsolutePath ?? string.Empty;
 
         if (context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase)
-            && path.Equals("/api/agents/register", StringComparison.OrdinalIgnoreCase))
+            && path.Equals("/api/machines/register", StringComparison.OrdinalIgnoreCase))
         {
             using var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding ?? Encoding.UTF8);
             var body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);

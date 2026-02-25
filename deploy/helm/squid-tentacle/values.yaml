@@ -8,6 +8,11 @@ tentacle:
   bearerToken: ""
   serverCertificate: ""
   roles: "k8s"
+  machineName: ""
+  environmentIds: ""
+  spaceId: 1
+  flavor: "KubernetesAgent"
+  subscriptionId: ""
 
   resources:
     requests:

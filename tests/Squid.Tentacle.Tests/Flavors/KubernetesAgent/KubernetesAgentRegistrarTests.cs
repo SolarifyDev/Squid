@@ -11,7 +11,7 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
     [Fact]
     public async Task RegisterAsync_Maps_Server_Response_To_TentacleRegistration()
     {
-        await using var server = FakeAgentRegistrationServer.Start();
+        await using var server = FakeMachineRegistrationServer.Start();
 
         var registrar = new Squid.Tentacle.Flavors.KubernetesAgent.KubernetesAgentRegistrar(
             new TentacleSettings

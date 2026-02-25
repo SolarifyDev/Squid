@@ -9,11 +9,11 @@ using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Halibut;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Services.Agents;
+using Squid.Core.Services.Machines;
 using Squid.Core.Settings.Halibut;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
-using Squid.Message.Commands.Agent;
+using Squid.Message.Commands.Machine;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.E2ETests.Deployments.Kubernetes.Agent;
@@ -100,9 +100,9 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         TentacleSubscriptionId = certManager.LoadOrCreateSubscriptionId();
         TentacleThumbprint = tentacleCert.Thumbprint;
 
-        var registration = await Run<IAgentService, RegisterAgentResponseData>(async agentService =>
+        var registration = await Run<IMachineRegistrationService, RegisterMachineResponseData>(async registrationService =>
         {
-            return await agentService.RegisterAgentAsync(new RegisterAgentCommand
+            return await registrationService.RegisterMachineAsync(new RegisterMachineCommand
             {
                 MachineName = $"squid-tentacle-e2e-{TentacleSubscriptionId[..8]}",
                 Thumbprint = tentacleCert.Thumbprint,

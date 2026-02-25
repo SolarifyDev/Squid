@@ -6,5 +6,5 @@ public interface ITentacleCertificateManager
 {
     X509Certificate2 LoadOrCreateCertificate();
 
-    string LoadOrCreateSubscriptionId();
+    string LoadOrCreateSubscriptionId(string overrideSubscriptionId = null);
 }

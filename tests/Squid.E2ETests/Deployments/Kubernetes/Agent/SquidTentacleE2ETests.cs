@@ -1,13 +1,13 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Agents;
+using Squid.Core.Services.Machines;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
-using Squid.Message.Commands.Agent;
+using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Shouldly;
 using Xunit;
@@ -41,9 +41,9 @@ public class SquidTentacleE2ETests
     [Fact]
     public async Task RealTentacle_Registration_CreatesMachineInDatabase()
     {
-        await _fixture.Run<IAgentDataProvider>(async agentDataProvider =>
+        await _fixture.Run<IMachineRegistrationDataProvider>(async dataProvider =>
         {
-            var machine = await agentDataProvider.GetAgentBySubscriptionIdAsync(
+            var machine = await dataProvider.GetMachineBySubscriptionIdAsync(
                 _fixture.TentacleSubscriptionId, CancellationToken.None).ConfigureAwait(false);
 
             machine.ShouldNotBeNull();
@@ -63,9 +63,9 @@ public class SquidTentacleE2ETests
     {
         try
         {
-            await _fixture.Run<IAgentService>(async agentService =>
+            await _fixture.Run<IMachineRegistrationService>(async registrationService =>
             {
-                var result = await agentService.RegisterAgentAsync(new RegisterAgentCommand
+                var result = await registrationService.RegisterMachineAsync(new RegisterMachineCommand
                 {
                     MachineName = $"squid-tentacle-e2e-{_fixture.TentacleSubscriptionId[..8]}",
                     Thumbprint = _fixture.TentacleThumbprint,
@@ -78,9 +78,9 @@ public class SquidTentacleE2ETests
                 result.MachineId.ShouldBe(_fixture.TentacleMachineId);
             }).ConfigureAwait(false);
 
-            await _fixture.Run<IAgentDataProvider>(async agentDataProvider =>
+            await _fixture.Run<IMachineRegistrationDataProvider>(async dataProvider =>
             {
-                var machine = await agentDataProvider.GetAgentBySubscriptionIdAsync(
+                var machine = await dataProvider.GetMachineBySubscriptionIdAsync(
                     _fixture.TentacleSubscriptionId, CancellationToken.None).ConfigureAwait(false);
 
                 machine.ShouldNotBeNull();
@@ -92,9 +92,9 @@ public class SquidTentacleE2ETests
         finally
         {
             // Restore original registration so other tests are not affected
-            await _fixture.Run<IAgentService>(async agentService =>
+            await _fixture.Run<IMachineRegistrationService>(async registrationService =>
             {
-                await agentService.RegisterAgentAsync(new RegisterAgentCommand
+                await registrationService.RegisterMachineAsync(new RegisterMachineCommand
                 {
                     MachineName = $"squid-tentacle-e2e-{_fixture.TentacleSubscriptionId[..8]}",
                     Thumbprint = _fixture.TentacleThumbprint,

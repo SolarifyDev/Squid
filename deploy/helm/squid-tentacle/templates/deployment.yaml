@@ -71,6 +71,18 @@ spec:
               key: bearer-token
         - name: Tentacle__Roles
           value: "{{ .Values.tentacle.roles }}"
+        - name: Tentacle__Flavor
+          value: "{{ .Values.tentacle.flavor }}"
+        - name: Tentacle__MachineName
+          value: "{{ .Values.tentacle.machineName }}"
+        - name: Tentacle__EnvironmentIds
+          value: "{{ .Values.tentacle.environmentIds }}"
+        - name: Tentacle__SpaceId
+          value: "{{ .Values.tentacle.spaceId }}"
+        {{- if .Values.tentacle.subscriptionId }}
+        - name: Tentacle__SubscriptionId
+          value: "{{ .Values.tentacle.subscriptionId }}"
+        {{- end }}
         - name: Tentacle__HealthCheckPort
           value: "{{ .Values.tentacle.healthCheckPort }}"
         - name: Tentacle__WorkspacePath

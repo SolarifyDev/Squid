@@ -37,7 +37,7 @@ public sealed class TentacleApp
 
         var certManager = _dependencies.CertificateManagerFactory(tentacleSettings.CertsPath);
         var tentacleCert = certManager.LoadOrCreateCertificate();
-        var subscriptionId = certManager.LoadOrCreateSubscriptionId();
+        var subscriptionId = certManager.LoadOrCreateSubscriptionId(tentacleSettings.SubscriptionId);
 
         Log.Information("Tentacle certificate thumbprint: {Thumbprint}", tentacleCert.Thumbprint);
         Log.Information("Tentacle subscription ID: {SubscriptionId}", subscriptionId);

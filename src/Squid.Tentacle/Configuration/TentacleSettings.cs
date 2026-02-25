@@ -15,4 +15,5 @@ public class TentacleSettings
     public string CertsPath { get; set; } = "/squid/certs";
     public int HealthCheckPort { get; set; } = 8080;
     public int ListeningPort { get; set; } = 10933;
+    public string SubscriptionId { get; set; } = string.Empty;
 }

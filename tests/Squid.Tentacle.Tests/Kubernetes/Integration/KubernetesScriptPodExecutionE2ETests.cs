@@ -43,7 +43,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         if (!settings.Enabled || !prereqs.IsAvailable || !settings.HasRequiredInstallSettings)
             return;
 
-        await using var fakeRegistrationServer = FakeAgentRegistrationServer.Start();
+        await using var fakeRegistrationServer = FakeMachineRegistrationServer.Start();
         var serverUrlForCluster = fakeRegistrationServer.ContainerReachableBaseAddress.ToString();
         var unique = Guid.NewGuid().ToString("N")[..8];
         var releaseName = $"{settings.ReleaseName}-{unique}";
@@ -125,7 +125,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         if (!settings.Enabled || !prereqs.IsAvailable || !settings.HasRequiredInstallSettings)
             return;
 
-        await using var fakeRegistrationServer = FakeAgentRegistrationServer.Start();
+        await using var fakeRegistrationServer = FakeMachineRegistrationServer.Start();
         var serverUrlForCluster = fakeRegistrationServer.ContainerReachableBaseAddress.ToString();
         var unique = Guid.NewGuid().ToString("N")[..8];
         var releaseName = $"{settings.ReleaseName}-{unique}";
@@ -206,7 +206,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         if (!settings.Enabled || !prereqs.IsAvailable || !settings.HasRequiredInstallSettings)
             return;
 
-        await using var fakeRegistrationServer = FakeAgentRegistrationServer.Start();
+        await using var fakeRegistrationServer = FakeMachineRegistrationServer.Start();
         var serverUrlForCluster = fakeRegistrationServer.ContainerReachableBaseAddress.ToString();
         var unique = Guid.NewGuid().ToString("N")[..8];
         var releaseName = $"{settings.ReleaseName}-{unique}";

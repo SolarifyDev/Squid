@@ -92,7 +92,7 @@ public class TentacleRegistrationClient
         foreach (var kv in _extraProperties)
             payload[kv.Key] = kv.Value;
 
-        var response = await client.PostAsJsonAsync("/api/agents/register", payload, JsonOptions, ct).ConfigureAwait(false);
+        var response = await client.PostAsJsonAsync("/api/machines/register", payload, JsonOptions, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

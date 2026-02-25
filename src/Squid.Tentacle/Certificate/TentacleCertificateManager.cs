@@ -38,8 +38,14 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         return cert;
     }
 
-    public string LoadOrCreateSubscriptionId()
+    public string LoadOrCreateSubscriptionId(string overrideSubscriptionId = null)
     {
+        if (!string.IsNullOrWhiteSpace(overrideSubscriptionId))
+        {
+            Log.Information("Using externally-provided subscription ID: {SubscriptionId}", overrideSubscriptionId);
+            return overrideSubscriptionId;
+        }
+
         var idPath = Path.Combine(_certsPath, SubscriptionIdFileName);
 
         if (File.Exists(idPath))

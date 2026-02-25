@@ -41,7 +41,7 @@ public class TransportCompositionTests
 
         var variables = new KubernetesAgentEndpointVariableContributor();
         var wrapper = new KubernetesAgentScriptContextWrapper();
-        var strategy = new HalibutAgentExecutionStrategy(
+        var strategy = new HalibutMachineExecutionStrategy(
             halibutFactory.Object,
             payloadBuilder.Object,
             observer.Object);

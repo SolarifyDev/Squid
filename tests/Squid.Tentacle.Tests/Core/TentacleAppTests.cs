@@ -265,7 +265,8 @@ public class TentacleAppTests : TimedTestBase
 
         public X509Certificate2 LoadOrCreateCertificate() => _certificate;
 
-        public string LoadOrCreateSubscriptionId() => _subscriptionId;
+        public string LoadOrCreateSubscriptionId(string overrideSubscriptionId = null) =>
+            string.IsNullOrWhiteSpace(overrideSubscriptionId) ? _subscriptionId : overrideSubscriptionId;
     }
 
     private sealed class FakeHalibutHost : ITentacleHalibutHost
