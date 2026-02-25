@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class LocalProcessRunner : ILocalProcessRunner
 {

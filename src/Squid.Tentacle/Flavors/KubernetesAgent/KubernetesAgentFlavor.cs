@@ -1,5 +1,7 @@
 using k8s;
+using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
@@ -13,7 +15,10 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
     public TentacleFlavorRuntime CreateRuntime(TentacleFlavorContext context)
     {
         var tentacleSettings = context.TentacleSettings;
-        var kubernetesSettings = context.KubernetesSettings;
+
+        var kubernetesSettings = new KubernetesSettings();
+        context.Configuration.GetSection("Kubernetes").Bind(kubernetesSettings);
+
         var registrar = new KubernetesAgentRegistrar(tentacleSettings, kubernetesSettings);
 
         var backgroundTasks = new List<ITentacleBackgroundTask>();

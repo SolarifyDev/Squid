@@ -13,6 +13,8 @@ public interface IReleaseDataProvider : IScopedDependency
     Task<Persistence.Entities.Deployments.Release> GetReleaseByIdAsync(int releaseId, CancellationToken cancellationToken = default);
 
     Task<(int, List<Persistence.Entities.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default);
+
+    Task<List<int>> GetReleaseIdsByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseDataProvider : IReleaseDataProvider
@@ -52,16 +54,26 @@ public class ReleaseDataProvider : IReleaseDataProvider
     public async Task<(int, List<Persistence.Entities.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<Persistence.Entities.Deployments.Release>();
-        
+
         if (channelId.HasValue)
             query = query.Where(x => x.ChannelId == channelId.Value);
-        
+
         query = query.Where(x => x.ProjectId == projectId);
-        
+
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
-        
+
         query = query.Skip((pageIndex - 1) * pageSize).Take(pageSize);
-        
+
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    public async Task<List<int>> GetReleaseIdsByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default)
+    {
+        var releaseIds = await (
+            from d in _repository.QueryNoTracking<Persistence.Entities.Deployments.Deployment>(x => deploymentIds.Contains(x.Id))
+            select d.ReleaseId
+        ).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return releaseIds;
     }
 }

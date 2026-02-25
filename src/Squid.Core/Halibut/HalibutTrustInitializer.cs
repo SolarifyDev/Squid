@@ -31,7 +31,6 @@ public class HalibutTrustInitializer : IStartable
 
         var machines = repository
             .QueryNoTracking<Machine>(m =>
-                !string.IsNullOrEmpty(m.PollingSubscriptionId) &&
                 !string.IsNullOrEmpty(m.Thumbprint) &&
                 !m.IsDisabled)
             .ToList();

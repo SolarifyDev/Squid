@@ -10,7 +10,7 @@ public class ChannelDto
     
     public int ProjectId { get; set; }
     
-    public int LifecycleId { get; set; }
+    public int? LifecycleId { get; set; }
     
     public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
     

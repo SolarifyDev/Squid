@@ -13,14 +13,14 @@ public sealed class TentacleFlavorResolver
 
     public ITentacleFlavor Resolve(string flavorId)
     {
-        var requested = string.IsNullOrWhiteSpace(flavorId)
-            ? "KubernetesAgent"
-            : flavorId;
+        if (string.IsNullOrWhiteSpace(flavorId))
+            throw new InvalidOperationException(
+                $"Tentacle flavor not configured. Set the Tentacle:Flavor setting. Available: {string.Join(", ", _flavors.Keys.OrderBy(k => k))}");
 
-        if (_flavors.TryGetValue(requested, out var flavor))
+        if (_flavors.TryGetValue(flavorId, out var flavor))
             return flavor;
 
         throw new InvalidOperationException(
-            $"Unknown Tentacle flavor '{requested}'. Available: {string.Join(", ", _flavors.Keys.OrderBy(k => k))}");
+            $"Unknown Tentacle flavor '{flavorId}'. Available: {string.Join(", ", _flavors.Keys.OrderBy(k => k))}");
     }
 }

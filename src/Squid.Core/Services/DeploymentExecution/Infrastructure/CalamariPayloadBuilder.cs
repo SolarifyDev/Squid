@@ -1,6 +1,6 @@
 using Squid.Core.Services.Common;
 
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
 {

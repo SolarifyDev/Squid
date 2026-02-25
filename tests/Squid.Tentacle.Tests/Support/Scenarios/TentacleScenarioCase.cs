@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
 
@@ -29,15 +30,19 @@ public sealed record TentacleScenarioCase(
             Flavor = FlavorId
         };
 
-        var kubernetesSettings = new KubernetesSettings
-        {
-            UseScriptPods = ExecutionBackend == TentacleExecutionBackendKind.KubernetesScriptPod
-        };
+        var useScriptPods = ExecutionBackend == TentacleExecutionBackendKind.KubernetesScriptPod;
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string>
+            {
+                ["Kubernetes:UseScriptPods"] = useScriptPods.ToString()
+            })
+            .Build();
 
         return new TentacleFlavorContext
         {
             TentacleSettings = tentacleSettings,
-            KubernetesSettings = kubernetesSettings
+            Configuration = configuration
         };
     }
 

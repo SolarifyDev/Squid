@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Tests.Support;
 
 namespace Squid.Tentacle.Tests.Support.Scenarios;
@@ -17,7 +19,10 @@ public class TentacleScenarioCaseTests
         var context = scenario.CreateContext();
 
         context.TentacleSettings.Flavor.ShouldBe("KubernetesAgent");
-        context.KubernetesSettings.UseScriptPods.ShouldBeFalse();
+
+        var k8sSettings = new KubernetesSettings();
+        context.Configuration.GetSection("Kubernetes").Bind(k8sSettings);
+        k8sSettings.UseScriptPods.ShouldBeFalse();
     }
 
     [Fact]
@@ -31,6 +36,8 @@ public class TentacleScenarioCaseTests
 
         var context = scenario.CreateContext();
 
-        context.KubernetesSettings.UseScriptPods.ShouldBeTrue();
+        var k8sSettings = new KubernetesSettings();
+        context.Configuration.GetSection("Kubernetes").Bind(k8sSettings);
+        k8sSettings.UseScriptPods.ShouldBeTrue();
     }
 }

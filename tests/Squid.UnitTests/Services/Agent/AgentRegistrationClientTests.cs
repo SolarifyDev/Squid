@@ -15,7 +15,7 @@ public class TentacleRegistrationClientTests
             BearerToken = "test-token"
         };
 
-        var client = new TentacleRegistrationClient(tentacleSettings, new KubernetesSettings());
+        var client = new TentacleRegistrationClient(tentacleSettings);
 
         client.ShouldNotBeNull();
     }
@@ -29,7 +29,7 @@ public class TentacleRegistrationClientTests
             BearerToken = "test-token"
         };
 
-        var client = new TentacleRegistrationClient(tentacleSettings, new KubernetesSettings());
+        var client = new TentacleRegistrationClient(tentacleSettings);
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         await Should.ThrowAsync<Exception>(
@@ -66,11 +66,13 @@ public class TentacleRegistrationClientTests
     {
         var settings = new TentacleSettings();
 
+        settings.Flavor.ShouldBe(string.Empty);
         settings.ServerUrl.ShouldBe("https://localhost:7078");
         settings.ServerPollingPort.ShouldBe(10943);
         settings.BearerToken.ShouldBe(string.Empty);
-        settings.Roles.ShouldBe("k8s");
+        settings.Roles.ShouldBe(string.Empty);
         settings.HealthCheckPort.ShouldBe(8080);
+        settings.ListeningPort.ShouldBe(10933);
     }
 
     [Fact]

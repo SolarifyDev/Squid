@@ -47,7 +47,8 @@ public class TentacleAppTests : TimedTestBase
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
-        var runTask = app.RunAsync(new TentacleSettings(), new KubernetesSettings(), cts.Token);
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent" };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
 
         await backgroundTask.Started.Task.WaitAsync(TestCancellationToken);
         cts.Cancel();
@@ -68,6 +69,79 @@ public class TentacleAppTests : TimedTestBase
 
         hook.Calls.ShouldBe(1);
         backgroundTask.Calls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_ListeningMode_Calls_StartListening_With_Correct_Port()
+    {
+        using var cert = CreateCertificate();
+        var certManager = new FakeCertificateManager(cert, "sub-listen");
+        var registrar = new FakeRegistrar();
+        var backend = new FakeScriptBackend();
+        var hook = new FakeStartupHook("hook-listen");
+        var flavor = new FakeFlavor("ListeningAgent", registrar, backend, [hook], [],
+            communicationMode: TentacleCommunicationMode.Listening,
+            listeningPort: 12345);
+
+        var halibutHost = new FakeHalibutHost();
+        var healthServer = new FakeHealthServer();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => certManager,
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, _, _) => halibutHost,
+            HealthCheckServerFactory = (_, _) => healthServer
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var settings = new TentacleSettings { Flavor = "ListeningAgent" };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+        cts.Cancel();
+        await runTask;
+
+        halibutHost.StartCalls.ShouldBe(1);
+        halibutHost.ListeningPort.ShouldBe(12345);
+        halibutHost.ServerThumbprint.ShouldBe(string.Empty);
+        halibutHost.Disposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RunAsync_ListeningMode_Falls_Back_To_Settings_Port_When_Runtime_Port_Is_Null()
+    {
+        using var cert = CreateCertificate();
+        var certManager = new FakeCertificateManager(cert, "sub-listen-default");
+        var registrar = new FakeRegistrar();
+        var backend = new FakeScriptBackend();
+        var hook = new FakeStartupHook("hook-listen-default");
+        var flavor = new FakeFlavor("ListeningAgent", registrar, backend, [hook], [],
+            communicationMode: TentacleCommunicationMode.Listening);
+
+        var halibutHost = new FakeHalibutHost();
+        var healthServer = new FakeHealthServer();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => certManager,
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, _, _) => halibutHost,
+            HealthCheckServerFactory = (_, _) => healthServer
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var settings = new TentacleSettings { Flavor = "ListeningAgent", ListeningPort = 19999 };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+        cts.Cancel();
+        await runTask;
+
+        halibutHost.StartCalls.ShouldBe(1);
+        halibutHost.ListeningPort.ShouldBe(19999);
     }
 
     [Fact]
@@ -92,7 +166,8 @@ public class TentacleAppTests : TimedTestBase
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
-        var runTask = app.RunAsync(new TentacleSettings(), new KubernetesSettings(), cts.Token);
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent" };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
 
         await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
         cts.Cancel();
@@ -104,26 +179,24 @@ public class TentacleAppTests : TimedTestBase
     }
 
     [Fact]
-    public void LoadSettings_Binds_Tentacle_And_Kubernetes_Sections()
+    public void LoadSettings_Binds_Tentacle_Section()
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string>
             {
                 ["Tentacle:Flavor"] = "Linux",
-                ["Tentacle:HealthCheckPort"] = "18080",
-                ["Kubernetes:Namespace"] = "qa",
-                ["Kubernetes:UseScriptPods"] = "true"
+                ["Tentacle:HealthCheckPort"] = "18080"
             })
             .Build();
 
         var tentacle = TentacleApp.LoadTentacleSettings(config);
-        var kubernetes = TentacleApp.LoadKubernetesSettings(config);
 
         tentacle.Flavor.ShouldBe("Linux");
         tentacle.HealthCheckPort.ShouldBe(18080);
-        kubernetes.Namespace.ShouldBe("qa");
-        kubernetes.UseScriptPods.ShouldBeTrue();
     }
+
+    private static IConfiguration CreateEmptyConfiguration()
+        => new ConfigurationBuilder().Build();
 
     private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken ct)
     {
@@ -158,7 +231,9 @@ public class TentacleAppTests : TimedTestBase
             ITentacleRegistrar registrar,
             ITentacleScriptBackend backend,
             IReadOnlyList<ITentacleStartupHook> hooks,
-            IReadOnlyList<ITentacleBackgroundTask> backgroundTasks)
+            IReadOnlyList<ITentacleBackgroundTask> backgroundTasks,
+            TentacleCommunicationMode communicationMode = TentacleCommunicationMode.Polling,
+            int? listeningPort = null)
         {
             Id = id;
             _runtime = new TentacleFlavorRuntime
@@ -166,7 +241,9 @@ public class TentacleAppTests : TimedTestBase
                 Registrar = registrar,
                 ScriptBackend = backend,
                 StartupHooks = hooks,
-                BackgroundTasks = backgroundTasks
+                BackgroundTasks = backgroundTasks,
+                CommunicationMode = communicationMode,
+                ListeningPort = listeningPort
             };
         }
 
@@ -197,6 +274,7 @@ public class TentacleAppTests : TimedTestBase
         public string ServerThumbprint { get; private set; } = string.Empty;
         public string SubscriptionId { get; private set; } = string.Empty;
         public string SubscriptionUri { get; private set; } = string.Empty;
+        public int ListeningPort { get; private set; }
         public bool Disposed { get; private set; }
 
         public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
@@ -205,6 +283,12 @@ public class TentacleAppTests : TimedTestBase
             ServerThumbprint = serverThumbprint;
             SubscriptionId = subscriptionId;
             SubscriptionUri = subscriptionUri ?? string.Empty;
+        }
+
+        public void StartListening(int port)
+        {
+            StartCalls++;
+            ListeningPort = port;
         }
 
         public ValueTask DisposeAsync()

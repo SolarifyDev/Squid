@@ -2,6 +2,7 @@ using Autofac;
 using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.E2ETests.Infrastructure;
 
 namespace Squid.E2ETests.Deployments;
@@ -49,6 +50,9 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
         public IEndpointVariableContributor Variables => _inner.Variables;
         public IScriptContextWrapper ScriptWrapper => _inner.ScriptWrapper;
         public IExecutionStrategy Strategy { get; }
+        public ExecutionLocation ExecutionLocation => _inner.ExecutionLocation;
+        public ExecutionBackend ExecutionBackend => _inner.ExecutionBackend;
+        public bool RequiresContextPreparationForPackagedPayload => _inner.RequiresContextPreparationForPackagedPayload;
 
         public StrategyCapturingTransport(IDeploymentTransport inner, IExecutionStrategy strategy)
         {

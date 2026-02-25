@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Configuration;
 
 namespace Squid.Tentacle.Abstractions;
@@ -28,7 +29,13 @@ public sealed class TentacleFlavorContext
 {
     public required TentacleSettings TentacleSettings { get; init; }
 
-    public required KubernetesSettings KubernetesSettings { get; init; }
+    public required IConfiguration Configuration { get; init; }
+}
+
+public enum TentacleCommunicationMode
+{
+    Polling,
+    Listening
 }
 
 public sealed class TentacleFlavorRuntime
@@ -36,6 +43,10 @@ public sealed class TentacleFlavorRuntime
     public required ITentacleRegistrar Registrar { get; init; }
 
     public required ITentacleScriptBackend ScriptBackend { get; init; }
+
+    public TentacleCommunicationMode CommunicationMode { get; init; } = TentacleCommunicationMode.Polling;
+
+    public int? ListeningPort { get; init; }
 
     public IReadOnlyList<ITentacleBackgroundTask> BackgroundTasks { get; init; } =
         Array.Empty<ITentacleBackgroundTask>();

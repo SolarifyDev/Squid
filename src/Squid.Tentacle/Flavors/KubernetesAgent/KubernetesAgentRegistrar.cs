@@ -10,7 +10,12 @@ public sealed class KubernetesAgentRegistrar : ITentacleRegistrar
 
     public KubernetesAgentRegistrar(TentacleSettings tentacleSettings, KubernetesSettings kubernetesSettings)
     {
-        _client = new TentacleRegistrationClient(tentacleSettings, kubernetesSettings);
+        var extraProperties = new Dictionary<string, string>
+        {
+            ["namespace"] = kubernetesSettings.Namespace
+        };
+
+        _client = new TentacleRegistrationClient(tentacleSettings, extraProperties);
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)

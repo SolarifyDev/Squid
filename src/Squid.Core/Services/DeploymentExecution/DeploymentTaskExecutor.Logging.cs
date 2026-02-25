@@ -33,7 +33,23 @@ public partial class DeploymentTaskExecutor
                     cancellationToken).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
 
+        await TriggerAutoDeploymentsAsync(ct).ConfigureAwait(false);
+
         Log.Information("Task {TaskId} completed successfully", _ctx.Task.Id);
+    }
+
+    private async Task TriggerAutoDeploymentsAsync(CancellationToken ct)
+    {
+        try
+        {
+            if (_ctx.Deployment == null) return;
+
+            await _autoDeployService.TriggerAutoDeploymentsAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Auto-deploy trigger failed for deployment {DeploymentId}, continuing", _ctx.Deployment?.Id);
+        }
     }
 
     private async Task RecordFailureAsync(int serverTaskId, Exception ex, CancellationToken ct)

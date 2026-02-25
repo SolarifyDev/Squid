@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
@@ -17,13 +18,13 @@ public class KubernetesAgentExecutionStrategyTests
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly CalamariPayloadBuilder _payloadBuilder;
     private readonly HalibutScriptObserver _observer;
-    private readonly KubernetesAgentExecutionStrategy _strategy;
+    private readonly HalibutAgentExecutionStrategy _strategy;
 
     public KubernetesAgentExecutionStrategyTests()
     {
         _payloadBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object);
         _observer = new HalibutScriptObserver();
-        _strategy = new KubernetesAgentExecutionStrategy(
+        _strategy = new HalibutAgentExecutionStrategy(
             _halibutClientFactory.Object,
             _payloadBuilder,
             _observer);
@@ -164,7 +165,7 @@ public class KubernetesAgentExecutionStrategyTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
-        var strategy = new KubernetesAgentExecutionStrategy(
+        var strategy = new HalibutAgentExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
             observer.Object);
@@ -204,7 +205,7 @@ public class KubernetesAgentExecutionStrategyTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
-        var strategy = new KubernetesAgentExecutionStrategy(
+        var strategy = new HalibutAgentExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
             observer.Object);

@@ -2,18 +2,18 @@ using System.Text;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
-public class KubernetesApiExecutionStrategy : IExecutionStrategy
+public class LocalProcessExecutionStrategy : IExecutionStrategy
 {
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly ILocalProcessRunner _processRunner;
-    private readonly KubernetesApiScriptContextWrapper? _scriptContextWrapper;
+    private readonly IScriptContextWrapper? _scriptContextWrapper;
 
-    public KubernetesApiExecutionStrategy(
+    public LocalProcessExecutionStrategy(
         ICalamariPayloadBuilder payloadBuilder,
         ILocalProcessRunner processRunner,
-        KubernetesApiScriptContextWrapper? scriptContextWrapper = null)
+        IScriptContextWrapper? scriptContextWrapper = null)
     {
         _payloadBuilder = payloadBuilder;
         _processRunner = processRunner;

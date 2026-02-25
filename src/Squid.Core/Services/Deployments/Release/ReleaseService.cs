@@ -149,17 +149,19 @@ public class ReleaseService : IReleaseService
     {
         try
         {
-            // 查询最新的成功部署完成记录，获取当前已部署的Release版本
-            var completions = await _deploymentCompletionDataProvider.GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
+            var completions = await _deploymentCompletionDataProvider
+                .GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
 
-            var releaseIds = completions
-                    // TODO: 从project开始查LifeCycle=>Phase=>Environments=>Deployment=>Release
-                .Distinct()
-                .ToList();
+            if (completions.Count == 0) return new List<int>();
+
+            var deploymentIds = completions.Select(c => c.DeploymentId).Distinct().ToList();
+
+            var releaseIds = await _releaseDataProvider
+                .GetReleaseIdsByDeploymentIdsAsync(deploymentIds, cancellationToken).ConfigureAwait(false);
 
             Log.Information("Found {Count} currently deployed releases for project {ProjectId}", releaseIds.Count, projectId);
 
-            return [];
+            return releaseIds;
         }
         catch (Exception ex)
         {

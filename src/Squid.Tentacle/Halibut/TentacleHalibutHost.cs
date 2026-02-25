@@ -51,6 +51,13 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             subscriptionId, pollUri, pollingEndpointUri);
     }
 
+    public void StartListening(int port)
+    {
+        _runtime.Listen(port);
+
+        Log.Information("Halibut listening on port {Port}", port);
+    }
+
     public static Uri ResolvePollUri(string subscriptionId, string subscriptionUri)
     {
         return string.IsNullOrWhiteSpace(subscriptionUri)

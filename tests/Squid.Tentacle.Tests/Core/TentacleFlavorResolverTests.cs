@@ -9,14 +9,20 @@ namespace Squid.Tentacle.Tests.Core;
 public class TentacleFlavorResolverTests
 {
     [Fact]
-    public void Resolve_EmptyFlavorId_FallsBack_To_KubernetesAgent()
+    public void Resolve_EmptyFlavorId_Throws_With_Configuration_Guidance()
     {
-        var kubernetes = new TestFlavor("KubernetesAgent");
-        var resolver = new TentacleFlavorResolver(new[] { kubernetes, new TestFlavor("Linux") });
+        var resolver = new TentacleFlavorResolver(new[]
+        {
+            new TestFlavor("KubernetesAgent"),
+            new TestFlavor("Linux")
+        });
 
-        var resolved = resolver.Resolve("");
+        var ex = Should.Throw<InvalidOperationException>(() => resolver.Resolve(""));
 
-        resolved.ShouldBeSameAs(kubernetes);
+        ex.Message.ShouldContain("Tentacle flavor not configured");
+        ex.Message.ShouldContain("Tentacle:Flavor");
+        ex.Message.ShouldContain("KubernetesAgent");
+        ex.Message.ShouldContain("Linux");
     }
 
     [Fact]

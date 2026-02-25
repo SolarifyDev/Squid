@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments;
@@ -161,6 +162,9 @@ public class TransportRegistryTests
         public IEndpointVariableContributor Variables { get; }
         public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy => null;
+        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
+        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
+        public bool RequiresContextPreparationForPackagedPayload => false;
 
         public StubTransport(CommunicationStyle style, IEndpointVariableContributor variables = null)
         {

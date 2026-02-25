@@ -1,8 +1,10 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -17,7 +19,7 @@ public class TransportCompositionTests
 
         var variables = new KubernetesApiEndpointVariableContributor(Mock.Of<IExternalFeedDataProvider>());
         var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
-        var strategy = new KubernetesApiExecutionStrategy(payloadBuilder.Object, processRunner.Object);
+        var strategy = new LocalProcessExecutionStrategy(payloadBuilder.Object, processRunner.Object);
 
         var transport = new KubernetesApiTransport(variables, wrapper, strategy);
 
@@ -25,6 +27,9 @@ public class TransportCompositionTests
         transport.Variables.ShouldBeSameAs(variables);
         transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
+        transport.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
+        transport.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
+        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]
@@ -36,7 +41,7 @@ public class TransportCompositionTests
 
         var variables = new KubernetesAgentEndpointVariableContributor();
         var wrapper = new KubernetesAgentScriptContextWrapper();
-        var strategy = new KubernetesAgentExecutionStrategy(
+        var strategy = new HalibutAgentExecutionStrategy(
             halibutFactory.Object,
             payloadBuilder.Object,
             observer.Object);
@@ -47,6 +52,9 @@ public class TransportCompositionTests
         transport.Variables.ShouldBeSameAs(variables);
         transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
+        transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
+        transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
+        transport.RequiresContextPreparationForPackagedPayload.ShouldBeFalse();
     }
 
     [Fact]

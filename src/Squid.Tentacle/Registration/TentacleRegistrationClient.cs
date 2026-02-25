@@ -9,7 +9,7 @@ namespace Squid.Tentacle.Registration;
 public class TentacleRegistrationClient
 {
     private readonly TentacleSettings _settings;
-    private readonly KubernetesSettings _kubernetesSettings;
+    private readonly Dictionary<string, string> _extraProperties;
     private readonly TentacleRegistrationClientOptions _options;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -19,18 +19,18 @@ public class TentacleRegistrationClient
 
     public TentacleRegistrationClient(
         TentacleSettings settings,
-        KubernetesSettings kubernetesSettings)
-        : this(settings, kubernetesSettings, options: null)
+        Dictionary<string, string> extraProperties = null)
+        : this(settings, extraProperties, options: null)
     {
     }
 
     public TentacleRegistrationClient(
         TentacleSettings settings,
-        KubernetesSettings kubernetesSettings,
+        Dictionary<string, string> extraProperties,
         TentacleRegistrationClientOptions options = null)
     {
         _settings = settings;
-        _kubernetesSettings = kubernetesSettings;
+        _extraProperties = extraProperties ?? new Dictionary<string, string>();
         _options = options ?? TentacleRegistrationClientOptions.Default;
     }
 
@@ -76,19 +76,21 @@ public class TentacleRegistrationClient
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.BearerToken);
 
         var machineName = string.IsNullOrEmpty(_settings.MachineName)
-            ? $"k8s-tentacle-{subscriptionId[..Math.Min(8, subscriptionId.Length)]}"
+            ? $"tentacle-{subscriptionId[..Math.Min(8, subscriptionId.Length)]}"
             : _settings.MachineName;
 
-        var payload = new
+        var payload = new Dictionary<string, object>
         {
-            machineName,
-            thumbprint,
-            subscriptionId,
-            spaceId = _settings.SpaceId,
-            roles = _settings.Roles,
-            environmentIds = _settings.EnvironmentIds,
-            @namespace = _kubernetesSettings.Namespace
+            ["machineName"] = machineName,
+            ["thumbprint"] = thumbprint,
+            ["subscriptionId"] = subscriptionId,
+            ["spaceId"] = _settings.SpaceId,
+            ["roles"] = _settings.Roles,
+            ["environmentIds"] = _settings.EnvironmentIds
         };
+
+        foreach (var kv in _extraProperties)
+            payload[kv.Key] = kv.Value;
 
         var response = await client.PostAsJsonAsync("/api/agents/register", payload, JsonOptions, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();

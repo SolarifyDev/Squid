@@ -5,9 +5,9 @@ using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
-public class KubernetesAgentExecutionStrategy : IExecutionStrategy
+public class HalibutAgentExecutionStrategy : IExecutionStrategy
 {
     private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
 
@@ -15,7 +15,7 @@ public class KubernetesAgentExecutionStrategy : IExecutionStrategy
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
 
-    public KubernetesAgentExecutionStrategy(
+    public HalibutAgentExecutionStrategy(
         IHalibutClientFactory halibutClientFactory,
         ICalamariPayloadBuilder payloadBuilder,
         IHalibutScriptObserver observer)

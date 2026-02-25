@@ -1,6 +1,4 @@
 using Microsoft.Extensions.Configuration;
-using Squid.Tentacle.Certificate;
-using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Core;
 using Serilog;
 
@@ -18,14 +16,13 @@ try
         .Build();
 
     var tentacleSettings = TentacleApp.LoadTentacleSettings(config);
-    var kubernetesSettings = TentacleApp.LoadKubernetesSettings(config);
 
     var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
     AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
 
     var app = new TentacleApp();
-    await app.RunAsync(tentacleSettings, kubernetesSettings, cts.Token).ConfigureAwait(false);
+    await app.RunAsync(tentacleSettings, config, cts.Token).ConfigureAwait(false);
 }
 catch (OperationCanceledException)
 {

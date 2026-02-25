@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -40,6 +41,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IDeploymentVariableResolver _variableResolver;
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly ITransportRegistry _transportRegistry;
+    private readonly IAutoDeployService _autoDeployService;
 
     #endregion
 
@@ -58,7 +60,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IDeploymentSnapshotService snapshotService,
         IDeploymentVariableResolver variableResolver,
         IActionHandlerRegistry actionHandlerRegistry,
-        ITransportRegistry transportRegistry)
+        ITransportRegistry transportRegistry,
+        IAutoDeployService autoDeployService)
     {
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
@@ -75,6 +78,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _variableResolver = variableResolver;
         _actionHandlerRegistry = actionHandlerRegistry;
         _transportRegistry = transportRegistry;
+        _autoDeployService = autoDeployService;
     }
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)

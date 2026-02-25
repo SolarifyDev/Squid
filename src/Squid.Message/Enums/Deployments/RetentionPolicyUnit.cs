@@ -4,6 +4,6 @@ public enum RetentionPolicyUnit
 {
     Days,
     Weeks,
-    Mouths,
+    Months,
     Years
 }

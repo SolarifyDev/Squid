@@ -5,6 +5,7 @@ using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Enums;
@@ -16,11 +17,11 @@ public class KubernetesApiExecutionStrategyTests
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly Mock<ILocalProcessRunner> _processRunner = new();
     private readonly Mock<ICalamariPayloadBuilder> _payloadBuilder = new();
-    private readonly KubernetesApiExecutionStrategy _strategy;
+    private readonly LocalProcessExecutionStrategy _strategy;
 
     public KubernetesApiExecutionStrategyTests()
     {
-        _strategy = new KubernetesApiExecutionStrategy(_payloadBuilder.Object, _processRunner.Object);
+        _strategy = new LocalProcessExecutionStrategy(_payloadBuilder.Object, _processRunner.Object);
 
         _payloadBuilder
             .Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
@@ -163,7 +164,7 @@ public class KubernetesApiExecutionStrategyTests
                 ScriptSyntax ___,
                 string ____) => $"WRAPPED::{userScript}");
 
-        var strategy = new KubernetesApiExecutionStrategy(
+        var strategy = new LocalProcessExecutionStrategy(
             _payloadBuilder.Object,
             _processRunner.Object,
             new KubernetesApiScriptContextWrapper(contextBuilder.Object));

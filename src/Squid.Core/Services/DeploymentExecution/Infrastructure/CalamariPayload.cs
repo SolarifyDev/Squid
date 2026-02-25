@@ -1,4 +1,4 @@
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class CalamariPayload
 {

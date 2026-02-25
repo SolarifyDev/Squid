@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;

@@ -74,7 +74,7 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
         var result = await client.RegisterAsync("sub", "thumb", TestCancellationToken);
 
         result.MachineId.ShouldBe(10);
-        server.LastRequestBody.ShouldContain("\"machineName\":\"k8s-tentacle-sub\"");
+        server.LastRequestBody.ShouldContain("\"machineName\":\"tentacle-sub\"");
     }
 
     private static TentacleRegistrationClient CreateClient(
@@ -87,7 +87,7 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
                 ServerUrl = server.BaseAddress.ToString().TrimEnd('/'),
                 BearerToken = "token"
             },
-            new KubernetesSettings(),
+            new Dictionary<string, string>(),
             options);
     }
 

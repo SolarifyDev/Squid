@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Machine;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -21,6 +22,8 @@ public class DeploymentService : IDeploymentService
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
+    private readonly ILifecycleResolver _lifecycleResolver;
+    private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
 
     public DeploymentService(
         IMapper mapper,
@@ -29,7 +32,9 @@ public class DeploymentService : IDeploymentService
         IEnvironmentDataProvider environmentDataProvider,
         IMachineDataProvider machineDataProvider,
         IServerTaskDataProvider serverTaskDataProvider,
-        ISquidBackgroundJobClient backgroundJobClient)
+        ISquidBackgroundJobClient backgroundJobClient,
+        ILifecycleResolver lifecycleResolver,
+        ILifecycleProgressionEvaluator progressionEvaluator)
     {
         _mapper = mapper;
         _deploymentDataProvider = deploymentDataProvider;
@@ -38,28 +43,25 @@ public class DeploymentService : IDeploymentService
         _machineDataProvider = machineDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
         _backgroundJobClient = backgroundJobClient;
+        _lifecycleResolver = lifecycleResolver;
+        _progressionEvaluator = progressionEvaluator;
     }
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
     {
-        Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}", 
+        Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}",
             command.ReleaseId, command.EnvironmentId);
 
-        // 1. 环境验证
         var isValid = await ValidateDeploymentEnvironmentAsync(command.ReleaseId, command.EnvironmentId, cancellationToken).ConfigureAwait(false);
         if (!isValid)
         {
             throw new DeploymentValidationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}");
         }
 
-        // 2. 获取Release信息
         var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
         if (release == null)
-        {
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
-        }
 
-        // 3. 创建ServerTask
         var serverTask = new Persistence.Entities.Deployments.ServerTask
         {
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
@@ -79,7 +81,6 @@ public class DeploymentService : IDeploymentService
 
         await _serverTaskDataProvider.AddServerTaskAsync(serverTask, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        // 4. 创建Deployment
         var deployment = new Persistence.Entities.Deployments.Deployment
         {
             Name = command.Name ?? $"Deploy {release.Version}",
@@ -106,7 +107,6 @@ public class DeploymentService : IDeploymentService
 
         await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        // Enqueue deployment execution via Hangfire
         var jobId = _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(
             executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None),
             queue: "deployment");
@@ -128,10 +128,9 @@ public class DeploymentService : IDeploymentService
 
     public async Task<bool> ValidateDeploymentEnvironmentAsync(int releaseId, int environmentId, CancellationToken cancellationToken = default)
     {
-        Log.Information("Validating deployment environment for release {ReleaseId} and environment {EnvironmentId}", 
+        Log.Information("Validating deployment environment for release {ReleaseId} and environment {EnvironmentId}",
             releaseId, environmentId);
 
-        // 1. 验证Release存在
         var release = await _releaseDataProvider.GetReleaseByIdAsync(releaseId, cancellationToken).ConfigureAwait(false);
         if (release == null)
         {
@@ -139,7 +138,6 @@ public class DeploymentService : IDeploymentService
             return false;
         }
 
-        // 2. 验证Environment存在
         var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(environmentId, cancellationToken).ConfigureAwait(false);
         if (environment == null)
         {
@@ -147,13 +145,23 @@ public class DeploymentService : IDeploymentService
             return false;
         }
 
-        // 3. 验证环境中有可用的机器
         var environmentIds = new HashSet<int> { environmentId };
         var machines = await _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), cancellationToken).ConfigureAwait(false);
-        
+
         if (!machines.Any())
         {
             Log.Warning("No available machines found in environment {EnvironmentId}", environmentId);
+            return false;
+        }
+
+        // Lifecycle progression validation
+        var lifecycle = await _lifecycleResolver.ResolveLifecycleAsync(release.ProjectId, release.ChannelId, cancellationToken).ConfigureAwait(false);
+        var progression = await _progressionEvaluator.EvaluateProgressionAsync(lifecycle.Id, release.ProjectId, cancellationToken).ConfigureAwait(false);
+
+        if (!progression.AllowedEnvironmentIds.Contains(environmentId))
+        {
+            Log.Warning("Environment {EnvironmentId} is not allowed by lifecycle {LifecycleId} progression",
+                environmentId, lifecycle.Id);
             return false;
         }
 

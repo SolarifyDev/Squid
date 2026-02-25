@@ -12,6 +12,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
@@ -182,7 +183,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IDeploymentSnapshotService>(),
             Mock.Of<IDeploymentVariableResolver>(),
             registry,
-            Mock.Of<ITransportRegistry>());
+            Mock.Of<ITransportRegistry>(),
+            Mock.Of<IAutoDeployService>());
     }
 
     private static DeploymentTaskContext CreateBaseContext()
@@ -280,6 +282,9 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         public IEndpointVariableContributor Variables => null;
         public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
+        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
+        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
+        public bool RequiresContextPreparationForPackagedPayload => false;
     }
 
     private sealed class EndpointStampingWrapper : IScriptContextWrapper

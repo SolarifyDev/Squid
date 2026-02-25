@@ -2,9 +2,9 @@ using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Persistence.EntityConfigurations;
 
-public class PhaseConfiguration : IEntityTypeConfiguration<Phase>
+public class LifecyclePhaseConfiguration : IEntityTypeConfiguration<LifecyclePhase>
 {
-    public void Configure(EntityTypeBuilder<Phase> builder)
+    public void Configure(EntityTypeBuilder<LifecyclePhase> builder)
     {
         builder.ToTable("phase");
 

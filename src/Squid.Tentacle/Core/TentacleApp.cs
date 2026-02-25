@@ -25,15 +25,15 @@ public sealed class TentacleApp
 
     public async Task RunAsync(
         TentacleSettings tentacleSettings,
-        KubernetesSettings kubernetesSettings,
+        IConfiguration configuration,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(tentacleSettings);
-        ArgumentNullException.ThrowIfNull(kubernetesSettings);
+        ArgumentNullException.ThrowIfNull(configuration);
 
         Log.Information(
-            "Squid Tentacle starting. Flavor={Flavor}, ServerUrl={ServerUrl}, Namespace={Namespace}, UseScriptPods={UseScriptPods}",
-            tentacleSettings.Flavor, tentacleSettings.ServerUrl, kubernetesSettings.Namespace, kubernetesSettings.UseScriptPods);
+            "Squid Tentacle starting. Flavor={Flavor}, ServerUrl={ServerUrl}",
+            tentacleSettings.Flavor, tentacleSettings.ServerUrl);
 
         var certManager = _dependencies.CertificateManagerFactory(tentacleSettings.CertsPath);
         var tentacleCert = certManager.LoadOrCreateCertificate();
@@ -47,7 +47,7 @@ public sealed class TentacleApp
         var runtime = flavor.CreateRuntime(new TentacleFlavorContext
         {
             TentacleSettings = tentacleSettings,
-            KubernetesSettings = kubernetesSettings
+            Configuration = configuration
         });
 
         Log.Information("Tentacle flavor selected: {Flavor}", flavor.Id);
@@ -61,7 +61,11 @@ public sealed class TentacleApp
         var scriptService = new BackendScriptServiceAdapter(runtime.ScriptBackend);
 
         await using var halibutHost = _dependencies.HalibutHostFactory(tentacleCert, scriptService, tentacleSettings);
-        halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId, registration.SubscriptionUri);
+
+        if (runtime.CommunicationMode == TentacleCommunicationMode.Polling)
+            halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId, registration.SubscriptionUri);
+        else
+            halibutHost.StartListening(runtime.ListeningPort ?? tentacleSettings.ListeningPort);
 
         var isReady = true;
         await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, () => isReady);
@@ -91,13 +95,6 @@ public sealed class TentacleApp
         var tentacleSettings = new TentacleSettings();
         configuration.GetSection("Tentacle").Bind(tentacleSettings);
         return tentacleSettings;
-    }
-
-    public static KubernetesSettings LoadKubernetesSettings(IConfiguration configuration)
-    {
-        var kubernetesSettings = new KubernetesSettings();
-        configuration.GetSection("Kubernetes").Bind(kubernetesSettings);
-        return kubernetesSettings;
     }
 
     private static async Task WaitForShutdownAsync(CancellationToken ct)

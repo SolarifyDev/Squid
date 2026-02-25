@@ -216,16 +216,8 @@ public partial class DeploymentTaskExecutor
             CalamariCommand = actionResult.CalamariCommand,
             ExecutionMode = resolvedMode,
             ContextPreparationPolicy = resolvedContextPreparationPolicy,
-            ExecutionLocation = tc.CommunicationStyle == CommunicationStyle.KubernetesApi
-                ? ExecutionLocation.ApiWorkerLocal
-                : tc.CommunicationStyle == CommunicationStyle.KubernetesAgent
-                    ? ExecutionLocation.RemoteTentacle
-                    : ExecutionLocation.Unspecified,
-            ExecutionBackend = tc.CommunicationStyle == CommunicationStyle.KubernetesApi
-                ? ExecutionBackend.LocalProcess
-                : tc.CommunicationStyle == CommunicationStyle.KubernetesAgent
-                    ? ExecutionBackend.HalibutScriptService
-                    : ExecutionBackend.Unspecified,
+            ExecutionLocation = tc.Transport?.ExecutionLocation ?? ExecutionLocation.Unspecified,
+            ExecutionBackend = tc.Transport?.ExecutionBackend ?? ExecutionBackend.Unspecified,
             PayloadKind = actionResult.PayloadKind,
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
@@ -245,8 +237,7 @@ public partial class DeploymentTaskExecutor
 
         var mode = actionResult.ResolveExecutionMode();
 
-        // Kubernetes API packaged payloads need context preparation to configure kubectl against the target cluster.
-        if (mode == ExecutionMode.PackagedPayload && tc.CommunicationStyle == CommunicationStyle.KubernetesApi)
+        if (mode == ExecutionMode.PackagedPayload && (tc.Transport?.RequiresContextPreparationForPackagedPayload ?? false))
             return ContextPreparationPolicy.Apply;
 
         return actionResult.ResolveContextPreparationPolicy();
