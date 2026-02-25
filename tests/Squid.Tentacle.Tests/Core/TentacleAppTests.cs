@@ -179,6 +179,48 @@ public class TentacleAppTests : TimedTestBase
     }
 
     [Fact]
+    public async Task RunAsync_ExternalSubscriptionId_OverridesTakesPrecedence()
+    {
+        using var cert = CreateCertificate();
+        var certManager = new FakeCertificateManager(cert, "file-sub-id");
+        var registrar = new FakeRegistrar
+        {
+            Result = new TentacleRegistration
+            {
+                MachineId = 99,
+                ServerThumbprint = "server-thumb",
+                SubscriptionUri = "poll://external-sub-id/"
+            }
+        };
+        var backend = new FakeScriptBackend();
+        var hook = new FakeStartupHook("hook-override");
+        var flavor = new FakeFlavor("KubernetesAgent", registrar, backend, [hook], []);
+
+        var halibutHost = new FakeHalibutHost();
+        var healthServer = new FakeHealthServer();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => certManager,
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, _, _) => halibutHost,
+            HealthCheckServerFactory = (_, _) => healthServer
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", SubscriptionId = "external-sub-id" };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+        cts.Cancel();
+        await runTask;
+
+        registrar.LastIdentity.SubscriptionId.ShouldBe("external-sub-id");
+        halibutHost.SubscriptionId.ShouldBe("external-sub-id");
+    }
+
+    [Fact]
     public void LoadSettings_Binds_Tentacle_Section()
     {
         var config = new ConfigurationBuilder()

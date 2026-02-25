@@ -73,6 +73,7 @@ public class TentacleRegistrationClientTests
         settings.Roles.ShouldBe(string.Empty);
         settings.HealthCheckPort.ShouldBe(8080);
         settings.ListeningPort.ShouldBe(10933);
+        settings.SubscriptionId.ShouldBe(string.Empty);
     }
 
     [Fact]

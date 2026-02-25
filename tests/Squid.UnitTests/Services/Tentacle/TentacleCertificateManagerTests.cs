@@ -84,6 +84,45 @@ public class TentacleCertificateManagerTests : IDisposable
         Directory.Exists(deepPath).ShouldBeTrue();
     }
 
+    [Fact]
+    public void LoadOrCreateSubscriptionId_ReturnsOverride_WhenProvided()
+    {
+        var manager = new TentacleCertificateManager(_tempCertsPath);
+
+        var id = manager.LoadOrCreateSubscriptionId("external-override-id");
+
+        id.ShouldBe("external-override-id");
+    }
+
+    [Fact]
+    public void LoadOrCreateSubscriptionId_IgnoresOverride_WhenNullOrWhitespace()
+    {
+        var manager = new TentacleCertificateManager(_tempCertsPath);
+
+        var id1 = manager.LoadOrCreateSubscriptionId(null);
+        var id2 = manager.LoadOrCreateSubscriptionId("");
+        var id3 = manager.LoadOrCreateSubscriptionId("   ");
+
+        id1.ShouldNotBeNullOrEmpty();
+        id2.ShouldBe(id1);
+        id3.ShouldBe(id1);
+    }
+
+    [Fact]
+    public void LoadOrCreateSubscriptionId_OverrideDoesNotPersistToFile()
+    {
+        var manager = new TentacleCertificateManager(_tempCertsPath);
+
+        var overrideId = manager.LoadOrCreateSubscriptionId("ext-override");
+        overrideId.ShouldBe("ext-override");
+
+        // Calling without override should generate a new ID (not return the override)
+        var fileId = manager.LoadOrCreateSubscriptionId();
+
+        fileId.ShouldNotBe("ext-override");
+        fileId.Length.ShouldBe(32);
+    }
+
     public void Dispose()
     {
         try
