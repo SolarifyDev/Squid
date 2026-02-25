@@ -677,4 +677,139 @@ public class IntegrationCertificateCrud : CertificateFixtureBase
             response.Data.Certificates.ShouldContain(c => c.Name == "List Via Mediator");
         }).ConfigureAwait(false);
     }
+
+    // ========== Create — Generate Self-Signed (no CertificateData) ==========
+
+    [Theory]
+    [InlineData(CertificateKeyType.RSA2048)]
+    [InlineData(CertificateKeyType.RSA4096)]
+    [InlineData(CertificateKeyType.NistP256)]
+    [InlineData(CertificateKeyType.NistP384)]
+    [InlineData(CertificateKeyType.NistP521)]
+    public async Task Generate_AllKeyTypes_PersistsSuccessfully(CertificateKeyType keyType)
+    {
+        await Run<ICertificateService>(async service =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = $"KeyType-{keyType}",
+                ValidityDays = 365,
+                KeyType = keyType,
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            var dto = @event.Data;
+            dto.Id.ShouldBeGreaterThan(0);
+            dto.SubjectCommonName.ShouldBe($"KeyType-{keyType}");
+            dto.SelfSigned.ShouldBeTrue();
+            dto.HasPrivateKey.ShouldBeTrue();
+            dto.CertificateDataFormat.ShouldBe(CertificateDataFormat.Pkcs12);
+            dto.Thumbprint.ShouldNotBeNullOrEmpty();
+            dto.PasswordHasValue.ShouldBeTrue();
+            dto.IsExpired.ShouldBeFalse();
+            dto.Version.ShouldBe(3);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Generate_WithSans_PersistsSubjectAlternativeNames()
+    {
+        await Run<ICertificateService>(async service =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = "SAN Gen Test",
+                ValidityDays = 365,
+                KeyType = CertificateKeyType.NistP256,
+                SubjectAlternativeNames = new List<string> { "app.example.com", "*.example.com" },
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            @event.Data.SubjectAlternativeNames.ShouldNotBeEmpty();
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Generate_CustomValidity_RespectsNotAfter()
+    {
+        await Run<ICertificateService>(async service =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = "Short Lived",
+                ValidityDays = 30,
+                KeyType = CertificateKeyType.RSA2048,
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            var expectedNotAfter = DateTimeOffset.UtcNow.AddDays(30);
+
+            @event.Data.NotAfter.ShouldBeGreaterThan(expectedNotAfter.AddHours(-1));
+            @event.Data.NotAfter.ShouldBeLessThan(expectedNotAfter.AddHours(1));
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Generate_WithEnvironmentIds_PersistsScoping()
+    {
+        await Run<ICertificateService>(async service =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = "Scoped Gen Cert",
+                ValidityDays = 365,
+                KeyType = CertificateKeyType.NistP384,
+                EnvironmentIds = new List<int> { 1, 2, 3 },
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            @event.Data.EnvironmentIds.ShouldBe(new List<int> { 1, 2, 3 });
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Generate_ThenReadBack_DataIsPersisted()
+    {
+        await Run<ICertificateService, ICertificateDataProvider>(async (service, provider) =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = "Persist Gen Test",
+                ValidityDays = 365,
+                KeyType = CertificateKeyType.NistP521,
+                Notes = "Generated cert notes",
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            var entity = await provider.GetCertificateByIdAsync(@event.Data.Id, CancellationToken.None).ConfigureAwait(false);
+
+            entity.ShouldNotBeNull();
+            entity.Name.ShouldBe("Persist Gen Test");
+            entity.CertificateData.ShouldNotBeNullOrEmpty();
+            entity.Password.ShouldNotBeNullOrEmpty();
+            entity.HasPrivateKey.ShouldBeTrue();
+            entity.SelfSigned.ShouldBeTrue();
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Mediator_GenerateSelfSigned_ReturnsResponse()
+    {
+        await Run<IMediator>(async mediator =>
+        {
+            var response = await mediator.SendAsync<CreateCertificateCommand, CreateCertificateResponse>(
+                new CreateCertificateCommand
+                {
+                    Name = "Mediator Gen Test",
+                    ValidityDays = 365,
+                    KeyType = CertificateKeyType.NistP256,
+                    SpaceId = 1
+                }).ConfigureAwait(false);
+
+            response.Data.Certificate.ShouldNotBeNull();
+            response.Data.Certificate.SubjectCommonName.ShouldBe("Mediator Gen Test");
+            response.Data.Certificate.SelfSigned.ShouldBeTrue();
+            response.Data.Certificate.HasPrivateKey.ShouldBeTrue();
+        }).ConfigureAwait(false);
+    }
 }

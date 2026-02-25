@@ -1,7 +1,7 @@
 using Squid.Message.Response;
 using Squid.Message.Models.Deployments.Machine;
 
-namespace Squid.Message.Requests.Deployments.Machine;
+namespace Squid.Message.Requests.Machines;
 
 public class GetMachinesRequest : IPaginatedRequest
 {
@@ -19,4 +19,4 @@ public class GetMachinesResponseData
     public int Count { get; set; }
 
     public List<MachineDto> Machines { get; set; }
-} 
+}

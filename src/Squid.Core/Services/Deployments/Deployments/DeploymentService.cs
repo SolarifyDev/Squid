@@ -3,7 +3,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
-using Squid.Core.Services.Deployments.Machine;
+using Squid.Core.Services.Machines;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Jobs;

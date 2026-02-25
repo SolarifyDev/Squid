@@ -1,4 +1,4 @@
-using Squid.Core.Services.Deployments.Machine;
+using Squid.Core.Services.Machines;
 
 namespace Squid.Core.Services.DeploymentExecution;
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.Deployments.Machine;
+using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;

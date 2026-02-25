@@ -41,7 +41,7 @@ public class SquidTentacleE2ETests
     [Fact]
     public async Task RealTentacle_Registration_CreatesMachineInDatabase()
     {
-        await _fixture.Run<IMachineRegistrationDataProvider>(async dataProvider =>
+        await _fixture.Run<IMachineDataProvider>(async dataProvider =>
         {
             var machine = await dataProvider.GetMachineBySubscriptionIdAsync(
                 _fixture.TentacleSubscriptionId, CancellationToken.None).ConfigureAwait(false);
@@ -78,7 +78,7 @@ public class SquidTentacleE2ETests
                 result.MachineId.ShouldBe(_fixture.TentacleMachineId);
             }).ConfigureAwait(false);
 
-            await _fixture.Run<IMachineRegistrationDataProvider>(async dataProvider =>
+            await _fixture.Run<IMachineDataProvider>(async dataProvider =>
             {
                 var machine = await dataProvider.GetMachineBySubscriptionIdAsync(
                     _fixture.TentacleSubscriptionId, CancellationToken.None).ConfigureAwait(false);

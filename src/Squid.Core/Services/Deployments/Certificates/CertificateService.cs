@@ -27,14 +27,12 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
 {
     public async Task<CertificateCreatedEvent> CreateCertificateAsync(CreateCertificateCommand command, CancellationToken cancellationToken)
     {
-        var certBytes = Convert.FromBase64String(command.CertificateData);
-        var entity = ParseCertificate(certBytes, command.Password);
+        var entity = string.IsNullOrEmpty(command.CertificateData)
+            ? GenerateSelfSignedEntity(command)
+            : ImportCertificateEntity(command);
 
-        entity.Name = command.Name;
-        entity.Notes = command.Notes;
-        entity.CertificateData = command.CertificateData;
-        entity.Password = command.Password;
         entity.SpaceId = command.SpaceId;
+        entity.Notes = command.Notes;
         entity.EnvironmentIds = command.EnvironmentIds != null ? string.Join(',', command.EnvironmentIds) : null;
         entity.LastModifiedOn = DateTimeOffset.UtcNow;
 
@@ -44,6 +42,58 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         {
             Data = mapper.Map<CertificateDto>(entity)
         };
+    }
+
+    private static Persistence.Entities.Deployments.Certificate ImportCertificateEntity(CreateCertificateCommand command)
+    {
+        var certBytes = Convert.FromBase64String(command.CertificateData);
+        var entity = ParseCertificate(certBytes, command.Password);
+
+        entity.Name = command.Name;
+        entity.CertificateData = command.CertificateData;
+        entity.Password = command.Password;
+
+        return entity;
+    }
+
+    private static Persistence.Entities.Deployments.Certificate GenerateSelfSignedEntity(CreateCertificateCommand command)
+    {
+        using var keyPair = CreateAsymmetricKey(command.KeyType);
+        var hashAlgorithm = GetHashAlgorithm(command.KeyType);
+
+        var subject = $"CN={command.Name}";
+        var request = CreateCertificateRequest(subject, keyPair, hashAlgorithm);
+
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
+
+        if (command.SubjectAlternativeNames is { Count: > 0 })
+        {
+            var sanBuilder = new SubjectAlternativeNameBuilder();
+
+            foreach (var san in command.SubjectAlternativeNames)
+                sanBuilder.AddDnsName(san);
+
+            request.CertificateExtensions.Add(sanBuilder.Build());
+        }
+
+        var notBefore = DateTimeOffset.UtcNow;
+        var notAfter = notBefore.AddDays(command.ValidityDays);
+
+        using var cert = request.CreateSelfSigned(notBefore, notAfter);
+
+        var password = Guid.NewGuid().ToString("N");
+        var pfxBytes = cert.Export(X509ContentType.Pfx, password);
+        var base64Data = Convert.ToBase64String(pfxBytes);
+
+        var entity = ParseCertificate(pfxBytes, password);
+
+        entity.Name = command.Name;
+        entity.CertificateData = base64Data;
+        entity.Password = password;
+
+        return entity;
     }
 
     public async Task<CertificateUpdatedEvent> UpdateCertificateAsync(UpdateCertificateCommand command, CancellationToken cancellationToken)
@@ -201,6 +251,45 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         {
             return new X509Certificate2(data, password);
         }
+    }
+
+    private static AsymmetricAlgorithm CreateAsymmetricKey(CertificateKeyType keyType)
+    {
+        return keyType switch
+        {
+            CertificateKeyType.RSA2048 => RSA.Create(2048),
+            CertificateKeyType.RSA4096 => RSA.Create(4096),
+            CertificateKeyType.NistP256 => ECDsa.Create(ECCurve.NamedCurves.nistP256),
+            CertificateKeyType.NistP384 => ECDsa.Create(ECCurve.NamedCurves.nistP384),
+            CertificateKeyType.NistP521 => ECDsa.Create(ECCurve.NamedCurves.nistP521),
+            _ => throw new ArgumentOutOfRangeException(nameof(keyType), keyType, "Unsupported key type")
+        };
+    }
+
+    private static HashAlgorithmName GetHashAlgorithm(CertificateKeyType keyType)
+    {
+        return keyType switch
+        {
+            CertificateKeyType.RSA2048 => HashAlgorithmName.SHA256,
+            CertificateKeyType.RSA4096 => HashAlgorithmName.SHA256,
+            CertificateKeyType.NistP256 => HashAlgorithmName.SHA256,
+            CertificateKeyType.NistP384 => HashAlgorithmName.SHA384,
+            CertificateKeyType.NistP521 => HashAlgorithmName.SHA512,
+            _ => HashAlgorithmName.SHA256
+        };
+    }
+
+    private static CertificateRequest CreateCertificateRequest(
+        string subject,
+        AsymmetricAlgorithm key,
+        HashAlgorithmName hashAlgorithm)
+    {
+        return key switch
+        {
+            RSA rsa => new CertificateRequest(subject, rsa, hashAlgorithm, RSASignaturePadding.Pkcs1),
+            ECDsa ecdsa => new CertificateRequest(subject, ecdsa, hashAlgorithm),
+            _ => throw new ArgumentException($"Unsupported key type: {key.GetType().Name}", nameof(key))
+        };
     }
 
     private static string ExtractCommonName(string distinguishedName)

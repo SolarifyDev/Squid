@@ -1,7 +1,6 @@
 using Squid.Core.Services.Machines;
-using Squid.Message.Commands.Deployments.Machine;
 using Squid.Message.Commands.Machine;
-using Squid.Message.Requests.Deployments.Machine;
+using Squid.Message.Requests.Machines;
 using Microsoft.AspNetCore.Authorization;
 
 namespace Squid.Api.Controllers;
@@ -12,17 +11,17 @@ namespace Squid.Api.Controllers;
 public class MachineController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineInstallScriptService _installScriptService;
-    private readonly IMachineRegistrationDataProvider _registrationDataProvider;
 
     public MachineController(
         IMediator mediator,
-        IMachineInstallScriptService installScriptService,
-        IMachineRegistrationDataProvider registrationDataProvider)
+        IMachineDataProvider machineDataProvider,
+        IMachineInstallScriptService installScriptService)
     {
         _mediator = mediator;
+        _machineDataProvider = machineDataProvider;
         _installScriptService = installScriptService;
-        _registrationDataProvider = registrationDataProvider;
     }
 
     [HttpPost("register")]
@@ -38,38 +37,11 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost("create")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateMachineResponse))]
-    public async Task<IActionResult> CreateMachineAsync([FromBody] CreateMachineCommand command)
-    {
-        var response = await _mediator.SendAsync<CreateMachineCommand, CreateMachineResponse>(command).ConfigureAwait(false);
-
-        return Ok(response);
-    }
-
-    [HttpPost("update")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateMachineResponse))]
-    public async Task<IActionResult> UpdateMachineAsync([FromBody] UpdateMachineCommand command)
-    {
-        var response = await _mediator.SendAsync<UpdateMachineCommand, UpdateMachineResponse>(command).ConfigureAwait(false);
-
-        return Ok(response);
-    }
-
-    [HttpPost("delete")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
-    public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command)
-    {
-        var response = await _mediator.SendAsync<DeleteMachinesCommand, DeleteMachinesResponse>(command).ConfigureAwait(false);
-
-        return Ok(response);
-    }
-
     [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
-    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request)
+    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)
     {
-        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request).ConfigureAwait(false);
+        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
@@ -90,7 +62,7 @@ public class MachineController : ControllerBase
     {
         if (string.IsNullOrEmpty(subscriptionId)) return BadRequest("subscriptionId is required");
 
-        var exists = await _registrationDataProvider.ExistsBySubscriptionIdAsync(subscriptionId, ct).ConfigureAwait(false);
+        var exists = await _machineDataProvider.ExistsBySubscriptionIdAsync(subscriptionId, ct).ConfigureAwait(false);
 
         return Ok(new { connected = exists });
     }

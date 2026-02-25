@@ -1,7 +1,7 @@
-using Squid.Core.Services.Deployments.Machine;
-using Squid.Message.Requests.Deployments.Machine;
+using Squid.Core.Services.Machines;
+using Squid.Message.Requests.Machines;
 
-namespace Squid.Core.Handlers.RequestHandlers.Deployments.Machine;
+namespace Squid.Core.Handlers.RequestHandlers.Machines;
 
 public class GetMachinesRequestHandler : IRequestHandler<GetMachinesRequest, GetMachinesResponse>
 {
@@ -16,4 +16,4 @@ public class GetMachinesRequestHandler : IRequestHandler<GetMachinesRequest, Get
     {
         return await _machineService.GetMachinesAsync(context.Message, cancellationToken).ConfigureAwait(false);
     }
-} 
+}

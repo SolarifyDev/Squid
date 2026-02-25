@@ -8,7 +8,6 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Message.Commands.Deployments.Certificate;
 using Squid.Message.Enums;
-using Squid.Message.Events.Deployments.Certificate;
 using Squid.Message.Models.Deployments.Certificate;
 using Squid.Message.Requests.Deployments.Certificate;
 
@@ -874,7 +873,175 @@ public class CertificateServiceTests
         @event.Data.CertificateDataFormat.ShouldBe(CertificateDataFormat.Pkcs12);
     }
 
+    // === CreateCertificateAsync — Generate Self-Signed Mode (no CertificateData) ===
+
+    [Theory]
+    [InlineData(CertificateKeyType.RSA2048, "sha256RSA")]
+    [InlineData(CertificateKeyType.RSA4096, "sha256RSA")]
+    public async Task GenerateSelfSigned_Rsa_ProducesCorrectAlgorithm(CertificateKeyType keyType, string expectedAlgorithmFragment)
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(keyType: keyType), CancellationToken.None);
+
+        @event.Data.SignatureAlgorithmName.ShouldContain(expectedAlgorithmFragment, Case.Insensitive);
+        @event.Data.HasPrivateKey.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(CertificateKeyType.NistP256)]
+    [InlineData(CertificateKeyType.NistP384)]
+    [InlineData(CertificateKeyType.NistP521)]
+    public async Task GenerateSelfSigned_Ecdsa_ProducesEcdsaCert(CertificateKeyType keyType)
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(keyType: keyType), CancellationToken.None);
+
+        @event.Data.SignatureAlgorithmName.ShouldNotBeNullOrEmpty();
+        @event.Data.HasPrivateKey.ShouldBeTrue();
+        @event.Data.CertificateDataFormat.ShouldBe(CertificateDataFormat.Pkcs12);
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_SetsNameAsSubjectAndName()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(name: "my-app.example.com"), CancellationToken.None);
+
+        @event.Data.SubjectCommonName.ShouldBe("my-app.example.com");
+        @event.Data.Name.ShouldBe("my-app.example.com");
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_IsSelfSigned()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(), CancellationToken.None);
+
+        @event.Data.SelfSigned.ShouldBeTrue();
+        @event.Data.IssuerDistinguishedName.ShouldBe(@event.Data.SubjectDistinguishedName);
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_RespectsValidityDays()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(validityDays: 730), CancellationToken.None);
+
+        var expectedNotAfter = DateTimeOffset.UtcNow.AddDays(730);
+
+        @event.Data.NotAfter.ShouldBeGreaterThan(expectedNotAfter.AddHours(-1));
+        @event.Data.NotAfter.ShouldBeLessThan(expectedNotAfter.AddHours(1));
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_WithSans_IncludesSubjectAlternativeNames()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(sans: new List<string> { "example.com", "*.example.com" }),
+            CancellationToken.None);
+
+        @event.Data.SubjectAlternativeNames.ShouldNotBeEmpty();
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_WithoutSans_EmptySubjectAlternativeNames()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(sans: null), CancellationToken.None);
+
+        @event.Data.SubjectAlternativeNames.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_SetsEnvironmentIds()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(environmentIds: new List<int> { 1, 3 }), CancellationToken.None);
+
+        @event.Data.EnvironmentIds.ShouldBe(new List<int> { 1, 3 });
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_PasswordHasValueIsTrue()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(), CancellationToken.None);
+
+        @event.Data.PasswordHasValue.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_CallsAddOnDataProvider()
+    {
+        SetupAddCapture();
+
+        await _service.CreateCertificateAsync(MakeGenerateCommand(), CancellationToken.None);
+
+        _dataProvider.Verify(
+            p => p.AddCertificateAsync(It.IsAny<Certificate>(), true, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_ThumbprintIsNotEmpty()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(), CancellationToken.None);
+
+        @event.Data.Thumbprint.ShouldNotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_VersionIs3()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(), CancellationToken.None);
+
+        @event.Data.Version.ShouldBe(3);
+    }
+
     // === Helpers ===
+
+    private static CreateCertificateCommand MakeGenerateCommand(
+        string name = "Test Self-Signed",
+        int validityDays = 365,
+        CertificateKeyType keyType = CertificateKeyType.RSA2048,
+        List<string> sans = null,
+        List<int> environmentIds = null)
+    {
+        return new CreateCertificateCommand
+        {
+            Name = name,
+            ValidityDays = validityDays,
+            KeyType = keyType,
+            SubjectAlternativeNames = sans,
+            Notes = "Generated test cert",
+            EnvironmentIds = environmentIds,
+            SpaceId = 1
+        };
+    }
 
     private CreateCertificateCommand MakeCreateCommand(
         byte[] certBytes,

@@ -15,12 +15,12 @@ public interface IMachineRegistrationService : IScopedDependency
 
 public class MachineRegistrationService : IMachineRegistrationService
 {
-    private readonly IMachineRegistrationDataProvider _dataProvider;
+    private readonly IMachineDataProvider _dataProvider;
     private readonly HalibutRuntime _halibutRuntime;
     private readonly SelfCertSetting _selfCertSetting;
 
     public MachineRegistrationService(
-        IMachineRegistrationDataProvider dataProvider,
+        IMachineDataProvider dataProvider,
         HalibutRuntime halibutRuntime,
         SelfCertSetting selfCertSetting)
     {
@@ -45,7 +45,7 @@ public class MachineRegistrationService : IMachineRegistrationService
             existing.EnvironmentIds = command.EnvironmentIds ?? existing.EnvironmentIds;
             existing.Endpoint = BuildEndpointJson(command);
 
-            await _dataProvider.UpdateMachineAsync(existing, cancellationToken).ConfigureAwait(false);
+            await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             machine = existing;
 
