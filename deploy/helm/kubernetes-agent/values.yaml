@@ -7,9 +7,10 @@ tentacle:
   serverCommsUrl: ""
   bearerToken: ""
   serverCertificate: ""
-  roles: "k8s"
+  roles:
+    - "k8s"
   machineName: ""
-  environmentIds: ""
+  environmentIds: []
   spaceId: 1
   flavor: "KubernetesAgent"
   subscriptionId: ""

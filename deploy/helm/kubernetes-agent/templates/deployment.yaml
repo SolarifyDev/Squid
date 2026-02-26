@@ -70,13 +70,13 @@ spec:
               name: {{ include "kubernetes-agent.fullname" . }}-secret
               key: bearer-token
         - name: Tentacle__Roles
-          value: "{{ .Values.tentacle.roles }}"
+          value: "{{ join "," .Values.tentacle.roles }}"
         - name: Tentacle__Flavor
           value: "{{ .Values.tentacle.flavor }}"
         - name: Tentacle__MachineName
           value: "{{ .Values.tentacle.machineName }}"
         - name: Tentacle__EnvironmentIds
-          value: "{{ .Values.tentacle.environmentIds }}"
+          value: "{{ join "," .Values.tentacle.environmentIds }}"
         - name: Tentacle__SpaceId
           value: "{{ .Values.tentacle.spaceId }}"
         {{- if .Values.tentacle.subscriptionId }}
