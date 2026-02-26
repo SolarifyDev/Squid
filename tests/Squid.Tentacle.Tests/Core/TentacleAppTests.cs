@@ -259,9 +259,7 @@ public class TentacleAppTests : TimedTestBase
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(cert.Export(X509ContentType.Pfx));
-#pragma warning restore SYSLIB0057
+        return X509CertificateLoader.LoadPkcs12(cert.Export(X509ContentType.Pfx), null);
     }
 
     private sealed class FakeFlavor : ITentacleFlavor

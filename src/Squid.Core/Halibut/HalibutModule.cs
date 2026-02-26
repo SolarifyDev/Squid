@@ -14,13 +14,9 @@ public class HalibutModule : Module
         builder.Register(ctx =>
         {
             var selfCertSetting = ctx.Resolve<SelfCertSetting>();
-            var selfCertBase64 = selfCertSetting.Base64;
 
-            if (string.IsNullOrEmpty(selfCertBase64))
-                throw new InvalidOperationException("缺少HALIBUT_CERT_BASE64环境变量");
-
-            var certBytes = Convert.FromBase64String(selfCertBase64);
-            var serverCert = new X509Certificate2(certBytes, selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
+            var certBytes = Convert.FromBase64String(selfCertSetting.Base64);
+            var serverCert = X509CertificateLoader.LoadPkcs12(certBytes, selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
 
             var services = new DelegateServiceFactory();
 
@@ -35,21 +31,19 @@ public class HalibutModule : Module
             StartPollingListenerIfEnabled(ctx, halibutRuntime);
 
             return halibutRuntime;
+            
         }).As<HalibutRuntime>().SingleInstance();
 
-        builder.RegisterType<HalibutTrustInitializer>()
-            .As<IStartable>()
-            .SingleInstance();
+        builder.RegisterType<HalibutTrustInitializer>().As<IStartable>().SingleInstance();
     }
 
     private static void StartPollingListenerIfEnabled(IComponentContext ctx, HalibutRuntime halibutRuntime)
     {
-        if (!ctx.TryResolve<PollingListenerSetting>(out var pollingSetting))
-            return;
+        if (!ctx.TryResolve<HalibutSetting>(out var halibutSetting)) return;
 
-        if (!pollingSetting.Enabled) return;
+        if (!halibutSetting.Polling.Enabled) return;
 
-        var port = pollingSetting.Port;
+        var port = halibutSetting.Polling.Port;
 
         halibutRuntime.Listen(port);
 

@@ -65,12 +65,10 @@ public partial class TentacleStub : IAsyncDisposable
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow.AddYears(1));
 
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(
+        return X509CertificateLoader.LoadPkcs12(
             cert.Export(X509ContentType.Pfx, string.Empty),
             string.Empty,
-            X509KeyStorageFlags.MachineKeySet);
-#pragma warning restore SYSLIB0057
+            X509KeyStorageFlags.Exportable);
     }
 
     private sealed class AsyncScriptServiceAdapter : IScriptServiceAsync

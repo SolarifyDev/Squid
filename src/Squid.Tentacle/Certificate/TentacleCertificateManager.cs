@@ -24,7 +24,7 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         if (File.Exists(certPath))
         {
             Log.Information("Loading existing tentacle certificate from {Path}", certPath);
-            return new X509Certificate2(certPath, CertPassword, X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
+            return X509CertificateLoader.LoadPkcs12FromFile(certPath, CertPassword);
         }
 
         Log.Information("Generating new self-signed tentacle certificate");
@@ -83,12 +83,10 @@ public class TentacleCertificateManager : ITentacleCertificateManager
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow.AddYears(5));
 
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(
+        return X509CertificateLoader.LoadPkcs12(
             cert.Export(X509ContentType.Pfx, CertPassword),
             CertPassword,
-            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
-#pragma warning restore SYSLIB0057
+            X509KeyStorageFlags.Exportable);
     }
 
     private static void EnsureDirectoryExists(string path)

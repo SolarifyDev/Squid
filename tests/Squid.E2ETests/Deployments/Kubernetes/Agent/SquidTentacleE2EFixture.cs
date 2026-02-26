@@ -37,10 +37,9 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     {
         _pollingPort = GetAvailablePort();
 
-        builder.RegisterInstance(new PollingListenerSetting
+        builder.RegisterInstance(new HalibutSetting
         {
-            Enabled = true,
-            Port = _pollingPort
+            Polling = new PollingSettings { Enabled = true, Port = _pollingPort }
         }).AsSelf().SingleInstance();
     }
 

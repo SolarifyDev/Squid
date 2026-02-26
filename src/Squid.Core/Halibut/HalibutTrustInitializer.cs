@@ -1,6 +1,5 @@
 using Halibut;
-using Squid.Core.Persistence.Db;
-using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Machines;
 
 namespace Squid.Core.Halibut;
 
@@ -23,24 +22,18 @@ public class HalibutTrustInitializer : IStartable
         }
         catch (Exception ex)
         {
-            Log.Warning("Halibut trust initialization skipped: {Message}", ex.Message);
+            Log.Warning(ex, "Halibut trust initialization skipped");
             return;
         }
 
-        var repository = _scope.Resolve<IRepository>();
-
-        var machines = repository
-            .QueryNoTracking<Machine>(m =>
-                !string.IsNullOrEmpty(m.Thumbprint) &&
-                !m.IsDisabled)
-            .ToList();
+        var machineDataProvider = _scope.Resolve<IMachineDataProvider>();
+        var machines = machineDataProvider.GetTrustedPollingMachinesAsync().GetAwaiter().GetResult();
 
         foreach (var machine in machines)
         {
             halibutRuntime.Trust(machine.Thumbprint);
 
-            Log.Information("Trusted agent thumbprint for machine {MachineName} ({SubscriptionId})",
-                machine.Name, machine.PollingSubscriptionId);
+            Log.Information("Trusted agent thumbprint for machine {MachineName} ({SubscriptionId})", machine.Name, machine.PollingSubscriptionId);
         }
 
         Log.Information("Halibut trust initialization complete, trusted {Count} agent(s)", machines.Count);

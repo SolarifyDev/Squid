@@ -239,20 +239,13 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         }
 
         // DER (raw binary certificate)
-        var derCert = new X509Certificate2(data);
+        var derCert = X509CertificateLoader.LoadCertificate(data);
         return (derCert, CertificateDataFormat.Der);
     }
 
     private static X509Certificate2 LoadPfx(byte[] data, string password)
     {
-        try
-        {
-            return new X509Certificate2(data, password, X509KeyStorageFlags.EphemeralKeySet);
-        }
-        catch (PlatformNotSupportedException)
-        {
-            return new X509Certificate2(data, password);
-        }
+        return X509CertificateLoader.LoadPkcs12(data, password);
     }
 
     private static AsymmetricAlgorithm CreateAsymmetricKey(CertificateKeyType keyType)

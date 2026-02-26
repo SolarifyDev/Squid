@@ -21,10 +21,9 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     {
         _pollingPort = GetAvailablePort();
 
-        builder.RegisterInstance(new PollingListenerSetting
+        builder.RegisterInstance(new HalibutSetting
         {
-            Enabled = true,
-            Port = _pollingPort
+            Polling = new PollingSettings { Enabled = true, Port = _pollingPort }
         }).AsSelf().SingleInstance();
     }
 
@@ -60,9 +59,7 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         var selfCertSetting = LifetimeScope.Resolve<SelfCertSetting>();
         var certBytes = Convert.FromBase64String(selfCertSetting.Base64);
 
-#pragma warning disable SYSLIB0057
-        using var cert = new X509Certificate2(certBytes, selfCertSetting.Password);
-#pragma warning restore SYSLIB0057
+        using var cert = X509CertificateLoader.LoadPkcs12(certBytes, selfCertSetting.Password);
 
         return cert.Thumbprint;
     }
