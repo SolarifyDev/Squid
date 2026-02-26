@@ -24,6 +24,8 @@ public class ActionExecutionResult
 
     public Dictionary<string, string> OutputVariables { get; set; } = new();
 
+    public HashSet<string> SensitiveOutputVariableNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public ExecutionMode ResolveExecutionMode()
     {
         if (ExecutionMode == ExecutionMode.Unspecified)

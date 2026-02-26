@@ -10,7 +10,8 @@ public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContr
 
     public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)
     {
-        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesAgentEndpointVariableDto>(endpointJson);
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesAgentEndpointDto>(endpointJson);
+        
         if (endpoint == null) return new List<VariableDto>();
 
         return new List<VariableDto>
@@ -19,10 +20,5 @@ public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContr
             EndpointVariableFactory.Make("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
             EndpointVariableFactory.Make("SquidPrintEvaluatedVariables", "True")
         };
-    }
-
-    private class KubernetesAgentEndpointVariableDto
-    {
-        public string Namespace { get; set; }
     }
 }

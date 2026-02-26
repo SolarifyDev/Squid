@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Models.Deployments.Machine;
 using CommunicationStyleEnum = Squid.Message.Enums.CommunicationStyle;
 
 namespace Squid.Core.Services.Machines;
@@ -48,11 +49,11 @@ public partial class MachineRegistrationService
 
     private static string BuildKubernetesAgentEndpointJson(RegisterKubernetesAgentCommand command)
     {
-        return JsonSerializer.Serialize(new
+        return JsonSerializer.Serialize(new KubernetesAgentEndpointDto
         {
-            command.Namespace,
-            command.Thumbprint,
-            command.SubscriptionId,
+            Namespace = command.Namespace,
+            Thumbprint = command.Thumbprint,
+            SubscriptionId = command.SubscriptionId,
             CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesAgent),
         });
     }
@@ -61,25 +62,13 @@ public partial class MachineRegistrationService
     {
         var endpointJson = BuildKubernetesAgentEndpointJson(command);
 
-        return new Machine
-        {
-            Name = command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
-            IsDisabled = false,
-            Roles = command.Roles ?? string.Empty,
-            EnvironmentIds = command.EnvironmentIds ?? string.Empty,
-            Json = string.Empty,
-            Thumbprint = command.Thumbprint,
-            Uri = string.Empty,
-            HasLatestCalamari = false,
-            Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
-            SpaceId = command.SpaceId,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            LicenseHash = string.Empty,
-            Slug = $"machine-{Guid.NewGuid():N}",
-            PollingSubscriptionId = command.SubscriptionId
-        };
+        var machine = BuildMachineDefaults(
+            command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
+            command.Roles, command.EnvironmentIds, command.SpaceId, endpointJson);
+
+        machine.Thumbprint = command.Thumbprint;
+        machine.PollingSubscriptionId = command.SubscriptionId;
+
+        return machine;
     }
 }

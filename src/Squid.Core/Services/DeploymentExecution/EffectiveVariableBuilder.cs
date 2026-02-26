@@ -6,10 +6,12 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public static class EffectiveVariableBuilder
 {
-    public static List<VariableDto> BuildEffectiveVariables(List<VariableDto> baseVariables, DeploymentTargetContext target)
+    public static List<VariableDto> BuildEffectiveVariables(
+        List<VariableDto> baseVariables, DeploymentTargetContext target, VariableScopeContext scopeContext)
     {
-        var variables = new List<VariableDto>(baseVariables);
+        var scopedVariables = VariableScopeEvaluator.Evaluate(baseVariables, scopeContext);
 
+        var variables = new List<VariableDto>(scopedVariables);
         variables.AddRange(target.EndpointVariables);
 
         return variables;

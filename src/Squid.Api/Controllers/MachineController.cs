@@ -29,6 +29,18 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("register/kubernetes-api")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterKubernetesApiAsync([FromBody] RegisterKubernetesApiCommand command, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(command.ClusterUrl)) return BadRequest("ClusterUrl is required");
+        if (command.AccountId <= 0) return BadRequest("AccountId is required");
+
+        var response = await _mediator.SendAsync<RegisterKubernetesApiCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
     public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)

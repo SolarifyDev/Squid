@@ -28,7 +28,7 @@ public partial class DeploymentSnapshotService
         var variables = await _variableDataProvider
             .GetVariablesByVariableSetIdsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
 
-        var snapshotData = GenerateVariableSetSnapshotData(variables);
+        var snapshotData = await GenerateVariableSetSnapshotDataAsync(variables, cancellationToken).ConfigureAwait(false);
         var blob = UtilService.BuildSnapshotBlob(snapshotData);
 
         var existing = await _deploymentSnapshotDataProvider
@@ -73,11 +73,25 @@ public partial class DeploymentSnapshotService
         };
     }
     
-    private VariableSetSnapshotDataDto GenerateVariableSetSnapshotData(List<Variable> variables)
+    private async Task<VariableSetSnapshotDataDto> GenerateVariableSetSnapshotDataAsync(
+        List<Variable> variables, CancellationToken ct)
     {
-        return new VariableSetSnapshotDataDto
+        var dtos = _mapper.Map<List<VariableDto>>(variables);
+
+        var variableIds = variables.Select(v => v.Id).ToList();
+        var allScopes = await _variableScopeDataProvider
+            .GetVariableScopesByVariableIdsAsync(variableIds, ct).ConfigureAwait(false);
+
+        var scopesByVariableId = allScopes
+            .GroupBy(s => s.VariableId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var dto in dtos)
         {
-            Variables = _mapper.Map<List<VariableDto>>(variables)
-        };
+            if (scopesByVariableId.TryGetValue(dto.Id, out var scopes))
+                dto.Scopes = _mapper.Map<List<VariableScopeDto>>(scopes);
+        }
+
+        return new VariableSetSnapshotDataDto { Variables = dtos };
     }
 }

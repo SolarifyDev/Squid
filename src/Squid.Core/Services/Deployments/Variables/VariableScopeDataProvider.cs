@@ -15,6 +15,8 @@ public interface IVariableScopeDataProvider : IScopedDependency
     
     Task<VariableScope> GetVariableScopeByIdAsync(int id, CancellationToken cancellationToken = default);
     
+    Task<List<VariableScope>> GetVariableScopesByVariableIdsAsync(List<int> variableIds, CancellationToken cancellationToken = default);
+
     Task<(int count, List<VariableScope>)> GetVariableScopePagingAsync(int? variableId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 }
 
@@ -67,6 +69,13 @@ public class VariableScopeDataProvider : IVariableScopeDataProvider
     {
         return await _repository.Query<VariableScope>()
             .Where(s => s.VariableId == variableId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<VariableScope>> GetVariableScopesByVariableIdsAsync(List<int> variableIds, CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<VariableScope>()
+            .Where(s => variableIds.Contains(s.VariableId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 

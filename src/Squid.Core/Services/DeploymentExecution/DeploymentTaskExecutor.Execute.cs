@@ -37,7 +37,14 @@ public partial class DeploymentTaskExecutor
         foreach (var tc in matchingTargets)
         {
             var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
-            var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc);
+            var scopeContext = new VariableScopeContext
+            {
+                EnvironmentId = _ctx.Deployment.EnvironmentId,
+                MachineId = tc.Machine.Id,
+                Roles = targetRoles,
+                ChannelId = _ctx.Deployment.ChannelId
+            };
+            var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc, scopeContext);
 
             if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVariables))
             {
@@ -74,8 +81,8 @@ public partial class DeploymentTaskExecutor
         => TargetStepMatcher.FindMatchingTargetsForStep(step, allTargets);
 
     public static List<VariableDto> BuildEffectiveVariables(
-        List<VariableDto> baseVariables, DeploymentTargetContext target)
-        => EffectiveVariableBuilder.BuildEffectiveVariables(baseVariables, target);
+        List<VariableDto> baseVariables, DeploymentTargetContext target, VariableScopeContext scopeContext)
+        => EffectiveVariableBuilder.BuildEffectiveVariables(baseVariables, target, scopeContext);
 
     private List<VariableDto> BuildActionVariables(List<VariableDto> effectiveVariables, DeploymentActionDto action)
         => EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, _ctx.SelectedPackages);
@@ -248,7 +255,12 @@ public partial class DeploymentTaskExecutor
         var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
 
         foreach (var kv in outputVars)
+        {
             actionResult.OutputVariables[kv.Key] = kv.Value.Value;
+
+            if (kv.Value.IsSensitive)
+                actionResult.SensitiveOutputVariableNames.Add(kv.Key);
+        }
     }
 
     private static void CollectOutputVariables(
@@ -256,9 +268,11 @@ public partial class DeploymentTaskExecutor
     {
         foreach (var kv in actionResult.OutputVariables)
         {
+            var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
             var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, kv.Key);
-            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value });
-            result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value });
+
+            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
+            result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
         }
     }
 
@@ -270,7 +284,10 @@ public partial class DeploymentTaskExecutor
             {
                 _ctx.Variables.AddRange(result.OutputVariables);
                 foreach (var v in result.OutputVariables)
-                    Log.Information("Output variable captured: {Name} = {Value}", v.Name, v.Value);
+                {
+                    var displayValue = v.IsSensitive ? "********" : v.Value;
+                    Log.Information("Output variable captured: {Name} = {Value}", v.Name, displayValue);
+                }
             }
 
             _ctx.FailureEncountered |= result.Failed;

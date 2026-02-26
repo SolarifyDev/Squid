@@ -123,7 +123,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         result.Count.ShouldBe(4);
         result.Select(v => v.Name).ShouldBe(new[] { "A", "B", "C", "D" });
@@ -140,7 +140,7 @@ public class StepCentricExecutionTests
 
         var target = new DeploymentTargetContext();
 
-        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         result.Count.ShouldBe(2);
     }
@@ -161,7 +161,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         baseVars.Count.ShouldBe(1);
         baseVars[0].Name.ShouldBe("A");
@@ -193,8 +193,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA);
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB);
+        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.ShouldNotContain(v => v.Value == "https://b.example.com");
         effectiveB.ShouldNotContain(v => v.Value == "https://a.example.com");
@@ -216,7 +216,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effective = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        var effective = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         effective.Count.ShouldBe(2);
         effective.Last(v => v.Name == "Url").Value.ShouldBe("endpoint-url");
@@ -248,8 +248,8 @@ public class StepCentricExecutionTests
 
         baseVars.Add(new VariableDto { Name = "OutputVar", Value = "step1-output" });
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA);
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB);
+        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.ShouldContain(v => v.Name == "OutputVar" && v.Value == "step1-output");
         effectiveB.ShouldContain(v => v.Name == "OutputVar" && v.Value == "step1-output");
@@ -279,8 +279,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA);
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB);
+        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.Add(new VariableDto { Name = "Temp", Value = "A-only" });
 
@@ -305,8 +305,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var first = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
-        var second = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target);
+        var first = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var second = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         ReferenceEquals(first, second).ShouldBeFalse();
     }
