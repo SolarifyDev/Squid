@@ -2,12 +2,12 @@ using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
-public class RegisterMachineCommand : ICommand
+public class RegisterKubernetesAgentCommand : ICommand
 {
     public string MachineName { get; set; }
     public string Thumbprint { get; set; }
     public string SubscriptionId { get; set; }
-    public int SpaceId { get; set; } = 1;
+    public int SpaceId { get; set; }
     public string Roles { get; set; }
     public string EnvironmentIds { get; set; }
     public string Namespace { get; set; } = "default";

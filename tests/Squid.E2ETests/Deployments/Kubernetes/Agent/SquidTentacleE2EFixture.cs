@@ -102,7 +102,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         var registration = await Run<IMachineRegistrationService, RegisterMachineResponseData>(async registrationService =>
         {
-            return await registrationService.RegisterMachineAsync(new RegisterMachineCommand
+            return await registrationService.RegisterKubernetesAgentAsync(new RegisterKubernetesAgentCommand
             {
                 MachineName = $"squid-tentacle-e2e-{TentacleSubscriptionId[..8]}",
                 Thumbprint = tentacleCert.Thumbprint,

@@ -87,6 +87,7 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
                 ServerUrl = server.BaseAddress.ToString().TrimEnd('/'),
                 BearerToken = "token"
             },
+            "/api/machines/register/kubernetes-agent",
             new Dictionary<string, string>(),
             options);
     }

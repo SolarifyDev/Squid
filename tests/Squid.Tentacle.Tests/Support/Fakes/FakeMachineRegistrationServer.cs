@@ -85,7 +85,7 @@ public sealed class FakeMachineRegistrationServer : IAsyncDisposable
         var path = context.Request.Url?.AbsolutePath ?? string.Empty;
 
         if (context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase)
-            && path.Equals("/api/machines/register", StringComparison.OrdinalIgnoreCase))
+            && path.StartsWith("/api/machines/register", StringComparison.OrdinalIgnoreCase))
         {
             using var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding ?? Encoding.UTF8);
             var body = await reader.ReadToEndAsync(ct).ConfigureAwait(false);

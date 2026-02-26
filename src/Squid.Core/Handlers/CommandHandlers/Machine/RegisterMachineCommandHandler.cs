@@ -3,18 +3,18 @@ using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Handlers.CommandHandlers.Machine;
 
-public class RegisterMachineCommandHandler : ICommandHandler<RegisterMachineCommand, RegisterMachineResponse>
+public class RegisterKubernetesAgentCommandHandler : ICommandHandler<RegisterKubernetesAgentCommand, RegisterMachineResponse>
 {
     private readonly IMachineRegistrationService _registrationService;
 
-    public RegisterMachineCommandHandler(IMachineRegistrationService registrationService)
+    public RegisterKubernetesAgentCommandHandler(IMachineRegistrationService registrationService)
     {
         _registrationService = registrationService;
     }
 
-    public async Task<RegisterMachineResponse> Handle(IReceiveContext<RegisterMachineCommand> context, CancellationToken cancellationToken)
+    public async Task<RegisterMachineResponse> Handle(IReceiveContext<RegisterKubernetesAgentCommand> context, CancellationToken cancellationToken)
     {
-        var result = await _registrationService.RegisterMachineAsync(context.Message, cancellationToken).ConfigureAwait(false);
+        var result = await _registrationService.RegisterKubernetesAgentAsync(context.Message, cancellationToken).ConfigureAwait(false);
 
         return new RegisterMachineResponse { Data = result };
     }

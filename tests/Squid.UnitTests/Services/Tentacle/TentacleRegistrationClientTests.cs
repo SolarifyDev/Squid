@@ -15,7 +15,7 @@ public class TentacleRegistrationClientTests
             BearerToken = "test-token"
         };
 
-        var client = new TentacleRegistrationClient(tentacleSettings);
+        var client = new TentacleRegistrationClient(tentacleSettings, "/api/machines/register/kubernetes-agent");
 
         client.ShouldNotBeNull();
     }
@@ -29,7 +29,7 @@ public class TentacleRegistrationClientTests
             BearerToken = "test-token"
         };
 
-        var client = new TentacleRegistrationClient(tentacleSettings);
+        var client = new TentacleRegistrationClient(tentacleSettings, "/api/machines/register/kubernetes-agent");
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         await Should.ThrowAsync<Exception>(

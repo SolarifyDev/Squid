@@ -15,7 +15,8 @@ public sealed class KubernetesAgentRegistrar : ITentacleRegistrar
             ["namespace"] = kubernetesSettings.Namespace
         };
 
-        _client = new TentacleRegistrationClient(tentacleSettings, extraProperties);
+        _client = new TentacleRegistrationClient(
+            tentacleSettings, "/api/machines/register/kubernetes-agent", extraProperties);
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)

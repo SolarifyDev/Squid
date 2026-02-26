@@ -65,7 +65,7 @@ public class SquidTentacleE2ETests
         {
             await _fixture.Run<IMachineRegistrationService>(async registrationService =>
             {
-                var result = await registrationService.RegisterMachineAsync(new RegisterMachineCommand
+                var result = await registrationService.RegisterKubernetesAgentAsync(new RegisterKubernetesAgentCommand
                 {
                     MachineName = $"squid-tentacle-e2e-{_fixture.TentacleSubscriptionId[..8]}",
                     Thumbprint = _fixture.TentacleThumbprint,
@@ -94,7 +94,7 @@ public class SquidTentacleE2ETests
             // Restore original registration so other tests are not affected
             await _fixture.Run<IMachineRegistrationService>(async registrationService =>
             {
-                await registrationService.RegisterMachineAsync(new RegisterMachineCommand
+                await registrationService.RegisterKubernetesAgentAsync(new RegisterKubernetesAgentCommand
                 {
                     MachineName = $"squid-tentacle-e2e-{_fixture.TentacleSubscriptionId[..8]}",
                     Thumbprint = _fixture.TentacleThumbprint,

@@ -24,15 +24,15 @@ public class MachineController : ControllerBase
         _installScriptService = installScriptService;
     }
 
-    [HttpPost("register")]
+    [HttpPost("register/kubernetes-agent")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
-    public async Task<IActionResult> RegisterAsync([FromBody] RegisterMachineCommand command, CancellationToken ct)
+    public async Task<IActionResult> RegisterKubernetesAgentAsync([FromBody] RegisterKubernetesAgentCommand command, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(command.Thumbprint)) return BadRequest("Thumbprint is required");
 
         if (string.IsNullOrEmpty(command.SubscriptionId)) return BadRequest("SubscriptionId is required");
 
-        var response = await _mediator.SendAsync<RegisterMachineCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterKubernetesAgentCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

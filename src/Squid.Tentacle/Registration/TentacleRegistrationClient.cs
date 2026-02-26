@@ -9,6 +9,7 @@ namespace Squid.Tentacle.Registration;
 public class TentacleRegistrationClient
 {
     private readonly TentacleSettings _settings;
+    private readonly string _registrationPath;
     private readonly Dictionary<string, string> _extraProperties;
     private readonly TentacleRegistrationClientOptions _options;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -19,17 +20,20 @@ public class TentacleRegistrationClient
 
     public TentacleRegistrationClient(
         TentacleSettings settings,
+        string registrationPath,
         Dictionary<string, string> extraProperties = null)
-        : this(settings, extraProperties, options: null)
+        : this(settings, registrationPath, extraProperties, options: null)
     {
     }
 
     public TentacleRegistrationClient(
         TentacleSettings settings,
+        string registrationPath,
         Dictionary<string, string> extraProperties,
         TentacleRegistrationClientOptions options = null)
     {
         _settings = settings;
+        _registrationPath = registrationPath;
         _extraProperties = extraProperties ?? new Dictionary<string, string>();
         _options = options ?? TentacleRegistrationClientOptions.Default;
     }
@@ -92,7 +96,7 @@ public class TentacleRegistrationClient
         foreach (var kv in _extraProperties)
             payload[kv.Key] = kv.Value;
 
-        var response = await client.PostAsJsonAsync("/api/machines/register", payload, JsonOptions, ct).ConfigureAwait(false);
+        var response = await client.PostAsJsonAsync(_registrationPath, payload, JsonOptions, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
