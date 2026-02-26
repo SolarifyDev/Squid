@@ -63,7 +63,40 @@ public class MachineInstallScriptServiceTests
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
-        result.AgentInstallScript.ShouldStartWith("helm upgrade --install my-agent");
+        result.AgentInstallScript.ShouldStartWith("helm upgrade --install --rollback-on-failure");
+    }
+
+    [Fact]
+    public async Task GenerateScript_AgentInstallScript_ReleaseNameIsSafe()
+    {
+        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+
+        result.AgentInstallScript.ShouldContain($"squid-agent-{result.SubscriptionId[..8]}");
+    }
+
+    [Fact]
+    public async Task GenerateScript_AgentInstallScript_ContainsMachineName()
+    {
+        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+
+        result.AgentInstallScript.ShouldContain("tentacle.machineName=\"my-agent\"");
+    }
+
+    [Fact]
+    public async Task GenerateScript_AgentInstallScript_ContainsNamespaceAndVersion()
+    {
+        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+
+        result.AgentInstallScript.ShouldContain("--create-namespace --namespace squid-agent");
+        result.AgentInstallScript.ShouldContain("--version \"0.*.*\"");
+    }
+
+    [Fact]
+    public async Task GenerateScript_AgentInstallScript_ContainsOciRegistry()
+    {
+        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+
+        result.AgentInstallScript.ShouldContain("oci://registry-1.docker.io/squidcd/squid-tentacle");
     }
 
     [Fact]
@@ -110,12 +143,13 @@ public class MachineInstallScriptServiceTests
     }
 
     [Fact]
-    public async Task GenerateScript_EmptyAgentName_UsesDefaultName()
+    public async Task GenerateScript_EmptyAgentName_FallsBackToReleaseName()
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(
             CreateCommand(agentName: ""), CancellationToken.None);
 
-        result.AgentInstallScript.ShouldContain($"helm upgrade --install squid-agent-{result.SubscriptionId[..8]}");
+        var releaseName = $"squid-agent-{result.SubscriptionId[..8]}";
+        result.AgentInstallScript.ShouldContain($"tentacle.machineName=\"{releaseName}\"");
     }
 
     [Fact]
@@ -123,7 +157,7 @@ public class MachineInstallScriptServiceTests
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
-        result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --atomic");
+        result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --rollback-on-failure");
         result.NfsCsiDriverScript.ShouldContain("csi-driver-nfs");
     }
 

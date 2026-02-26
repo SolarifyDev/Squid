@@ -75,7 +75,7 @@ public class MachineInstallScriptService : IMachineInstallScriptService
     private static string BuildNfsCsiDriverScript()
     {
         return JoinLines(
-            "helm upgrade --install --atomic",
+            "helm upgrade --install --rollback-on-failure",
             "--repo https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts",
             "--namespace kube-system",
             "--version \"v4.*.*\"",
@@ -88,16 +88,16 @@ public class MachineInstallScriptService : IMachineInstallScriptService
         string subscriptionId,
         string bearerToken)
     {
+        var releaseName = $"squid-agent-{subscriptionId[..8]}";
         var agentName = string.IsNullOrWhiteSpace(command.AgentName)
-            ? $"squid-agent-{subscriptionId[..8]}"
+            ? releaseName
             : command.AgentName;
 
         var environmentIds = string.Join(",", command.EnvironmentIds);
         var roles = string.Join(",", command.Tags);
 
         return JoinLines(
-            $"helm upgrade --install {agentName}",
-            "oci://registry-1.docker.io/squidcd/squid-tentacle",
+            $"helm upgrade --install --rollback-on-failure",
             $"--set tentacle.serverUrl=\"{command.ServerUrl}\"",
             $"--set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"",
             $"--set tentacle.bearerToken=\"{bearerToken}\"",
@@ -107,7 +107,11 @@ public class MachineInstallScriptService : IMachineInstallScriptService
             $"--set tentacle.spaceId=\"{command.SpaceId}\"",
             $"--set tentacle.flavor=\"KubernetesAgent\"",
             $"--set tentacle.subscriptionId=\"{subscriptionId}\"",
-            $"--set kubernetes.namespace=\"default\"");
+            $"--set kubernetes.namespace=\"default\"",
+            $"--create-namespace --namespace squid-agent",
+            $"--version \"0.*.*\"",
+            releaseName,
+            "oci://registry-1.docker.io/squidcd/squid-tentacle");
     }
 
     private static string JoinLines(params string[] lines)
