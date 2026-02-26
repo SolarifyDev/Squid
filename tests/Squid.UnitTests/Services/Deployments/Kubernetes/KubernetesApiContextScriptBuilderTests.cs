@@ -1,7 +1,9 @@
 using System;
+using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 
@@ -26,7 +28,7 @@ public class KubernetesApiContextScriptBuilderTests
     private static DeploymentAccount CreateTokenAccount(string token = "test-token-123") => new()
     {
         AccountType = AccountType.Token,
-        Token = token
+        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = token })
     };
 
     private static DeploymentAccount CreateUsernamePasswordAccount(
@@ -34,8 +36,7 @@ public class KubernetesApiContextScriptBuilderTests
         string password = "s3cret") => new()
     {
         AccountType = AccountType.UsernamePassword,
-        Username = username,
-        Password = password
+        Credentials = JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = username, Password = password })
     };
 
     private static DeploymentAccount CreateClientCertAccount(
@@ -43,8 +44,7 @@ public class KubernetesApiContextScriptBuilderTests
         string keyData = "LS0tLS1CRUdJTi...KEY") => new()
     {
         AccountType = AccountType.ClientCertificate,
-        ClientCertificateData = certData,
-        ClientCertificateKeyData = keyData
+        Credentials = JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = certData, ClientCertificateKeyData = keyData })
     };
 
     private static DeploymentAccount CreateAwsAccount(
@@ -52,8 +52,7 @@ public class KubernetesApiContextScriptBuilderTests
         string secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY") => new()
     {
         AccountType = AccountType.AmazonWebServicesAccount,
-        AccessKey = accessKey,
-        SecretKey = secretKey
+        Credentials = JsonSerializer.Serialize(new AwsCredentials { AccessKey = accessKey, SecretKey = secretKey })
     };
 
     // === Token Auth Tests ===

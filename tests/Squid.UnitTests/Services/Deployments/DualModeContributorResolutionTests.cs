@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -100,20 +101,20 @@ public class TransportRegistryTests
     // ========== Contributor behavior ==========
 
     [Fact]
-    public void ApiContributor_ParseAccountId_ReturnsId()
+    public void ApiContributor_ParseDeploymentAccountId_ReturnsId()
     {
         var contributor = new KubernetesApiEndpointVariableContributor();
-        var json = JsonSerializer.Serialize(new { AccountId = "42" });
+        var json = JsonSerializer.Serialize(new { DeploymentAccountId = "42" });
 
-        contributor.ParseAccountId(json).ShouldBe(42);
+        contributor.ParseDeploymentAccountId(json).ShouldBe(42);
     }
 
     [Fact]
-    public void AgentContributor_ParseAccountId_ReturnsNull()
+    public void AgentContributor_ParseDeploymentAccountId_ReturnsNull()
     {
         var contributor = new KubernetesAgentEndpointVariableContributor();
 
-        contributor.ParseAccountId("{}").ShouldBeNull();
+        contributor.ParseDeploymentAccountId("{}").ShouldBeNull();
     }
 
     [Theory]
@@ -123,7 +124,11 @@ public class TransportRegistryTests
     {
         var json = MakeEndpointJson(style);
         var account = style == "KubernetesApi"
-            ? new DeploymentAccount { AccountType = Message.Enums.AccountType.Token, Token = "t" }
+            ? new DeploymentAccount
+            {
+                AccountType = Message.Enums.AccountType.Token,
+                Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "t" })
+            }
             : null;
 
         IEndpointVariableContributor contributor = style == "KubernetesApi"
@@ -145,7 +150,7 @@ public class TransportRegistryTests
                 variables: new KubernetesAgentEndpointVariableContributor())
         };
 
-        var accountId = tc.Transport.Variables.ParseAccountId("{}");
+        var accountId = tc.Transport.Variables.ParseDeploymentAccountId("{}");
 
         accountId.ShouldBeNull();
         tc.Account.ShouldBeNull();

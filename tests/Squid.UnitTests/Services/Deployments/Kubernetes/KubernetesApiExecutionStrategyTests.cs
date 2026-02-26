@@ -184,7 +184,8 @@ public class KubernetesApiExecutionStrategyTests
         request.Account = new Squid.Core.Persistence.Entities.Deployments.DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = "secret"
+            Credentials = System.Text.Json.JsonSerializer.Serialize(
+                new Squid.Message.Models.Deployments.Account.TokenCredentials { Token = "secret" })
         };
 
         await strategy.ExecuteScriptAsync(request, CancellationToken.None);

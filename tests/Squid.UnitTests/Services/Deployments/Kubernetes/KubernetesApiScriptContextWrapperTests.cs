@@ -4,6 +4,7 @@ using Moq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
@@ -33,7 +34,7 @@ public class KubernetesApiScriptContextWrapperTests
     private static DeploymentAccount CreateTokenAccount() => new()
     {
         AccountType = AccountType.Token,
-        Token = "test-token"
+        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token" })
     };
 
     // === WrapScript — valid endpoint, Bash syntax ===

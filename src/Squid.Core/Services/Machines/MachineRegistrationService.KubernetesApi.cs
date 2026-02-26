@@ -17,7 +17,7 @@ public partial class MachineRegistrationService
 
         await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        Log.Information("Registered KubernetesApi machine {MachineName} with account {AccountId}", machine.Name, command.AccountId);
+        Log.Information("Registered KubernetesApi machine {MachineName} with account {DeploymentAccountId}", machine.Name, command.DeploymentAccountId);
 
         return new RegisterMachineResponseData
         {
@@ -29,12 +29,12 @@ public partial class MachineRegistrationService
     {
         return JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
-            CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesApi),
             ClusterUrl = command.ClusterUrl,
             Namespace = command.Namespace,
             SkipTlsVerification = command.SkipTlsVerification.ToString(),
             ClusterCertificate = command.ClusterCertificate,
-            AccountId = command.AccountId.ToString(),
+            DeploymentAccountId = command.DeploymentAccountId.ToString(),
+            CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesApi)
         });
     }
 

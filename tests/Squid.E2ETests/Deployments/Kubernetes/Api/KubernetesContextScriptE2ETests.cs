@@ -1,7 +1,9 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Shouldly;
@@ -34,7 +36,8 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = token
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
         };
 
         var script = _builder.WrapWithContext(
@@ -66,7 +69,8 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = token
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
         };
 
         // The context script auto-creates namespace if not "default"
@@ -101,7 +105,8 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = token
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
         };
 
         var userScript = @"
@@ -146,7 +151,8 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = token
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
         };
 
         var script = _builder.WrapWithContext(

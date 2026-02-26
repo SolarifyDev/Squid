@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -169,7 +171,8 @@ data:
                     Name = "Test Account",
                     Slug = $"test-account-{Guid.NewGuid():N}",
                     AccountType = AccountType.Token,
-                    Token = "test-token"
+                    Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                        new TokenCredentials { Token = "test-token" })
                 };
 
                 await repository.InsertAsync(account).ConfigureAwait(false);
@@ -246,7 +249,7 @@ data:
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://localhost:6443",
                 SkipTlsVerification = "True",
-                AccountId = "1",
+                DeploymentAccountId = "1",
                 Namespace = ns ?? "default"
             });
 

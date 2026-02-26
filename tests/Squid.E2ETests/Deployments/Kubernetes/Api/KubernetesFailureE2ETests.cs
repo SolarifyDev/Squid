@@ -1,7 +1,9 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
@@ -89,7 +91,8 @@ data:
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = "this-is-an-invalid-token"
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = "this-is-an-invalid-token" })
         };
 
         var script = _contextBuilder.WrapWithContext(
@@ -118,8 +121,12 @@ data:
         var account = new DeploymentAccount
         {
             AccountType = AccountType.ClientCertificate,
-            ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
-            ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new ClientCertificateCredentials
+                {
+                    ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
+                    ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
+                })
         };
 
         var script = _contextBuilder.WrapWithContext(
@@ -164,7 +171,8 @@ data:
             var account = new DeploymentAccount
             {
                 AccountType = AccountType.Token,
-                Token = token
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = token })
             };
 
             var fullScript = _contextBuilder.WrapWithContext(
@@ -216,7 +224,8 @@ data:
             var account = new DeploymentAccount
             {
                 AccountType = AccountType.Token,
-                Token = token
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = token })
             };
 
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-fail-{Guid.NewGuid():N}");
@@ -279,7 +288,8 @@ data:
         var account = new DeploymentAccount
         {
             AccountType = AccountType.Token,
-            Token = token
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
         };
 
         var fullScript = _contextBuilder.WrapWithContext(

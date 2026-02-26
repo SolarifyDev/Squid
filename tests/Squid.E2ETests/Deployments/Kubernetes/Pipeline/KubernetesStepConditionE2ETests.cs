@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -222,7 +224,7 @@ public class KubernetesStepConditionE2ETests
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://localhost:6443",
                 SkipTlsVerification = "True",
-                AccountId = "1",
+                DeploymentAccountId = "1",
                 Namespace = "default"
             });
 
@@ -255,7 +257,8 @@ public class KubernetesStepConditionE2ETests
                 Name = "E2E Variable Condition Account",
                 Slug = "e2e-variable-condition-account",
                 AccountType = AccountType.Token,
-                Token = "e2e-test-token"
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = "e2e-test-token" })
             };
 
             await repository.InsertAsync(account).ConfigureAwait(false);
@@ -389,7 +392,7 @@ public class KubernetesStepConditionE2ETests
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://localhost:6443",
                 SkipTlsVerification = "True",
-                AccountId = "1",
+                DeploymentAccountId = "1",
                 Namespace = "default"
             });
 
@@ -422,7 +425,8 @@ public class KubernetesStepConditionE2ETests
                 Name = "E2E Condition Account",
                 Slug = "e2e-condition-account",
                 AccountType = AccountType.Token,
-                Token = "e2e-test-token"
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = "e2e-test-token" })
             };
 
             await repository.InsertAsync(account).ConfigureAwait(false);

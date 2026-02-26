@@ -22,7 +22,7 @@ public class KubernetesApiEndpointDto
 
     public KubernetesContainerDto Container { get; set; }
 
-    public string AccountId { get; set; }
+    public string DeploymentAccountId { get; set; }
 }
 
 public class KubernetesContainerDto

@@ -2,9 +2,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
 
@@ -18,7 +20,7 @@ public class KubernetesApiEndpointVariableContributorTests
         string clusterUrl = "https://k8s.example.com:6443",
         string ns = "default",
         string skipTls = "False",
-        string accountId = "42",
+        string deploymentAccountId = "42",
         string clusterCert = null) =>
         JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
@@ -26,83 +28,92 @@ public class KubernetesApiEndpointVariableContributorTests
             ClusterUrl = clusterUrl,
             Namespace = ns,
             SkipTlsVerification = skipTls,
-            AccountId = accountId,
+            DeploymentAccountId = deploymentAccountId,
             ClusterCertificate = clusterCert
         });
 
     private static DeploymentAccount CreateTokenAccount() => new()
     {
         AccountType = AccountType.Token,
-        Token = "test-token-123"
+        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
     };
 
     private static DeploymentAccount CreateUsernamePasswordAccount() => new()
     {
         AccountType = AccountType.UsernamePassword,
-        Username = "admin",
-        Password = "s3cret"
+        Credentials = JsonSerializer.Serialize(new UsernamePasswordCredentials
+        {
+            Username = "admin",
+            Password = "s3cret"
+        })
     };
 
     private static DeploymentAccount CreateClientCertAccount() => new()
     {
         AccountType = AccountType.ClientCertificate,
-        ClientCertificateData = "LS0tLS1CRUdJTi...",
-        ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY"
+        Credentials = JsonSerializer.Serialize(new ClientCertificateCredentials
+        {
+            ClientCertificateData = "LS0tLS1CRUdJTi...",
+            ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY"
+        })
     };
 
     private static DeploymentAccount CreateAwsAccount() => new()
     {
         AccountType = AccountType.AmazonWebServicesAccount,
-        AccessKey = "AKIAIOSFODNN7EXAMPLE",
-        SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        Credentials = JsonSerializer.Serialize(new AwsCredentials
+        {
+            AccessKey = "AKIAIOSFODNN7EXAMPLE",
+            SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        })
     };
 
-    // === ParseAccountId ===
+    // === ParseDeploymentAccountId ===
 
     [Fact]
-    public void ParseAccountId_ValidJson_ReturnsAccountId()
+    public void ParseDeploymentAccountId_ValidJson_ReturnsAccountId()
     {
-        var json = MakeEndpointJson(accountId: "42");
-        _contributor.ParseAccountId(json).ShouldBe(42);
+        var json = MakeEndpointJson(deploymentAccountId: "42");
+        _contributor.ParseDeploymentAccountId(json).ShouldBe(42);
     }
 
     [Fact]
-    public void ParseAccountId_NoAccountId_ReturnsNull()
+    public void ParseDeploymentAccountId_NoAccountId_ReturnsNull()
     {
-        var json = MakeEndpointJson(accountId: null);
-        _contributor.ParseAccountId(json).ShouldBeNull();
+        var json = MakeEndpointJson(deploymentAccountId: null);
+        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
     }
 
     [Fact]
-    public void ParseAccountId_NonNumericAccountId_ReturnsNull()
+    public void ParseDeploymentAccountId_NonNumericAccountId_ReturnsNull()
     {
-        var json = MakeEndpointJson(accountId: "abc");
-        _contributor.ParseAccountId(json).ShouldBeNull();
+        var json = MakeEndpointJson(deploymentAccountId: "abc");
+        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
     }
 
     [Fact]
-    public void ParseAccountId_EmptyAccountId_ReturnsNull()
+    public void ParseDeploymentAccountId_EmptyAccountId_ReturnsNull()
     {
-        var json = MakeEndpointJson(accountId: "");
-        _contributor.ParseAccountId(json).ShouldBeNull();
+        var json = MakeEndpointJson(deploymentAccountId: "");
+        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
     }
 
     [Fact]
-    public void ParseAccountId_InvalidJson_ReturnsNull()
+    public void ParseDeploymentAccountId_InvalidJson_ReturnsNull()
     {
-        _contributor.ParseAccountId("not-json").ShouldBeNull();
+        _contributor.ParseDeploymentAccountId("not-json").ShouldBeNull();
     }
 
     [Fact]
-    public void ParseAccountId_EmptyString_ReturnsNull()
+    public void ParseDeploymentAccountId_EmptyString_ReturnsNull()
     {
-        _contributor.ParseAccountId(string.Empty).ShouldBeNull();
+        _contributor.ParseDeploymentAccountId(string.Empty).ShouldBeNull();
     }
 
     [Fact]
-    public void ParseAccountId_Null_ReturnsNull()
+    public void ParseDeploymentAccountId_Null_ReturnsNull()
     {
-        _contributor.ParseAccountId(null).ShouldBeNull();
+        _contributor.ParseDeploymentAccountId(null).ShouldBeNull();
     }
 
     // === ContributeVariables — count & all names ===

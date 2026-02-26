@@ -16,5 +16,5 @@ public class RegisterKubernetesApiCommand : ICommand
     public bool SkipTlsVerification { get; set; }
 
     // Account (standalone — created separately via /api/deployment-accounts/create)
-    public int AccountId { get; set; }
+    public int DeploymentAccountId { get; set; }
 }

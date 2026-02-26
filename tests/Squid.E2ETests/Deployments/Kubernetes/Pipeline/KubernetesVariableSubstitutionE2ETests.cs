@@ -2,12 +2,14 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Helpers;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -345,7 +347,7 @@ stringData:
             CommunicationStyle = communicationStyle,
             ClusterUrl = "https://localhost:6443",
             SkipTlsVerification = "True",
-            AccountId = "1",
+            DeploymentAccountId = "1",
             Namespace = "default"
         });
 
@@ -378,7 +380,8 @@ stringData:
             Name = "E2E VarSub Account",
             Slug = "e2e-varsub-account",
             AccountType = AccountType.Token,
-            Token = "e2e-test-token"
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = "e2e-test-token" })
         };
 
         await repository.InsertAsync(account, ct).ConfigureAwait(false);

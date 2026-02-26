@@ -72,7 +72,7 @@ public class KubernetesAgentPipelineBehaviorTests
             ClusterUrl = "https://k8s:6443",
             Namespace = "default",
             SkipTlsVerification = "False",
-            AccountId = (string)null,
+            DeploymentAccountId = (string)null,
             ClusterCertificate = (string)null
         });
 

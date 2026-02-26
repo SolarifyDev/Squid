@@ -122,10 +122,10 @@ public partial class DeploymentTaskExecutor
 
     private async Task LoadAccountCredentialsAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        var accountId = tc.Transport.Variables.ParseAccountId(tc.EndpointJson);
+        var deploymentAccountId = tc.Transport.Variables.ParseDeploymentAccountId(tc.EndpointJson);
 
-        if (accountId.HasValue)
-            tc.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
+        if (deploymentAccountId.HasValue)
+            tc.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(deploymentAccountId.Value, ct).ConfigureAwait(false);
     }
 
     private void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)

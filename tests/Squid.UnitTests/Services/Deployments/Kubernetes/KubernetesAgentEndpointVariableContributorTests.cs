@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -16,14 +17,14 @@ public class KubernetesAgentEndpointVariableContributorTests
     private static string MakeEndpointJson(string ns = "production") =>
         JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = ns });
 
-    // === ParseAccountId ===
+    // === ParseDeploymentAccountId ===
 
     [Fact]
-    public void ParseAccountId_AlwaysReturnsNull()
+    public void ParseDeploymentAccountId_AlwaysReturnsNull()
     {
         var json = MakeEndpointJson();
 
-        _contributor.ParseAccountId(json).ShouldBeNull();
+        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
     }
 
     // === ContributeVariables — count & names ===
@@ -165,6 +166,6 @@ public class KubernetesAgentEndpointVariableContributorTests
     private static DeploymentAccount CreateTokenAccount() => new()
     {
         AccountType = AccountType.Token,
-        Token = "test-token-123"
+        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
     };
 }

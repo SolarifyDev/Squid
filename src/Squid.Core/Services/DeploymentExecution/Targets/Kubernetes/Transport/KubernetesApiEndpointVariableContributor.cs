@@ -1,5 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -15,11 +17,11 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         _externalFeedDataProvider = externalFeedDataProvider;
     }
 
-    public int? ParseAccountId(string endpointJson)
+    public int? ParseDeploymentAccountId(string endpointJson)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
         if (endpoint == null) return null;
-        return int.TryParse(endpoint.AccountId, out var id) ? id : null;
+        return int.TryParse(endpoint.DeploymentAccountId, out var id) ? id : null;
     }
 
     public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)
@@ -29,17 +31,26 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         var accountType = account?.AccountType.ToString() ?? "Token";
 
+        var creds = account != null
+            ? DeploymentAccountCredentialsConverter.Deserialize(account.AccountType, account.Credentials)
+            : null;
+
+        var tokenCreds = creds as TokenCredentials;
+        var upCreds = creds as UsernamePasswordCredentials;
+        var certCreds = creds as ClientCertificateCredentials;
+        var awsCreds = creds as AwsCredentials;
+
         return new List<VariableDto>
         {
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
             EndpointVariableFactory.Make("Squid.Account.AccountType", accountType),
-            EndpointVariableFactory.Make("Squid.Account.Token", account?.Token ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make("Squid.Account.Username", account?.Username ?? string.Empty),
-            EndpointVariableFactory.Make("Squid.Account.Password", account?.Password ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make("Squid.Account.ClientCertificateData", account?.ClientCertificateData ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make("Squid.Account.ClientCertificateKeyData", account?.ClientCertificateKeyData ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make("Squid.Account.AccessKey", account?.AccessKey ?? string.Empty),
-            EndpointVariableFactory.Make("Squid.Account.SecretKey", account?.SecretKey ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.Token", tokenCreds?.Token ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.Username", upCreds?.Username ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Account.Password", upCreds?.Password ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.ClientCertificateData", certCreds?.ClientCertificateData ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.ClientCertificateKeyData", certCreds?.ClientCertificateKeyData ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.AccessKey", awsCreds?.AccessKey ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Account.SecretKey", awsCreds?.SecretKey ?? string.Empty, isSensitive: true),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.SkipTlsVerification", endpoint.SkipTlsVerification ?? "False"),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterCertificate", endpoint.ClusterCertificate ?? string.Empty),

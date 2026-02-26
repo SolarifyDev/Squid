@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -177,7 +179,8 @@ public class KubernetesMultiTargetE2ETests
                 Name = "E2E Multi Account",
                 Slug = "e2e-multi-account",
                 AccountType = AccountType.Token,
-                Token = "e2e-test-token"
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = "e2e-test-token" })
             };
 
             await repository.InsertAsync(account).ConfigureAwait(false);
@@ -264,7 +267,8 @@ public class KubernetesMultiTargetE2ETests
                 Name = "E2E Mismatch Account",
                 Slug = "e2e-mismatch-account",
                 AccountType = AccountType.Token,
-                Token = "e2e-test-token"
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = "e2e-test-token" })
             };
 
             await repository.InsertAsync(account).ConfigureAwait(false);
@@ -316,7 +320,7 @@ public class KubernetesMultiTargetE2ETests
             CommunicationStyle = communicationStyle,
             ClusterUrl = "https://localhost:6443",
             SkipTlsVerification = "True",
-            AccountId = "1",
+            DeploymentAccountId = "1",
             Namespace = "default"
         });
 

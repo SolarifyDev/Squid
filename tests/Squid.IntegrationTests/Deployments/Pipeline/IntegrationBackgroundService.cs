@@ -108,7 +108,7 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://172.16.145.222:6443",
                 SkipTlsVerification = "True",
-                AccountId = "1",
+                DeploymentAccountId = "1",
                 Namespace = "squid"
             });
 

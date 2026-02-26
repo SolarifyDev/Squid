@@ -1,8 +1,10 @@
 using System.Text;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
@@ -58,7 +60,8 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var account = new DeploymentAccount
             {
                 AccountType = AccountType.Token,
-                Token = token
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = token })
             };
 
             var fullScript = _contextBuilder.WrapWithContext(
@@ -122,7 +125,8 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var account = new DeploymentAccount
             {
                 AccountType = AccountType.Token,
-                Token = token
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = token })
             };
 
             // Write values file to temp dir and modify script to reference it
@@ -186,7 +190,8 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var account = new DeploymentAccount
             {
                 AccountType = AccountType.Token,
-                Token = token
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = token })
             };
 
             var fullScript = _contextBuilder.WrapWithContext(

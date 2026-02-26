@@ -6,7 +6,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContributor
 {
-    public int? ParseAccountId(string endpointJson) => null;
+    public int? ParseDeploymentAccountId(string endpointJson) => null;
 
     public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)
     {
