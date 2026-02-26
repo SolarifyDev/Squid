@@ -906,15 +906,27 @@ public class CertificateServiceTests
     }
 
     [Fact]
-    public async Task GenerateSelfSigned_SetsNameAsSubjectAndName()
+    public async Task GenerateSelfSigned_NameAndCommonNameAreSeparate()
     {
         SetupAddCapture();
 
         var @event = await _service.CreateCertificateAsync(
-            MakeGenerateCommand(name: "my-app.example.com"), CancellationToken.None);
+            MakeGenerateCommand(name: "My Display Name", commonName: "my-app.example.com"), CancellationToken.None);
 
+        @event.Data.Name.ShouldBe("My Display Name");
         @event.Data.SubjectCommonName.ShouldBe("my-app.example.com");
-        @event.Data.Name.ShouldBe("my-app.example.com");
+    }
+
+    [Fact]
+    public async Task GenerateSelfSigned_CommonNameNull_FallsBackToName()
+    {
+        SetupAddCapture();
+
+        var @event = await _service.CreateCertificateAsync(
+            MakeGenerateCommand(name: "fallback.example.com", commonName: null), CancellationToken.None);
+
+        @event.Data.Name.ShouldBe("fallback.example.com");
+        @event.Data.SubjectCommonName.ShouldBe("fallback.example.com");
     }
 
     [Fact]
@@ -1026,6 +1038,7 @@ public class CertificateServiceTests
 
     private static CreateCertificateCommand MakeGenerateCommand(
         string name = "Test Self-Signed",
+        string commonName = null,
         int validityDays = 365,
         CertificateKeyType keyType = CertificateKeyType.RSA2048,
         List<string> sans = null,
@@ -1034,6 +1047,7 @@ public class CertificateServiceTests
         return new CreateCertificateCommand
         {
             Name = name,
+            CommonName = commonName,
             ValidityDays = validityDays,
             KeyType = keyType,
             SubjectAlternativeNames = sans,

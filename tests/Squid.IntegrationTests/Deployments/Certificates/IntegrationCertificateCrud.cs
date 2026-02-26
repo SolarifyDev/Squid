@@ -712,6 +712,25 @@ public class IntegrationCertificateCrud : CertificateFixtureBase
     }
 
     [Fact]
+    public async Task Generate_NameAndCommonNameAreSeparate()
+    {
+        await Run<ICertificateService>(async service =>
+        {
+            var @event = await service.CreateCertificateAsync(new CreateCertificateCommand
+            {
+                Name = "Production TLS",
+                CommonName = "prod.example.com",
+                ValidityDays = 365,
+                KeyType = CertificateKeyType.RSA2048,
+                SpaceId = 1
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            @event.Data.Name.ShouldBe("Production TLS");
+            @event.Data.SubjectCommonName.ShouldBe("prod.example.com");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
     public async Task Generate_WithSans_PersistsSubjectAlternativeNames()
     {
         await Run<ICertificateService>(async service =>

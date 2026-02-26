@@ -16,6 +16,7 @@ public class CreateCertificateCommand : ICommand
     public string Password { get; set; }
 
     // Generate mode — when CertificateData is null, generate self-signed
+    public string CommonName { get; set; }
     public CertificateKeyType KeyType { get; set; } = CertificateKeyType.RSA2048;
     public int ValidityDays { get; set; } = 365;
     public List<string> SubjectAlternativeNames { get; set; }

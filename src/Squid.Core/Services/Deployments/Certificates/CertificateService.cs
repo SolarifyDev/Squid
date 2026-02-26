@@ -58,10 +58,12 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
 
     private static Persistence.Entities.Deployments.Certificate GenerateSelfSignedEntity(CreateCertificateCommand command)
     {
+        var commonName = !string.IsNullOrEmpty(command.CommonName) ? command.CommonName : command.Name;
+
         using var keyPair = CreateAsymmetricKey(command.KeyType);
         var hashAlgorithm = GetHashAlgorithm(command.KeyType);
 
-        var subject = $"CN={command.Name}";
+        var subject = $"CN={commonName}";
         var request = CreateCertificateRequest(subject, keyPair, hashAlgorithm);
 
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
