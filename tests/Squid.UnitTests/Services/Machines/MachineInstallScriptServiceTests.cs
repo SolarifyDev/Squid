@@ -123,8 +123,17 @@ public class MachineInstallScriptServiceTests
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
-        result.NfsCsiDriverScript.ShouldContain("helm repo add csi-driver-nfs");
-        result.NfsCsiDriverScript.ShouldContain("helm install csi-driver-nfs");
+        result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --atomic");
+        result.NfsCsiDriverScript.ShouldContain("csi-driver-nfs");
+    }
+
+    [Fact]
+    public async Task GenerateScript_UsesBackslashLineContinuation()
+    {
+        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+
+        result.AgentInstallScript.ShouldContain(" \\\n");
+        result.NfsCsiDriverScript.ShouldContain(" \\\n");
     }
 
     [Fact]

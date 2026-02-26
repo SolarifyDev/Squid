@@ -4,7 +4,6 @@ using Npgsql;
 using Serilog;
 using Squid.Core;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Settings.Security;
 using Squid.Core.Settings.SelfCert;
 using Xunit;
 
@@ -43,6 +42,7 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         configuration["SquidStore:ConnectionString"] = _connectionString;
 
         var containerBuilder = new ContainerBuilder();
+        containerBuilder.RegisterInstance(configuration).As<IConfiguration>().SingleInstance();
         containerBuilder.RegisterModule(new SquidModule(logger, configuration));
 
         containerBuilder.RegisterInstance(new SelfCertSetting
@@ -50,14 +50,6 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
             Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64")
                      ?? Convert.ToBase64String(CreateSelfSignedCertBytes()),
             Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
-        }).AsSelf().SingleInstance();
-
-        containerBuilder.RegisterInstance(new SecuritySetting
-        {
-            VariableEncryption = new VariableEncryptionDto
-            {
-                MasterKey = Convert.ToBase64String(new byte[32])
-            }
         }).AsSelf().SingleInstance();
 
         RegisterOverrides(containerBuilder, configuration);

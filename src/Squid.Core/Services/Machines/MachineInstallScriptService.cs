@@ -74,8 +74,13 @@ public class MachineInstallScriptService : IMachineInstallScriptService
 
     private static string BuildNfsCsiDriverScript()
     {
-        return "helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts && " +
-               "helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system --set kubeletDir=/var/lib/kubelet";
+        return JoinLines(
+            "helm upgrade --install --atomic",
+            "--repo https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts",
+            "--namespace kube-system",
+            "--version \"v4.*.*\"",
+            "csi-driver-nfs",
+            "csi-driver-nfs");
     }
 
     private static string BuildAgentInstallScript(
@@ -90,21 +95,23 @@ public class MachineInstallScriptService : IMachineInstallScriptService
         var environmentIds = string.Join(",", command.EnvironmentIds);
         var roles = string.Join(",", command.Tags);
 
-        var sb = new StringBuilder();
-        sb.Append("helm upgrade --install ");
-        sb.Append(agentName);
-        sb.Append(" oci://registry-1.docker.io/squid/squid-tentacle");
-        sb.Append($" --set tentacle.serverUrl=\"{command.ServerUrl}\"");
-        sb.Append($" --set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"");
-        sb.Append($" --set tentacle.bearerToken=\"{bearerToken}\"");
-        sb.Append($" --set tentacle.machineName=\"{agentName}\"");
-        sb.Append($" --set tentacle.roles=\"{roles}\"");
-        sb.Append($" --set tentacle.environmentIds=\"{environmentIds}\"");
-        sb.Append($" --set tentacle.spaceId=\"{command.SpaceId}\"");
-        sb.Append($" --set tentacle.flavor=\"KubernetesAgent\"");
-        sb.Append($" --set tentacle.subscriptionId=\"{subscriptionId}\"");
-        sb.Append($" --set kubernetes.namespace=\"default\"");
+        return JoinLines(
+            $"helm upgrade --install {agentName}",
+            "oci://registry-1.docker.io/squid/squid-tentacle",
+            $"--set tentacle.serverUrl=\"{command.ServerUrl}\"",
+            $"--set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"",
+            $"--set tentacle.bearerToken=\"{bearerToken}\"",
+            $"--set tentacle.machineName=\"{agentName}\"",
+            $"--set tentacle.roles=\"{roles}\"",
+            $"--set tentacle.environmentIds=\"{environmentIds}\"",
+            $"--set tentacle.spaceId=\"{command.SpaceId}\"",
+            $"--set tentacle.flavor=\"KubernetesAgent\"",
+            $"--set tentacle.subscriptionId=\"{subscriptionId}\"",
+            $"--set kubernetes.namespace=\"default\"");
+    }
 
-        return sb.ToString();
+    private static string JoinLines(params string[] lines)
+    {
+        return string.Join(" \\\n", lines);
     }
 }

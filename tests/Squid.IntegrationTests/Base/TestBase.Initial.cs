@@ -40,6 +40,7 @@ public partial class TestBase
 
         var isolatedConnectionString = GetIsolatedConnectionString(configuration);
 
+        containerBuilder.RegisterInstance(configuration).As<IConfiguration>().SingleInstance();
         containerBuilder.RegisterModule(new SquidModule(logger, configuration));
 
         containerBuilder.Register(_ =>

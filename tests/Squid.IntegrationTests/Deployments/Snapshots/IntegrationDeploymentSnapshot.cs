@@ -20,6 +20,11 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
             {
                 var builder = new TestDataBuilder(repository, unitOfWork);
 
+                // Set up lifecycle (must be first — Project and Channel reference LifecycleId = 1)
+                var environment = await builder.CreateEnvironmentAsync();
+                var lifecycle = await builder.CreateLifecycleAsync();
+                await builder.CreateLifecyclePhaseAsync(lifecycle.Id, environment.Id);
+
                 // Set up project with process + variables
                 var variableSet = await builder.CreateVariableSetAsync();
                 await builder.CreateVariableAsync(variableSet.Id, "AppName", "Squid");
@@ -30,10 +35,9 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                 var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step");
                 await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", "Octopus.Script");
 
-                var channel = await builder.CreateChannelAsync(project.Id);
+                var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id);
 
-                // Set up environment + machine (required for deployment validation)
-                var environment = await builder.CreateEnvironmentAsync();
+                // Set up machine (required for deployment validation)
                 await builder.CreateMachineAsync(environment.Id);
 
                 // Create release — snapshots both process and variables
@@ -80,6 +84,11 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
             {
                 var builder = new TestDataBuilder(repository, unitOfWork);
 
+                // Set up lifecycle (must be first — Project and Channel reference LifecycleId = 1)
+                var environment = await builder.CreateEnvironmentAsync();
+                var lifecycle = await builder.CreateLifecycleAsync();
+                await builder.CreateLifecyclePhaseAsync(lifecycle.Id, environment.Id);
+
                 // Set up project with process + variables
                 var variableSet = await builder.CreateVariableSetAsync();
                 await builder.CreateVariableAsync(variableSet.Id, "Env", "Production");
@@ -91,8 +100,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                 var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Original Action", "Octopus.Script");
                 await builder.CreateActionPropertiesAsync(action.Id, ("Octopus.Action.Script.ScriptBody", "echo original"));
 
-                var channel = await builder.CreateChannelAsync(project.Id);
-                var environment = await builder.CreateEnvironmentAsync();
+                var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id);
                 await builder.CreateMachineAsync(environment.Id);
 
                 // Create release — freezes "Original Step" + "Env=Production"

@@ -3,6 +3,7 @@ using System.Linq;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.IntegrationTests.Helpers;
 
@@ -324,5 +325,47 @@ public class TestDataBuilder
         variableSet.OwnerId = ownerId;
         await _repository.UpdateAsync(variableSet).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task<Lifecycle> CreateLifecycleAsync(string name = "Default Lifecycle")
+    {
+        var entity = new Lifecycle
+        {
+            Name = name,
+            SpaceId = 1,
+            Slug = name.ToLowerInvariant().Replace(" ", "-"),
+            ReleaseRetentionKeepForever = true,
+            TentacleRetentionKeepForever = true
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
+    public async Task<LifecyclePhase> CreateLifecyclePhaseAsync(int lifecycleId, int environmentId, string name = "Default Phase")
+    {
+        var phase = new LifecyclePhase
+        {
+            LifecycleId = lifecycleId,
+            Name = name,
+            SortOrder = 0,
+            IsOptionalPhase = false
+        };
+
+        await _repository.InsertAsync(phase).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        var phaseEnv = new LifecyclePhaseEnvironment
+        {
+            PhaseId = phase.Id,
+            EnvironmentId = environmentId,
+            TargetType = LifecyclePhaseEnvironmentTargetType.Automatic
+        };
+
+        await _repository.InsertAsync(phaseEnv).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return phase;
     }
 }

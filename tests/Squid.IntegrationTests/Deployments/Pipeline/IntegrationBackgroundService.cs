@@ -63,18 +63,6 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
         .As<ITransportRegistry>()
         .InstancePerLifetimeScope();
 
-        var securitySetting = new Squid.Core.Settings.Security.SecuritySetting
-        {
-            VariableEncryption = new Squid.Core.Settings.Security.VariableEncryptionDto
-            {
-                MasterKey = Convert.ToBase64String(new byte[32])
-            }
-        };
-
-        builder.RegisterInstance(securitySetting)
-            .As<Squid.Core.Settings.Security.SecuritySetting>()
-            .SingleInstance();
-
         var halibutFactoryMock = new Mock<IHalibutClientFactory>();
         builder.RegisterInstance(halibutFactoryMock.Object)
             .As<IHalibutClientFactory>()
