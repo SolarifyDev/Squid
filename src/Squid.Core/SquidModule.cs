@@ -39,32 +39,11 @@ public class SquidModule : Module
 
     private void RegisterSettings(ContainerBuilder builder)
     {
-        builder.RegisterInstance(_configuration)
-            .As<IConfiguration>()
-            .SingleInstance();
-
-        var settingTypes = _assemblies.SelectMany(a => a.GetTypes())
+        var settingTypes = typeof(SquidModule).Assembly.GetTypes()
             .Where(t => t.IsClass && typeof(IConfigurationSetting).IsAssignableFrom(t))
             .ToArray();
 
-        foreach (var type in settingTypes)
-        {
-            builder.Register(ctx =>
-                {
-                    var cfg = ctx.Resolve<IConfiguration>();
-
-                    var sectionName = type.Name.EndsWith("Setting")
-                        ? type.Name[..^"Setting".Length]
-                        : type.Name;
-
-                    var instance = Activator.CreateInstance(type)!;
-                    cfg.GetSection(sectionName).Bind(instance);
-
-                    return instance;
-                })
-                .As(type)
-                .SingleInstance();
-        }
+        builder.RegisterTypes(settingTypes).AsSelf().SingleInstance();
     }
 
     private void RegisterMediator(ContainerBuilder builder)

@@ -1,4 +1,3 @@
-using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Requests.Machines;
 using Microsoft.AspNetCore.Authorization;
@@ -11,17 +10,10 @@ namespace Squid.Api.Controllers;
 public class MachineController : ControllerBase
 {
     private readonly IMediator _mediator;
-    private readonly IMachineDataProvider _machineDataProvider;
-    private readonly IMachineInstallScriptService _installScriptService;
 
-    public MachineController(
-        IMediator mediator,
-        IMachineDataProvider machineDataProvider,
-        IMachineInstallScriptService installScriptService)
+    public MachineController(IMediator mediator)
     {
         _mediator = mediator;
-        _machineDataProvider = machineDataProvider;
-        _installScriptService = installScriptService;
     }
 
     [HttpPost("register/kubernetes-agent")]
@@ -51,19 +43,18 @@ public class MachineController : ControllerBase
     public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync(
         [FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
     {
-        var data = await _installScriptService.GenerateKubernetesAgentScriptAsync(command, User, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<GenerateKubernetesAgentInstallScriptCommand, GenerateKubernetesAgentInstallScriptResponse>(command, ct).ConfigureAwait(false);
 
-        return Ok(new GenerateKubernetesAgentInstallScriptResponse { Data = data });
+        return Ok(response);
     }
 
     [HttpGet("connection-status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
     public async Task<IActionResult> GetConnectionStatusAsync(
-        [FromQuery] string subscriptionId, CancellationToken ct)
+        [FromQuery] GetConnectionStatusRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(subscriptionId)) return BadRequest("subscriptionId is required");
+        var response = await _mediator.RequestAsync<GetConnectionStatusRequest, GetConnectionStatusResponse>(request, ct).ConfigureAwait(false);
 
-        var exists = await _machineDataProvider.ExistsBySubscriptionIdAsync(subscriptionId, ct).ConfigureAwait(false);
-
-        return Ok(new { connected = exists });
+        return Ok(response);
     }
 }

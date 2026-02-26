@@ -1,8 +1,8 @@
-using System.Security.Claims;
 using System.Text;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Account;
 using Squid.Core.Services.Authentication;
+using Squid.Core.Services.Identity;
 using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.Server;
 using Squid.Message.Commands.Machine;
@@ -12,22 +12,25 @@ namespace Squid.Core.Services.Machines;
 public interface IMachineInstallScriptService : IScopedDependency
 {
     Task<GenerateKubernetesAgentInstallScriptData> GenerateKubernetesAgentScriptAsync(
-        GenerateKubernetesAgentInstallScriptCommand command, ClaimsPrincipal user, CancellationToken ct);
+        GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct);
 }
 
 public class MachineInstallScriptService : IMachineInstallScriptService
 {
+    private readonly ICurrentUser _currentUser;
     private readonly IUserTokenService _userTokenService;
     private readonly IAccountService _accountService;
     private readonly ServerUrlSetting _serverUrlSetting;
     private readonly PollingListenerSetting _pollingListenerSetting;
 
     public MachineInstallScriptService(
+        ICurrentUser currentUser,
         IUserTokenService userTokenService,
         IAccountService accountService,
         ServerUrlSetting serverUrlSetting,
         PollingListenerSetting pollingListenerSetting)
     {
+        _currentUser = currentUser;
         _userTokenService = userTokenService;
         _accountService = accountService;
         _serverUrlSetting = serverUrlSetting;
@@ -35,10 +38,10 @@ public class MachineInstallScriptService : IMachineInstallScriptService
     }
 
     public async Task<GenerateKubernetesAgentInstallScriptData> GenerateKubernetesAgentScriptAsync(
-        GenerateKubernetesAgentInstallScriptCommand command, ClaimsPrincipal user, CancellationToken ct)
+        GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
     {
         var subscriptionId = Guid.NewGuid().ToString("N");
-        var bearerToken = await GenerateBearerTokenAsync(user, ct).ConfigureAwait(false);
+        var bearerToken = await GenerateBearerTokenAsync(ct).ConfigureAwait(false);
         var serverUrl = _serverUrlSetting.ExternalUrl;
         var commsPort = _pollingListenerSetting.Port;
 
@@ -54,14 +57,14 @@ public class MachineInstallScriptService : IMachineInstallScriptService
         };
     }
 
-    private async Task<string> GenerateBearerTokenAsync(ClaimsPrincipal user, CancellationToken ct)
+    private async Task<string> GenerateBearerTokenAsync(CancellationToken ct)
     {
-        var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var userId = _currentUser.Id;
 
-        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
-            throw new InvalidOperationException("Cannot resolve current user from claims");
+        if (userId == null)
+            throw new InvalidOperationException("Cannot resolve current user");
 
-        var userAccount = await _accountService.GetByIdAsync(userId, ct).ConfigureAwait(false);
+        var userAccount = await _accountService.GetByIdAsync(userId.Value, ct).ConfigureAwait(false);
 
         if (userAccount == null)
             throw new InvalidOperationException($"User account {userId} not found");
