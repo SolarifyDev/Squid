@@ -40,8 +40,7 @@ public class MachineController : ControllerBase
 
     [HttpPost("generate-kubernetes-agent-install-script")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
-    public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync(
-        [FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
+    public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
     {
         var response = await _mediator.SendAsync<GenerateKubernetesAgentInstallScriptCommand, GenerateKubernetesAgentInstallScriptResponse>(command, ct).ConfigureAwait(false);
 
@@ -50,8 +49,7 @@ public class MachineController : ControllerBase
 
     [HttpGet("connection-status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
-    public async Task<IActionResult> GetConnectionStatusAsync(
-        [FromQuery] GetConnectionStatusRequest request, CancellationToken ct)
+    public async Task<IActionResult> GetConnectionStatusAsync([FromQuery] GetConnectionStatusRequest request, CancellationToken ct)
     {
         var response = await _mediator.RequestAsync<GetConnectionStatusRequest, GetConnectionStatusResponse>(request, ct).ConfigureAwait(false);
 

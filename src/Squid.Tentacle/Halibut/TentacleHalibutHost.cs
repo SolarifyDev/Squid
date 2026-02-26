@@ -37,7 +37,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         _runtime.Trust(serverThumbprint);
 
         var pollUri = ResolvePollUri(subscriptionId, subscriptionUri);
-        var pollingEndpointUri = BuildPollingEndpointUri(_settings.ServerUrl, _settings.ServerPollingPort);
+        var pollingEndpointUri = new Uri(_settings.ServerCommsUrl);
 
         var serverEndpoint = new ServiceEndPoint(
             pollingEndpointUri,
@@ -65,11 +65,6 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             : new Uri(subscriptionUri);
     }
 
-    public static Uri BuildPollingEndpointUri(string serverUrl, int serverPollingPort)
-    {
-        var serverUri = new Uri(serverUrl);
-        return new Uri($"https://{serverUri.Host}:{serverPollingPort}/");
-    }
 
     public async ValueTask DisposeAsync()
     {

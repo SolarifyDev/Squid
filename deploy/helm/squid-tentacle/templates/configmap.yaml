@@ -9,7 +9,7 @@ data:
     {
       "Tentacle": {
         "ServerUrl": "{{ .Values.tentacle.serverUrl }}",
-        "ServerPollingPort": {{ .Values.tentacle.serverPollingPort }},
+        "ServerCommsUrl": "{{ .Values.tentacle.serverCommsUrl }}",
         "Roles": "{{ .Values.tentacle.roles }}"
       },
       "Kubernetes": {

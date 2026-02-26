@@ -128,7 +128,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         var settings = new TentacleSettings
         {
             ServerUrl = $"https://localhost:{_pollingPort}",
-            ServerPollingPort = _pollingPort
+            ServerCommsUrl = $"https://localhost:{_pollingPort}/"
         };
 
         var serverThumbprint = GetServerThumbprint();

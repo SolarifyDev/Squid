@@ -11,4 +11,4 @@ Script Pods:
 
 Verify registration:
   The tentacle will register with the Squid Server at {{ .Values.tentacle.serverUrl }}
-  and begin polling on port {{ .Values.tentacle.serverPollingPort }}.
+  and begin polling via {{ .Values.tentacle.serverCommsUrl }}.

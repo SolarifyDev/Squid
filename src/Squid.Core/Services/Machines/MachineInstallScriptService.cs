@@ -3,8 +3,6 @@ using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Account;
 using Squid.Core.Services.Authentication;
 using Squid.Core.Services.Identity;
-using Squid.Core.Settings.Halibut;
-using Squid.Core.Settings.Server;
 using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Services.Machines;
@@ -20,21 +18,15 @@ public class MachineInstallScriptService : IMachineInstallScriptService
     private readonly ICurrentUser _currentUser;
     private readonly IUserTokenService _userTokenService;
     private readonly IAccountService _accountService;
-    private readonly ServerUrlSetting _serverUrlSetting;
-    private readonly PollingListenerSetting _pollingListenerSetting;
 
     public MachineInstallScriptService(
         ICurrentUser currentUser,
         IUserTokenService userTokenService,
-        IAccountService accountService,
-        ServerUrlSetting serverUrlSetting,
-        PollingListenerSetting pollingListenerSetting)
+        IAccountService accountService)
     {
         _currentUser = currentUser;
         _userTokenService = userTokenService;
         _accountService = accountService;
-        _serverUrlSetting = serverUrlSetting;
-        _pollingListenerSetting = pollingListenerSetting;
     }
 
     public async Task<GenerateKubernetesAgentInstallScriptData> GenerateKubernetesAgentScriptAsync(
@@ -42,12 +34,10 @@ public class MachineInstallScriptService : IMachineInstallScriptService
     {
         var subscriptionId = Guid.NewGuid().ToString("N");
         var bearerToken = await GenerateBearerTokenAsync(ct).ConfigureAwait(false);
-        var serverUrl = _serverUrlSetting.ExternalUrl;
-        var commsPort = _pollingListenerSetting.Port;
 
         var nfsCsiDriverScript = BuildNfsCsiDriverScript();
         var agentInstallScript = BuildAgentInstallScript(
-            command, subscriptionId, bearerToken, serverUrl, commsPort);
+            command, subscriptionId, bearerToken);
 
         return new GenerateKubernetesAgentInstallScriptData
         {
@@ -91,9 +81,7 @@ public class MachineInstallScriptService : IMachineInstallScriptService
     private static string BuildAgentInstallScript(
         GenerateKubernetesAgentInstallScriptCommand command,
         string subscriptionId,
-        string bearerToken,
-        string serverUrl,
-        int commsPort)
+        string bearerToken)
     {
         var agentName = string.IsNullOrWhiteSpace(command.AgentName)
             ? $"squid-agent-{subscriptionId[..8]}"
@@ -106,8 +94,8 @@ public class MachineInstallScriptService : IMachineInstallScriptService
         sb.Append("helm upgrade --install ");
         sb.Append(agentName);
         sb.Append(" oci://registry-1.docker.io/squid/squid-tentacle");
-        sb.Append($" --set tentacle.serverUrl=\"{serverUrl}\"");
-        sb.Append($" --set tentacle.serverPollingPort=\"{commsPort}\"");
+        sb.Append($" --set tentacle.serverUrl=\"{command.ServerUrl}\"");
+        sb.Append($" --set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"");
         sb.Append($" --set tentacle.bearerToken=\"{bearerToken}\"");
         sb.Append($" --set tentacle.machineName=\"{agentName}\"");
         sb.Append($" --set tentacle.roles=\"{roles}\"");

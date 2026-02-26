@@ -28,11 +28,4 @@ public class TentacleHalibutHostUriTests
         Should.Throw<UriFormatException>(() => TentacleHalibutHost.ResolvePollUri("abc123", "not a uri"));
     }
 
-    [Fact]
-    public void BuildPollingEndpointUri_Uses_Server_Host_And_Polling_Port()
-    {
-        var uri = TentacleHalibutHost.BuildPollingEndpointUri("https://squid.example.com:7078/some/path", 10943);
-
-        uri.ShouldBe(new Uri("https://squid.example.com:10943/"));
-    }
 }

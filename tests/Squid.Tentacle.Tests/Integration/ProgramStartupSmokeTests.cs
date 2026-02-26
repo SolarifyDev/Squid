@@ -103,7 +103,7 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
         {
             ["Tentacle__Flavor"] = "KubernetesAgent",
             ["Tentacle__ServerUrl"] = registrationServer.BaseAddress.ToString().TrimEnd('/'),
-            ["Tentacle__ServerPollingPort"] = pollingPort.ToString(),
+            ["Tentacle__ServerCommsUrl"] = $"https://localhost:{pollingPort}/",
             ["Tentacle__BearerToken"] = "unit-test-token",
             ["Tentacle__MachineName"] = machineName,
             ["Tentacle__Roles"] = "web,api",

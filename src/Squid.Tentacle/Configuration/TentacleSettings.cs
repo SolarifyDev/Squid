@@ -4,7 +4,7 @@ public class TentacleSettings
 {
     public string Flavor { get; set; } = string.Empty;
     public string ServerUrl { get; set; } = "https://localhost:7078";
-    public int ServerPollingPort { get; set; } = 10943;
+    public string ServerCommsUrl { get; set; } = string.Empty;
     public string BearerToken { get; set; } = string.Empty;
     public string ServerCertificate { get; set; } = string.Empty;
     public string MachineName { get; set; } = string.Empty;

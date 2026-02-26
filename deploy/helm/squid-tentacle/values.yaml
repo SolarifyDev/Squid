@@ -4,7 +4,7 @@ tentacle:
     tag: latest
     pullPolicy: IfNotPresent
   serverUrl: ""
-  serverPollingPort: 10943
+  serverCommsUrl: ""
   bearerToken: ""
   serverCertificate: ""
   roles: "k8s"

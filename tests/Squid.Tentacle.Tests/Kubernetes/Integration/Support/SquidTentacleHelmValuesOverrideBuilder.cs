@@ -26,7 +26,7 @@ public static class SquidTentacleHelmValuesOverrideBuilder
         sb.AppendLine($"    repository: {Yaml(values.TentacleImageRepository)}");
         sb.AppendLine($"    tag: {Yaml(values.TentacleImageTag)}");
         sb.AppendLine($"  serverUrl: {Yaml(values.ServerUrl)}");
-        sb.AppendLine("  serverPollingPort: 10943");
+        sb.AppendLine("  serverCommsUrl: \"\"");
         sb.AppendLine($"  bearerToken: {Yaml(values.BearerToken)}");
         sb.AppendLine("  roles: \"k8s\"");
         sb.AppendLine("kubernetes:");

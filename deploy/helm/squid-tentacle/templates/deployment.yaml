@@ -62,8 +62,8 @@ spec:
         env:
         - name: Tentacle__ServerUrl
           value: "{{ .Values.tentacle.serverUrl }}"
-        - name: Tentacle__ServerPollingPort
-          value: "{{ .Values.tentacle.serverPollingPort }}"
+        - name: Tentacle__ServerCommsUrl
+          value: "{{ .Values.tentacle.serverCommsUrl }}"
         - name: Tentacle__BearerToken
           valueFrom:
             secretKeyRef:

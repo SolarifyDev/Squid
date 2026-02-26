@@ -39,7 +39,7 @@ public class SquidTentacleHelmChartContractTests
         var yaml = File.ReadAllText(DeploymentTemplatePath);
 
         yaml.ShouldContain("Tentacle__ServerUrl");
-        yaml.ShouldContain("Tentacle__ServerPollingPort");
+        yaml.ShouldContain("Tentacle__ServerCommsUrl");
         yaml.ShouldContain("Tentacle__BearerToken");
         yaml.ShouldContain("Tentacle__Roles");
     }

@@ -68,7 +68,7 @@ public class TentacleRegistrationClientTests
 
         settings.Flavor.ShouldBe(string.Empty);
         settings.ServerUrl.ShouldBe("https://localhost:7078");
-        settings.ServerPollingPort.ShouldBe(10943);
+        settings.ServerCommsUrl.ShouldBe(string.Empty);
         settings.BearerToken.ShouldBe(string.Empty);
         settings.Roles.ShouldBe(string.Empty);
         settings.HealthCheckPort.ShouldBe(8080);
