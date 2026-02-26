@@ -1,6 +1,6 @@
 tentacle:
   image:
-    repository: squid/squid-tentacle
+    repository: squidcd/squid-tentacle
     tag: latest
     pullPolicy: IfNotPresent
   serverUrl: ""

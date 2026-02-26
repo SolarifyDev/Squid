@@ -97,7 +97,7 @@ public class MachineInstallScriptService : IMachineInstallScriptService
 
         return JoinLines(
             $"helm upgrade --install {agentName}",
-            "oci://registry-1.docker.io/squid/squid-tentacle",
+            "oci://registry-1.docker.io/squidcd/squid-tentacle",
             $"--set tentacle.serverUrl=\"{command.ServerUrl}\"",
             $"--set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"",
             $"--set tentacle.bearerToken=\"{bearerToken}\"",
