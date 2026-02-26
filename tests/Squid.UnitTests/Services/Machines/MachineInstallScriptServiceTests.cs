@@ -96,7 +96,7 @@ public class MachineInstallScriptServiceTests
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
-        result.AgentInstallScript.ShouldContain("oci://registry-1.docker.io/squidcd/squid-tentacle");
+        result.AgentInstallScript.ShouldContain("oci://registry-1.docker.io/squidcd/kubernetes-agent");
     }
 
     [Fact]

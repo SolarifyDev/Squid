@@ -40,10 +40,10 @@ public class KubernetesE2EEnvironmentSettingsTests
     {
         var settings = new KubernetesE2EEnvironmentSettings
         {
-            ReleaseName = "squid-tentacle"
+            ReleaseName = "kubernetes-agent"
         };
 
-        settings.GetTentacleDeploymentName().ShouldBe("squid-tentacle");
-        settings.GetTentaclePodLabelSelector().ShouldBe("app.kubernetes.io/instance=squid-tentacle,app.kubernetes.io/name=squid-tentacle");
+        settings.GetTentacleDeploymentName().ShouldBe("kubernetes-agent");
+        settings.GetTentaclePodLabelSelector().ShouldBe("app.kubernetes.io/instance=kubernetes-agent,app.kubernetes.io/name=kubernetes-agent");
     }
 }

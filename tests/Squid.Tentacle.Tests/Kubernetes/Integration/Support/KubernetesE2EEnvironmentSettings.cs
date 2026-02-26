@@ -7,7 +7,7 @@ public sealed class KubernetesE2EEnvironmentSettings
     public bool Enabled { get; init; }
     public string ClusterName { get; init; } = "squid-tentacle-e2e";
     public string Namespace { get; init; } = "squid-agent-e2e";
-    public string ReleaseName { get; init; } = "squid-tentacle";
+    public string ReleaseName { get; init; } = "kubernetes-agent";
     public string TentacleImageRepository { get; init; } = string.Empty;
     public string TentacleImageTag { get; init; } = string.Empty;
     public string ScriptPodImage { get; init; } = string.Empty;
@@ -67,7 +67,7 @@ public sealed class KubernetesE2EEnvironmentSettings
             Enabled = ReadBool("SQUID_TENTACLE_K8S_E2E_ENABLED"),
             ClusterName = ReadWithDefault("SQUID_TENTACLE_K8S_E2E_KIND_CLUSTER_NAME", "squid-tentacle-e2e"),
             Namespace = ReadWithDefault("SQUID_TENTACLE_K8S_E2E_NAMESPACE", "squid-agent-e2e"),
-            ReleaseName = ReadWithDefault("SQUID_TENTACLE_K8S_E2E_RELEASE_NAME", "squid-tentacle"),
+            ReleaseName = ReadWithDefault("SQUID_TENTACLE_K8S_E2E_RELEASE_NAME", "kubernetes-agent"),
             TentacleImageRepository = ReadRaw("SQUID_TENTACLE_K8S_E2E_TENTACLE_IMAGE_REPOSITORY"),
             TentacleImageTag = ReadRaw("SQUID_TENTACLE_K8S_E2E_TENTACLE_IMAGE_TAG"),
             ScriptPodImage = ReadRaw("SQUID_TENTACLE_K8S_E2E_SCRIPT_POD_IMAGE"),
@@ -92,6 +92,6 @@ public sealed class KubernetesE2EEnvironmentSettings
         if (!string.IsNullOrWhiteSpace(TentaclePodLabelSelector))
             return TentaclePodLabelSelector;
 
-        return $"app.kubernetes.io/instance={ReleaseName},app.kubernetes.io/name=squid-tentacle";
+        return $"app.kubernetes.io/instance={ReleaseName},app.kubernetes.io/name=kubernetes-agent";
     }
 }

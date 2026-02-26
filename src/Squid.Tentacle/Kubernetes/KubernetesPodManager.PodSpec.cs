@@ -14,7 +14,7 @@ public partial class KubernetesPodManager
                 NamespaceProperty = _settings.TentacleNamespace,
                 Labels = new Dictionary<string, string>
                 {
-                    ["app.kubernetes.io/managed-by"] = "squid-tentacle",
+                    ["app.kubernetes.io/managed-by"] = "kubernetes-agent",
                     ["squid.io/ticket-id"] = ticketId
                 }
             },

@@ -23,12 +23,12 @@ public class KubernetesAgentClusterSmokeScaffoldTests : KubernetesAgentIntegrati
             return;
         }
 
-        var chartPath = Path.Combine(WorkspacePaths.RepositoryRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(WorkspacePaths.RepositoryRoot, "deploy", "helm", "kubernetes-agent");
         Directory.Exists(chartPath).ShouldBeTrue();
 
         var result = await CommandRunner.RunAsync(
             "helm",
-            $"template squid-tentacle \"{chartPath}\"",
+            $"template kubernetes-agent \"{chartPath}\"",
             WorkspacePaths.RepositoryRoot,
             TestCancellationToken);
 

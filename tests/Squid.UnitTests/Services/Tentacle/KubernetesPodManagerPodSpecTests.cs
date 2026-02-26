@@ -51,7 +51,7 @@ public class KubernetesPodManagerPodSpecTests
     {
         var pod = CaptureCreatedPod();
 
-        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "squid-tentacle");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
         pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
     }
 

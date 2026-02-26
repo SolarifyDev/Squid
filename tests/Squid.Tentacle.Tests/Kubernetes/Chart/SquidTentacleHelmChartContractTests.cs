@@ -9,10 +9,10 @@ public class SquidTentacleHelmChartContractTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 
     private static readonly string ChartValuesPath = Path.Combine(
-        RepoRoot, "deploy", "helm", "squid-tentacle", "values.yaml");
+        RepoRoot, "deploy", "helm", "kubernetes-agent", "values.yaml");
 
     private static readonly string DeploymentTemplatePath = Path.Combine(
-        RepoRoot, "deploy", "helm", "squid-tentacle", "templates", "deployment.yaml");
+        RepoRoot, "deploy", "helm", "kubernetes-agent", "templates", "deployment.yaml");
 
     [Fact]
     public void Values_DefaultWorkspaceAccessModes_IncludeReadWriteMany()

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "squid-tentacle.pvc-name" . }}
+  name: {{ include "kubernetes-agent.pvc-name" . }}
   labels:
-    {{- include "squid-tentacle.labels" . | nindent 4 }}
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
 spec:
   accessModes:
     {{- toYaml .Values.workspace.accessModes | nindent 4 }}

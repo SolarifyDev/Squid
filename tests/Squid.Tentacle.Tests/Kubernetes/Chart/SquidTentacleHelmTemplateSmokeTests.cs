@@ -17,10 +17,10 @@ public class SquidTentacleHelmTemplateSmokeTests : TimedTestBase
         if (!ExternalToolProbe.HasHelm())
             return;
 
-        var chartPath = Path.Combine(RepoRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(RepoRoot, "deploy", "helm", "kubernetes-agent");
         var result = await CommandRunner.RunAsync(
             "helm",
-            $"template squid-tentacle \"{chartPath}\"",
+            $"template kubernetes-agent \"{chartPath}\"",
             RepoRoot,
             TestCancellationToken);
 

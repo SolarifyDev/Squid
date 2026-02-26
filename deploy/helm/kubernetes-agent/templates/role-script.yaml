@@ -8,10 +8,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "squid-tentacle.fullname" $ }}-script
+  name: {{ include "kubernetes-agent.fullname" $ }}-script
   namespace: {{ $ns }}
   labels:
-    {{- include "squid-tentacle.labels" $ | nindent 4 }}
+    {{- include "kubernetes-agent.labels" $ | nindent 4 }}
 rules:
   {{- toYaml $.Values.scriptPod.rbac.clusterRole.rules | nindent 2 }}
 {{- end }}

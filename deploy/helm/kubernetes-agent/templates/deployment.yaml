@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "squid-tentacle.fullname" . }}
+  name: {{ include "kubernetes-agent.fullname" . }}
   labels:
-    {{- include "squid-tentacle.labels" . | nindent 4 }}
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
     {{- with .Values.tentacle.metadata.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -17,11 +17,11 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "squid-tentacle.selectorLabels" . | nindent 6 }}
+      {{- include "kubernetes-agent.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "squid-tentacle.selectorLabels" . | nindent 8 }}
+        {{- include "kubernetes-agent.selectorLabels" . | nindent 8 }}
         {{- with .Values.tentacle.metadata.labels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -30,10 +30,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "squid-tentacle.tentacle-sa-name" . }}
+      serviceAccountName: {{ include "kubernetes-agent.tentacle-sa-name" . }}
       terminationGracePeriodSeconds: {{ .Values.tentacle.terminationGracePeriodSeconds }}
       containers:
-      - name: squid-tentacle
+      - name: kubernetes-agent
         image: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag }}"
         imagePullPolicy: {{ .Values.tentacle.image.pullPolicy }}
         ports:
@@ -67,7 +67,7 @@ spec:
         - name: Tentacle__BearerToken
           valueFrom:
             secretKeyRef:
-              name: {{ include "squid-tentacle.fullname" . }}-secret
+              name: {{ include "kubernetes-agent.fullname" . }}-secret
               key: bearer-token
         - name: Tentacle__Roles
           value: "{{ .Values.tentacle.roles }}"
@@ -100,11 +100,11 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: Kubernetes__PvcClaimName
-          value: {{ include "squid-tentacle.pvc-name" . }}
+          value: {{ include "kubernetes-agent.pvc-name" . }}
         - name: Kubernetes__ScriptPodImage
           value: "{{ .Values.scriptPod.image }}"
         - name: Kubernetes__ScriptPodServiceAccount
-          value: {{ include "squid-tentacle.script-sa-name" . }}
+          value: {{ include "kubernetes-agent.script-sa-name" . }}
         - name: Kubernetes__ScriptPodTimeoutSeconds
           value: "{{ .Values.scriptPod.timeoutSeconds }}"
         - name: Kubernetes__ScriptPodCpuRequest
@@ -127,7 +127,7 @@ spec:
       volumes:
       - name: workspace
         persistentVolumeClaim:
-          claimName: {{ include "squid-tentacle.pvc-name" . }}
+          claimName: {{ include "kubernetes-agent.pvc-name" . }}
       - name: certs
         emptyDir: {}
       {{- with .Values.tentacle.tolerations }}

@@ -111,7 +111,7 @@ public partial class KubernetesPodManager
     {
         var pods = _ops.ListPods(
             _settings.TentacleNamespace,
-            "app.kubernetes.io/managed-by=squid-tentacle");
+            "app.kubernetes.io/managed-by=kubernetes-agent");
 
         return pods.Items.ToList();
     }

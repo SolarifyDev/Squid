@@ -50,7 +50,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         var namespaceName = $"{settings.Namespace}-{unique}";
 
         var repoRoot = WorkspacePaths.RepositoryRoot;
-        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "kubernetes-agent");
         using var tempDir = new TemporaryDirectory();
         var valuesPath = Path.Combine(tempDir.Path, "values.override.yaml");
         var helperPodYamlPath = Path.Combine(tempDir.Path, "helper-pod.yaml");
@@ -92,7 +92,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
             var registrationBody = await fakeRegistrationServer.WaitForFirstRegistrationAsync(TestCancellationToken);
             registrationBody.ShouldContain("subscriptionId");
 
-            var selector = $"app.kubernetes.io/name=squid-tentacle,app.kubernetes.io/instance={releaseName}";
+            var selector = $"app.kubernetes.io/name=kubernetes-agent,app.kubernetes.io/instance={releaseName}";
             var listed = await kubectl.GetPodsBySelectorAsync(namespaceName, selector, TestCancellationToken);
             listed.ExitCode.ShouldBe(0);
             var tentaclePodName = ParseFirstPodName(listed.StdOut);
@@ -132,7 +132,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         var namespaceName = $"{settings.Namespace}-{unique}";
 
         var repoRoot = WorkspacePaths.RepositoryRoot;
-        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "kubernetes-agent");
         using var tempDir = new TemporaryDirectory();
         var valuesPath = Path.Combine(tempDir.Path, "values.override.yaml");
         var helperPodYamlPath = Path.Combine(tempDir.Path, "helper-pod.yaml");
@@ -213,7 +213,7 @@ public class KubernetesScriptPodExecutionE2ETests : KubernetesAgentIntegrationTe
         var namespaceName = $"{settings.Namespace}-{unique}";
 
         var repoRoot = WorkspacePaths.RepositoryRoot;
-        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "kubernetes-agent");
         Directory.Exists(chartPath).ShouldBeTrue();
 
         using var tempDir = new TemporaryDirectory();
@@ -351,7 +351,7 @@ metadata:
   name: {{podName}}
   namespace: {{ns}}
   labels:
-    app.kubernetes.io/managed-by: squid-tentacle
+    app.kubernetes.io/managed-by: kubernetes-agent
 spec:
   serviceAccountName: {{serviceAccountName}}
   restartPolicy: Never

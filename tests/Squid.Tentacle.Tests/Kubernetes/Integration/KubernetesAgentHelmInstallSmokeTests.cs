@@ -29,7 +29,7 @@ public class KubernetesAgentHelmInstallSmokeTests : KubernetesAgentIntegrationTe
         }
 
         var repoRoot = WorkspacePaths.RepositoryRoot;
-        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "squid-tentacle");
+        var chartPath = Path.Combine(repoRoot, "deploy", "helm", "kubernetes-agent");
         Directory.Exists(chartPath).ShouldBeTrue();
 
         using var tempDir = new TemporaryDirectory();

@@ -111,7 +111,7 @@ public class MachineInstallScriptService : IMachineInstallScriptService
             $"--create-namespace --namespace squid-agent",
             $"--version \"0.*.*\"",
             releaseName,
-            "oci://registry-1.docker.io/squidcd/squid-tentacle");
+            "oci://registry-1.docker.io/squidcd/kubernetes-agent");
     }
 
     private static string JoinLines(params string[] lines)

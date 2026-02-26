@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "squid-tentacle.name" -}}
+{{- define "kubernetes-agent.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "squid-tentacle.fullname" -}}
+{{- define "kubernetes-agent.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,9 +24,9 @@ Create a default fully qualified app name.
 {{/*
 Common labels
 */}}
-{{- define "squid-tentacle.labels" -}}
-helm.sh/chart: {{ include "squid-tentacle.name" . }}-{{ .Chart.Version | replace "+" "_" }}
-{{ include "squid-tentacle.selectorLabels" . }}
+{{- define "kubernetes-agent.labels" -}}
+helm.sh/chart: {{ include "kubernetes-agent.name" . }}-{{ .Chart.Version | replace "+" "_" }}
+{{ include "kubernetes-agent.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
@@ -34,32 +34,32 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "squid-tentacle.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "squid-tentacle.name" . }}
+{{- define "kubernetes-agent.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kubernetes-agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Tentacle service account name
 */}}
-{{- define "squid-tentacle.tentacle-sa-name" -}}
-{{- printf "%s-tentacle" (include "squid-tentacle.fullname" .) -}}
+{{- define "kubernetes-agent.tentacle-sa-name" -}}
+{{- printf "%s-tentacle" (include "kubernetes-agent.fullname" .) -}}
 {{- end }}
 
 {{/*
 Script pod service account name
 */}}
-{{- define "squid-tentacle.script-sa-name" -}}
+{{- define "kubernetes-agent.script-sa-name" -}}
 {{- if .Values.scriptPod.serviceAccount }}
 {{- .Values.scriptPod.serviceAccount }}
 {{- else }}
-{{- printf "%s-script" (include "squid-tentacle.fullname" .) -}}
+{{- printf "%s-script" (include "kubernetes-agent.fullname" .) -}}
 {{- end }}
 {{- end }}
 
 {{/*
 PVC name
 */}}
-{{- define "squid-tentacle.pvc-name" -}}
-{{- printf "%s-workspace" (include "squid-tentacle.fullname" .) -}}
+{{- define "kubernetes-agent.pvc-name" -}}
+{{- printf "%s-workspace" (include "kubernetes-agent.fullname" .) -}}
 {{- end }}
