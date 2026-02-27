@@ -1,4 +1,3 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -88,17 +87,15 @@ data:
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = "this-is-an-invalid-token" })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = "this-is-an-invalid-token" });
 
         var script = _contextBuilder.WrapWithContext(
             "kubectl get pods",
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);
@@ -118,21 +115,19 @@ data:
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.ClientCertificate,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new ClientCertificateCredentials
-                {
-                    ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
-                    ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
-                })
-        };
+        var accountType = AccountType.ClientCertificate;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new ClientCertificateCredentials
+            {
+                ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
+                ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
+            });
 
         var script = _contextBuilder.WrapWithContext(
             "kubectl get pods",
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);
@@ -168,15 +163,12 @@ data:
                 SkipTlsVerification = "True"
             };
 
-            var account = new DeploymentAccount
-            {
-                AccountType = AccountType.Token,
-                Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                    new TokenCredentials { Token = token })
-            };
+            var accountType = AccountType.Token;
+            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token });
 
             var fullScript = _contextBuilder.WrapWithContext(
-                result.ScriptBody, endpoint, account, ScriptSyntax.Bash);
+                result.ScriptBody, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
 
@@ -221,12 +213,9 @@ data:
                 SkipTlsVerification = "True"
             };
 
-            var account = new DeploymentAccount
-            {
-                AccountType = AccountType.Token,
-                Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                    new TokenCredentials { Token = token })
-            };
+            var accountType = AccountType.Token;
+            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token });
 
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-fail-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
@@ -237,7 +226,7 @@ data:
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
 
             var fullScript = _contextBuilder.WrapWithContext(
-                modifiedScript, endpoint, account, ScriptSyntax.Bash);
+                modifiedScript, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
 
@@ -285,15 +274,12 @@ data:
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token });
 
         var fullScript = _contextBuilder.WrapWithContext(
-            modifiedScript, endpoint, account, ScriptSyntax.Bash);
+            modifiedScript, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
 
         return await ExecuteBashScriptAsync(fullScript);
     }

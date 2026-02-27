@@ -32,11 +32,11 @@ public class KubernetesAgentPipelineBehaviorTests
     {
         var contributor = new KubernetesAgentEndpointVariableContributor();
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "production" });
-        var endpointVars = contributor.ContributeVariables(json, null);
+        var endpointVars = contributor.ContributeVariables(json, null, null);
 
         var wrapper = new KubernetesAgentScriptContextWrapper();
         var result = wrapper.WrapScript(
-            "kubectl get pods", json, null,
+            "kubectl get pods", json, null, null,
             Message.Models.Deployments.Execution.ScriptSyntax.Bash, endpointVars);
 
         result.ShouldContain("--namespace=\"production\"");
@@ -52,7 +52,7 @@ public class KubernetesAgentPipelineBehaviorTests
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "prod" });
 
         var tc = new DeploymentTargetContext();
-        var endpointVars = contributor.ContributeVariables(json, null);
+        var endpointVars = contributor.ContributeVariables(json, null, null);
 
         tc.EndpointVariables.AddRange(endpointVars);
 
@@ -76,8 +76,8 @@ public class KubernetesAgentPipelineBehaviorTests
             ClusterCertificate = (string)null
         });
 
-        var agentVars = agentContributor.ContributeVariables(agentJson, null);
-        var apiVars = apiContributor.ContributeVariables(apiJson, null);
+        var agentVars = agentContributor.ContributeVariables(agentJson, null, null);
+        var apiVars = apiContributor.ContributeVariables(apiJson, null, null);
 
         agentVars.Count.ShouldBe(3);
         apiVars.Count.ShouldBe(15);
@@ -89,7 +89,7 @@ public class KubernetesAgentPipelineBehaviorTests
         var contributor = new KubernetesAgentEndpointVariableContributor();
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "default" });
 
-        var vars = contributor.ContributeVariables(json, null);
+        var vars = contributor.ContributeVariables(json, null, null);
         var names = vars.Select(v => v.Name).ToList();
 
         names.ShouldContain("Squid.Action.Kubernetes.Namespace");

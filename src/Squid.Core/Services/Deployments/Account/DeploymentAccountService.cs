@@ -101,13 +101,46 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             Name = entity.Name,
             Slug = entity.Slug,
             AccountType = entity.AccountType,
-            Username = (creds as UsernamePasswordCredentials)?.Username ?? (creds as SshKeyPairCredentials)?.Username,
-            AccessKey = (creds as AwsCredentials)?.AccessKey,
-            TokenHasValue = creds is TokenCredentials tc && !string.IsNullOrEmpty(tc.Token),
-            PasswordHasValue = creds is UsernamePasswordCredentials up && !string.IsNullOrEmpty(up.Password),
-            ClientCertificateDataHasValue = creds is ClientCertificateCredentials cert && !string.IsNullOrEmpty(cert.ClientCertificateData),
-            ClientCertificateKeyDataHasValue = creds is ClientCertificateCredentials certKey && !string.IsNullOrEmpty(certKey.ClientCertificateKeyData),
-            SecretKeyHasValue = creds is AwsCredentials aws && !string.IsNullOrEmpty(aws.SecretKey),
+            Credentials = BuildCredentialsSummary(entity.AccountType, creds)
+        };
+    }
+
+    private static object BuildCredentialsSummary(AccountType accountType, object creds)
+    {
+        return accountType switch
+        {
+            AccountType.Token => new TokenCredentialsSummary
+            {
+                TokenHasValue = creds is TokenCredentials tc && !string.IsNullOrEmpty(tc.Token)
+            },
+            AccountType.UsernamePassword => new UsernamePasswordCredentialsSummary
+            {
+                Username = (creds as UsernamePasswordCredentials)?.Username,
+                PasswordHasValue = creds is UsernamePasswordCredentials up && !string.IsNullOrEmpty(up.Password)
+            },
+            AccountType.ClientCertificate => new ClientCertificateCredentialsSummary
+            {
+                CertificateDataHasValue = creds is ClientCertificateCredentials cert && !string.IsNullOrEmpty(cert.ClientCertificateData),
+                CertificateKeyDataHasValue = creds is ClientCertificateCredentials certKey && !string.IsNullOrEmpty(certKey.ClientCertificateKeyData)
+            },
+            AccountType.AmazonWebServicesAccount or AccountType.AmazonWebServicesRoleAccount => new AwsCredentialsSummary
+            {
+                AccessKey = (creds as AwsCredentials)?.AccessKey,
+                SecretKeyHasValue = creds is AwsCredentials aws && !string.IsNullOrEmpty(aws.SecretKey)
+            },
+            AccountType.SshKeyPair => new SshKeyPairCredentialsSummary
+            {
+                Username = (creds as SshKeyPairCredentials)?.Username,
+                PrivateKeyFileHasValue = creds is SshKeyPairCredentials ssh && !string.IsNullOrEmpty(ssh.PrivateKeyFile)
+            },
+            AccountType.AzureServicePrincipal => new AzureServicePrincipalCredentialsSummary
+            {
+                SubscriptionNumber = (creds as AzureServicePrincipalCredentials)?.SubscriptionNumber,
+                ClientId = (creds as AzureServicePrincipalCredentials)?.ClientId,
+                TenantId = (creds as AzureServicePrincipalCredentials)?.TenantId,
+                KeyHasValue = creds is AzureServicePrincipalCredentials az && !string.IsNullOrEmpty(az.Key)
+            },
+            _ => null
         };
     }
 

@@ -123,19 +123,16 @@ public class TransportRegistryTests
     public void ContributeVariables_CorrectCount(string style, int expectedCount)
     {
         var json = MakeEndpointJson(style);
-        var account = style == "KubernetesApi"
-            ? new DeploymentAccount
-            {
-                AccountType = Message.Enums.AccountType.Token,
-                Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "t" })
-            }
+        var accountType = style == "KubernetesApi" ? Message.Enums.AccountType.Token : (Message.Enums.AccountType?)null;
+        var credentialsJson = style == "KubernetesApi"
+            ? JsonSerializer.Serialize(new TokenCredentials { Token = "t" })
             : null;
 
         IEndpointVariableContributor contributor = style == "KubernetesApi"
             ? new KubernetesApiEndpointVariableContributor()
             : new KubernetesAgentEndpointVariableContributor();
 
-        contributor.ContributeVariables(json, account).Count.ShouldBe(expectedCount);
+        contributor.ContributeVariables(json, accountType, credentialsJson).Count.ShouldBe(expectedCount);
     }
 
     // ========== DeploymentTargetContext ==========
@@ -153,7 +150,7 @@ public class TransportRegistryTests
         var accountId = tc.Transport.Variables.ParseDeploymentAccountId("{}");
 
         accountId.ShouldBeNull();
-        tc.Account.ShouldBeNull();
+        tc.AccountType.ShouldBeNull();
     }
 
     // ========== Helpers ==========

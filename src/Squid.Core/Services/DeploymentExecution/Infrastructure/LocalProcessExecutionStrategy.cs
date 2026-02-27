@@ -142,7 +142,8 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         return _scriptContextWrapper.WrapScript(
             scriptBody,
             request.EndpointJson,
-            request.Account,
+            request.AccountType,
+            request.CredentialsJson,
             request.Syntax,
             request.Variables);
     }

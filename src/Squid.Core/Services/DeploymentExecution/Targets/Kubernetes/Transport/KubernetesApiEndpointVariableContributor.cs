@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -24,15 +25,15 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         return int.TryParse(endpoint.DeploymentAccountId, out var id) ? id : null;
     }
 
-    public List<VariableDto> ContributeVariables(string endpointJson, DeploymentAccount account)
+    public List<VariableDto> ContributeVariables(string endpointJson, AccountType? accountType, string credentialsJson)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
         if (endpoint == null) return new List<VariableDto>();
 
-        var accountType = account?.AccountType.ToString() ?? "Token";
+        var accountTypeStr = accountType?.ToString() ?? "Token";
 
-        var creds = account != null
-            ? DeploymentAccountCredentialsConverter.Deserialize(account.AccountType, account.Credentials)
+        var creds = accountType.HasValue && credentialsJson != null
+            ? DeploymentAccountCredentialsConverter.Deserialize(accountType.Value, credentialsJson)
             : null;
 
         var tokenCreds = creds as TokenCredentials;
@@ -43,7 +44,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         return new List<VariableDto>
         {
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
-            EndpointVariableFactory.Make("Squid.Account.AccountType", accountType),
+            EndpointVariableFactory.Make("Squid.Account.AccountType", accountTypeStr),
             EndpointVariableFactory.Make("Squid.Account.Token", tokenCreds?.Token ?? string.Empty, isSensitive: true),
             EndpointVariableFactory.Make("Squid.Account.Username", upCreds?.Username ?? string.Empty),
             EndpointVariableFactory.Make("Squid.Account.Password", upCreds?.Password ?? string.Empty, isSensitive: true),

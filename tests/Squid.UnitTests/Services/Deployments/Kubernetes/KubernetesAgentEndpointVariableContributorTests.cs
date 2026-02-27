@@ -5,7 +5,6 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -32,7 +31,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_ValidEndpoint_Returns3Variables()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
 
         vars.Count.ShouldBe(3);
     }
@@ -40,7 +39,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_AllExpectedVariableNamesPresent()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
         var names = vars.Select(v => v.Name).ToList();
 
         names.ShouldContain("Squid.Action.Kubernetes.Namespace");
@@ -53,7 +52,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_Namespace_MappedCorrectly()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(ns: "staging"), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(ns: "staging"), null, null);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "staging");
     }
@@ -63,7 +62,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     {
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = (string)null });
 
-        var vars = _contributor.ContributeVariables(json, null);
+        var vars = _contributor.ContributeVariables(json, null, null);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "default");
     }
@@ -73,7 +72,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_SuppressEnvironmentLogging_AlwaysFalse()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Script.SuppressEnvironmentLogging" && v.Value == "False");
     }
@@ -81,7 +80,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_PrintEvaluatedVariables_AlwaysTrue()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
 
         vars.ShouldContain(v => v.Name == "SquidPrintEvaluatedVariables" && v.Value == "True");
     }
@@ -91,7 +90,8 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NoAccountCredentialVariables()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), CreateTokenAccount());
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), AccountType.Token,
+            JsonSerializer.Serialize(new Squid.Message.Models.Deployments.Account.TokenCredentials { Token = "test-token-123" }));
         var names = vars.Select(v => v.Name).ToList();
 
         names.ShouldNotContain("Squid.Account.AccountType");
@@ -109,7 +109,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullAccount_StillReturns3Variables()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null);
+        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
 
         vars.Count.ShouldBe(3);
     }
@@ -119,7 +119,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_InvalidJson_ReturnsEmpty()
     {
-        var vars = _contributor.ContributeVariables("not-json", null);
+        var vars = _contributor.ContributeVariables("not-json", null, null);
 
         vars.ShouldBeEmpty();
     }
@@ -127,7 +127,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_EmptyJson_ReturnsEmpty()
     {
-        var vars = _contributor.ContributeVariables(string.Empty, null);
+        var vars = _contributor.ContributeVariables(string.Empty, null, null);
 
         vars.ShouldBeEmpty();
     }
@@ -135,7 +135,7 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullJson_ReturnsEmpty()
     {
-        var vars = _contributor.ContributeVariables(null, null);
+        var vars = _contributor.ContributeVariables(null, null, null);
 
         vars.ShouldBeEmpty();
     }
@@ -163,9 +163,4 @@ public class KubernetesAgentEndpointVariableContributorTests
         vars.ShouldBeEmpty();
     }
 
-    private static DeploymentAccount CreateTokenAccount() => new()
-    {
-        AccountType = AccountType.Token,
-        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
-    };
 }

@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using Moq;
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
@@ -31,11 +30,8 @@ public class KubernetesApiScriptContextWrapperTests
             Namespace = ns
         });
 
-    private static DeploymentAccount CreateTokenAccount() => new()
-    {
-        AccountType = AccountType.Token,
-        Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token" })
-    };
+    private static (AccountType, string) TokenAccount() =>
+        (AccountType.Token, JsonSerializer.Serialize(new TokenCredentials { Token = "test-token" }));
 
     // === WrapScript — valid endpoint, Bash syntax ===
 
@@ -43,24 +39,24 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_ValidEndpoint_Bash_CallsBuilder()
     {
         var json = MakeEndpointJson();
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
         var variables = new List<VariableDto>();
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
                 It.IsAny<KubernetesApiEndpointDto>(),
-                account,
+                at, cj,
                 ScriptSyntax.Bash,
                 null))
             .Returns("wrapped-bash");
 
-        var result = _wrapper.WrapScript("echo hi", json, account, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hi", json, at, cj, ScriptSyntax.Bash, variables);
 
         result.ShouldBe("wrapped-bash");
         _builderMock.Verify(b => b.WrapWithContext(
             "echo hi",
             It.IsAny<KubernetesApiEndpointDto>(),
-            account,
+            at, cj,
             ScriptSyntax.Bash,
             null), Times.Once);
     }
@@ -71,24 +67,24 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_ValidEndpoint_PowerShell_CallsBuilder()
     {
         var json = MakeEndpointJson();
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
         var variables = new List<VariableDto>();
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "Get-Process",
                 It.IsAny<KubernetesApiEndpointDto>(),
-                account,
+                at, cj,
                 ScriptSyntax.PowerShell,
                 null))
             .Returns("wrapped-powershell");
 
-        var result = _wrapper.WrapScript("Get-Process", json, account, ScriptSyntax.PowerShell, variables);
+        var result = _wrapper.WrapScript("Get-Process", json, at, cj, ScriptSyntax.PowerShell, variables);
 
         result.ShouldBe("wrapped-powershell");
         _builderMock.Verify(b => b.WrapWithContext(
             "Get-Process",
             It.IsAny<KubernetesApiEndpointDto>(),
-            account,
+            at, cj,
             ScriptSyntax.PowerShell,
             null), Times.Once);
     }
@@ -99,22 +95,22 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_DeserializesEndpointCorrectly_ClusterUrlPassedToBuilder()
     {
         var json = MakeEndpointJson(clusterUrl: "https://my-cluster:8443");
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
 
         _builderMock.Setup(b => b.WrapWithContext(
                 It.IsAny<string>(),
                 It.Is<KubernetesApiEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
-                account,
+                at, cj,
                 It.IsAny<ScriptSyntax>(),
                 It.IsAny<string>()))
             .Returns("ok");
 
-        _wrapper.WrapScript("echo", json, account, ScriptSyntax.Bash, new List<VariableDto>());
+        _wrapper.WrapScript("echo", json, at, cj, ScriptSyntax.Bash, new List<VariableDto>());
 
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
             It.Is<KubernetesApiEndpointDto>(e => e.ClusterUrl == "https://my-cluster:8443"),
-            account,
+            at, cj,
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Once);
     }
@@ -125,7 +121,7 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_WithCustomKubectl_PassesCustomPath()
     {
         var json = MakeEndpointJson();
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
         var variables = new List<VariableDto>
         {
             new() { Name = "Squid.Action.Kubernetes.CustomKubectlExecutable", Value = "/usr/local/bin/kubectl-1.28" }
@@ -134,12 +130,12 @@ public class KubernetesApiScriptContextWrapperTests
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
                 It.IsAny<KubernetesApiEndpointDto>(),
-                account,
+                at, cj,
                 ScriptSyntax.Bash,
                 "/usr/local/bin/kubectl-1.28"))
             .Returns("wrapped-with-custom-kubectl");
 
-        var result = _wrapper.WrapScript("echo hi", json, account, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hi", json, at, cj, ScriptSyntax.Bash, variables);
 
         result.ShouldBe("wrapped-with-custom-kubectl");
     }
@@ -148,7 +144,7 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_VariablesWithoutCustomKubectl_PassesNullAsCustomPath()
     {
         var json = MakeEndpointJson();
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
         var variables = new List<VariableDto>
         {
             new() { Name = "SomeOtherVariable", Value = "some-value" }
@@ -157,18 +153,18 @@ public class KubernetesApiScriptContextWrapperTests
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
                 It.IsAny<KubernetesApiEndpointDto>(),
-                account,
+                at, cj,
                 ScriptSyntax.Bash,
                 null))
             .Returns("wrapped-no-custom");
 
-        var result = _wrapper.WrapScript("echo hi", json, account, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hi", json, at, cj, ScriptSyntax.Bash, variables);
 
         result.ShouldBe("wrapped-no-custom");
         _builderMock.Verify(b => b.WrapWithContext(
             "echo hi",
             It.IsAny<KubernetesApiEndpointDto>(),
-            account,
+            at, cj,
             ScriptSyntax.Bash,
             null), Times.Once);
     }
@@ -177,17 +173,17 @@ public class KubernetesApiScriptContextWrapperTests
     public void WrapScript_NullVariables_PassesNullAsCustomPath()
     {
         var json = MakeEndpointJson();
-        var account = CreateTokenAccount();
+        var (at, cj) = TokenAccount();
 
         _builderMock.Setup(b => b.WrapWithContext(
                 "echo hi",
                 It.IsAny<KubernetesApiEndpointDto>(),
-                account,
+                at, cj,
                 ScriptSyntax.Bash,
                 null))
             .Returns("wrapped-null-vars");
 
-        var result = _wrapper.WrapScript("echo hi", json, account, ScriptSyntax.Bash, null);
+        var result = _wrapper.WrapScript("echo hi", json, at, cj, ScriptSyntax.Bash, null);
 
         result.ShouldBe("wrapped-null-vars");
     }
@@ -197,13 +193,16 @@ public class KubernetesApiScriptContextWrapperTests
     [Fact]
     public void WrapScript_NullEndpointJson_ReturnsOriginalScript()
     {
-        var result = _wrapper.WrapScript("echo hi", null, CreateTokenAccount(), ScriptSyntax.Bash, null);
+        var (at, cj) = TokenAccount();
+
+        var result = _wrapper.WrapScript("echo hi", null, at, cj, ScriptSyntax.Bash, null);
 
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
             It.IsAny<KubernetesApiEndpointDto>(),
-            It.IsAny<DeploymentAccount>(),
+            It.IsAny<AccountType?>(),
+            It.IsAny<string>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
     }
@@ -211,13 +210,16 @@ public class KubernetesApiScriptContextWrapperTests
     [Fact]
     public void WrapScript_EmptyEndpointJson_ReturnsOriginalScript()
     {
-        var result = _wrapper.WrapScript("echo hi", string.Empty, CreateTokenAccount(), ScriptSyntax.Bash, null);
+        var (at, cj) = TokenAccount();
+
+        var result = _wrapper.WrapScript("echo hi", string.Empty, at, cj, ScriptSyntax.Bash, null);
 
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
             It.IsAny<KubernetesApiEndpointDto>(),
-            It.IsAny<DeploymentAccount>(),
+            It.IsAny<AccountType?>(),
+            It.IsAny<string>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
     }
@@ -225,13 +227,16 @@ public class KubernetesApiScriptContextWrapperTests
     [Fact]
     public void WrapScript_InvalidJson_ReturnsOriginalScript()
     {
-        var result = _wrapper.WrapScript("echo hi", "not-json", CreateTokenAccount(), ScriptSyntax.Bash, null);
+        var (at, cj) = TokenAccount();
+
+        var result = _wrapper.WrapScript("echo hi", "not-json", at, cj, ScriptSyntax.Bash, null);
 
         result.ShouldBe("echo hi");
         _builderMock.Verify(b => b.WrapWithContext(
             It.IsAny<string>(),
             It.IsAny<KubernetesApiEndpointDto>(),
-            It.IsAny<DeploymentAccount>(),
+            It.IsAny<AccountType?>(),
+            It.IsAny<string>(),
             It.IsAny<ScriptSyntax>(),
             It.IsAny<string>()), Times.Never);
     }

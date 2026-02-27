@@ -1,4 +1,3 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -33,17 +32,15 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token });
 
         var script = _builder.WrapWithContext(
             "kubectl get pods --all-namespaces",
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);
@@ -66,18 +63,16 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token });
 
         // The context script auto-creates namespace if not "default"
         var script = _builder.WrapWithContext(
             $"kubectl get namespace {testNs}",
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);
@@ -102,12 +97,9 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token });
 
         var userScript = @"
 cat <<'YAML' | kubectl apply -f -
@@ -124,7 +116,8 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         var script = _builder.WrapWithContext(
             userScript,
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);
@@ -148,17 +141,15 @@ kubectl get configmap squid-e2e-test -n " + testNs;
             SkipTlsVerification = "True"
         };
 
-        var account = new DeploymentAccount
-        {
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        };
+        var accountType = AccountType.Token;
+        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token });
 
         var script = _builder.WrapWithContext(
             "kubectl cluster-info",
             endpoint,
-            account,
+            accountType,
+            credentialsJson,
             ScriptSyntax.Bash);
 
         var result = await ExecuteBashScriptAsync(script);

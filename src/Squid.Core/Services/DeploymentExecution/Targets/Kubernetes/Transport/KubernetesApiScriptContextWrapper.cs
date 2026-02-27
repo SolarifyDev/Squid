@@ -1,4 +1,4 @@
-using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
@@ -14,7 +14,7 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
         _builder = builder;
     }
 
-    public string WrapScript(string script, string endpointJson, DeploymentAccount account,
+    public string WrapScript(string script, string endpointJson, AccountType? accountType, string credentialsJson,
                              ScriptSyntax syntax, List<VariableDto> variables)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(endpointJson);
@@ -24,6 +24,6 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
             .FirstOrDefault(v => string.Equals(v.Name, "Squid.Action.Kubernetes.CustomKubectlExecutable", StringComparison.OrdinalIgnoreCase))
             ?.Value;
 
-        return _builder.WrapWithContext(script, endpoint, account, syntax, customKubectl);
+        return _builder.WrapWithContext(script, endpoint, accountType, credentialsJson, syntax, customKubectl);
     }
 }

@@ -292,7 +292,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         public string WrapScript(
             string script,
             string endpointJson,
-            DeploymentAccount account,
+            AccountType? accountType,
+            string credentialsJson,
             ScriptSyntax syntax,
             List<VariableDto> variables)
             => $"WRAPPED_ENDPOINT={endpointJson};{script}";

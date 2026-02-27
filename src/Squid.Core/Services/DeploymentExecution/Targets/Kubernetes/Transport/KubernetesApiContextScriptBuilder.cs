@@ -1,4 +1,3 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Message.Enums;
@@ -13,7 +12,8 @@ public interface IKubernetesApiContextScriptBuilder : IScopedDependency
     string WrapWithContext(
         string userScript,
         KubernetesApiEndpointDto endpoint,
-        DeploymentAccount account,
+        AccountType? accountType,
+        string credentialsJson,
         ScriptSyntax syntax,
         string customKubectlPath = null);
 }
@@ -23,12 +23,13 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
     public string WrapWithContext(
         string userScript,
         KubernetesApiEndpointDto endpoint,
-        DeploymentAccount account,
+        AccountType? accountType,
+        string credentialsJson,
         ScriptSyntax syntax,
         string customKubectlPath = null)
     {
-        var creds = account != null
-            ? DeploymentAccountCredentialsConverter.Deserialize(account.AccountType, account.Credentials)
+        var creds = accountType.HasValue && credentialsJson != null
+            ? DeploymentAccountCredentialsConverter.Deserialize(accountType.Value, credentialsJson)
             : null;
 
         var tokenCreds = creds as TokenCredentials;
@@ -42,7 +43,7 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
         template = template
             .Replace("{{KubectlExe}}", customKubectlPath ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{ClusterUrl}}", endpoint?.ClusterUrl ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{AccountType}}", account?.AccountType.ToString() ?? "Token", StringComparison.Ordinal)
+            .Replace("{{AccountType}}", accountType?.ToString() ?? "Token", StringComparison.Ordinal)
             .Replace("{{SkipTlsVerification}}", endpoint?.SkipTlsVerification ?? "False", StringComparison.Ordinal)
             .Replace("{{Namespace}}", endpoint?.Namespace ?? "default", StringComparison.Ordinal)
             .Replace("{{ClusterCertificate}}", endpoint?.ClusterCertificate ?? string.Empty, StringComparison.Ordinal)

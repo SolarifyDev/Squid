@@ -1,4 +1,4 @@
-using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -6,7 +6,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 {
-    public string WrapScript(string script, string endpointJson, DeploymentAccount account,
+    public string WrapScript(string script, string endpointJson, AccountType? accountType, string credentialsJson,
                              ScriptSyntax syntax, List<VariableDto> variables)
     {
         var ns = ResolveNamespace(variables);

@@ -1,4 +1,3 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
@@ -72,17 +71,15 @@ data:
                 Namespace = testNs,
                 SkipTlsVerification = "True"
             };
-            var account = new DeploymentAccount
-            {
-                AccountType = AccountType.Token,
-                Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                    new TokenCredentials { Token = token })
-            };
+            var accountType = AccountType.Token;
+            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token });
 
             var fullScript = _contextBuilder.WrapWithContext(
                 modifiedScript,
                 endpoint,
-                account,
+                accountType,
+                credentialsJson,
                 ScriptSyntax.Bash);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
@@ -154,17 +151,15 @@ data:
                 Namespace = testNs,
                 SkipTlsVerification = "True"
             };
-            var account = new DeploymentAccount
-            {
-                AccountType = AccountType.Token,
-                Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                    new TokenCredentials { Token = token })
-            };
+            var accountType = AccountType.Token;
+            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token });
 
             var fullScript = _contextBuilder.WrapWithContext(
                 modifiedScript,
                 endpoint,
-                account,
+                accountType,
+                credentialsJson,
                 ScriptSyntax.Bash);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);

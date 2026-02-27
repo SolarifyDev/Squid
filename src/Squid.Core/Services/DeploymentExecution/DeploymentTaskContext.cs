@@ -37,7 +37,8 @@ public class DeploymentTaskContext
 public class DeploymentTargetContext
 {
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
-    public DeploymentAccount Account { get; set; }
+    public AccountType? AccountType { get; set; }
+    public string CredentialsJson { get; set; }
     public string EndpointJson { get; set; }
     public CommunicationStyle CommunicationStyle { get; set; }
     public IDeploymentTransport Transport { get; set; }

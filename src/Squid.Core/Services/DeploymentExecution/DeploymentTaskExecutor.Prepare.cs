@@ -125,14 +125,22 @@ public partial class DeploymentTaskExecutor
         var deploymentAccountId = tc.Transport.Variables.ParseDeploymentAccountId(tc.EndpointJson);
 
         if (deploymentAccountId.HasValue)
-            tc.Account = await _deploymentAccountDataProvider.GetAccountByIdAsync(deploymentAccountId.Value, ct).ConfigureAwait(false);
+        {
+            var account = await _deploymentAccountDataProvider.GetAccountByIdAsync(deploymentAccountId.Value, ct).ConfigureAwait(false);
+
+            if (account != null)
+            {
+                tc.AccountType = account.AccountType;
+                tc.CredentialsJson = account.Credentials;
+            }
+        }
     }
 
     private void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)
     {
         if (tc.Transport == null) return;
 
-        var endpointVars = tc.Transport.Variables.ContributeVariables(tc.EndpointJson, tc.Account);
+        var endpointVars = tc.Transport.Variables.ContributeVariables(tc.EndpointJson, tc.AccountType, tc.CredentialsJson);
 
         tc.EndpointVariables.AddRange(endpointVars);
     }

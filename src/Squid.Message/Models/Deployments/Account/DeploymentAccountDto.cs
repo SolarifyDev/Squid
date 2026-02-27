@@ -9,11 +9,42 @@ public class DeploymentAccountDto : IBaseModel
     public string Name { get; set; }
     public string Slug { get; set; }
     public AccountType AccountType { get; set; }
-    public string Username { get; set; }
-    public string AccessKey { get; set; }
+    public object Credentials { get; set; }
+}
+
+public class TokenCredentialsSummary
+{
     public bool TokenHasValue { get; set; }
+}
+
+public class UsernamePasswordCredentialsSummary
+{
+    public string Username { get; set; }
     public bool PasswordHasValue { get; set; }
-    public bool ClientCertificateDataHasValue { get; set; }
-    public bool ClientCertificateKeyDataHasValue { get; set; }
+}
+
+public class ClientCertificateCredentialsSummary
+{
+    public bool CertificateDataHasValue { get; set; }
+    public bool CertificateKeyDataHasValue { get; set; }
+}
+
+public class AwsCredentialsSummary
+{
+    public string AccessKey { get; set; }
     public bool SecretKeyHasValue { get; set; }
+}
+
+public class SshKeyPairCredentialsSummary
+{
+    public string Username { get; set; }
+    public bool PrivateKeyFileHasValue { get; set; }
+}
+
+public class AzureServicePrincipalCredentialsSummary
+{
+    public string SubscriptionNumber { get; set; }
+    public string ClientId { get; set; }
+    public string TenantId { get; set; }
+    public bool KeyHasValue { get; set; }
 }

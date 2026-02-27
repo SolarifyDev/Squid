@@ -154,7 +154,7 @@ public partial class DeploymentTaskExecutor
         if (wrapper == null) return;
 
         prepared.ScriptBody = wrapper.WrapScript(
-            prepared.ScriptBody, tc.EndpointJson, tc.Account,
+            prepared.ScriptBody, tc.EndpointJson, tc.AccountType, tc.CredentialsJson,
             prepared.Syntax, effectiveVariables);
     }
 
@@ -229,7 +229,8 @@ public partial class DeploymentTaskExecutor
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
             EndpointJson = tc.EndpointJson,
-            Account = tc.Account,
+            AccountType = tc.AccountType,
+            CredentialsJson = tc.CredentialsJson,
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version

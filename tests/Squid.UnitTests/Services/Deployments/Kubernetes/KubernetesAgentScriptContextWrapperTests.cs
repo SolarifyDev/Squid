@@ -16,7 +16,7 @@ public class KubernetesAgentScriptContextWrapperTests
     {
         var variables = MakeVariables("production");
 
-        var result = _wrapper.WrapScript("echo hello", "{}", null, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hello", "{}", null, null, ScriptSyntax.Bash, variables);
 
         result.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         result.ShouldContain("echo hello");
@@ -27,7 +27,7 @@ public class KubernetesAgentScriptContextWrapperTests
     {
         var variables = MakeVariables("staging");
 
-        var result = _wrapper.WrapScript("kubectl get pods", "{}", null, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("kubectl get pods", "{}", null, null, ScriptSyntax.Bash, variables);
 
         var nsIndex = result.IndexOf("set-context", System.StringComparison.Ordinal);
         var scriptIndex = result.IndexOf("kubectl get pods", System.StringComparison.Ordinal);
@@ -42,7 +42,7 @@ public class KubernetesAgentScriptContextWrapperTests
     {
         var variables = MakeVariables("production");
 
-        var result = _wrapper.WrapScript("Get-Process", "{}", null, ScriptSyntax.PowerShell, variables);
+        var result = _wrapper.WrapScript("Get-Process", "{}", null, null, ScriptSyntax.PowerShell, variables);
 
         result.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         result.ShouldContain("| Out-Null");
@@ -59,7 +59,7 @@ public class KubernetesAgentScriptContextWrapperTests
     {
         var variables = MakeVariables(ns);
 
-        var result = _wrapper.WrapScript("echo hi", "{}", null, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hi", "{}", null, null, ScriptSyntax.Bash, variables);
 
         result.ShouldContain($"--namespace=\"{expected}\"");
     }
@@ -67,7 +67,7 @@ public class KubernetesAgentScriptContextWrapperTests
     [Fact]
     public void WrapScript_NullVariables_DefaultsToDefault()
     {
-        var result = _wrapper.WrapScript("echo hi", "{}", null, ScriptSyntax.Bash, null);
+        var result = _wrapper.WrapScript("echo hi", "{}", null, null, ScriptSyntax.Bash, null);
 
         result.ShouldContain("--namespace=\"default\"");
     }
@@ -80,7 +80,7 @@ public class KubernetesAgentScriptContextWrapperTests
             new() { Name = "SomeOtherVariable", Value = "some-value" }
         };
 
-        var result = _wrapper.WrapScript("echo hi", "{}", null, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("echo hi", "{}", null, null, ScriptSyntax.Bash, variables);
 
         result.ShouldContain("--namespace=\"default\"");
     }
@@ -90,7 +90,7 @@ public class KubernetesAgentScriptContextWrapperTests
     {
         var variables = MakeVariables("my-custom-ns");
 
-        var result = _wrapper.WrapScript("kubectl apply -f deploy.yaml", "{}", null, ScriptSyntax.Bash, variables);
+        var result = _wrapper.WrapScript("kubectl apply -f deploy.yaml", "{}", null, null, ScriptSyntax.Bash, variables);
 
         result.ShouldContain("--namespace=\"my-custom-ns\"");
     }
