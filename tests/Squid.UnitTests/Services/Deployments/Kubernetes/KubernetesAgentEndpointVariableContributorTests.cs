@@ -24,8 +24,8 @@ public class KubernetesAgentEndpointVariableContributorTests
         var json = MakeEndpointJson();
         var refs = _contributor.ParseResourceReferences(json);
 
-        refs.DeploymentAccountId.ShouldBeNull();
-        refs.CertificateId.ShouldBeNull();
+        refs.FindFirst(EndpointResourceType.AuthenticationAccount).ShouldBeNull();
+        refs.FindFirst(EndpointResourceType.ClientCertificate).ShouldBeNull();
     }
 
     // === ContributeVariables — count & names ===
@@ -92,12 +92,8 @@ public class KubernetesAgentEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NoAccountCredentialVariables()
     {
-        var ctx = new EndpointContext
-        {
-            EndpointJson = MakeEndpointJson(),
-            AccountType = AccountType.Token,
-            CredentialsJson = JsonSerializer.Serialize(new Squid.Message.Models.Deployments.Account.TokenCredentials { Token = "test-token-123" })
-        };
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        ctx.SetAccountData(AccountType.Token, JsonSerializer.Serialize(new Squid.Message.Models.Deployments.Account.TokenCredentials { Token = "test-token-123" }));
         var vars = _contributor.ContributeVariables(ctx);
         var names = vars.Select(v => v.Name).ToList();
 

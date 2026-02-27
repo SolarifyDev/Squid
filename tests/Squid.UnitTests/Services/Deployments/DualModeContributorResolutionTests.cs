@@ -7,6 +7,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments;
@@ -104,9 +105,15 @@ public class TransportRegistryTests
     public void ApiContributor_ParseResourceReferences_ReturnsId()
     {
         var contributor = new KubernetesApiEndpointVariableContributor();
-        var json = JsonSerializer.Serialize(new { DeploymentAccountId = "42" });
+        var json = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+        {
+            ResourceReferences = new List<EndpointResourceReference>
+            {
+                new() { Type = EndpointResourceType.AuthenticationAccount, ResourceId = 42 }
+            }
+        });
 
-        contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBe(42);
+        contributor.ParseResourceReferences(json).FindFirst(EndpointResourceType.AuthenticationAccount).ShouldBe(42);
     }
 
     [Fact]
@@ -115,7 +122,7 @@ public class TransportRegistryTests
         var contributor = new KubernetesAgentEndpointVariableContributor();
 
         var refs = contributor.ParseResourceReferences("{}");
-        refs.DeploymentAccountId.ShouldBeNull();
+        refs.FindFirst(EndpointResourceType.AuthenticationAccount).ShouldBeNull();
     }
 
     [Theory]
@@ -133,12 +140,10 @@ public class TransportRegistryTests
             ? new KubernetesApiEndpointVariableContributor()
             : new KubernetesAgentEndpointVariableContributor();
 
-        var ctx = new EndpointContext
-        {
-            EndpointJson = json,
-            AccountType = accountType,
-            CredentialsJson = credentialsJson
-        };
+        var ctx = new EndpointContext { EndpointJson = json };
+
+        if (accountType.HasValue && credentialsJson != null)
+            ctx.SetAccountData(accountType.Value, credentialsJson);
 
         contributor.ContributeVariables(ctx).Count.ShouldBe(expectedCount);
     }
@@ -157,8 +162,8 @@ public class TransportRegistryTests
 
         var refs = tc.Transport.Variables.ParseResourceReferences("{}");
 
-        refs.DeploymentAccountId.ShouldBeNull();
-        tc.EndpointContext.AccountType.ShouldBeNull();
+        refs.FindFirst(EndpointResourceType.AuthenticationAccount).ShouldBeNull();
+        tc.EndpointContext.GetAccountData().ShouldBeNull();
     }
 
     // ========== Helpers ==========

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -20,22 +21,26 @@ public class KubernetesApiContextScriptBuilderTests
         string clusterCert = null,
         AccountType? accountType = null,
         string credentialsJson = null,
-        ScriptSyntax syntax = ScriptSyntax.Bash) => new()
+        ScriptSyntax syntax = ScriptSyntax.Bash)
     {
-        Endpoint = new EndpointContext
+        var endpoint = new EndpointContext
         {
             EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = ns,
-                SkipTlsVerification = skipTls,
-                ClusterCertificate = clusterCert
-            }),
-            AccountType = accountType,
-            CredentialsJson = credentialsJson
-        },
-        Syntax = syntax
-    };
+                SkipTlsVerification = skipTls
+            })
+        };
+
+        if (clusterCert != null)
+            endpoint.SetCertificate(EndpointResourceType.ClusterCertificate, clusterCert);
+
+        if (accountType.HasValue && credentialsJson != null)
+            endpoint.SetAccountData(accountType.Value, credentialsJson);
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
 
     private static ScriptContext TokenContext(ScriptSyntax syntax = ScriptSyntax.Bash, string token = "test-token-123")
     {

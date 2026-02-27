@@ -113,20 +113,24 @@ kubectl get configmap squid-e2e-test -n " + testNs;
 
     private static ScriptContext MakeScriptContext(
         string clusterUrl, string token, string ns,
-        ScriptSyntax syntax = ScriptSyntax.Bash) => new()
+        ScriptSyntax syntax = ScriptSyntax.Bash)
     {
-        Endpoint = new EndpointContext
+        var endpoint = new EndpointContext
         {
             EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = ns,
                 SkipTlsVerification = "True"
-            }),
-            AccountType = AccountType.Token,
-            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        },
-        Syntax = syntax
-    };
+            })
+        };
+        endpoint.SetAccountData(AccountType.Token, DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token }));
+
+        return new ScriptContext
+        {
+            Endpoint = endpoint,
+            Syntax = syntax
+        };
+    }
 }

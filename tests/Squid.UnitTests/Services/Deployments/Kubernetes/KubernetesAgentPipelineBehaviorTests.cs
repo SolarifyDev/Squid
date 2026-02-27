@@ -75,9 +75,7 @@ public class KubernetesAgentPipelineBehaviorTests
             CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://k8s:6443",
             Namespace = "default",
-            SkipTlsVerification = "False",
-            DeploymentAccountId = (string)null,
-            ClusterCertificate = (string)null
+            SkipTlsVerification = "False"
         });
 
         var agentVars = agentContributor.ContributeVariables(new EndpointContext { EndpointJson = agentJson });

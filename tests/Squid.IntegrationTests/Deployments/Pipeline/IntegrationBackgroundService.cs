@@ -108,8 +108,11 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://172.16.145.222:6443",
                 SkipTlsVerification = "True",
-                DeploymentAccountId = "1",
-                Namespace = "squid"
+                Namespace = "squid",
+                ResourceReferences = new[]
+                {
+                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+                }
             });
 
             var machine = new Machine

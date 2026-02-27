@@ -10,6 +10,8 @@ using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
 
+using static Squid.Message.Enums.EndpointResourceType;
+
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 public class KubernetesApiEndpointVariableContributorTests
@@ -20,105 +22,99 @@ public class KubernetesApiEndpointVariableContributorTests
         string clusterUrl = "https://k8s.example.com:6443",
         string ns = "default",
         string skipTls = "False",
-        string deploymentAccountId = "42",
-        string clusterCert = null,
-        string certificateId = null) =>
+        List<EndpointResourceReference> resourceReferences = null) =>
         JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
             CommunicationStyle = "KubernetesApi",
             ClusterUrl = clusterUrl,
             Namespace = ns,
             SkipTlsVerification = skipTls,
-            DeploymentAccountId = deploymentAccountId,
-            ClusterCertificate = clusterCert,
-            CertificateId = certificateId
+            ResourceReferences = resourceReferences ?? new List<EndpointResourceReference>
+            {
+                new() { Type = AuthenticationAccount, ResourceId = 42 }
+            }
         });
 
-    private static EndpointContext TokenContext() => new()
+    private static EndpointContext TokenContext()
     {
-        EndpointJson = MakeEndpointJson(),
-        AccountType = AccountType.Token,
-        CredentialsJson = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
-    };
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        ctx.SetAccountData(AccountType.Token, JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" }));
+        return ctx;
+    }
 
-    private static EndpointContext UsernamePasswordContext() => new()
+    private static EndpointContext UsernamePasswordContext()
     {
-        EndpointJson = MakeEndpointJson(),
-        AccountType = AccountType.UsernamePassword,
-        CredentialsJson = JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" })
-    };
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        ctx.SetAccountData(AccountType.UsernamePassword, JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" }));
+        return ctx;
+    }
 
-    private static EndpointContext ClientCertContext() => new()
+    private static EndpointContext ClientCertContext()
     {
-        EndpointJson = MakeEndpointJson(),
-        AccountType = AccountType.ClientCertificate,
-        CredentialsJson = JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTi...", ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY" })
-    };
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        ctx.SetAccountData(AccountType.ClientCertificate, JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTi...", ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY" }));
+        return ctx;
+    }
 
-    private static EndpointContext AwsContext() => new()
+    private static EndpointContext AwsContext()
     {
-        EndpointJson = MakeEndpointJson(),
-        AccountType = AccountType.AmazonWebServicesAccount,
-        CredentialsJson = JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIAIOSFODNN7EXAMPLE", SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" })
-    };
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        ctx.SetAccountData(AccountType.AmazonWebServicesAccount, JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIAIOSFODNN7EXAMPLE", SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" }));
+        return ctx;
+    }
 
     // === ParseResourceReferences ===
 
     [Fact]
     public void ParseResourceReferences_ValidJson_ReturnsAccountId()
     {
-        var json = MakeEndpointJson(deploymentAccountId: "42");
-        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBe(42);
+        var json = MakeEndpointJson();
+
+        _contributor.ParseResourceReferences(json).FindFirst(AuthenticationAccount).ShouldBe(42);
     }
 
     [Fact]
-    public void ParseResourceReferences_WithCertificateId_ReturnsCertificateId()
+    public void ParseResourceReferences_WithCertificateRef_ReturnsCertificateId()
     {
-        var json = MakeEndpointJson(certificateId: "99");
-        _contributor.ParseResourceReferences(json).CertificateId.ShouldBe(99);
+        var json = MakeEndpointJson(resourceReferences: new List<EndpointResourceReference>
+        {
+            new() { Type = ClientCertificate, ResourceId = 99 }
+        });
+
+        _contributor.ParseResourceReferences(json).FindFirst(ClientCertificate).ShouldBe(99);
     }
 
     [Fact]
-    public void ParseResourceReferences_NoAccountId_ReturnsNull()
+    public void ParseResourceReferences_NoReferences_ReturnsNull()
     {
-        var json = MakeEndpointJson(deploymentAccountId: null);
-        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
-    }
+        var json = MakeEndpointJson(resourceReferences: new List<EndpointResourceReference>());
 
-    [Fact]
-    public void ParseResourceReferences_NonNumericAccountId_ReturnsNull()
-    {
-        var json = MakeEndpointJson(deploymentAccountId: "abc");
-        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
-    }
-
-    [Fact]
-    public void ParseResourceReferences_EmptyAccountId_ReturnsNull()
-    {
-        var json = MakeEndpointJson(deploymentAccountId: "");
-        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
+        _contributor.ParseResourceReferences(json).FindFirst(AuthenticationAccount).ShouldBeNull();
     }
 
     [Fact]
     public void ParseResourceReferences_InvalidJson_ReturnsEmpty()
     {
         var refs = _contributor.ParseResourceReferences("not-json");
-        refs.DeploymentAccountId.ShouldBeNull();
-        refs.CertificateId.ShouldBeNull();
+
+        refs.FindFirst(AuthenticationAccount).ShouldBeNull();
+        refs.FindFirst(ClientCertificate).ShouldBeNull();
     }
 
     [Fact]
     public void ParseResourceReferences_EmptyString_ReturnsEmpty()
     {
         var refs = _contributor.ParseResourceReferences(string.Empty);
-        refs.DeploymentAccountId.ShouldBeNull();
+
+        refs.FindFirst(AuthenticationAccount).ShouldBeNull();
     }
 
     [Fact]
     public void ParseResourceReferences_Null_ReturnsEmpty()
     {
         var refs = _contributor.ParseResourceReferences(null);
-        refs.DeploymentAccountId.ShouldBeNull();
+
+        refs.FindFirst(AuthenticationAccount).ShouldBeNull();
     }
 
     // === ContributeVariables — count & all names ===
@@ -184,7 +180,7 @@ public class KubernetesApiEndpointVariableContributorTests
     public void ContributeVariables_ClusterCertificate_MappedCorrectly()
     {
         var ctx = TokenContext();
-        ctx.EndpointJson = MakeEndpointJson(clusterCert: "MIICpDCCAYwCCQ...");
+        ctx.SetCertificate(EndpointResourceType.ClusterCertificate, "MIICpDCCAYwCCQ...");
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterCertificate" && v.Value == "MIICpDCCAYwCCQ...");
@@ -288,15 +284,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullNamespace_DefaultsToDefault()
     {
-        var json = JsonSerializer.Serialize(new KubernetesApiEndpointDto
-        {
-            CommunicationStyle = "KubernetesApi",
-            ClusterUrl = "https://k8s:6443",
-            Namespace = null
-        });
-
         var ctx = TokenContext();
-        ctx.EndpointJson = json;
+        ctx.EndpointJson = MakeEndpointJson(ns: null);
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "default");
@@ -305,15 +294,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullSkipTls_DefaultsToFalse()
     {
-        var json = JsonSerializer.Serialize(new KubernetesApiEndpointDto
-        {
-            CommunicationStyle = "KubernetesApi",
-            ClusterUrl = "https://k8s:6443",
-            SkipTlsVerification = null
-        });
-
         var ctx = TokenContext();
-        ctx.EndpointJson = json;
+        ctx.EndpointJson = MakeEndpointJson(skipTls: null);
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.SkipTlsVerification" && v.Value == "False");
@@ -350,7 +332,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_InvalidJson_ReturnsEmpty()
     {
-        var ctx = new EndpointContext { EndpointJson = "not-json", AccountType = AccountType.Token };
+        var ctx = new EndpointContext { EndpointJson = "not-json" };
+        ctx.SetAccountData(AccountType.Token, null);
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();
@@ -359,7 +342,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_EmptyJson_ReturnsEmpty()
     {
-        var ctx = new EndpointContext { EndpointJson = string.Empty, AccountType = AccountType.Token };
+        var ctx = new EndpointContext { EndpointJson = string.Empty };
+        ctx.SetAccountData(AccountType.Token, null);
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();
@@ -368,7 +352,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullJson_ReturnsEmpty()
     {
-        var ctx = new EndpointContext { EndpointJson = null, AccountType = AccountType.Token };
+        var ctx = new EndpointContext { EndpointJson = null };
+        ctx.SetAccountData(AccountType.Token, null);
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();

@@ -152,20 +152,24 @@ data:
     }
 
     private static ScriptContext MakeScriptContext(
-        string clusterUrl, string token, string ns) => new()
+        string clusterUrl, string token, string ns)
     {
-        Endpoint = new EndpointContext
+        var endpoint = new EndpointContext
         {
             EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
             {
                 ClusterUrl = clusterUrl,
                 Namespace = ns,
                 SkipTlsVerification = "True"
-            }),
-            AccountType = AccountType.Token,
-            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token })
-        },
-        Syntax = ScriptSyntax.Bash
-    };
+            })
+        };
+        endpoint.SetAccountData(AccountType.Token, DeploymentAccountCredentialsConverter.Serialize(
+            new TokenCredentials { Token = token }));
+
+        return new ScriptContext
+        {
+            Endpoint = endpoint,
+            Syntax = ScriptSyntax.Bash
+        };
+    }
 }

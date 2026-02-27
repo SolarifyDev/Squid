@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
+using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
@@ -127,11 +128,15 @@ public partial class DeploymentTaskExecutor
     {
         var refs = tc.Transport.Variables.ParseResourceReferences(tc.EndpointContext.EndpointJson);
 
-        if (refs.DeploymentAccountId.HasValue)
-            await ResolveAccountAsync(tc, refs.DeploymentAccountId.Value, ct).ConfigureAwait(false);
+        var authAccountId = refs.FindFirst(EndpointResourceType.AuthenticationAccount);
 
-        if (refs.CertificateId.HasValue)
-            await EnrichWithCertificateAsync(tc, refs.CertificateId.Value, ct).ConfigureAwait(false);
+        if (authAccountId.HasValue)
+            await ResolveAccountAsync(tc, authAccountId.Value, ct).ConfigureAwait(false);
+
+        foreach (var certRef in refs.References.Where(r => r.Type is EndpointResourceType.ClientCertificate or EndpointResourceType.ClusterCertificate))
+        {
+            await ResolveCertificateAsync(tc, certRef, ct).ConfigureAwait(false);
+        }
     }
 
     private async Task ResolveAccountAsync(DeploymentTargetContext tc, int accountId, CancellationToken ct)
@@ -140,33 +145,38 @@ public partial class DeploymentTaskExecutor
 
         if (account == null) return;
 
-        tc.EndpointContext.AccountType = account.AccountType;
-        tc.EndpointContext.CredentialsJson = account.Credentials;
+        tc.EndpointContext.SetAccountData(account.AccountType, account.Credentials);
     }
 
-    private async Task EnrichWithCertificateAsync(DeploymentTargetContext tc, int certificateId, CancellationToken ct)
+    private async Task ResolveCertificateAsync(DeploymentTargetContext tc, EndpointResourceReference certRef, CancellationToken ct)
     {
-        var cert = await _certificateDataProvider.GetCertificateByIdAsync(certificateId, ct).ConfigureAwait(false);
+        var cert = await _certificateDataProvider.GetCertificateByIdAsync(certRef.ResourceId, ct).ConfigureAwait(false);
 
         if (cert == null) return;
 
-        tc.EndpointContext.AccountType ??= AccountType.ClientCertificate;
+        tc.EndpointContext.SetCertificate(certRef.Type, cert.CertificateData);
 
-        var creds = DeserializeOrCreateCredentials(tc.EndpointContext);
+        if (certRef.Type == EndpointResourceType.ClientCertificate) EnrichCredentialsWithClientCertificate(tc.EndpointContext, cert);
+    }
+
+    private static void EnrichCredentialsWithClientCertificate(EndpointContext ctx, Persistence.Entities.Deployments.Certificate cert)
+    {
+        var accountData = ctx.GetAccountData() ?? new ResolvedAuthenticationAccountData { AuthenticationAccountType = AccountType.ClientCertificate };
+        var creds = DeserializeOrCreateCredentials(accountData);
 
         creds.ClientCertificateData = cert.CertificateData;
 
         if (cert.HasPrivateKey)
             creds.ClientCertificateKeyData = cert.CertificateData;
 
-        tc.EndpointContext.CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(creds);
+        ctx.SetAccountData(accountData.AuthenticationAccountType, DeploymentAccountCredentialsConverter.Serialize(creds));
     }
 
-    private static ClientCertificateCredentials DeserializeOrCreateCredentials(EndpointContext ctx)
+    private static ClientCertificateCredentials DeserializeOrCreateCredentials(ResolvedAuthenticationAccountData accountData)
     {
-        if (ctx.AccountType == AccountType.ClientCertificate && !string.IsNullOrEmpty(ctx.CredentialsJson))
+        if (accountData.AuthenticationAccountType == AccountType.ClientCertificate && !string.IsNullOrEmpty(accountData.CredentialsJson))
         {
-            var existing = DeploymentAccountCredentialsConverter.Deserialize(AccountType.ClientCertificate, ctx.CredentialsJson);
+            var existing = DeploymentAccountCredentialsConverter.Deserialize(AccountType.ClientCertificate, accountData.CredentialsJson);
 
             if (existing is ClientCertificateCredentials cc) return cc;
         }

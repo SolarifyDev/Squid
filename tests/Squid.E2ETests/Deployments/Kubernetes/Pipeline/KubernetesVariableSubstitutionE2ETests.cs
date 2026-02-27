@@ -347,8 +347,11 @@ stringData:
             CommunicationStyle = communicationStyle,
             ClusterUrl = "https://localhost:6443",
             SkipTlsVerification = "True",
-            DeploymentAccountId = "1",
-            Namespace = "default"
+            Namespace = "default",
+            ResourceReferences = new[]
+            {
+                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+            }
         });
 
         var machine = new Machine

@@ -42,14 +42,14 @@ public class KubernetesApiScriptContextWrapperTests
     {
         var resolvedJson = endpointJson == DefaultSentinel ? MakeEndpointJson() : endpointJson;
 
+        var endpoint = new EndpointContext { EndpointJson = resolvedJson };
+
+        if (accountType.HasValue)
+            endpoint.SetAccountData(accountType.Value, credentialsJson);
+
         return new ScriptContext
         {
-            Endpoint = new EndpointContext
-            {
-                EndpointJson = resolvedJson,
-                AccountType = accountType,
-                CredentialsJson = credentialsJson
-            },
+            Endpoint = endpoint,
             Syntax = syntax,
             Variables = variables
         };

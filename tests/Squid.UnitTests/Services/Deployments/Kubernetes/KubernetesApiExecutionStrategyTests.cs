@@ -176,13 +176,13 @@ public class KubernetesApiExecutionStrategyTests
         request.ExecutionMode = ExecutionMode.PackagedPayload;
         request.ContextPreparationPolicy = ContextPreparationPolicy.Apply;
         request.Syntax = ScriptSyntax.PowerShell;
-        request.EndpointContext = new EndpointContext
+        var endpointCtx = new EndpointContext
         {
-            EndpointJson = """{"ClusterUrl":"https://example.cluster","Namespace":"demo","SkipTlsVerification":"True"}""",
-            AccountType = AccountType.Token,
-            CredentialsJson = System.Text.Json.JsonSerializer.Serialize(
-                new TokenCredentials { Token = "secret" })
+            EndpointJson = """{"ClusterUrl":"https://example.cluster","Namespace":"demo","SkipTlsVerification":"True"}"""
         };
+        endpointCtx.SetAccountData(AccountType.Token, System.Text.Json.JsonSerializer.Serialize(
+            new TokenCredentials { Token = "secret" }));
+        request.EndpointContext = endpointCtx;
 
         await strategy.ExecuteScriptAsync(request, CancellationToken.None);
 

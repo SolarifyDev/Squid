@@ -1,3 +1,4 @@
+using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
@@ -11,10 +12,9 @@ public class RegisterKubernetesApiCommand : ICommand
 
     // Endpoint
     public string ClusterUrl { get; set; }
-    public string ClusterCertificate { get; set; }
     public string Namespace { get; set; } = "default";
     public bool SkipTlsVerification { get; set; }
 
-    // Account (standalone — created separately via /api/deployment-accounts/create)
-    public int DeploymentAccountId { get; set; }
+    // Resources — at least one required
+    public List<EndpointResourceReference> ResourceReferences { get; set; }
 }

@@ -15,8 +15,6 @@ public partial class MachineRegistrationService
 
         await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        Log.Information("Registered KubernetesApi machine {MachineName} with account {DeploymentAccountId}", machine.Name, command.DeploymentAccountId);
-
         return new RegisterMachineResponseData
         {
             MachineId = machine.Id,
@@ -30,8 +28,7 @@ public partial class MachineRegistrationService
             ClusterUrl = command.ClusterUrl,
             Namespace = command.Namespace,
             SkipTlsVerification = command.SkipTlsVerification.ToString(),
-            ClusterCertificate = command.ClusterCertificate,
-            DeploymentAccountId = command.DeploymentAccountId.ToString(),
+            ResourceReferences = command.ResourceReferences,
             CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesApi)
         });
     }

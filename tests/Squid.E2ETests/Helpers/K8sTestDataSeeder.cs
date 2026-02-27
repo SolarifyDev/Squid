@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
+using Squid.Message.Models.Deployments.Machine;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.E2ETests.Helpers;
@@ -188,8 +189,11 @@ public class K8sTestDataSeeder
             CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://localhost:6443",
             SkipTlsVerification = "True",
-            DeploymentAccountId = "1",
-            Namespace = "default"
+            Namespace = "default",
+            ResourceReferences = new[]
+            {
+                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+            }
         });
 
         return new Machine

@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -23,8 +24,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         return new EndpointResourceReferences
         {
-            DeploymentAccountId = int.TryParse(endpoint.DeploymentAccountId, out var accountId) ? accountId : null,
-            CertificateId = int.TryParse(endpoint.CertificateId, out var certId) ? certId : null
+            References = endpoint.ResourceReferences ?? new()
         };
     }
 
@@ -34,20 +34,26 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         if (endpoint == null) return new List<VariableDto>();
 
-        var accountTypeStr = context.AccountType?.ToString() ?? "Token";
+        var accountData = context.GetAccountData();
+        var accountTypeStr = accountData?.AuthenticationAccountType.ToString() ?? "Token";
 
         return new List<VariableDto>
         {
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
             EndpointVariableFactory.Make("Squid.Account.AccountType", accountTypeStr),
-            EndpointVariableFactory.Make("Squid.Account.CredentialsJson", context.CredentialsJson ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make("Squid.Account.CredentialsJson", accountData?.CredentialsJson ?? string.Empty, isSensitive: true),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.SkipTlsVerification", endpoint.SkipTlsVerification ?? "False"),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterCertificate", endpoint.ClusterCertificate ?? string.Empty),
+            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterCertificate", ResolveClusterCertificate(context)),
             EndpointVariableFactory.Make("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
             EndpointVariableFactory.Make("Squid.Action.Kubernetes.OutputKubectlVersion", "True"),
             EndpointVariableFactory.Make("SquidPrintEvaluatedVariables", "True")
         };
+    }
+
+    private static string ResolveClusterCertificate(EndpointContext context)
+    {
+        return context.GetCertificate(EndpointResourceType.ClusterCertificate) ?? string.Empty;
     }
 
     public async Task<List<VariableDto>> ContributeAdditionalVariablesAsync(

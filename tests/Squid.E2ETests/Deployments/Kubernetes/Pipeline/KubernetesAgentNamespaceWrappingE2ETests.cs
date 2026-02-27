@@ -249,8 +249,11 @@ data:
                 CommunicationStyle = "KubernetesApi",
                 ClusterUrl = "https://localhost:6443",
                 SkipTlsVerification = "True",
-                DeploymentAccountId = "1",
-                Namespace = ns ?? "default"
+                Namespace = ns ?? "default",
+                ResourceReferences = new[]
+                {
+                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+                }
             });
 
         return new Machine
