@@ -1,0 +1,2 @@
+ALTER TABLE variable_set ADD COLUMN name VARCHAR(200) NOT NULL DEFAULT '';
+ALTER TABLE variable_set ADD COLUMN description TEXT;

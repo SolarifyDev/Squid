@@ -6,6 +6,10 @@ namespace Squid.Message.Commands.Deployments.Variable;
 
 public class CreateVariableSetCommand : ICommand
 {
+    public string Name { get; set; }
+
+    public string Description { get; set; }
+
     public int OwnerId { get; set; }
 
     public VariableSetOwnerType OwnerType { get; set; }

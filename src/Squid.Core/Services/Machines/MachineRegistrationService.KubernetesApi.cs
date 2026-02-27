@@ -8,9 +8,7 @@ namespace Squid.Core.Services.Machines;
 
 public partial class MachineRegistrationService
 {
-    public async Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(
-        RegisterKubernetesApiCommand command,
-        CancellationToken cancellationToken = default)
+    public async Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default)
     {
         var endpointJson = BuildKubernetesApiEndpointJson(command);
         var machine = BuildKubernetesApiMachine(command, endpointJson);

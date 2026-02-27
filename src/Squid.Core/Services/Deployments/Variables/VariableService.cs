@@ -50,6 +50,8 @@ public class VariableService : IVariableService
     {
         var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
+        variableSet.Name = command.Name;
+        variableSet.Description = command.Description;
         variableSet.OwnerId = command.OwnerId;
         variableSet.OwnerType = command.OwnerType;
         variableSet.SpaceId = command.SpaceId;
