@@ -1,7 +1,9 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Variables;
+using Squid.Core.Utils;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.Project;
@@ -29,55 +31,42 @@ public class ProjectService : IProjectService
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly IDeploymentProcessDataProvider _processDataProvider;
+    private readonly IChannelDataProvider _channelDataProvider;
 
     public ProjectService(
         IMapper mapper,
         IProjectDataProvider projectDataProvider,
         IVariableDataProvider variableDataProvider,
-        IDeploymentProcessDataProvider processDataProvider)
+        IDeploymentProcessDataProvider processDataProvider,
+        IChannelDataProvider channelDataProvider)
     {
         _mapper = mapper;
         _projectDataProvider = projectDataProvider;
         _processDataProvider = processDataProvider;
         _variableDataProvider = variableDataProvider;
+        _channelDataProvider = channelDataProvider;
     }
 
-    public async Task<ProjectCreatedEvent> CreateProjectAsync(CreateProjectCommand command, CancellationToken cancellationToken)
+    public async Task<ProjectCreatedEvent> CreateProjectAsync(
+        CreateProjectCommand command, CancellationToken cancellationToken)
     {
-        var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
-        project.LastModified = DateTimeOffset.UtcNow;
+        var project = BuildProject(command);
 
-        if (project.IncludedLibraryVariableSetIds == null)
-        {
-            project.IncludedLibraryVariableSetIds = string.Empty;
-        }
-
+        // Commit 1: Project (need project.Id for child entities)
         await _projectDataProvider.AddProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var deploymentProcess = new DeploymentProcess
-        {
-            ProjectId = project.Id,
-            Version = 1,
-            SpaceId = project.SpaceId,
-            LastModified = DateTimeOffset.UtcNow,
-            LastModifiedBy = "System"
-        };
+        var process = CreateDeploymentProcess(project);
+        var variableSet = CreateVariableSet(project);
+        var defaultChannel = CreateDefaultChannel(project);
 
-        await _processDataProvider.AddDeploymentProcessAsync(deploymentProcess, cancellationToken: cancellationToken).ConfigureAwait(false);
+        // Commit 2: child entities (single SaveChanges via last forceSave: true)
+        await _processDataProvider.AddDeploymentProcessAsync(process, forceSave: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _variableDataProvider.AddVariableSetAsync(variableSet, forceSave: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _channelDataProvider.AddChannelAsync(defaultChannel, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var variableSet = new VariableSet
-        {
-            SpaceId = project.SpaceId,
-            OwnerType = VariableSetOwnerType.Project,
-            OwnerId = project.Id,
-            Version = 1,
-            LastModified = DateTimeOffset.UtcNow
-        };
-        
-        await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
-
+        // Commit 3: FK writeback (IDs now populated after flush)
+        project.DeploymentProcessId = process.Id;
         project.VariableSetId = variableSet.Id;
-        project.DeploymentProcessId = deploymentProcess.Id;
 
         await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -90,6 +79,7 @@ public class ProjectService : IProjectService
     public async Task<ProjectUpdatedEvent> UpdateProjectAsync(UpdateProjectCommand command, CancellationToken cancellationToken)
     {
         var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
+
         project.LastModified = DateTimeOffset.UtcNow;
 
         if (project.IncludedLibraryVariableSetIds == null)
@@ -149,4 +139,49 @@ public class ProjectService : IProjectService
             Data = _mapper.Map<ProjectDto>(project)
         };
     }
+
+    private Persistence.Entities.Deployments.Project BuildProject(CreateProjectCommand command)
+    {
+        var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
+
+        project.LastModified = DateTimeOffset.UtcNow;
+        project.IncludedLibraryVariableSetIds ??= string.Empty;
+        project.Json ??= string.Empty;
+        project.DataVersion ??= Array.Empty<byte>();
+
+        if (string.IsNullOrWhiteSpace(project.Slug))
+            project.Slug = SlugGenerator.Generate(project.Name);
+
+        return project;
+    }
+
+    private static DeploymentProcess CreateDeploymentProcess(
+        Persistence.Entities.Deployments.Project project) => new()
+    {
+        ProjectId = project.Id,
+        Version = 1,
+        SpaceId = project.SpaceId,
+        LastModified = DateTimeOffset.UtcNow,
+        LastModifiedBy = "System"
+    };
+
+    private static VariableSet CreateVariableSet(
+        Persistence.Entities.Deployments.Project project) => new()
+    {
+        SpaceId = project.SpaceId,
+        OwnerType = VariableSetOwnerType.Project,
+        OwnerId = project.Id,
+        Version = 1,
+        LastModified = DateTimeOffset.UtcNow
+    };
+
+    private static Channel CreateDefaultChannel(
+        Persistence.Entities.Deployments.Project project) => new()
+    {
+        Name = "Default",
+        ProjectId = project.Id,
+        SpaceId = project.SpaceId,
+        IsDefault = true,
+        Slug = "default"
+    };
 }

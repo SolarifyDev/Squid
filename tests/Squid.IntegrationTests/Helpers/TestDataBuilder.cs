@@ -107,6 +107,35 @@ public class TestDataBuilder
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        var defaultChannel = new Channel
+        {
+            Name = "Default",
+            ProjectId = entity.Id,
+            SpaceId = 1,
+            IsDefault = true,
+            Slug = "default"
+        };
+
+        await _repository.InsertAsync(defaultChannel).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return entity;
+    }
+
+    public async Task<ProjectGroup> CreateProjectGroupAsync(string name = "Default Project Group")
+    {
+        var entity = new ProjectGroup
+        {
+            Name = name,
+            Description = string.Empty,
+            SpaceId = 1,
+            Slug = name.ToLowerInvariant().Replace(" ", "-"),
+            DataVersion = Array.Empty<byte>()
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
         return entity;
     }
 

@@ -20,10 +20,6 @@ public class MachineController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
     public async Task<IActionResult> RegisterKubernetesAgentAsync([FromBody] RegisterKubernetesAgentCommand command, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(command.Thumbprint)) return BadRequest("Thumbprint is required");
-
-        if (string.IsNullOrEmpty(command.SubscriptionId)) return BadRequest("SubscriptionId is required");
-
         var response = await _mediator.SendAsync<RegisterKubernetesAgentCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
@@ -33,9 +29,6 @@ public class MachineController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
     public async Task<IActionResult> RegisterKubernetesApiAsync([FromBody] RegisterKubernetesApiCommand command, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(command.ClusterUrl)) return BadRequest("ClusterUrl is required");
-        if (command.ResourceReferences == null || command.ResourceReferences.Count == 0) return BadRequest("At least one resource reference is required");
-
         var response = await _mediator.SendAsync<RegisterKubernetesApiCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
