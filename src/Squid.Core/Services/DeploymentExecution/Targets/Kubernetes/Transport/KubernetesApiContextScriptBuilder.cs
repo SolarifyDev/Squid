@@ -2,7 +2,6 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -11,10 +10,7 @@ public interface IKubernetesApiContextScriptBuilder : IScopedDependency
 {
     string WrapWithContext(
         string userScript,
-        KubernetesApiEndpointDto endpoint,
-        AccountType? accountType,
-        string credentialsJson,
-        ScriptSyntax syntax,
+        ScriptContext context,
         string customKubectlPath = null);
 }
 
@@ -22,12 +18,14 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
 {
     public string WrapWithContext(
         string userScript,
-        KubernetesApiEndpointDto endpoint,
-        AccountType? accountType,
-        string credentialsJson,
-        ScriptSyntax syntax,
+        ScriptContext context,
         string customKubectlPath = null)
     {
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(context?.Endpoint?.EndpointJson);
+
+        var accountType = context?.Endpoint?.AccountType;
+        var credentialsJson = context?.Endpoint?.CredentialsJson;
+
         var creds = accountType.HasValue && credentialsJson != null
             ? DeploymentAccountCredentialsConverter.Deserialize(accountType.Value, credentialsJson)
             : null;
@@ -37,7 +35,8 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
         var certCreds = creds as ClientCertificateCredentials;
         var awsCreds = creds as AwsCredentials;
 
-        var templateName = syntax == ScriptSyntax.Bash ? "KubectlContext.sh" : "KubectlContext.ps1";
+        var syntax = context?.Syntax ?? Message.Models.Deployments.Execution.ScriptSyntax.Bash;
+        var templateName = syntax == Message.Models.Deployments.Execution.ScriptSyntax.Bash ? "KubectlContext.sh" : "KubectlContext.ps1";
         var template = UtilService.GetEmbeddedScriptContent(templateName);
 
         template = template

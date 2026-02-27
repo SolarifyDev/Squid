@@ -1,4 +1,3 @@
-using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -6,9 +5,9 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IEndpointVariableContributor : IScopedDependency
 {
-    int? ParseDeploymentAccountId(string endpointJson);
+    EndpointResourceReferences ParseResourceReferences(string endpointJson);
 
-    List<VariableDto> ContributeVariables(string endpointJson, AccountType? accountType, string credentialsJson);
+    List<VariableDto> ContributeVariables(EndpointContext context);
 
     Task<List<VariableDto>> ContributeAdditionalVariablesAsync(
         DeploymentProcessSnapshotDto processSnapshot,

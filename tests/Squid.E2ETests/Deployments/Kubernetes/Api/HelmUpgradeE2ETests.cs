@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -49,23 +51,9 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var ctx = new ActionExecutionContext { Action = action };
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
-            // Wrap with K8s context
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(
-                result.ScriptBody,
-                endpoint,
-                accountType,
-                credentialsJson,
-                ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Helm upgrade failed: {scriptResult.StdErr}");
@@ -112,17 +100,6 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var valuesContent = Encoding.UTF8.GetString(result.Files["rawYamlValues.yaml"]);
             valuesContent.ShouldContain("replicaCount: 1");
 
-            // Wrap with K8s context and execute
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
-
             // Write values file to temp dir and modify script to reference it
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
@@ -134,13 +111,9 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
 
             // Prepend cd to temp dir in script so values file is found
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(
-                modifiedScript,
-                endpoint,
-                accountType,
-                credentialsJson,
-                ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Helm upgrade failed: {scriptResult.StdErr}");
@@ -176,22 +149,9 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             var ctx = new ActionExecutionContext { Action = action };
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(
-                result.ScriptBody,
-                endpoint,
-                accountType,
-                credentialsJson,
-                ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Helm dry-run failed: {scriptResult.StdErr}");
@@ -205,6 +165,24 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
     }
 
     // === Helper Methods ===
+
+    private static ScriptContext MakeScriptContext(
+        string clusterUrl, string token, string ns) => new()
+    {
+        Endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = clusterUrl,
+                Namespace = ns,
+                SkipTlsVerification = "True"
+            }),
+            AccountType = AccountType.Token,
+            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
+        },
+        Syntax = ScriptSyntax.Bash
+    };
 
     private static DeploymentActionDto CreateHelmAction(Dictionary<string, string> properties)
     {

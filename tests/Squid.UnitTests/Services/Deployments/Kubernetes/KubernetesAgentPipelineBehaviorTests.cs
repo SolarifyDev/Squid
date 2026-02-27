@@ -32,12 +32,16 @@ public class KubernetesAgentPipelineBehaviorTests
     {
         var contributor = new KubernetesAgentEndpointVariableContributor();
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "production" });
-        var endpointVars = contributor.ContributeVariables(json, null, null);
+        var endpointVars = contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
 
         var wrapper = new KubernetesAgentScriptContextWrapper();
-        var result = wrapper.WrapScript(
-            "kubectl get pods", json, null, null,
-            Message.Models.Deployments.Execution.ScriptSyntax.Bash, endpointVars);
+        var ctx = new ScriptContext
+        {
+            Endpoint = new EndpointContext { EndpointJson = json },
+            Syntax = Message.Models.Deployments.Execution.ScriptSyntax.Bash,
+            Variables = endpointVars
+        };
+        var result = wrapper.WrapScript("kubectl get pods", ctx);
 
         result.ShouldContain("--namespace=\"production\"");
         result.ShouldContain("kubectl get pods");
@@ -52,7 +56,7 @@ public class KubernetesAgentPipelineBehaviorTests
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "prod" });
 
         var tc = new DeploymentTargetContext();
-        var endpointVars = contributor.ContributeVariables(json, null, null);
+        var endpointVars = contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
 
         tc.EndpointVariables.AddRange(endpointVars);
 
@@ -60,7 +64,7 @@ public class KubernetesAgentPipelineBehaviorTests
     }
 
     [Fact]
-    public void AgentContributes3Variables_ApiContributes15()
+    public void AgentContributes3Variables_ApiContributes9()
     {
         var agentContributor = new KubernetesAgentEndpointVariableContributor();
         var apiContributor = new KubernetesApiEndpointVariableContributor();
@@ -76,11 +80,11 @@ public class KubernetesAgentPipelineBehaviorTests
             ClusterCertificate = (string)null
         });
 
-        var agentVars = agentContributor.ContributeVariables(agentJson, null, null);
-        var apiVars = apiContributor.ContributeVariables(apiJson, null, null);
+        var agentVars = agentContributor.ContributeVariables(new EndpointContext { EndpointJson = agentJson });
+        var apiVars = apiContributor.ContributeVariables(new EndpointContext { EndpointJson = apiJson });
 
         agentVars.Count.ShouldBe(3);
-        apiVars.Count.ShouldBe(15);
+        apiVars.Count.ShouldBe(9);
     }
 
     [Fact]
@@ -89,7 +93,7 @@ public class KubernetesAgentPipelineBehaviorTests
         var contributor = new KubernetesAgentEndpointVariableContributor();
         var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "default" });
 
-        var vars = contributor.ContributeVariables(json, null, null);
+        var vars = contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
         var names = vars.Select(v => v.Name).ToList();
 
         names.ShouldContain("Squid.Action.Kubernetes.Namespace");

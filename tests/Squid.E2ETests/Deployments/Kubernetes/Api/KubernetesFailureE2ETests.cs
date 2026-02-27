@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -80,23 +82,9 @@ data:
     {
         var clusterUrl = await GetClusterUrlAsync();
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = "default",
-            SkipTlsVerification = "True"
-        };
+        var scriptContext = MakeScriptContext(clusterUrl, "this-is-an-invalid-token", "default");
 
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = "this-is-an-invalid-token" });
-
-        var script = _contextBuilder.WrapWithContext(
-            "kubectl get pods",
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+        var script = _contextBuilder.WrapWithContext("kubectl get pods", scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
 
@@ -108,27 +96,28 @@ data:
     {
         var clusterUrl = await GetClusterUrlAsync();
 
-        var endpoint = new KubernetesApiEndpointDto
+        var scriptContext = new ScriptContext
         {
-            ClusterUrl = clusterUrl,
-            Namespace = "default",
-            SkipTlsVerification = "True"
+            Endpoint = new EndpointContext
+            {
+                EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+                {
+                    ClusterUrl = clusterUrl,
+                    Namespace = "default",
+                    SkipTlsVerification = "True"
+                }),
+                AccountType = AccountType.ClientCertificate,
+                CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                    new ClientCertificateCredentials
+                    {
+                        ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
+                        ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
+                    })
+            },
+            Syntax = ScriptSyntax.Bash
         };
 
-        var accountType = AccountType.ClientCertificate;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new ClientCertificateCredentials
-            {
-                ClientCertificateData = "bm90LWEtdmFsaWQtY2VydA==",
-                ClientCertificateKeyData = "bm90LWEtdmFsaWQta2V5"
-            });
-
-        var script = _contextBuilder.WrapWithContext(
-            "kubectl get pods",
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+        var script = _contextBuilder.WrapWithContext("kubectl get pods", scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
 
@@ -156,19 +145,9 @@ data:
             var ctx = new ActionExecutionContext { Action = action };
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
-
-            var fullScript = _contextBuilder.WrapWithContext(
-                result.ScriptBody, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
 
@@ -206,17 +185,6 @@ data:
             var ctx = new ActionExecutionContext { Action = action };
             var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
 
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
-
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-fail-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
 
@@ -224,9 +192,9 @@ data:
                 await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
 
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(
-                modifiedScript, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
 
@@ -266,23 +234,30 @@ data:
             await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
 
         var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+        var scriptContext = MakeScriptContext(clusterUrl, token, contextNamespace);
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = contextNamespace,
-            SkipTlsVerification = "True"
-        };
-
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = token });
-
-        var fullScript = _contextBuilder.WrapWithContext(
-            modifiedScript, endpoint, accountType, credentialsJson, ScriptSyntax.Bash);
+        var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
         return await ExecuteBashScriptAsync(fullScript);
     }
+
+    private static ScriptContext MakeScriptContext(
+        string clusterUrl, string token, string ns) => new()
+    {
+        Endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = clusterUrl,
+                Namespace = ns,
+                SkipTlsVerification = "True"
+            }),
+            AccountType = AccountType.Token,
+            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
+        },
+        Syntax = ScriptSyntax.Bash
+    };
 
     private static DeploymentActionDto CreateHelmAction(Dictionary<string, string> properties)
     {

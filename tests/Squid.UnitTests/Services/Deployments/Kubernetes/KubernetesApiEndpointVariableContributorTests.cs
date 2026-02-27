@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
@@ -20,7 +21,8 @@ public class KubernetesApiEndpointVariableContributorTests
         string ns = "default",
         string skipTls = "False",
         string deploymentAccountId = "42",
-        string clusterCert = null) =>
+        string clusterCert = null,
+        string certificateId = null) =>
         JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
             CommunicationStyle = "KubernetesApi",
@@ -28,96 +30,116 @@ public class KubernetesApiEndpointVariableContributorTests
             Namespace = ns,
             SkipTlsVerification = skipTls,
             DeploymentAccountId = deploymentAccountId,
-            ClusterCertificate = clusterCert
+            ClusterCertificate = clusterCert,
+            CertificateId = certificateId
         });
 
-    private static (AccountType, string) TokenAccount() =>
-        (AccountType.Token, JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" }));
+    private static EndpointContext TokenContext() => new()
+    {
+        EndpointJson = MakeEndpointJson(),
+        AccountType = AccountType.Token,
+        CredentialsJson = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
+    };
 
-    private static (AccountType, string) UsernamePasswordAccount() =>
-        (AccountType.UsernamePassword, JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" }));
+    private static EndpointContext UsernamePasswordContext() => new()
+    {
+        EndpointJson = MakeEndpointJson(),
+        AccountType = AccountType.UsernamePassword,
+        CredentialsJson = JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" })
+    };
 
-    private static (AccountType, string) ClientCertAccount() =>
-        (AccountType.ClientCertificate, JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTi...", ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY" }));
+    private static EndpointContext ClientCertContext() => new()
+    {
+        EndpointJson = MakeEndpointJson(),
+        AccountType = AccountType.ClientCertificate,
+        CredentialsJson = JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTi...", ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY" })
+    };
 
-    private static (AccountType, string) AwsAccount() =>
-        (AccountType.AmazonWebServicesAccount, JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIAIOSFODNN7EXAMPLE", SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" }));
+    private static EndpointContext AwsContext() => new()
+    {
+        EndpointJson = MakeEndpointJson(),
+        AccountType = AccountType.AmazonWebServicesAccount,
+        CredentialsJson = JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIAIOSFODNN7EXAMPLE", SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" })
+    };
 
-    // === ParseDeploymentAccountId ===
+    // === ParseResourceReferences ===
 
     [Fact]
-    public void ParseDeploymentAccountId_ValidJson_ReturnsAccountId()
+    public void ParseResourceReferences_ValidJson_ReturnsAccountId()
     {
         var json = MakeEndpointJson(deploymentAccountId: "42");
-        _contributor.ParseDeploymentAccountId(json).ShouldBe(42);
+        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBe(42);
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_NoAccountId_ReturnsNull()
+    public void ParseResourceReferences_WithCertificateId_ReturnsCertificateId()
+    {
+        var json = MakeEndpointJson(certificateId: "99");
+        _contributor.ParseResourceReferences(json).CertificateId.ShouldBe(99);
+    }
+
+    [Fact]
+    public void ParseResourceReferences_NoAccountId_ReturnsNull()
     {
         var json = MakeEndpointJson(deploymentAccountId: null);
-        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
+        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_NonNumericAccountId_ReturnsNull()
+    public void ParseResourceReferences_NonNumericAccountId_ReturnsNull()
     {
         var json = MakeEndpointJson(deploymentAccountId: "abc");
-        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
+        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_EmptyAccountId_ReturnsNull()
+    public void ParseResourceReferences_EmptyAccountId_ReturnsNull()
     {
         var json = MakeEndpointJson(deploymentAccountId: "");
-        _contributor.ParseDeploymentAccountId(json).ShouldBeNull();
+        _contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBeNull();
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_InvalidJson_ReturnsNull()
+    public void ParseResourceReferences_InvalidJson_ReturnsEmpty()
     {
-        _contributor.ParseDeploymentAccountId("not-json").ShouldBeNull();
+        var refs = _contributor.ParseResourceReferences("not-json");
+        refs.DeploymentAccountId.ShouldBeNull();
+        refs.CertificateId.ShouldBeNull();
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_EmptyString_ReturnsNull()
+    public void ParseResourceReferences_EmptyString_ReturnsEmpty()
     {
-        _contributor.ParseDeploymentAccountId(string.Empty).ShouldBeNull();
+        var refs = _contributor.ParseResourceReferences(string.Empty);
+        refs.DeploymentAccountId.ShouldBeNull();
     }
 
     [Fact]
-    public void ParseDeploymentAccountId_Null_ReturnsNull()
+    public void ParseResourceReferences_Null_ReturnsEmpty()
     {
-        _contributor.ParseDeploymentAccountId(null).ShouldBeNull();
+        var refs = _contributor.ParseResourceReferences(null);
+        refs.DeploymentAccountId.ShouldBeNull();
     }
 
     // === ContributeVariables — count & all names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns15Variables()
+    public void ContributeVariables_ValidEndpoint_Returns9Variables()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
-        vars.Count.ShouldBe(15);
+        vars.Count.ShouldBe(9);
     }
 
     [Fact]
     public void ContributeVariables_AllExpectedVariableNamesPresent()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
         var names = vars.Select(v => v.Name).ToList();
 
         names.ShouldContain("Squid.Action.Kubernetes.ClusterUrl");
         names.ShouldContain("Squid.Account.AccountType");
-        names.ShouldContain("Squid.Account.Token");
-        names.ShouldContain("Squid.Account.Username");
-        names.ShouldContain("Squid.Account.Password");
-        names.ShouldContain("Squid.Account.ClientCertificateData");
-        names.ShouldContain("Squid.Account.ClientCertificateKeyData");
-        names.ShouldContain("Squid.Account.AccessKey");
-        names.ShouldContain("Squid.Account.SecretKey");
+        names.ShouldContain("Squid.Account.CredentialsJson");
         names.ShouldContain("Squid.Action.Kubernetes.SkipTlsVerification");
         names.ShouldContain("Squid.Action.Kubernetes.Namespace");
         names.ShouldContain("Squid.Action.Kubernetes.ClusterCertificate");
@@ -131,9 +153,9 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_ClusterUrl_MappedCorrectly()
     {
-        var json = MakeEndpointJson(clusterUrl: "https://my-cluster:6443");
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = MakeEndpointJson(clusterUrl: "https://my-cluster:6443");
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterUrl" && v.Value == "https://my-cluster:6443");
     }
@@ -141,9 +163,9 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_Namespace_MappedCorrectly()
     {
-        var json = MakeEndpointJson(ns: "production");
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = MakeEndpointJson(ns: "production");
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "production");
     }
@@ -151,9 +173,9 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_SkipTls_MappedCorrectly()
     {
-        var json = MakeEndpointJson(skipTls: "True");
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = MakeEndpointJson(skipTls: "True");
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.SkipTlsVerification" && v.Value == "True");
     }
@@ -161,118 +183,84 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_ClusterCertificate_MappedCorrectly()
     {
-        var json = MakeEndpointJson(clusterCert: "MIICpDCCAYwCCQ...");
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = MakeEndpointJson(clusterCert: "MIICpDCCAYwCCQ...");
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterCertificate" && v.Value == "MIICpDCCAYwCCQ...");
     }
 
-    // === ContributeVariables — Token account ===
+    // === ContributeVariables — account types ===
 
     [Fact]
     public void ContributeVariables_TokenAccount_AccountTypeMapped()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && v.Value == "Token");
     }
 
     [Fact]
-    public void ContributeVariables_TokenAccount_TokenMapped()
-    {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.Token" && v.Value == "test-token-123");
-    }
-
-    // === ContributeVariables — UsernamePassword account ===
-
-    [Fact]
     public void ContributeVariables_UsernamePasswordAccount_AccountTypeMapped()
     {
-        var (at, cj) = UsernamePasswordAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(UsernamePasswordContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && v.Value == "UsernamePassword");
     }
 
     [Fact]
-    public void ContributeVariables_UsernamePasswordAccount_UsernameMapped()
-    {
-        var (at, cj) = UsernamePasswordAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.Username" && v.Value == "admin");
-    }
-
-    [Fact]
-    public void ContributeVariables_UsernamePasswordAccount_PasswordMapped()
-    {
-        var (at, cj) = UsernamePasswordAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.Password" && v.Value == "s3cret");
-    }
-
-    // === ContributeVariables — ClientCertificate account ===
-
-    [Fact]
     public void ContributeVariables_ClientCertAccount_AccountTypeMapped()
     {
-        var (at, cj) = ClientCertAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(ClientCertContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && v.Value == "ClientCertificate");
     }
 
     [Fact]
-    public void ContributeVariables_ClientCertAccount_CertDataMapped()
-    {
-        var (at, cj) = ClientCertAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateData" && v.Value == "LS0tLS1CRUdJTi...");
-    }
-
-    [Fact]
-    public void ContributeVariables_ClientCertAccount_KeyDataMapped()
-    {
-        var (at, cj) = ClientCertAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateKeyData" && v.Value == "LS0tLS1CRUdJTi...KEY");
-    }
-
-    // === ContributeVariables — AWS account ===
-
-    [Fact]
     public void ContributeVariables_AwsAccount_AccountTypeMapped()
     {
-        var (at, cj) = AwsAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(AwsContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && v.Value == "AmazonWebServicesAccount");
     }
 
-    [Fact]
-    public void ContributeVariables_AwsAccount_AccessKeyMapped()
-    {
-        var (at, cj) = AwsAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+    // === ContributeVariables — CredentialsJson ===
 
-        vars.ShouldContain(v => v.Name == "Squid.Account.AccessKey" && v.Value == "AKIAIOSFODNN7EXAMPLE");
+    [Fact]
+    public void ContributeVariables_TokenAccount_CredentialsJsonContainsToken()
+    {
+        var vars = _contributor.ContributeVariables(TokenContext());
+
+        var credVar = vars.First(v => v.Name == "Squid.Account.CredentialsJson");
+        credVar.Value.ShouldContain("test-token-123");
     }
 
     [Fact]
-    public void ContributeVariables_AwsAccount_SecretKeyMapped()
+    public void ContributeVariables_UsernamePasswordAccount_CredentialsJsonContainsCreds()
     {
-        var (at, cj) = AwsAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(UsernamePasswordContext());
 
-        vars.ShouldContain(v => v.Name == "Squid.Account.SecretKey" && v.Value == "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+        var credVar = vars.First(v => v.Name == "Squid.Account.CredentialsJson");
+        credVar.Value.ShouldContain("admin");
+        credVar.Value.ShouldContain("s3cret");
+    }
+
+    [Fact]
+    public void ContributeVariables_ClientCertAccount_CredentialsJsonContainsCertData()
+    {
+        var vars = _contributor.ContributeVariables(ClientCertContext());
+
+        var credVar = vars.First(v => v.Name == "Squid.Account.CredentialsJson");
+        credVar.Value.ShouldContain("LS0tLS1CRUdJTi...");
+    }
+
+    [Fact]
+    public void ContributeVariables_AwsAccount_CredentialsJsonContainsAwsCreds()
+    {
+        var vars = _contributor.ContributeVariables(AwsContext());
+
+        var credVar = vars.First(v => v.Name == "Squid.Account.CredentialsJson");
+        credVar.Value.ShouldContain("AKIAIOSFODNN7EXAMPLE");
     }
 
     // === ContributeVariables — null/empty account ===
@@ -280,23 +268,19 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullAccount_DefaultsToToken()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && v.Value == "Token");
     }
 
     [Fact]
-    public void ContributeVariables_NullAccount_CredentialFieldsEmpty()
+    public void ContributeVariables_NullAccount_CredentialsJsonEmpty()
     {
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), null, null);
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        var vars = _contributor.ContributeVariables(ctx);
 
-        vars.ShouldContain(v => v.Name == "Squid.Account.Token" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.Username" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.Password" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.AccessKey" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.SecretKey" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateData" && v.Value == string.Empty);
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateKeyData" && v.Value == string.Empty);
+        vars.ShouldContain(v => v.Name == "Squid.Account.CredentialsJson" && v.Value == string.Empty);
     }
 
     // === ContributeVariables — default endpoint values ===
@@ -311,8 +295,9 @@ public class KubernetesApiEndpointVariableContributorTests
             Namespace = null
         });
 
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = json;
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "default");
     }
@@ -327,8 +312,9 @@ public class KubernetesApiEndpointVariableContributorTests
             SkipTlsVerification = null
         });
 
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(json, at, cj);
+        var ctx = TokenContext();
+        ctx.EndpointJson = json;
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.SkipTlsVerification" && v.Value == "False");
     }
@@ -338,8 +324,7 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_SuppressEnvironmentLogging_AlwaysFalse()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Script.SuppressEnvironmentLogging" && v.Value == "False");
     }
@@ -347,8 +332,7 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_OutputKubectlVersion_AlwaysTrue()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.OutputKubectlVersion" && v.Value == "True");
     }
@@ -356,8 +340,7 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_PrintEvaluatedVariables_AlwaysTrue()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
         vars.ShouldContain(v => v.Name == "SquidPrintEvaluatedVariables" && v.Value == "True");
     }
@@ -367,8 +350,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_InvalidJson_ReturnsEmpty()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables("not-json", at, cj);
+        var ctx = new EndpointContext { EndpointJson = "not-json", AccountType = AccountType.Token };
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();
     }
@@ -376,8 +359,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_EmptyJson_ReturnsEmpty()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(string.Empty, at, cj);
+        var ctx = new EndpointContext { EndpointJson = string.Empty, AccountType = AccountType.Token };
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();
     }
@@ -385,8 +368,8 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_NullJson_ReturnsEmpty()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(null, at, cj);
+        var ctx = new EndpointContext { EndpointJson = null, AccountType = AccountType.Token };
+        var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldBeEmpty();
     }
@@ -394,51 +377,20 @@ public class KubernetesApiEndpointVariableContributorTests
     // === ContributeVariables — sensitive variable marking ===
 
     [Fact]
-    public void ContributeVariables_TokenAccount_TokenIsSensitive()
+    public void ContributeVariables_CredentialsJson_IsSensitive()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
-        vars.ShouldContain(v => v.Name == "Squid.Account.Token" && v.IsSensitive);
-    }
-
-    [Fact]
-    public void ContributeVariables_PasswordIsSensitive()
-    {
-        var (at, cj) = UsernamePasswordAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.Password" && v.IsSensitive);
-    }
-
-    [Fact]
-    public void ContributeVariables_ClientCertDataIsSensitive()
-    {
-        var (at, cj) = ClientCertAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateData" && v.IsSensitive);
-        vars.ShouldContain(v => v.Name == "Squid.Account.ClientCertificateKeyData" && v.IsSensitive);
-    }
-
-    [Fact]
-    public void ContributeVariables_AwsSecretKeyIsSensitive()
-    {
-        var (at, cj) = AwsAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
-
-        vars.ShouldContain(v => v.Name == "Squid.Account.SecretKey" && v.IsSensitive);
+        vars.ShouldContain(v => v.Name == "Squid.Account.CredentialsJson" && v.IsSensitive);
     }
 
     [Fact]
     public void ContributeVariables_NonSensitiveVariables_NotMarkedSensitive()
     {
-        var (at, cj) = TokenAccount();
-        var vars = _contributor.ContributeVariables(MakeEndpointJson(), at, cj);
+        var vars = _contributor.ContributeVariables(TokenContext());
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterUrl" && !v.IsSensitive);
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && !v.IsSensitive);
-        vars.ShouldContain(v => v.Name == "Squid.Account.Username" && !v.IsSensitive);
     }
 
     // === ContributeAdditionalVariablesAsync — ContainerImage ===

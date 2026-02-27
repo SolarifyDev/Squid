@@ -8,6 +8,7 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ActivityLog;
+using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
@@ -175,6 +176,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IServerTaskDataProvider>(),
             Mock.Of<IDeploymentDataProvider>(),
             Mock.Of<IDeploymentAccountDataProvider>(),
+            Mock.Of<ICertificateDataProvider>(),
             Mock.Of<IDeploymentCompletionDataProvider>(),
             activityLogMock.Object,
             Mock.Of<IServerTaskLogDataProvider>(),
@@ -221,7 +223,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 Name = name,
                 Roles = roles
             },
-            EndpointJson = endpointJson,
+            EndpointContext = new EndpointContext { EndpointJson = endpointJson },
             Transport = transport,
             CommunicationStyle = transport.CommunicationStyle
         };
@@ -289,14 +291,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
     private sealed class EndpointStampingWrapper : IScriptContextWrapper
     {
-        public string WrapScript(
-            string script,
-            string endpointJson,
-            AccountType? accountType,
-            string credentialsJson,
-            ScriptSyntax syntax,
-            List<VariableDto> variables)
-            => $"WRAPPED_ENDPOINT={endpointJson};{script}";
+        public string WrapScript(string script, ScriptContext context)
+            => $"WRAPPED_ENDPOINT={context.Endpoint.EndpointJson};{script}";
     }
 
     private sealed class RecordingStrategy : IExecutionStrategy

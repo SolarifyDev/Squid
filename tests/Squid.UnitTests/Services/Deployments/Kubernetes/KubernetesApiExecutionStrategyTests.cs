@@ -10,6 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Enums;
+using ScriptContext = Squid.Core.Services.DeploymentExecution.ScriptContext;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -155,17 +156,11 @@ public class KubernetesApiExecutionStrategyTests
         contextBuilder
             .Setup(b => b.WrapWithContext(
                 It.IsAny<string>(),
-                It.IsAny<Squid.Message.Models.Deployments.Machine.KubernetesApiEndpointDto>(),
-                It.IsAny<AccountType?>(),
-                It.IsAny<string>(),
-                It.IsAny<ScriptSyntax>(),
+                It.IsAny<ScriptContext>(),
                 It.IsAny<string>()))
             .Returns((string userScript,
-                Squid.Message.Models.Deployments.Machine.KubernetesApiEndpointDto _,
-                AccountType? __,
-                string ___,
-                ScriptSyntax ____,
-                string _____) => $"WRAPPED::{userScript}");
+                ScriptContext _,
+                string __) => $"WRAPPED::{userScript}");
 
         var strategy = new LocalProcessExecutionStrategy(
             _payloadBuilder.Object,
@@ -181,12 +176,13 @@ public class KubernetesApiExecutionStrategyTests
         request.ExecutionMode = ExecutionMode.PackagedPayload;
         request.ContextPreparationPolicy = ContextPreparationPolicy.Apply;
         request.Syntax = ScriptSyntax.PowerShell;
-        request.EndpointJson = """
-            {"ClusterUrl":"https://example.cluster","Namespace":"demo","SkipTlsVerification":"True"}
-            """;
-        request.AccountType = AccountType.Token;
-        request.CredentialsJson = System.Text.Json.JsonSerializer.Serialize(
-            new TokenCredentials { Token = "secret" });
+        request.EndpointContext = new EndpointContext
+        {
+            EndpointJson = """{"ClusterUrl":"https://example.cluster","Namespace":"demo","SkipTlsVerification":"True"}""",
+            AccountType = AccountType.Token,
+            CredentialsJson = System.Text.Json.JsonSerializer.Serialize(
+                new TokenCredentials { Token = "secret" })
+        };
 
         await strategy.ExecuteScriptAsync(request, CancellationToken.None);
 

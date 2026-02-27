@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -25,23 +27,11 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var clusterUrl = await GetClusterUrlAsync();
         var token = await GetServiceAccountTokenAsync();
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = "default",
-            SkipTlsVerification = "True"
-        };
-
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = token });
+        var scriptContext = MakeScriptContext(clusterUrl, token, "default");
 
         var script = _builder.WrapWithContext(
             "kubectl get pods --all-namespaces",
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+            scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
 
@@ -56,24 +46,12 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var token = await GetServiceAccountTokenAsync();
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = testNs,
-            SkipTlsVerification = "True"
-        };
-
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = token });
+        var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
         // The context script auto-creates namespace if not "default"
         var script = _builder.WrapWithContext(
             $"kubectl get namespace {testNs}",
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+            scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
         result.ExitCode.ShouldBe(0, $"Script failed: {result.StdErr}");
@@ -90,16 +68,7 @@ public class KubernetesContextScriptE2ETests : KubernetesApiE2ETestBase
         var token = await GetServiceAccountTokenAsync();
         var testNs = $"squid-e2e-{Guid.NewGuid().ToString("N")[..8]}";
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = testNs,
-            SkipTlsVerification = "True"
-        };
-
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = token });
+        var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
         var userScript = @"
 cat <<'YAML' | kubectl apply -f -
@@ -115,10 +84,7 @@ kubectl get configmap squid-e2e-test -n " + testNs;
 
         var script = _builder.WrapWithContext(
             userScript,
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+            scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
         result.ExitCode.ShouldBe(0, $"Script failed: {result.StdErr}");
@@ -134,26 +100,33 @@ kubectl get configmap squid-e2e-test -n " + testNs;
         var clusterUrl = await GetClusterUrlAsync();
         var token = await GetServiceAccountTokenAsync();
 
-        var endpoint = new KubernetesApiEndpointDto
-        {
-            ClusterUrl = clusterUrl,
-            Namespace = "default",
-            SkipTlsVerification = "True"
-        };
-
-        var accountType = AccountType.Token;
-        var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-            new TokenCredentials { Token = token });
+        var scriptContext = MakeScriptContext(clusterUrl, token, "default");
 
         var script = _builder.WrapWithContext(
             "kubectl cluster-info",
-            endpoint,
-            accountType,
-            credentialsJson,
-            ScriptSyntax.Bash);
+            scriptContext);
 
         var result = await ExecuteBashScriptAsync(script);
         result.ExitCode.ShouldBe(0, $"Script failed: {result.StdErr}");
         result.StdOut.ShouldContain("Kubernetes");
     }
+
+    private static ScriptContext MakeScriptContext(
+        string clusterUrl, string token, string ns,
+        ScriptSyntax syntax = ScriptSyntax.Bash) => new()
+    {
+        Endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = clusterUrl,
+                Namespace = ns,
+                SkipTlsVerification = "True"
+            }),
+            AccountType = AccountType.Token,
+            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
+        },
+        Syntax = syntax
+    };
 }

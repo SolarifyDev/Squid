@@ -17,9 +17,7 @@ public class ScriptExecutionRequest
     public PayloadKind PayloadKind { get; set; } = PayloadKind.Unspecified;
     public RunnerKind RunnerKind { get; set; } = RunnerKind.Unspecified;
     public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
-    public string EndpointJson { get; set; }
-    public AccountType? AccountType { get; set; }
-    public string CredentialsJson { get; set; }
+    public EndpointContext EndpointContext { get; set; }
     public List<VariableDto> Variables { get; set; }
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public string ReleaseVersion { get; set; }

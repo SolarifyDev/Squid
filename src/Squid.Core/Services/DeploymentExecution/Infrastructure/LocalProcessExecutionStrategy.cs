@@ -139,12 +139,13 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         if (request.ResolveContextPreparationPolicy() != ContextPreparationPolicy.Apply)
             return scriptBody;
 
-        return _scriptContextWrapper.WrapScript(
-            scriptBody,
-            request.EndpointJson,
-            request.AccountType,
-            request.CredentialsJson,
-            request.Syntax,
-            request.Variables);
+        var scriptContext = new ScriptContext
+        {
+            Endpoint = request.EndpointContext,
+            Syntax = request.Syntax,
+            Variables = request.Variables
+        };
+
+        return _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 }

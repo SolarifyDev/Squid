@@ -153,9 +153,14 @@ public partial class DeploymentTaskExecutor
 
         if (wrapper == null) return;
 
-        prepared.ScriptBody = wrapper.WrapScript(
-            prepared.ScriptBody, tc.EndpointJson, tc.AccountType, tc.CredentialsJson,
-            prepared.Syntax, effectiveVariables);
+        var scriptContext = new ScriptContext
+        {
+            Endpoint = tc.EndpointContext,
+            Syntax = prepared.Syntax,
+            Variables = effectiveVariables
+        };
+
+        prepared.ScriptBody = wrapper.WrapScript(prepared.ScriptBody, scriptContext);
     }
 
     private async Task ExecuteActionResultsAsync(
@@ -228,9 +233,7 @@ public partial class DeploymentTaskExecutor
             PayloadKind = actionResult.PayloadKind,
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
-            EndpointJson = tc.EndpointJson,
-            AccountType = tc.AccountType,
-            CredentialsJson = tc.CredentialsJson,
+            EndpointContext = tc.EndpointContext,
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version

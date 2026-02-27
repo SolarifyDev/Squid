@@ -101,24 +101,25 @@ public class TransportRegistryTests
     // ========== Contributor behavior ==========
 
     [Fact]
-    public void ApiContributor_ParseDeploymentAccountId_ReturnsId()
+    public void ApiContributor_ParseResourceReferences_ReturnsId()
     {
         var contributor = new KubernetesApiEndpointVariableContributor();
         var json = JsonSerializer.Serialize(new { DeploymentAccountId = "42" });
 
-        contributor.ParseDeploymentAccountId(json).ShouldBe(42);
+        contributor.ParseResourceReferences(json).DeploymentAccountId.ShouldBe(42);
     }
 
     [Fact]
-    public void AgentContributor_ParseDeploymentAccountId_ReturnsNull()
+    public void AgentContributor_ParseResourceReferences_ReturnsNull()
     {
         var contributor = new KubernetesAgentEndpointVariableContributor();
 
-        contributor.ParseDeploymentAccountId("{}").ShouldBeNull();
+        var refs = contributor.ParseResourceReferences("{}");
+        refs.DeploymentAccountId.ShouldBeNull();
     }
 
     [Theory]
-    [InlineData("KubernetesApi", 15)]
+    [InlineData("KubernetesApi", 9)]
     [InlineData("KubernetesAgent", 3)]
     public void ContributeVariables_CorrectCount(string style, int expectedCount)
     {
@@ -132,7 +133,14 @@ public class TransportRegistryTests
             ? new KubernetesApiEndpointVariableContributor()
             : new KubernetesAgentEndpointVariableContributor();
 
-        contributor.ContributeVariables(json, accountType, credentialsJson).Count.ShouldBe(expectedCount);
+        var ctx = new EndpointContext
+        {
+            EndpointJson = json,
+            AccountType = accountType,
+            CredentialsJson = credentialsJson
+        };
+
+        contributor.ContributeVariables(ctx).Count.ShouldBe(expectedCount);
     }
 
     // ========== DeploymentTargetContext ==========
@@ -147,10 +155,10 @@ public class TransportRegistryTests
                 variables: new KubernetesAgentEndpointVariableContributor())
         };
 
-        var accountId = tc.Transport.Variables.ParseDeploymentAccountId("{}");
+        var refs = tc.Transport.Variables.ParseResourceReferences("{}");
 
-        accountId.ShouldBeNull();
-        tc.AccountType.ShouldBeNull();
+        refs.DeploymentAccountId.ShouldBeNull();
+        tc.EndpointContext.AccountType.ShouldBeNull();
     }
 
     // ========== Helpers ==========

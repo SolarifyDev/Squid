@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
@@ -12,43 +13,58 @@ public class KubernetesApiContextScriptBuilderTests
 {
     private readonly KubernetesApiContextScriptBuilder _builder = new();
 
-    private static KubernetesApiEndpointDto CreateEndpoint(
+    private static ScriptContext CreateContext(
         string clusterUrl = "https://k8s.example.com:6443",
         string ns = "default",
         string skipTls = "False",
-        string clusterCert = null) => new()
+        string clusterCert = null,
+        AccountType? accountType = null,
+        string credentialsJson = null,
+        ScriptSyntax syntax = ScriptSyntax.Bash) => new()
     {
-        ClusterUrl = clusterUrl,
-        Namespace = ns,
-        SkipTlsVerification = skipTls,
-        ClusterCertificate = clusterCert
+        Endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = clusterUrl,
+                Namespace = ns,
+                SkipTlsVerification = skipTls,
+                ClusterCertificate = clusterCert
+            }),
+            AccountType = accountType,
+            CredentialsJson = credentialsJson
+        },
+        Syntax = syntax
     };
 
-    private static (AccountType, string) TokenAccount(string token = "test-token-123") =>
-        (AccountType.Token, JsonSerializer.Serialize(new TokenCredentials { Token = token }));
+    private static ScriptContext TokenContext(ScriptSyntax syntax = ScriptSyntax.Bash, string token = "test-token-123")
+    {
+        var ctx = CreateContext(accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = token }), syntax: syntax);
+        return ctx;
+    }
 
-    private static (AccountType, string) UsernamePasswordAccount(
-        string username = "admin", string password = "s3cret") =>
-        (AccountType.UsernamePassword, JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = username, Password = password }));
+    private static ScriptContext UsernamePasswordContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+        => CreateContext(accountType: AccountType.UsernamePassword,
+            credentialsJson: JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" }),
+            syntax: syntax);
 
-    private static (AccountType, string) ClientCertAccount(
-        string certData = "LS0tLS1CRUdJTi...", string keyData = "LS0tLS1CRUdJTi...KEY") =>
-        (AccountType.ClientCertificate, JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = certData, ClientCertificateKeyData = keyData }));
+    private static ScriptContext ClientCertContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+        => CreateContext(accountType: AccountType.ClientCertificate,
+            credentialsJson: JsonSerializer.Serialize(new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTi...", ClientCertificateKeyData = "LS0tLS1CRUdJTi...KEY" }),
+            syntax: syntax);
 
-    private static (AccountType, string) AwsAccount(
-        string accessKey = "AKIAIOSFODNN7EXAMPLE", string secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY") =>
-        (AccountType.AmazonWebServicesAccount, JsonSerializer.Serialize(new AwsCredentials { AccessKey = accessKey, SecretKey = secretKey }));
+    private static ScriptContext AwsContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+        => CreateContext(accountType: AccountType.AmazonWebServicesAccount,
+            credentialsJson: JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIAIOSFODNN7EXAMPLE", SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" }),
+            syntax: syntax);
 
     // === Token Auth Tests ===
 
     [Fact]
     public void WrapWithContext_TokenAuth_Bash_ContainsTokenCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("kubectl get pods", TokenContext());
 
         result.ShouldContain("test-token-123");
         result.ShouldContain("Token");
@@ -58,11 +74,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_TokenAuth_PowerShell_ContainsTokenCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl get pods", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("test-token-123");
         result.ShouldContain("Token");
@@ -74,11 +86,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_UsernamePasswordAuth_Bash_ContainsCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get nodes",
-            CreateEndpoint(),
-            UsernamePasswordAccount().Item1, UsernamePasswordAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("kubectl get nodes", UsernamePasswordContext());
 
         result.ShouldContain("admin");
         result.ShouldContain("s3cret");
@@ -88,11 +96,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_UsernamePasswordAuth_PowerShell_ContainsCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get nodes",
-            CreateEndpoint(),
-            UsernamePasswordAccount().Item1, UsernamePasswordAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl get nodes", UsernamePasswordContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("admin");
         result.ShouldContain("s3cret");
@@ -104,11 +108,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClientCertAuth_Bash_ContainsCertData()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            ClientCertAccount().Item1, ClientCertAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("kubectl get pods", ClientCertContext());
 
         result.ShouldContain("LS0tLS1CRUdJTi...");
         result.ShouldContain("LS0tLS1CRUdJTi...KEY");
@@ -118,11 +118,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClientCertAuth_PowerShell_ContainsCertData()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            ClientCertAccount().Item1, ClientCertAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl get pods", ClientCertContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("LS0tLS1CRUdJTi...");
         result.ShouldContain("LS0tLS1CRUdJTi...KEY");
@@ -134,11 +130,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_AwsAuth_Bash_ContainsAwsCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            AwsAccount().Item1, AwsAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("kubectl get pods", AwsContext());
 
         result.ShouldContain("AKIAIOSFODNN7EXAMPLE");
         result.ShouldContain("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
@@ -148,11 +140,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_AwsAuth_PowerShell_ContainsAwsCredentials()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            AwsAccount().Item1, AwsAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl get pods", AwsContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("AKIAIOSFODNN7EXAMPLE");
         result.ShouldContain("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
@@ -164,11 +152,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClusterUrl_Bash_ContainsUrl()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(clusterUrl: "https://my-cluster.example.com:8443"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var ctx = TokenContext();
+        ctx.Endpoint.EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            { ClusterUrl = "https://my-cluster.example.com:8443", Namespace = "default", SkipTlsVerification = "False" });
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("https://my-cluster.example.com:8443");
     }
@@ -176,11 +164,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClusterUrl_PowerShell_ContainsUrl()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(clusterUrl: "https://my-cluster.example.com:8443"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var ctx = TokenContext(ScriptSyntax.PowerShell);
+        ctx.Endpoint.EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            { ClusterUrl = "https://my-cluster.example.com:8443", Namespace = "default", SkipTlsVerification = "False" });
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("https://my-cluster.example.com:8443");
     }
@@ -190,11 +178,10 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomNamespace_Bash_ContainsNamespace()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(ns: "production"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var ctx = CreateContext(ns: "production", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("production");
     }
@@ -202,11 +189,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomNamespace_PowerShell_ContainsNamespace()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(ns: "production"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var ctx = CreateContext(ns: "production", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            syntax: ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("production");
     }
@@ -216,11 +203,10 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_SkipTls_Bash_ContainsSkipTlsTrue()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(skipTls: "True"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var ctx = CreateContext(skipTls: "True", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("True");
     }
@@ -228,11 +214,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_SkipTls_PowerShell_ContainsSkipTlsTrue()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(skipTls: "True"),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var ctx = CreateContext(skipTls: "True", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            syntax: ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("True");
     }
@@ -242,11 +228,10 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClusterCert_Bash_ContainsCertContent()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(clusterCert: "MIICpDCCAYwCCQDU+pQ4pHgSpDANBg..."),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var ctx = CreateContext(clusterCert: "MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...");
     }
@@ -254,11 +239,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_ClusterCert_PowerShell_ContainsCertContent()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(clusterCert: "MIICpDCCAYwCCQDU+pQ4pHgSpDANBg..."),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var ctx = CreateContext(clusterCert: "MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            syntax: ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...");
     }
@@ -270,15 +255,10 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var userScript = "kubectl apply -f deployment.yaml\nkubectl rollout status deployment/myapp";
 
-        var result = _builder.WrapWithContext(
-            userScript,
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext(userScript, TokenContext());
 
         result.ShouldContain("kubectl apply -f deployment.yaml");
         result.ShouldContain("kubectl rollout status deployment/myapp");
-        // User script should be after context setup
         var contextIndex = result.IndexOf("config use-context", StringComparison.Ordinal);
         var userScriptIndex = result.IndexOf("kubectl apply -f deployment.yaml", StringComparison.Ordinal);
         userScriptIndex.ShouldBeGreaterThan(contextIndex);
@@ -287,13 +267,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_UserScript_PowerShell_ScriptEmbeddedAtEnd()
     {
-        var userScript = "kubectl apply -f deployment.yaml";
-
-        var result = _builder.WrapWithContext(
-            userScript,
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl apply -f deployment.yaml", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("kubectl apply -f deployment.yaml");
         var contextIndex = result.IndexOf("config use-context", StringComparison.Ordinal);
@@ -304,11 +278,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_EmptyUserScript_Bash_DoesNotThrow()
     {
-        var result = _builder.WrapWithContext(
-            string.Empty,
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext(string.Empty, TokenContext());
 
         result.ShouldNotBeNullOrEmpty();
     }
@@ -318,12 +288,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomKubectl_Bash_ContainsCustomPath()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash,
-            "/usr/local/bin/kubectl-1.28");
+        var result = _builder.WrapWithContext("echo hi", TokenContext(), "/usr/local/bin/kubectl-1.28");
 
         result.ShouldContain("/usr/local/bin/kubectl-1.28");
     }
@@ -331,12 +296,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomKubectl_PowerShell_ContainsCustomPath()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell,
-            "C:\\tools\\kubectl.exe");
+        var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell), "C:\\tools\\kubectl.exe");
 
         result.ShouldContain("C:\\tools\\kubectl.exe");
     }
@@ -344,14 +304,8 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_NullCustomKubectl_Bash_FallsBackToDefault()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash,
-            null);
+        var result = _builder.WrapWithContext("echo hi", TokenContext(), null);
 
-        // The template should have empty KubectlExe, which the script handles by defaulting to "kubectl"
         result.ShouldNotBeNullOrEmpty();
     }
 
@@ -360,11 +314,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_BashSyntax_UsesBashTemplate()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
         result.ShouldContain("#!/bin/bash");
     }
@@ -372,11 +322,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_PowerShellSyntax_UsesPowerShellTemplate()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("$ErrorActionPreference");
     }
@@ -386,11 +332,10 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_NullEndpoint_DoesNotThrow()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            null,
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var ctx = TokenContext();
+        ctx.Endpoint.EndpointJson = null;
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldNotBeNullOrEmpty();
     }
@@ -398,11 +343,9 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_NullAccount_DoesNotThrow()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            null, null,
-            ScriptSyntax.Bash);
+        var ctx = CreateContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldNotBeNullOrEmpty();
     }
@@ -410,11 +353,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_NullUserScript_DoesNotThrow()
     {
-        var result = _builder.WrapWithContext(
-            null,
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext(null, TokenContext());
 
         result.ShouldNotBeNullOrEmpty();
     }
@@ -422,11 +361,9 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_AllNull_DoesNotThrow()
     {
-        var result = _builder.WrapWithContext(
-            null,
-            null,
-            null, null,
-            ScriptSyntax.Bash);
+        var ctx = new ScriptContext { Endpoint = new EndpointContext(), Syntax = ScriptSyntax.Bash };
+
+        var result = _builder.WrapWithContext(null, ctx);
 
         result.ShouldNotBeNullOrEmpty();
     }
@@ -436,11 +373,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_NoUnreplacedPlaceholders()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("kubectl get pods", TokenContext());
 
         result.ShouldNotContain("{{");
         result.ShouldNotContain("}}");
@@ -449,11 +382,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_PowerShell_NoUnreplacedPlaceholders()
     {
-        var result = _builder.WrapWithContext(
-            "kubectl get pods",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("kubectl get pods", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldNotContain("{{");
         result.ShouldNotContain("}}");
@@ -464,11 +393,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_DoesNotUseEval()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
         result.ShouldNotContain("eval ");
     }
@@ -476,11 +401,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_UsesBashArrayForClusterCmd()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
         result.ShouldContain("CLUSTER_CMD=(");
         result.ShouldContain("\"${CLUSTER_CMD[@]}\"");
@@ -491,11 +412,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_CleanupTrapRemovesCertFiles()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
         result.ShouldContain("CERT_PATH=\"\"");
         result.ShouldContain("CLIENT_CERT_PATH=\"\"");
@@ -510,11 +427,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_PowerShell_FinallyCleansCertFiles()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("$certPath = $null");
         result.ShouldContain("$clientCertPath = $null");
@@ -527,19 +440,11 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_HasErrorHandlingForKubectlCommands()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
-        // set-cluster has error handling via || { ... exit 1; }
         result.ShouldContain("kubectl config set-cluster failed");
-        // set-credentials has error handling
         result.ShouldContain("kubectl config set-credentials failed");
-        // set-context has error handling
         result.ShouldContain("kubectl config set-context failed");
-        // use-context has error handling
         result.ShouldContain("kubectl config use-context failed");
     }
 
@@ -548,11 +453,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_Bash_SetsKubeconfigEnv()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.Bash);
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
 
         result.ShouldContain("KUBECONFIG");
     }
@@ -560,11 +461,7 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_PowerShell_SetsKubeconfigEnv()
     {
-        var result = _builder.WrapWithContext(
-            "echo hi",
-            CreateEndpoint(),
-            TokenAccount().Item1, TokenAccount().Item2,
-            ScriptSyntax.PowerShell);
+        var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("KUBECONFIG");
     }

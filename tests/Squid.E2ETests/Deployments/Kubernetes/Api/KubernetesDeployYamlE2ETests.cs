@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -64,23 +66,9 @@ data:
             }
 
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
-
-            var fullScript = _contextBuilder.WrapWithContext(
-                modifiedScript,
-                endpoint,
-                accountType,
-                credentialsJson,
-                ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Deploy YAML failed: {scriptResult.StdErr}");
@@ -144,23 +132,9 @@ data:
             }
 
             var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var endpoint = new KubernetesApiEndpointDto
-            {
-                ClusterUrl = clusterUrl,
-                Namespace = testNs,
-                SkipTlsVerification = "True"
-            };
-            var accountType = AccountType.Token;
-            var credentialsJson = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = token });
-
-            var fullScript = _contextBuilder.WrapWithContext(
-                modifiedScript,
-                endpoint,
-                accountType,
-                credentialsJson,
-                ScriptSyntax.Bash);
+            var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Deploy multi-doc YAML failed: {scriptResult.StdErr}");
@@ -176,4 +150,22 @@ data:
             await Cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
     }
+
+    private static ScriptContext MakeScriptContext(
+        string clusterUrl, string token, string ns) => new()
+    {
+        Endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = clusterUrl,
+                Namespace = ns,
+                SkipTlsVerification = "True"
+            }),
+            AccountType = AccountType.Token,
+            CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(
+                new TokenCredentials { Token = token })
+        },
+        Syntax = ScriptSyntax.Bash
+    };
 }

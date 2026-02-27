@@ -1,4 +1,3 @@
-using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -6,12 +5,11 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 {
-    public string WrapScript(string script, string endpointJson, AccountType? accountType, string credentialsJson,
-                             ScriptSyntax syntax, List<VariableDto> variables)
+    public string WrapScript(string script, ScriptContext context)
     {
-        var ns = ResolveNamespace(variables);
+        var ns = ResolveNamespace(context?.Variables);
 
-        return syntax == ScriptSyntax.Bash
+        return context?.Syntax == ScriptSyntax.Bash
             ? WrapBash(script, ns)
             : WrapPowerShell(script, ns);
     }

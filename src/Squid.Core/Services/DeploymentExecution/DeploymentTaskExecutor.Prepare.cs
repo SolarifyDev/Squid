@@ -1,5 +1,8 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
@@ -29,7 +32,7 @@ public partial class DeploymentTaskExecutor
             LoadTransportForTarget(tc);
 
             if (tc.Transport != null)
-                await LoadAccountCredentialsAsync(tc, ct).ConfigureAwait(false);
+                await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);
 
             ContributeEndpointVariablesForTarget(tc);
 
@@ -115,32 +118,67 @@ public partial class DeploymentTaskExecutor
 
     private void LoadTransportForTarget(DeploymentTargetContext tc)
     {
-        tc.EndpointJson = tc.Machine.Endpoint;
-        tc.CommunicationStyle = CommunicationStyleParser.Parse(tc.EndpointJson);
+        tc.EndpointContext = new EndpointContext { EndpointJson = tc.Machine.Endpoint };
+        tc.CommunicationStyle = CommunicationStyleParser.Parse(tc.EndpointContext.EndpointJson);
         tc.Transport = _transportRegistry.Resolve(tc.CommunicationStyle);
     }
 
-    private async Task LoadAccountCredentialsAsync(DeploymentTargetContext tc, CancellationToken ct)
+    private async Task LoadAuthenticationAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        var deploymentAccountId = tc.Transport.Variables.ParseDeploymentAccountId(tc.EndpointJson);
+        var refs = tc.Transport.Variables.ParseResourceReferences(tc.EndpointContext.EndpointJson);
 
-        if (deploymentAccountId.HasValue)
+        if (refs.DeploymentAccountId.HasValue)
+            await ResolveAccountAsync(tc, refs.DeploymentAccountId.Value, ct).ConfigureAwait(false);
+
+        if (refs.CertificateId.HasValue)
+            await EnrichWithCertificateAsync(tc, refs.CertificateId.Value, ct).ConfigureAwait(false);
+    }
+
+    private async Task ResolveAccountAsync(DeploymentTargetContext tc, int accountId, CancellationToken ct)
+    {
+        var account = await _deploymentAccountDataProvider.GetAccountByIdAsync(accountId, ct).ConfigureAwait(false);
+
+        if (account == null) return;
+
+        tc.EndpointContext.AccountType = account.AccountType;
+        tc.EndpointContext.CredentialsJson = account.Credentials;
+    }
+
+    private async Task EnrichWithCertificateAsync(DeploymentTargetContext tc, int certificateId, CancellationToken ct)
+    {
+        var cert = await _certificateDataProvider.GetCertificateByIdAsync(certificateId, ct).ConfigureAwait(false);
+
+        if (cert == null) return;
+
+        tc.EndpointContext.AccountType ??= AccountType.ClientCertificate;
+
+        var creds = DeserializeOrCreateCredentials(tc.EndpointContext);
+
+        creds.ClientCertificateData = cert.CertificateData;
+
+        if (cert.HasPrivateKey)
+            creds.ClientCertificateKeyData = cert.CertificateData;
+
+        tc.EndpointContext.CredentialsJson = DeploymentAccountCredentialsConverter.Serialize(creds);
+    }
+
+    private static ClientCertificateCredentials DeserializeOrCreateCredentials(EndpointContext ctx)
+    {
+        if (ctx.AccountType == AccountType.ClientCertificate && !string.IsNullOrEmpty(ctx.CredentialsJson))
         {
-            var account = await _deploymentAccountDataProvider.GetAccountByIdAsync(deploymentAccountId.Value, ct).ConfigureAwait(false);
+            var existing = DeploymentAccountCredentialsConverter.Deserialize(AccountType.ClientCertificate, ctx.CredentialsJson);
 
-            if (account != null)
-            {
-                tc.AccountType = account.AccountType;
-                tc.CredentialsJson = account.Credentials;
-            }
+            if (existing is ClientCertificateCredentials cc) return cc;
         }
+
+        return new ClientCertificateCredentials();
     }
 
     private void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)
     {
         if (tc.Transport == null) return;
 
-        var endpointVars = tc.Transport.Variables.ContributeVariables(tc.EndpointJson, tc.AccountType, tc.CredentialsJson);
+        var endpointVars = tc.Transport.Variables.ContributeVariables(tc.EndpointContext);
 
         tc.EndpointVariables.AddRange(endpointVars);
     }

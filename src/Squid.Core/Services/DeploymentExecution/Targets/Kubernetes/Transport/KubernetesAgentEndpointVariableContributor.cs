@@ -1,4 +1,3 @@
-using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -6,12 +5,12 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContributor
 {
-    public int? ParseDeploymentAccountId(string endpointJson) => null;
+    public EndpointResourceReferences ParseResourceReferences(string endpointJson) => new();
 
-    public List<VariableDto> ContributeVariables(string endpointJson, AccountType? accountType, string credentialsJson)
+    public List<VariableDto> ContributeVariables(EndpointContext context)
     {
-        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesAgentEndpointDto>(endpointJson);
-        
+        var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesAgentEndpointDto>(context.EndpointJson);
+
         if (endpoint == null) return new List<VariableDto>();
 
         return new List<VariableDto>

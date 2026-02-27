@@ -1,6 +1,7 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ActivityLog;
+using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
@@ -26,6 +27,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
+    private readonly ICertificateDataProvider _certificateDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IActivityLogDataProvider _activityLogDataProvider;
     private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
@@ -52,6 +54,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IServerTaskDataProvider serverTaskDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
         IDeploymentAccountDataProvider deploymentAccountDataProvider,
+        ICertificateDataProvider certificateDataProvider,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
         IActivityLogDataProvider activityLogDataProvider,
         IServerTaskLogDataProvider serverTaskLogDataProvider,
@@ -69,6 +72,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _serverTaskDataProvider = serverTaskDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentAccountDataProvider = deploymentAccountDataProvider;
+        _certificateDataProvider = certificateDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
         _activityLogDataProvider = activityLogDataProvider;
         _serverTaskLogDataProvider = serverTaskLogDataProvider;
