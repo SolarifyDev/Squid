@@ -15,6 +15,8 @@ public interface IProjectDataProvider : IScopedDependency
     Task<(int Count, List<Persistence.Entities.Deployments.Project> Projects)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default);
+
+    Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(CancellationToken cancellationToken = default);
 }
 
 public class ProjectDataProvider : IProjectDataProvider
@@ -73,6 +75,13 @@ public class ProjectDataProvider : IProjectDataProvider
     {
         return await _repository.Query<Persistence.Entities.Deployments.Project>()
             .Where(p => ids.Contains(p.Id))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(CancellationToken cancellationToken = default)
+    {
+        return await _repository.Query<Persistence.Entities.Deployments.Project>()
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

@@ -1,7 +1,10 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Channels;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.ProjectGroup;
 using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Utils;
 using Squid.Message.Commands.Deployments.Project;
@@ -23,28 +26,39 @@ public interface IProjectService : IScopedDependency
     Task<GetProjectsResponse> GetProjectsAsync(GetProjectsRequest request, CancellationToken cancellationToken);
 
     Task<GetProjectResponse> GetProjectByIdAsync(int id, CancellationToken cancellationToken);
+
+    Task<GetProjectSummariesResponse> GetProjectSummariesAsync(GetProjectSummariesRequest request, CancellationToken cancellationToken);
 }
 
-public class ProjectService : IProjectService
+public partial class ProjectService : IProjectService
 {
     private readonly IMapper _mapper;
+    private readonly IRepository _repository;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IVariableDataProvider _variableDataProvider;
     private readonly IDeploymentProcessDataProvider _processDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
+    private readonly IProjectGroupDataProvider _projectGroupDataProvider;
+    private readonly IEnvironmentDataProvider _environmentDataProvider;
 
     public ProjectService(
         IMapper mapper,
+        IRepository repository,
         IProjectDataProvider projectDataProvider,
         IVariableDataProvider variableDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
-        IChannelDataProvider channelDataProvider)
+        IChannelDataProvider channelDataProvider,
+        IProjectGroupDataProvider projectGroupDataProvider,
+        IEnvironmentDataProvider environmentDataProvider)
     {
         _mapper = mapper;
+        _repository = repository;
         _projectDataProvider = projectDataProvider;
         _processDataProvider = processDataProvider;
         _variableDataProvider = variableDataProvider;
         _channelDataProvider = channelDataProvider;
+        _projectGroupDataProvider = projectGroupDataProvider;
+        _environmentDataProvider = environmentDataProvider;
     }
 
     public async Task<ProjectCreatedEvent> CreateProjectAsync(

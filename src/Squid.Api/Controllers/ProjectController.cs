@@ -59,4 +59,13 @@ public class ProjectController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("summaries")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectSummariesResponse))]
+    public async Task<IActionResult> GetProjectSummariesAsync([FromQuery] GetProjectSummariesRequest request)
+    {
+        var response = await _mediator.RequestAsync<GetProjectSummariesRequest, GetProjectSummariesResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }
