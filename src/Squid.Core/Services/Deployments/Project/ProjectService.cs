@@ -2,7 +2,9 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Channels;
+using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.ProjectGroup;
 using Squid.Core.Services.Deployments.Variables;
@@ -28,6 +30,8 @@ public interface IProjectService : IScopedDependency
     Task<GetProjectResponse> GetProjectByIdAsync(int id, CancellationToken cancellationToken);
 
     Task<GetProjectSummariesResponse> GetProjectSummariesAsync(GetProjectSummariesRequest request, CancellationToken cancellationToken);
+
+    Task<GetProjectProgressionResponse> GetProjectProgressionAsync(GetProjectProgressionRequest request, CancellationToken cancellationToken);
 }
 
 public partial class ProjectService : IProjectService
@@ -40,6 +44,10 @@ public partial class ProjectService : IProjectService
     private readonly IChannelDataProvider _channelDataProvider;
     private readonly IProjectGroupDataProvider _projectGroupDataProvider;
     private readonly IEnvironmentDataProvider _environmentDataProvider;
+    private readonly ILifeCycleDataProvider _lifeCycleDataProvider;
+    private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
+    private readonly ILifecycleResolver _lifecycleResolver;
+    private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
 
     public ProjectService(
         IMapper mapper,
@@ -49,7 +57,11 @@ public partial class ProjectService : IProjectService
         IDeploymentProcessDataProvider processDataProvider,
         IChannelDataProvider channelDataProvider,
         IProjectGroupDataProvider projectGroupDataProvider,
-        IEnvironmentDataProvider environmentDataProvider)
+        IEnvironmentDataProvider environmentDataProvider,
+        ILifeCycleDataProvider lifeCycleDataProvider,
+        ILifecycleProgressionEvaluator progressionEvaluator,
+        ILifecycleResolver lifecycleResolver,
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider)
     {
         _mapper = mapper;
         _repository = repository;
@@ -59,6 +71,10 @@ public partial class ProjectService : IProjectService
         _channelDataProvider = channelDataProvider;
         _projectGroupDataProvider = projectGroupDataProvider;
         _environmentDataProvider = environmentDataProvider;
+        _lifeCycleDataProvider = lifeCycleDataProvider;
+        _progressionEvaluator = progressionEvaluator;
+        _lifecycleResolver = lifecycleResolver;
+        _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
     }
 
     public async Task<ProjectCreatedEvent> CreateProjectAsync(

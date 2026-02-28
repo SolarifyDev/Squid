@@ -342,6 +342,143 @@ public class TestDataBuilder
         return entity;
     }
 
+    public async Task<Project> CreateProjectAsync(
+        int variableSetId,
+        int deploymentProcessId,
+        int projectGroupId,
+        int lifecycleId,
+        string name = "Test Project")
+    {
+        var entity = new Project
+        {
+            Name = name,
+            Slug = name.ToLowerInvariant().Replace(" ", "-"),
+            IsDisabled = false,
+            VariableSetId = variableSetId,
+            DeploymentProcessId = deploymentProcessId,
+            ProjectGroupId = projectGroupId,
+            LifecycleId = lifecycleId,
+            AutoCreateRelease = false,
+            Json = string.Empty,
+            IncludedLibraryVariableSetIds = string.Empty,
+            DiscreteChannelRelease = false,
+            DataVersion = Array.Empty<byte>(),
+            SpaceId = 1,
+            LastModified = DateTimeOffset.UtcNow,
+            AllowIgnoreChannelRules = false
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        var defaultChannel = new Channel
+        {
+            Name = "Default",
+            ProjectId = entity.Id,
+            SpaceId = 1,
+            IsDefault = true,
+            Slug = "default"
+        };
+
+        await _repository.InsertAsync(defaultChannel).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return entity;
+    }
+
+    public async Task<LifecyclePhase> CreateEmptyLifecyclePhaseAsync(int lifecycleId, string name = "Empty Phase")
+    {
+        var phase = new LifecyclePhase
+        {
+            LifecycleId = lifecycleId,
+            Name = name,
+            SortOrder = 0,
+            IsOptionalPhase = false
+        };
+
+        await _repository.InsertAsync(phase).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return phase;
+    }
+
+    public async Task<ServerTask> CreateServerTaskAsync(string state = "Success")
+    {
+        var entity = new ServerTask
+        {
+            Name = "DeploymentTask",
+            Description = "Test deployment task",
+            QueueTime = DateTimeOffset.UtcNow.AddMinutes(-5),
+            StartTime = DateTimeOffset.UtcNow.AddMinutes(-4),
+            CompletedTime = DateTimeOffset.UtcNow,
+            State = state,
+            HasWarningsOrErrors = false,
+            ServerNodeId = Guid.Empty,
+            ProjectId = 0,
+            EnvironmentId = 0,
+            DurationSeconds = 60,
+            BatchId = 0,
+            JSON = "{}",
+            DataVersion = Array.Empty<byte>(),
+            SpaceId = 1,
+            LastModified = DateTimeOffset.UtcNow,
+            ConcurrencyTag = string.Empty,
+            ErrorMessage = string.Empty,
+            BusinessProcessState = string.Empty,
+            ServerTaskType = string.Empty,
+            StateOrder = 0,
+            Weight = 0,
+            JobId = string.Empty
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
+    public async Task<Deployment> CreateDeploymentAsync(
+        int projectId,
+        int environmentId,
+        int releaseId,
+        int taskId,
+        int channelId = 1)
+    {
+        var entity = new Deployment
+        {
+            Name = $"Deploy to env {environmentId}",
+            TaskId = taskId,
+            SpaceId = 1,
+            ChannelId = channelId,
+            ProjectId = projectId,
+            ReleaseId = releaseId,
+            EnvironmentId = environmentId,
+            MachineId = 0,
+            Json = "{}",
+            DeployedBy = 0,
+            DeployedToMachineIds = string.Empty,
+            Created = DateTimeOffset.UtcNow
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
+    public async Task<DeploymentCompletion> CreateDeploymentCompletionAsync(int deploymentId, string state = "Success")
+    {
+        var entity = new DeploymentCompletion
+        {
+            DeploymentId = deploymentId,
+            State = state,
+            CompletedTime = DateTimeOffset.UtcNow,
+            SpaceId = 1
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
     public async Task UpdateProjectProcessIdAsync(Project project, int processId)
     {
         project.DeploymentProcessId = processId;

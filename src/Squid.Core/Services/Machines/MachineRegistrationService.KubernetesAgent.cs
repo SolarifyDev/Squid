@@ -1,8 +1,7 @@
 using System.Text.Json;
-using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Message.Enums;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Core.Persistence.Entities.Deployments;
 using CommunicationStyleEnum = Squid.Message.Enums.CommunicationStyle;
 
 namespace Squid.Core.Services.Machines;

@@ -68,4 +68,14 @@ public class ProjectController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("{projectId:int}/progression")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectProgressionResponse))]
+    public async Task<IActionResult> GetProjectProgressionAsync(int projectId)
+    {
+        var request = new GetProjectProgressionRequest { ProjectId = projectId };
+        var response = await _mediator.RequestAsync<GetProjectProgressionRequest, GetProjectProgressionResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

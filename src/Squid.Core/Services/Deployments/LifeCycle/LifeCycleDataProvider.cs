@@ -34,6 +34,8 @@ public interface ILifeCycleDataProvider : IScopedDependency
 
     Task<List<LifecyclePhase>> GetPhasesByLifecycleIdAsync(int lifecycleId, CancellationToken cancellationToken);
 
+    Task<List<LifecyclePhase>> GetPhasesByLifecycleIdsAsync(List<int> lifecycleIds, CancellationToken cancellationToken);
+
     Task<List<LifecyclePhaseEnvironment>> GetPhaseEnvironmentsByPhaseIdsAsync(List<int> phaseIds, CancellationToken cancellationToken);
 
     Task AddPhaseEnvironmentsAsync(List<LifecyclePhaseEnvironment> phaseEnvironments, bool forceSave = true, CancellationToken cancellationToken = default);
@@ -143,6 +145,11 @@ public class LifeCycleDataProvider(IUnitOfWork unitOfWork, IRepository repositor
         return await repository.QueryNoTracking<LifecyclePhase>(x => x.LifecycleId == lifecycleId)
             .OrderBy(x => x.SortOrder)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<LifecyclePhase>> GetPhasesByLifecycleIdsAsync(List<int> lifecycleIds, CancellationToken cancellationToken)
+    {
+        return await repository.QueryNoTracking<LifecyclePhase>(x => lifecycleIds.Contains(x.LifecycleId)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<LifecyclePhaseEnvironment>> GetPhaseEnvironmentsByPhaseIdsAsync(List<int> phaseIds, CancellationToken cancellationToken)
