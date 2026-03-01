@@ -52,6 +52,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             .CreateLogger();
 
         SetKubeconfigEnvironment();
+        AddCalamariToPath();
         await CreateEnvironmentAsync().ConfigureAwait(false);
         await RegisterRealTentacleAsync().ConfigureAwait(false);
         StartRealTentaclePolling();
@@ -76,6 +77,29 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
                              ?? KindClusterFixture.DefaultKubeconfigPath;
 
         System.Environment.SetEnvironmentVariable("KUBECONFIG", kubeconfigPath);
+    }
+
+    private static void AddCalamariToPath()
+    {
+        var testAssemblyDir = Path.GetDirectoryName(typeof(SquidTentacleE2EFixture<>).Assembly.Location)!;
+
+        // Navigate from tests/Squid.E2ETests/bin/Debug/net9.0/ to src/Squid.Calamari/bin/Debug/net9.0/
+        var calamariDir = Path.GetFullPath(Path.Combine(
+            testAssemblyDir, "..", "..", "..", "..", "..",
+            "src", "Squid.Calamari", "bin", "Debug", "net9.0"));
+
+        var calamariPath = Path.Combine(calamariDir, "squid-calamari");
+
+        if (!File.Exists(calamariPath))
+        {
+            Log.Warning("squid-calamari not found at {Path}, tentacle tests requiring calamari may fail", calamariPath);
+            return;
+        }
+
+        var currentPath = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        System.Environment.SetEnvironmentVariable("PATH", $"{calamariDir}:{currentPath}");
+
+        Log.Information("Added squid-calamari to PATH from {Dir}", calamariDir);
     }
 
     private async Task CreateEnvironmentAsync()
