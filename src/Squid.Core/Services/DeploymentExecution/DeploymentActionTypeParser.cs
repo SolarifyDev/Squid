@@ -33,6 +33,12 @@ public static class DeploymentActionTypeParser
             return true;
         }
 
+        if (string.Equals(actionType, "Squid.KubernetesDeployIngress", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.KubernetesDeployIngress;
+            return true;
+        }
+
         return false;
     }
 

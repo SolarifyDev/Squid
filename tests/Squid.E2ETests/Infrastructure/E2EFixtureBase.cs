@@ -4,6 +4,7 @@ using Npgsql;
 using Serilog;
 using Squid.Core;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Settings.SelfCert;
 using Xunit;
 
@@ -51,6 +52,10 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
                      ?? Convert.ToBase64String(CreateSelfSignedCertBytes()),
             Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
         }).AsSelf().SingleInstance();
+
+        containerBuilder.RegisterType<NoOpBackgroundJobClient>()
+            .As<ISquidBackgroundJobClient>()
+            .InstancePerLifetimeScope();
 
         RegisterOverrides(containerBuilder, configuration);
 

@@ -9,6 +9,7 @@ public class DeploymentActionTypeParserTests
     [InlineData("Squid.KubernetesDeployRawYaml", DeploymentActionType.KubernetesDeployRawYaml)]
     [InlineData("Squid.KubernetesDeployContainers", DeploymentActionType.KubernetesDeployContainers)]
     [InlineData("Squid.HelmChartUpgrade", DeploymentActionType.HelmChartUpgrade)]
+    [InlineData("Squid.KubernetesDeployIngress", DeploymentActionType.KubernetesDeployIngress)]
     [InlineData("squid.kubernetesrunscript", DeploymentActionType.KubernetesRunScript)]
     public void TryParse_KnownActionType_ReturnsEnum(string input, DeploymentActionType expected)
     {
