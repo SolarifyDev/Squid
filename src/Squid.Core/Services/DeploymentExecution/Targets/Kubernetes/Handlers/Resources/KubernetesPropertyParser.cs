@@ -181,6 +181,9 @@ internal static class KubernetesPropertyParser
                 FillContainerSecurityContext(element, container);
                 FillContainerLifecycle(element, container);
 
+                container.IsInitContainer = element.TryGetProperty("IsInitContainer", out var initProp)
+                    && string.Equals(initProp.GetString(), "True", StringComparison.OrdinalIgnoreCase);
+
                 result.Add(container);
             }
         }
@@ -220,6 +223,14 @@ internal static class KubernetesPropertyParser
 
                 if (string.Equals(type, "ConfigMap", StringComparison.OrdinalIgnoreCase))
                     volume.ConfigMapName = referenceName;
+                else if (string.Equals(type, "Secret", StringComparison.OrdinalIgnoreCase))
+                    volume.SecretName = referenceName;
+                else if (string.Equals(type, "EmptyDir", StringComparison.OrdinalIgnoreCase))
+                    volume.EmptyDir = true;
+                else if (string.Equals(type, "PVC", StringComparison.OrdinalIgnoreCase))
+                    volume.PvcClaimName = referenceName;
+                else if (string.Equals(type, "HostPath", StringComparison.OrdinalIgnoreCase))
+                    volume.HostPath = referenceName;
 
                 result.Add(volume);
             }
@@ -875,6 +886,7 @@ internal sealed class ContainerSpec
     public ProbeSpec? StartupProbe { get; set; }
     public SecurityContextSpec? SecurityContext { get; set; }
     public LifecycleSpec? Lifecycle { get; set; }
+    public bool IsInitContainer { get; set; }
 }
 
 internal sealed class ContainerPortSpec
@@ -888,6 +900,10 @@ internal sealed class VolumeSpec
 {
     public string Name { get; set; } = string.Empty;
     public string? ConfigMapName { get; set; }
+    public string? SecretName { get; set; }
+    public bool EmptyDir { get; set; }
+    public string? PvcClaimName { get; set; }
+    public string? HostPath { get; set; }
 }
 
 internal sealed class ProbeSpec
