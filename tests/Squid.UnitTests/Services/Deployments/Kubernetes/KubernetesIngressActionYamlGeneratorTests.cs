@@ -352,6 +352,33 @@ public class KubernetesIngressActionYamlGeneratorTests
         yaml.ShouldContain("number: 80");
     }
 
+    // === GenerateAsync — flat path format (serviceName/servicePort at path level) ===
+
+    [Fact]
+    public async Task GenerateAsync_Rules_FlatPathServiceName_GeneratesBackend()
+    {
+        var (step, action) = CreateAction(
+            rules: "[{\"host\":\"app.example.com\",\"paths\":[{\"path\":\"/\",\"pathType\":\"Prefix\",\"serviceName\":\"web-svc\",\"servicePort\":80}]}]");
+
+        var yaml = await GetIngressYaml(step, action);
+
+        yaml.ShouldContain("- host: app.example.com");
+        yaml.ShouldContain("service:");
+        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("number: 80");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_Rules_IntegerServicePort_GeneratesPortNumber()
+    {
+        var (step, action) = CreateAction(
+            rules: "[{\"host\":\"example.com\",\"paths\":[{\"path\":\"/\",\"pathType\":\"Prefix\",\"backend\":{\"serviceName\":\"my-svc\",\"servicePort\":443}}]}]");
+
+        var yaml = await GetIngressYaml(step, action);
+
+        yaml.ShouldContain("number: 443");
+    }
+
     // === GenerateAsync — only one file returned ===
 
     [Fact]

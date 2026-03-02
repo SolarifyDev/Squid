@@ -565,6 +565,25 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("APP_PORT: 8080");
     }
 
+    // === Service ports integer values ===
+
+    [Fact]
+    public async Task GenerateAsync_ServicePortsIntegerValues_ParsesCorrectly()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceName", "web-svc");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceType", "ClusterIP");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServicePorts",
+            "[{\"name\":\"http\",\"port\":80,\"targetPort\":80,\"protocol\":\"TCP\"}]");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
+
+        yaml.ShouldContain("kind: Service");
+        yaml.ShouldContain("port: 80");
+        yaml.ShouldContain("targetPort: 80");
+    }
+
     // === Service with NodePort ===
 
     [Fact]

@@ -112,9 +112,9 @@ internal static class KubernetesPropertyParser
             foreach (var element in doc.RootElement.EnumerateArray())
             {
                 var name = element.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var portText = element.TryGetProperty("port", out var portProp) ? portProp.GetString() : null;
-                var targetPortText = element.TryGetProperty("targetPort", out var targetPortProp) ? targetPortProp.GetString() : null;
-                var nodePortText = element.TryGetProperty("nodePort", out var nodePortProp) ? nodePortProp.GetString() : null;
+                var portText = element.TryGetProperty("port", out var portProp) ? GetStringOrNumber(portProp) : null;
+                var targetPortText = element.TryGetProperty("targetPort", out var targetPortProp) ? GetStringOrNumber(targetPortProp) : null;
+                var nodePortText = element.TryGetProperty("nodePort", out var nodePortProp) ? GetStringOrNumber(nodePortProp) : null;
                 var protocol = element.TryGetProperty("protocol", out var protocolProp) ? protocolProp.GetString() ?? string.Empty : string.Empty;
 
                 if (!int.TryParse(portText, out var port))
@@ -503,6 +503,9 @@ internal static class KubernetesPropertyParser
 
         return result;
     }
+
+    private static string? GetStringOrNumber(JsonElement element) =>
+        element.ValueKind == JsonValueKind.Number ? element.GetRawText() : element.GetString();
 
     private static string? GetOptionalString(JsonElement element, string propertyName)
     {

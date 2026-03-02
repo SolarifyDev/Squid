@@ -108,23 +108,29 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 
             if (path.TryGetProperty("backend", out var backend))
                 AppendBackend(sb, backend);
+            else if (path.TryGetProperty("serviceName", out _))
+                AppendBackend(sb, path);
         }
     }
 
     private static void AppendBackend(StringBuilder sb, JsonElement backend)
     {
-        // Frontend flat format: { serviceName: "...", servicePort: "..." }
+        // Frontend flat format: { serviceName: "...", servicePort: "..." or 80 }
         if (backend.TryGetProperty("serviceName", out var serviceNameProp))
         {
             var serviceName = serviceNameProp.GetString();
-            var servicePort = backend.TryGetProperty("servicePort", out var servicePortProp) ? servicePortProp.GetString() : null;
+            var servicePort = (string)null;
+
+            if (backend.TryGetProperty("servicePort", out var servicePortProp))
+                servicePort = servicePortProp.ValueKind == JsonValueKind.Number
+                    ? servicePortProp.GetRawText()
+                    : servicePortProp.GetString();
+
             sb.AppendLine("          service:");
             sb.AppendLine($"            name: {serviceName}");
             sb.AppendLine("            port:");
 
-            if (int.TryParse(servicePort, out var portNumber))
-                sb.AppendLine($"              number: {portNumber}");
-            else if (!string.IsNullOrWhiteSpace(servicePort))
+            if (!string.IsNullOrWhiteSpace(servicePort))
                 sb.AppendLine($"              number: {servicePort}");
         }
         // K8s v1 format: { service: { name: "...", port: { number: 80 } } }
