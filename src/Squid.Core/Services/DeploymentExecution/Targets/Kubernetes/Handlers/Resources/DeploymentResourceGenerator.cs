@@ -449,7 +449,73 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendHostAliasesIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        KubernetesPropertyParser.AppendJsonFromProperty(sb, "      ", "hostAliases", properties, "Squid.Action.KubernetesContainers.HostAliases");
+        if (!properties.TryGetValue("Squid.Action.KubernetesContainers.HostAliases", out var raw)
+            || string.IsNullOrWhiteSpace(raw))
+            return;
+
+        raw = raw.Trim();
+
+        if (string.Equals(raw, "[]", StringComparison.Ordinal) || string.Equals(raw, "{}", StringComparison.Ordinal))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return;
+
+            var hasAny = false;
+
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                var ip = element.TryGetProperty("ip", out var ipProp) ? ipProp.GetString() : null;
+
+                if (string.IsNullOrWhiteSpace(ip))
+                    continue;
+
+                if (!hasAny)
+                {
+                    sb.AppendLine("      hostAliases:");
+                    hasAny = true;
+                }
+
+                sb.AppendLine($"      - ip: {ip}");
+
+                var hostnames = ParseHostnames(element);
+
+                if (hostnames.Length > 0)
+                {
+                    sb.AppendLine("        hostnames:");
+
+                    foreach (var hostname in hostnames)
+                        sb.AppendLine($"        - {hostname}");
+                }
+            }
+        }
+        catch { }
+    }
+
+    private static string[] ParseHostnames(JsonElement element)
+    {
+        if (!element.TryGetProperty("hostnames", out var hostnamesProp))
+            return [];
+
+        if (hostnamesProp.ValueKind == JsonValueKind.String)
+        {
+            return (hostnamesProp.GetString() ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        if (hostnamesProp.ValueKind == JsonValueKind.Array)
+        {
+            return hostnamesProp.EnumerateArray()
+                .Select(h => h.GetString() ?? string.Empty)
+                .Where(h => !string.IsNullOrWhiteSpace(h))
+                .ToArray();
+        }
+
+        return [];
     }
 
     private static void AppendIntValueIfPresent(StringBuilder sb, string indent, string yamlKey, string? raw)

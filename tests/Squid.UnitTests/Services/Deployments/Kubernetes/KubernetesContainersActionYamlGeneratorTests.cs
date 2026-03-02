@@ -548,6 +548,23 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("EMPTY_VAR: \"\"");
     }
 
+    [Fact]
+    public async Task GenerateAsync_ConfigMapValuesArrayFormat_GeneratesCorrectData()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "test-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues",
+            "[{\"Key\":\"APP_ENV\",\"Value\":\"production\"},{\"Key\":\"APP_PORT\",\"Value\":\"8080\"}]");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
+
+        yaml.ShouldContain("kind: ConfigMap");
+        yaml.ShouldContain("name: test-config");
+        yaml.ShouldContain("APP_ENV: production");
+        yaml.ShouldContain("APP_PORT: 8080");
+    }
+
     // === Service with NodePort ===
 
     [Fact]

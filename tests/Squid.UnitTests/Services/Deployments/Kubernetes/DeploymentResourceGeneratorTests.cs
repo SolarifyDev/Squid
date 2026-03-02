@@ -547,6 +547,144 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("path: /var/log");
     }
 
+    // === JSON passthrough formatting (tolerations, affinity, hostAliases) ===
+
+    [Fact]
+    public async Task Generate_Tolerations_DashInlineWithFirstProperty()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Equal","value":"1","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- key: test");
+        yaml.ShouldNotContain("- key: \"test\"");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_SimpleStringValues_NotQuoted()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"node-role","operator":"Exists","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("key: node-role");
+        yaml.ShouldContain("operator: Exists");
+        yaml.ShouldContain("effect: NoSchedule");
+        yaml.ShouldNotContain("\"node-role\"");
+        yaml.ShouldNotContain("\"Exists\"");
+        yaml.ShouldNotContain("\"NoSchedule\"");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_NumericStringValue_IsSingleQuoted()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Equal","value":"1","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("value: '1'");
+        yaml.ShouldNotContain("value: \"1\"");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_EmptyStringEffect_IsSingleQuotedEmpty()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Exists","effect":""}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("effect: ''");
+        yaml.ShouldNotContain("effect: \"\"");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_BooleanStringValue_IsSingleQuoted()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Equal","value":"true","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("value: 'true'");
+        yaml.ShouldNotContain("value: true\n");
+        yaml.ShouldNotContain("value: \"true\"");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_FullOctopusExample_MatchesConventionalFormat()
+    {
+        // Verifies exact output matches the reference Octopus YAML provided during review
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"equal","value":"1","effect":""}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- key: test");
+        yaml.ShouldContain("operator: equal");
+        yaml.ShouldContain("value: '1'");
+        yaml.ShouldContain("effect: ''");
+    }
+
+    [Fact]
+    public async Task Generate_HostAliases_SpaceSeparatedString_GeneratesList()
+    {
+        // Frontend sends hostnames as a space-separated string
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.HostAliases",
+            """[{"ip":"127.0.0.1","hostnames":"foo.local bar.local"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- ip: 127.0.0.1");
+        yaml.ShouldContain("hostnames:");
+        yaml.ShouldContain("- foo.local");
+        yaml.ShouldContain("- bar.local");
+        yaml.ShouldNotContain("hostnames: foo.local bar.local");
+    }
+
+    [Fact]
+    public async Task Generate_HostAliases_ArrayHostnames_GeneratesList()
+    {
+        // Handles array hostnames format for robustness
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.HostAliases",
+            """[{"ip":"127.0.0.1","hostnames":["foo.local","bar.local"]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- ip: 127.0.0.1");
+        yaml.ShouldContain("hostnames:");
+        yaml.ShouldContain("- foo.local");
+        yaml.ShouldContain("- bar.local");
+    }
+
+    [Fact]
+    public async Task Generate_NodeAffinity_DashInlineWithFirstProperty()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.NodeAffinity",
+            """{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"kubernetes.io/os","operator":"In","values":["linux"]}]}]}}""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- matchExpressions:");
+        yaml.ShouldContain("- key: kubernetes.io/os");
+        yaml.ShouldContain("operator: In");
+        yaml.ShouldContain("- linux");
+        yaml.ShouldNotContain("\"kubernetes.io/os\"");
+        yaml.ShouldNotContain("\"In\"");
+    }
+
     // === Init containers ===
 
     [Fact]
@@ -611,6 +749,129 @@ public class DeploymentResourceGeneratorTests
 
         yaml.IndexOf("initContainers:", StringComparison.Ordinal)
             .ShouldBeLessThan(yaml.IndexOf("containers:", StringComparison.Ordinal));
+    }
+
+    // === Probes ===
+
+    [Fact]
+    public async Task Generate_HttpGetProbe_NoTypeField_InYaml()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","LivenessProbe":{"type":"httpGet","httpGet":{"path":"/health","port":"8080","scheme":"HTTP"},"initialDelaySeconds":"10","periodSeconds":"5","failureThreshold":"3","successThreshold":"","timeoutSeconds":""}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("livenessProbe:");
+        yaml.ShouldContain("httpGet:");
+        yaml.ShouldContain("path: /health");
+        yaml.ShouldContain("port: 8080");
+        yaml.ShouldContain("scheme: HTTP");
+        yaml.ShouldContain("initialDelaySeconds: 10");
+        yaml.ShouldContain("periodSeconds: 5");
+        yaml.ShouldContain("failureThreshold: 3");
+        yaml.ShouldNotContain("type: httpGet");
+    }
+
+    [Fact]
+    public async Task Generate_ExecProbe_StringCommand_GeneratesExecBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ReadinessProbe":{"type":"exec","exec":{"command":"cat /tmp/healthy"},"initialDelaySeconds":"5","periodSeconds":"","failureThreshold":"","successThreshold":"","timeoutSeconds":""}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("readinessProbe:");
+        yaml.ShouldContain("exec:");
+        yaml.ShouldContain("command:");
+        yaml.ShouldContain("- cat /tmp/healthy");
+        yaml.ShouldNotContain("type: exec");
+    }
+
+    [Fact]
+    public async Task Generate_ExecProbe_MultilineStringCommand_SplitsIntoList()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","StartupProbe":{"type":"exec","exec":{"command":"/bin/sh\n-c\ncat /tmp/healthy"},"initialDelaySeconds":"","periodSeconds":"","failureThreshold":"","successThreshold":"","timeoutSeconds":""}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("startupProbe:");
+        yaml.ShouldContain("exec:");
+        yaml.ShouldContain("- /bin/sh");
+        yaml.ShouldContain("- -c");
+        yaml.ShouldContain("- cat /tmp/healthy");
+    }
+
+    [Fact]
+    public async Task Generate_TcpSocketProbe_NoTypeField_InYaml()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","LivenessProbe":{"type":"tcpSocket","tcpSocket":{"port":"3306"},"initialDelaySeconds":"","periodSeconds":"","failureThreshold":"","successThreshold":"","timeoutSeconds":""}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("livenessProbe:");
+        yaml.ShouldContain("tcpSocket:");
+        yaml.ShouldContain("port: 3306");
+        yaml.ShouldNotContain("type: tcpSocket");
+    }
+
+    // === Lifecycle ===
+
+    [Fact]
+    public async Task Generate_LifecyclePreStop_ExecStringCommand_GeneratesPreStopBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","Lifecycle":{"preStop":{"type":"exec","command":"sleep 5"}}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("lifecycle:");
+        yaml.ShouldContain("preStop:");
+        yaml.ShouldContain("exec:");
+        yaml.ShouldContain("command:");
+        yaml.ShouldContain("- sleep 5");
+    }
+
+    [Fact]
+    public async Task Generate_LifecyclePostStart_ExecStringCommand_GeneratesPostStartBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","Lifecycle":{"postStart":{"type":"exec","command":"echo started"}}}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("lifecycle:");
+        yaml.ShouldContain("postStart:");
+        yaml.ShouldContain("exec:");
+        yaml.ShouldContain("- echo started");
+    }
+
+    [Theory]
+    [InlineData("preStop")]
+    [InlineData("postStart")]
+    public async Task Generate_LifecycleHandler_EmptyType_OmitsHandler(string hookName)
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            $"[{{\"Name\":\"app\",\"Image\":\"nginx:latest\",\"Lifecycle\":{{\"{hookName}\":{{\"type\":\"\",\"command\":\"\"}}}}}}]");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("lifecycle:");
     }
 
     // === Helpers ===

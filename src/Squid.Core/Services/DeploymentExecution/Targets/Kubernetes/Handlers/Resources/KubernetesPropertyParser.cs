@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Squid.Message.Models.Deployments.Process;
@@ -384,8 +385,7 @@ internal static class KubernetesPropertyParser
             InitialDelaySeconds = GetOptionalString(probeElement, "initialDelaySeconds"),
             PeriodSeconds = GetOptionalString(probeElement, "periodSeconds"),
             SuccessThreshold = GetOptionalString(probeElement, "successThreshold"),
-            TimeoutSeconds = GetOptionalString(probeElement, "timeoutSeconds"),
-            Type = GetOptionalString(probeElement, "type")
+            TimeoutSeconds = GetOptionalString(probeElement, "timeoutSeconds")
         };
 
         if (probeElement.TryGetProperty("exec", out var execElement))
@@ -402,8 +402,7 @@ internal static class KubernetesPropertyParser
             && string.IsNullOrWhiteSpace(result.InitialDelaySeconds)
             && string.IsNullOrWhiteSpace(result.PeriodSeconds)
             && string.IsNullOrWhiteSpace(result.SuccessThreshold)
-            && string.IsNullOrWhiteSpace(result.TimeoutSeconds)
-            && string.IsNullOrWhiteSpace(result.Type))
+            && string.IsNullOrWhiteSpace(result.TimeoutSeconds))
         {
             return null;
         }
@@ -416,17 +415,30 @@ internal static class KubernetesPropertyParser
         if (execElement.ValueKind != JsonValueKind.Object)
             return null;
 
-        if (!execElement.TryGetProperty("command", out var commandElement) || commandElement.ValueKind != JsonValueKind.Array)
+        if (!execElement.TryGetProperty("command", out var commandElement))
             return null;
 
         var result = new ExecActionSpec();
 
-        foreach (var item in commandElement.EnumerateArray())
+        if (commandElement.ValueKind == JsonValueKind.Array)
         {
-            var value = item.GetString();
+            foreach (var item in commandElement.EnumerateArray())
+            {
+                var value = item.GetString();
 
-            if (!string.IsNullOrWhiteSpace(value))
-                result.Command.Add(value);
+                if (!string.IsNullOrWhiteSpace(value))
+                    result.Command.Add(value);
+            }
+        }
+        else if (commandElement.ValueKind == JsonValueKind.String)
+        {
+            foreach (var line in (commandElement.GetString() ?? string.Empty).Split('\n'))
+            {
+                var trimmed = line.TrimEnd('\r');
+
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    result.Command.Add(trimmed);
+            }
         }
 
         if (result.Command.Count == 0)
@@ -586,8 +598,8 @@ internal static class KubernetesPropertyParser
 
         var lifecycle = new LifecycleSpec
         {
-            PreStop = ParseLifecycleHandler(lifecycleElement, "PreStop"),
-            PostStart = ParseLifecycleHandler(lifecycleElement, "PostStart")
+            PreStop = ParseLifecycleHandler(lifecycleElement, "preStop"),
+            PostStart = ParseLifecycleHandler(lifecycleElement, "postStart")
         };
 
         if (lifecycle.PreStop == null && lifecycle.PostStart == null)
@@ -598,19 +610,42 @@ internal static class KubernetesPropertyParser
 
     private static LifecycleHandlerSpec? ParseLifecycleHandler(JsonElement lifecycleElement, string propertyName)
     {
-        if (!lifecycleElement.TryGetProperty(propertyName, out var handlerElement) || handlerElement.ValueKind != JsonValueKind.Object)
+        var handlerElement = default(JsonElement);
+        var found = false;
+
+        foreach (var prop in lifecycleElement.EnumerateObject())
+        {
+            if (!string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            handlerElement = prop.Value;
+            found = true;
+            break;
+        }
+
+        if (!found || handlerElement.ValueKind != JsonValueKind.Object)
             return null;
 
         var handler = new LifecycleHandlerSpec();
+        var type = GetOptionalString(handlerElement, "type") ?? string.Empty;
 
-        if (handlerElement.TryGetProperty("exec", out var execElement))
-            handler.Exec = ParseExecAction(execElement);
+        if (string.Equals(type, "exec", StringComparison.OrdinalIgnoreCase))
+            handler.Exec = ParseExecAction(handlerElement);
+        else if (string.Equals(type, "httpGet", StringComparison.OrdinalIgnoreCase))
+            handler.HttpGet = ParseHttpGetAction(handlerElement);
+        else if (string.Equals(type, "tcpSocket", StringComparison.OrdinalIgnoreCase))
+            handler.TcpSocket = ParseTcpSocketAction(handlerElement);
+        else
+        {
+            if (handlerElement.TryGetProperty("exec", out var execElement))
+                handler.Exec = ParseExecAction(execElement);
 
-        if (handlerElement.TryGetProperty("httpGet", out var httpGetElement))
-            handler.HttpGet = ParseHttpGetAction(httpGetElement);
+            if (handlerElement.TryGetProperty("httpGet", out var httpGetElement))
+                handler.HttpGet = ParseHttpGetAction(httpGetElement);
 
-        if (handlerElement.TryGetProperty("tcpSocket", out var tcpSocketElement))
-            handler.TcpSocket = ParseTcpSocketAction(tcpSocketElement);
+            if (handlerElement.TryGetProperty("tcpSocket", out var tcpSocketElement))
+                handler.TcpSocket = ParseTcpSocketAction(tcpSocketElement);
+        }
 
         if (handler.Exec == null && handler.HttpGet == null && handler.TcpSocket == null)
             return null;
@@ -641,7 +676,6 @@ internal static class KubernetesPropertyParser
         AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "periodSeconds", probe.PeriodSeconds);
         AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "successThreshold", probe.SuccessThreshold);
         AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "timeoutSeconds", probe.TimeoutSeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "type", probe.Type);
 
         if (probe.Exec != null && probe.Exec.Command.Count > 0)
         {
@@ -831,11 +865,12 @@ internal static class KubernetesPropertyParser
             case JsonValueKind.Array:
                 foreach (var item in element.EnumerateArray())
                 {
-                    if (item.ValueKind == JsonValueKind.Object || item.ValueKind == JsonValueKind.Array)
+                    if (item.ValueKind == JsonValueKind.Object)
+                        AppendObjectArrayItem(sb, indent, item);
+                    else if (item.ValueKind == JsonValueKind.Array)
                     {
                         sb.Append(indent);
                         sb.AppendLine("-");
-
                         AppendJsonElementYaml(sb, indent + "  ", item);
                     }
                     else
@@ -859,7 +894,93 @@ internal static class KubernetesPropertyParser
 
     private static void AppendJsonScalarValue(StringBuilder sb, JsonElement element)
     {
-        sb.Append(element.GetRawText());
+        if (element.ValueKind == JsonValueKind.String)
+            AppendYamlString(sb, element.GetString() ?? string.Empty);
+        else
+            sb.Append(element.GetRawText());
+    }
+
+    private static void AppendYamlString(StringBuilder sb, string value)
+    {
+        if (value.Length == 0)
+        {
+            sb.Append("''");
+            return;
+        }
+
+        if (NeedsYamlQuoting(value))
+        {
+            sb.Append('\'');
+            sb.Append(value.Replace("'", "''", StringComparison.Ordinal));
+            sb.Append('\'');
+            return;
+        }
+
+        sb.Append(value);
+    }
+
+    private static bool NeedsYamlQuoting(string value)
+    {
+        var first = value[0];
+
+        if (first is ':' or '{' or '[' or ',' or '&' or '*' or '?' or '|'
+                or '>' or '!' or '%' or '@' or '`' or '\'' or '"' or '#' or '-')
+            return true;
+
+        var lower = value.ToLowerInvariant();
+
+        if (lower is "true" or "false" or "yes" or "no" or "on" or "off" or "null" or "~")
+            return true;
+
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+            || double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            return true;
+
+        if (value.Contains(": ", StringComparison.Ordinal) || value.EndsWith(":", StringComparison.Ordinal))
+            return true;
+
+        return false;
+    }
+
+    private static void AppendObjectArrayItem(StringBuilder sb, string indent, JsonElement obj)
+    {
+        var subIndent = indent + "  ";
+        var first = true;
+
+        foreach (var property in obj.EnumerateObject())
+        {
+            var name = property.Name;
+            var value = property.Value;
+
+            if (first)
+            {
+                sb.Append(indent);
+                sb.Append("- ");
+                first = false;
+            }
+            else
+            {
+                sb.Append(subIndent);
+            }
+
+            if (value.ValueKind == JsonValueKind.Object || value.ValueKind == JsonValueKind.Array)
+            {
+                sb.AppendLine($"{name}:");
+                AppendJsonElementYaml(sb, subIndent + "  ", value);
+            }
+            else
+            {
+                sb.Append($"{name}: ");
+                AppendJsonScalarValue(sb, value);
+                sb.AppendLine();
+            }
+        }
+
+        if (first)
+        {
+            sb.Append(indent);
+            sb.AppendLine("- {}");
+        }
     }
 }
 
@@ -913,7 +1034,6 @@ internal sealed class ProbeSpec
     public string? PeriodSeconds { get; set; }
     public string? SuccessThreshold { get; set; }
     public string? TimeoutSeconds { get; set; }
-    public string? Type { get; set; }
     public ExecActionSpec? Exec { get; set; }
     public HttpGetActionSpec? HttpGet { get; set; }
     public TcpSocketActionSpec? TcpSocket { get; set; }

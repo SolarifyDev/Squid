@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -8,46 +7,28 @@ internal sealed class ConfigMapResourceGenerator : IKubernetesResourceGenerator
     public bool CanGenerate(Dictionary<string, string> properties)
     {
         var configMapName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapName");
-        var configValues = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
 
-        if (string.IsNullOrWhiteSpace(configMapName) || string.IsNullOrWhiteSpace(configValues))
+        if (string.IsNullOrWhiteSpace(configMapName))
             return false;
 
-        try
-        {
-            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(configValues) ?? new Dictionary<string, string>();
-            return values.Count > 0;
-        }
-        catch
-        {
-            return false;
-        }
+        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
+
+        return values.Count > 0;
     }
 
     public string Generate(Dictionary<string, string> properties)
     {
         var configMapName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapName");
-        var configValues = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
 
-        if (string.IsNullOrWhiteSpace(configMapName) || string.IsNullOrWhiteSpace(configValues))
+        if (string.IsNullOrWhiteSpace(configMapName))
             return string.Empty;
 
-        var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
-
-        Dictionary<string, string> values;
-
-        try
-        {
-            values = JsonSerializer.Deserialize<Dictionary<string, string>>(configValues) ?? new Dictionary<string, string>();
-        }
-        catch
-        {
-            values = new Dictionary<string, string>();
-        }
+        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
 
         if (values.Count == 0)
             return string.Empty;
 
+        var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
         var sb = new StringBuilder();
 
         sb.AppendLine("apiVersion: v1");

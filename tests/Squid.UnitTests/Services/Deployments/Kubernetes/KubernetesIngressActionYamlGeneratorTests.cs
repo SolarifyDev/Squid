@@ -130,7 +130,8 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("rules: [{\"host\":\"example.com\"}]");
+        yaml.ShouldContain("rules:");
+        yaml.ShouldContain("- host: example.com");
     }
 
     // === GenerateAsync — ingress name ===
@@ -199,12 +200,13 @@ public class KubernetesIngressActionYamlGeneratorTests
     public async Task GenerateAsync_WithAnnotations_YamlContainsAnnotations()
     {
         var (step, action) = CreateAction(
-            annotations: "{\"nginx.ingress.kubernetes.io/rewrite-target\":\"/\"}",
+            annotations: "[{\"Key\":\"nginx.ingress.kubernetes.io/rewrite-target\",\"Value\":\"/\"}]",
             rules: "[{\"host\":\"example.com\"}]");
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("annotations: {\"nginx.ingress.kubernetes.io/rewrite-target\":\"/\"}");
+        yaml.ShouldContain("annotations:");
+        yaml.ShouldContain("nginx.ingress.kubernetes.io/rewrite-target: /");
     }
 
     [Fact]
@@ -252,7 +254,9 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("tls: [{\"secretName\":\"my-tls-secret\",\"hosts\":[\"example.com\"]}]");
+        yaml.ShouldContain("tls:");
+        yaml.ShouldContain("secretName: my-tls-secret");
+        yaml.ShouldContain("- example.com");
     }
 
     [Fact]
@@ -290,9 +294,9 @@ public class KubernetesIngressActionYamlGeneratorTests
         var (step, action) = CreateAction(
             ingressName: "web-ingress",
             ns: "staging",
-            annotations: "{\"cert-manager.io/cluster-issuer\":\"letsencrypt\"}",
+            annotations: "[{\"Key\":\"cert-manager.io/cluster-issuer\",\"Value\":\"letsencrypt\"}]",
             ingressClassName: "nginx",
-            rules: "[{\"host\":\"app.example.com\",\"http\":{\"paths\":[{\"path\":\"/\",\"pathType\":\"Prefix\",\"backend\":{\"service\":{\"name\":\"web-svc\",\"port\":{\"number\":80}}}}]}}]",
+            rules: "[{\"host\":\"app.example.com\",\"paths\":[{\"path\":\"/\",\"pathType\":\"Prefix\",\"backend\":{\"serviceName\":\"web-svc\",\"servicePort\":\"80\"}}]}]",
             tls: "[{\"secretName\":\"app-tls\",\"hosts\":[\"app.example.com\"]}]");
 
         var yaml = await GetIngressYaml(step, action);
@@ -302,12 +306,50 @@ public class KubernetesIngressActionYamlGeneratorTests
         yaml.ShouldContain("name: web-ingress");
         yaml.ShouldContain("namespace: staging");
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("cert-manager.io/cluster-issuer");
+        yaml.ShouldContain("cert-manager.io/cluster-issuer: letsencrypt");
         yaml.ShouldContain("ingressClassName: nginx");
         yaml.ShouldContain("rules:");
-        yaml.ShouldContain("app.example.com");
+        yaml.ShouldContain("- host: app.example.com");
+        yaml.ShouldContain("service:");
+        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("number: 80");
         yaml.ShouldContain("tls:");
-        yaml.ShouldContain("app-tls");
+        yaml.ShouldContain("secretName: app-tls");
+    }
+
+    // === GenerateAsync — rules with frontend flat format ===
+
+    [Fact]
+    public async Task GenerateAsync_Rules_FrontendFlatFormat_GeneratesK8sv1Backend()
+    {
+        var (step, action) = CreateAction(
+            rules: "[{\"host\":\"api.example.com\",\"paths\":[{\"path\":\"/api\",\"pathType\":\"Prefix\",\"backend\":{\"serviceName\":\"api-svc\",\"servicePort\":\"8080\"}}]}]");
+
+        var yaml = await GetIngressYaml(step, action);
+
+        yaml.ShouldContain("- host: api.example.com");
+        yaml.ShouldContain("http:");
+        yaml.ShouldContain("paths:");
+        yaml.ShouldContain("- path: /api");
+        yaml.ShouldContain("pathType: Prefix");
+        yaml.ShouldContain("backend:");
+        yaml.ShouldContain("service:");
+        yaml.ShouldContain("name: api-svc");
+        yaml.ShouldContain("port:");
+        yaml.ShouldContain("number: 8080");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_Rules_K8sv1Format_AcceptedAsBackwardCompat()
+    {
+        var (step, action) = CreateAction(
+            rules: "[{\"host\":\"app.example.com\",\"http\":{\"paths\":[{\"path\":\"/\",\"pathType\":\"Prefix\",\"backend\":{\"service\":{\"name\":\"web-svc\",\"port\":{\"number\":80}}}}]}}]");
+
+        var yaml = await GetIngressYaml(step, action);
+
+        yaml.ShouldContain("- host: app.example.com");
+        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("number: 80");
     }
 
     // === GenerateAsync — only one file returned ===
