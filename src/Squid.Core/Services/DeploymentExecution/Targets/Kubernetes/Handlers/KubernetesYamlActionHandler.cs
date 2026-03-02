@@ -86,7 +86,7 @@ public class KubernetesYamlActionHandler : IActionHandler
     public static bool HasCreateFeedSecrets(DeploymentActionDto action)
     {
         var containersProp = action.Properties?
-            .FirstOrDefault(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+            .FirstOrDefault(p => p.PropertyName == KubernetesProperties.Containers);
 
         if (containersProp == null || string.IsNullOrWhiteSpace(containersProp.PropertyValue))
             return false;
@@ -114,7 +114,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
     public static void InjectImagePullSecret(DeploymentActionDto action, string secretName)
     {
-        const string propName = "Squid.Action.KubernetesContainers.PodSecurityImagePullSecrets";
+        const string propName = KubernetesProperties.PodSecurityImagePullSecrets;
 
         var existingProp = action.Properties?
             .FirstOrDefault(p => p.PropertyName == propName);
@@ -191,11 +191,11 @@ public class KubernetesYamlActionHandler : IActionHandler
     public static string GetNamespaceFromAction(DeploymentActionDto action)
     {
         var ns = action.Properties?
-            .FirstOrDefault(p => p.PropertyName == "Squid.Action.KubernetesContainers.Namespace")?.PropertyValue;
+            .FirstOrDefault(p => p.PropertyName == KubernetesProperties.Namespace)?.PropertyValue;
 
         if (string.IsNullOrWhiteSpace(ns))
             ns = action.Properties?
-                .FirstOrDefault(p => p.PropertyName == "Squid.Action.Kubernetes.Namespace")?.PropertyValue;
+                .FirstOrDefault(p => p.PropertyName == KubernetesProperties.LegacyNamespace)?.PropertyValue;
 
         return string.IsNullOrWhiteSpace(ns) ? "default" : ns;
     }
@@ -225,7 +225,7 @@ public class KubernetesYamlActionHandler : IActionHandler
     public static void UpdateContainerImages(DeploymentActionDto action, string resolvedImage)
     {
         var containersProp = action.Properties?
-            .FirstOrDefault(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+            .FirstOrDefault(p => p.PropertyName == KubernetesProperties.Containers);
 
         if (containersProp == null || string.IsNullOrWhiteSpace(containersProp.PropertyValue))
             return;

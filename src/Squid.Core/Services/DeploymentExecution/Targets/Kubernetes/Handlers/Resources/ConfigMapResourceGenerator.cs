@@ -6,24 +6,24 @@ internal sealed class ConfigMapResourceGenerator : IKubernetesResourceGenerator
 {
     public bool CanGenerate(Dictionary<string, string> properties)
     {
-        var configMapName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapName");
+        var configMapName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ConfigMapName);
 
         if (string.IsNullOrWhiteSpace(configMapName))
             return false;
 
-        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
+        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.ConfigMapValues);
 
         return values.Count > 0;
     }
 
     public string Generate(Dictionary<string, string> properties)
     {
-        var configMapName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapName");
+        var configMapName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ConfigMapName);
 
         if (string.IsNullOrWhiteSpace(configMapName))
             return string.Empty;
 
-        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.ConfigMapValues");
+        var values = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.ConfigMapValues);
 
         if (values.Count == 0)
             return string.Empty;

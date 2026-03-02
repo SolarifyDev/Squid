@@ -11,9 +11,9 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     public string Generate(Dictionary<string, string> properties)
     {
-        var deploymentName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.DeploymentName");
+        var deploymentName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DeploymentName);
         var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
-        var replicasText = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.Replicas");
+        var replicasText = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.Replicas);
 
         int replicas = 1;
 
@@ -25,15 +25,15 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (containerSpecs.Count == 0)
             return string.Empty;
 
-        var deploymentStrategy = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.DeploymentStyle");
+        var deploymentStrategy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DeploymentStyle);
 
         if (string.IsNullOrWhiteSpace(deploymentStrategy))
             deploymentStrategy = "RollingUpdate";
 
         var volumes = KubernetesPropertyParser.ParseVolumes(properties);
-        var deploymentAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.DeploymentAnnotations");
-        var deploymentLabels = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.DeploymentLabels");
-        var podAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.PodAnnotations");
+        var deploymentAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.DeploymentAnnotations);
+        var deploymentLabels = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.DeploymentLabels);
+        var podAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.PodAnnotations);
 
         var selectorLabels = deploymentLabels.Count > 0
             ? deploymentLabels
@@ -54,8 +54,8 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
         sb.AppendLine("spec:");
         sb.AppendLine($"  replicas: {replicas}");
-        AppendIntPropertyIfPresent(sb, "  ", "revisionHistoryLimit", properties, "Squid.Action.KubernetesContainers.RevisionHistoryLimit");
-        AppendIntPropertyIfPresent(sb, "  ", "progressDeadlineSeconds", properties, "Squid.Action.KubernetesContainers.ProgressDeadlineSeconds");
+        AppendIntPropertyIfPresent(sb, "  ", "revisionHistoryLimit", properties, KubernetesProperties.RevisionHistoryLimit);
+        AppendIntPropertyIfPresent(sb, "  ", "progressDeadlineSeconds", properties, KubernetesProperties.ProgressDeadlineSeconds);
 
         sb.AppendLine("  selector:");
         sb.AppendLine("    matchLabels:");
@@ -81,12 +81,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         AppendDictionary(sb, "      annotations:", "        ", podAnnotations);
 
         sb.AppendLine("    spec:");
-        AppendStringPropertyIfPresent(sb, "      ", "serviceAccountName", properties, "Squid.Action.KubernetesContainers.ServiceAccountName");
+        AppendStringPropertyIfPresent(sb, "      ", "serviceAccountName", properties, KubernetesProperties.ServiceAccountName);
         AppendRestartPolicyIfNeeded(sb, properties);
         AppendDnsPolicyIfNeeded(sb, properties);
         AppendHostNetworkIfNeeded(sb, properties);
-        AppendIntPropertyIfPresent(sb, "      ", "terminationGracePeriodSeconds", properties, "Squid.Action.KubernetesContainers.PodTerminationGracePeriodSeconds");
-        AppendStringPropertyIfPresent(sb, "      ", "priorityClassName", properties, "Squid.Action.KubernetesContainers.PodPriorityClassName");
+        AppendIntPropertyIfPresent(sb, "      ", "terminationGracePeriodSeconds", properties, KubernetesProperties.PodTerminationGracePeriodSeconds);
+        AppendStringPropertyIfPresent(sb, "      ", "priorityClassName", properties, KubernetesProperties.PodPriorityClassName);
         AppendReadinessGatesIfPresent(sb, properties);
 
         if (volumes.Count > 0)
@@ -97,7 +97,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 AppendVolumeYaml(sb, volume);
         }
 
-        KubernetesPropertyParser.AppendJsonFromProperty(sb, "      ", "tolerations", properties, "Squid.Action.KubernetesContainers.Tolerations");
+        KubernetesPropertyParser.AppendJsonFromProperty(sb, "      ", "tolerations", properties, KubernetesProperties.Tolerations);
 
         AppendAffinityIfPresent(sb, properties);
         AppendDnsConfigIfPresent(sb, properties);
@@ -184,8 +184,8 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (!string.Equals(deploymentStrategy, "RollingUpdate", StringComparison.OrdinalIgnoreCase))
             return;
 
-        var maxUnavailable = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.MaxUnavailable");
-        var maxSurge = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.MaxSurge");
+        var maxUnavailable = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.MaxUnavailable);
+        var maxSurge = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.MaxSurge);
 
         if (string.IsNullOrWhiteSpace(maxUnavailable) && string.IsNullOrWhiteSpace(maxSurge))
             return;
@@ -197,7 +197,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendRestartPolicyIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var restartPolicy = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodRestartPolicy");
+        var restartPolicy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodRestartPolicy);
 
         if (string.IsNullOrWhiteSpace(restartPolicy) || string.Equals(restartPolicy, "Always", StringComparison.OrdinalIgnoreCase))
             return;
@@ -207,7 +207,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendDnsPolicyIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var dnsPolicy = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodDnsPolicy");
+        var dnsPolicy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodDnsPolicy);
 
         if (string.IsNullOrWhiteSpace(dnsPolicy) || string.Equals(dnsPolicy, "ClusterFirst", StringComparison.OrdinalIgnoreCase))
             return;
@@ -217,7 +217,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendHostNetworkIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var raw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodHostNetworking");
+        var raw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodHostNetworking);
 
         if (string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase))
             sb.AppendLine("      hostNetwork: true");
@@ -225,7 +225,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendReadinessGatesIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var raw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodReadinessGates");
+        var raw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodReadinessGates);
 
         if (string.IsNullOrWhiteSpace(raw))
             return;
@@ -243,17 +243,17 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendAffinityIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var hasNodeAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.NodeAffinity", out var nodeAffinityRaw)
+        var hasNodeAffinity = properties.TryGetValue(KubernetesProperties.NodeAffinity, out var nodeAffinityRaw)
             && !string.IsNullOrWhiteSpace(nodeAffinityRaw)
             && !string.Equals(nodeAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(nodeAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
 
-        var hasPodAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.PodAffinity", out var podAffinityRaw)
+        var hasPodAffinity = properties.TryGetValue(KubernetesProperties.PodAffinity, out var podAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAffinityRaw)
             && !string.Equals(podAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(podAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
 
-        var hasPodAntiAffinity = properties.TryGetValue("Squid.Action.KubernetesContainers.PodAntiAffinity", out var podAntiAffinityRaw)
+        var hasPodAntiAffinity = properties.TryGetValue(KubernetesProperties.PodAntiAffinity, out var podAntiAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAntiAffinityRaw)
             && !string.Equals(podAntiAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
             && !string.Equals(podAntiAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
@@ -299,9 +299,9 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendDnsConfigIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var optionsRaw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.DnsConfigOptions").Trim();
-        var nameserversRaw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodDnsNameservers");
-        var searchesRaw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodDnsSearches");
+        var optionsRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DnsConfigOptions).Trim();
+        var nameserversRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodDnsNameservers);
+        var searchesRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodDnsSearches);
 
         var hasOptions = !string.IsNullOrWhiteSpace(optionsRaw)
             && !string.Equals(optionsRaw, "[]", StringComparison.Ordinal)
@@ -345,16 +345,16 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendPodSecurityContextIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        var sysctlsRaw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySysctls").Trim();
-        var fsGroup = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecurityFsGroup");
-        var runAsUser = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecurityRunAsUser");
-        var runAsGroup = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecurityRunAsGroup");
-        var runAsNonRoot = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecurityRunAsNonRoot");
-        var supplementalGroupsRaw = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySupplementalGroups");
-        var seLinuxLevel = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySeLinuxLevel");
-        var seLinuxRole = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySeLinuxRole");
-        var seLinuxType = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySeLinuxType");
-        var seLinuxUser = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.PodSecuritySeLinuxUser");
+        var sysctlsRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySysctls).Trim();
+        var fsGroup = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecurityFsGroup);
+        var runAsUser = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecurityRunAsUser);
+        var runAsGroup = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecurityRunAsGroup);
+        var runAsNonRoot = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecurityRunAsNonRoot);
+        var supplementalGroupsRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySupplementalGroups);
+        var seLinuxLevel = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySeLinuxLevel);
+        var seLinuxRole = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySeLinuxRole);
+        var seLinuxType = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySeLinuxType);
+        var seLinuxUser = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySeLinuxUser);
 
         var hasSysctls = !string.IsNullOrWhiteSpace(sysctlsRaw)
             && !string.Equals(sysctlsRaw, "[]", StringComparison.Ordinal)
@@ -418,7 +418,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendImagePullSecretsIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        if (!properties.TryGetValue("Squid.Action.KubernetesContainers.PodSecurityImagePullSecrets", out var raw)
+        if (!properties.TryGetValue(KubernetesProperties.PodSecurityImagePullSecrets, out var raw)
             || string.IsNullOrWhiteSpace(raw))
         {
             return;
@@ -449,7 +449,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendHostAliasesIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
-        if (!properties.TryGetValue("Squid.Action.KubernetesContainers.HostAliases", out var raw)
+        if (!properties.TryGetValue(KubernetesProperties.HostAliases, out var raw)
             || string.IsNullOrWhiteSpace(raw))
             return;
 

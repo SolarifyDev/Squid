@@ -45,7 +45,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
     private static void NormalizeDeploymentName(DeploymentActionDto action, Dictionary<string, string> properties)
     {
-        const string key = "Squid.Action.KubernetesContainers.DeploymentName";
+        const string key = KubernetesProperties.DeploymentName;
 
         if (!properties.TryGetValue(key, out var name) || string.IsNullOrWhiteSpace(name))
             properties[key] = action.Name;

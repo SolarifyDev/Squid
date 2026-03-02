@@ -7,8 +7,8 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
 {
     public bool CanGenerate(Dictionary<string, string> properties)
     {
-        var secretName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.SecretName");
-        var secretValues = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.SecretValues");
+        var secretName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretName);
+        var secretValues = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretValues);
 
         if (string.IsNullOrWhiteSpace(secretName) || string.IsNullOrWhiteSpace(secretValues))
             return false;
@@ -26,8 +26,8 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
 
     public string Generate(Dictionary<string, string> properties)
     {
-        var secretName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.SecretName");
-        var secretValuesJson = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.SecretValues");
+        var secretName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretName);
+        var secretValuesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretValues);
 
         if (string.IsNullOrWhiteSpace(secretName) || string.IsNullOrWhiteSpace(secretValuesJson))
             return string.Empty;

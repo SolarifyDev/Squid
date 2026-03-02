@@ -30,10 +30,10 @@ internal static class KubernetesPropertyParser
 
     internal static string GetNamespace(Dictionary<string, string> properties)
     {
-        var ns = GetProperty(properties, "Squid.Action.KubernetesContainers.Namespace");
+        var ns = GetProperty(properties, KubernetesProperties.Namespace);
 
         if (string.IsNullOrWhiteSpace(ns))
-            ns = GetProperty(properties, "Squid.Action.Kubernetes.Namespace");
+            ns = GetProperty(properties, KubernetesProperties.LegacyNamespace);
 
         if (string.IsNullOrWhiteSpace(ns))
             ns = "default";
@@ -97,7 +97,7 @@ internal static class KubernetesPropertyParser
     {
         var result = new List<ServicePortSpec>();
 
-        var portsJson = GetProperty(properties, "Squid.Action.KubernetesContainers.ServicePorts");
+        var portsJson = GetProperty(properties, KubernetesProperties.ServicePorts);
 
         if (string.IsNullOrWhiteSpace(portsJson))
             return result;
@@ -120,11 +120,6 @@ internal static class KubernetesPropertyParser
                 if (!int.TryParse(portText, out var port))
                     continue;
 
-                int? targetPort = null;
-
-                if (int.TryParse(targetPortText, out var parsedTargetPort))
-                    targetPort = parsedTargetPort;
-
                 int? nodePort = null;
 
                 if (int.TryParse(nodePortText, out var parsedNodePort))
@@ -134,7 +129,7 @@ internal static class KubernetesPropertyParser
                 {
                     Name = string.IsNullOrWhiteSpace(name) ? "http" : name,
                     Port = port,
-                    TargetPort = targetPort,
+                    TargetPort = string.IsNullOrWhiteSpace(targetPortText) ? null : targetPortText,
                     NodePort = nodePort,
                     Protocol = string.IsNullOrWhiteSpace(protocol) ? "TCP" : protocol
                 });
@@ -151,7 +146,7 @@ internal static class KubernetesPropertyParser
     {
         var result = new List<ContainerSpec>();
 
-        var containersJson = GetProperty(properties, "Squid.Action.KubernetesContainers.Containers");
+        var containersJson = GetProperty(properties, KubernetesProperties.Containers);
 
         if (string.IsNullOrWhiteSpace(containersJson))
             return result;
@@ -199,7 +194,7 @@ internal static class KubernetesPropertyParser
     {
         var result = new List<VolumeSpec>();
 
-        var combinedVolumesJson = GetProperty(properties, "Squid.Action.KubernetesContainers.CombinedVolumes");
+        var combinedVolumesJson = GetProperty(properties, KubernetesProperties.CombinedVolumes);
 
         if (string.IsNullOrWhiteSpace(combinedVolumesJson))
             return result;
@@ -991,7 +986,7 @@ internal sealed class ServicePortSpec
 {
     public string Name { get; set; } = string.Empty;
     public int Port { get; set; }
-    public int? TargetPort { get; set; }
+    public string? TargetPort { get; set; }
     public int? NodePort { get; set; }
     public string Protocol { get; set; } = string.Empty;
 }

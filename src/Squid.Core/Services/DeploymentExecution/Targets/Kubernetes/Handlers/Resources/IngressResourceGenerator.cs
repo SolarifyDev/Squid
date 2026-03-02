@@ -7,27 +7,27 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 {
     public bool CanGenerate(Dictionary<string, string> properties)
     {
-        var rulesJson = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.IngressRules");
+        var rulesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressRules);
 
         return !string.IsNullOrWhiteSpace(rulesJson);
     }
 
     public string Generate(Dictionary<string, string> properties)
     {
-        var ingressName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.IngressName");
+        var ingressName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressName);
 
         if (string.IsNullOrWhiteSpace(ingressName))
             ingressName = "ingress";
 
         var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
-        var rulesJson = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.IngressRules");
+        var rulesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressRules);
 
         if (string.IsNullOrWhiteSpace(rulesJson))
             return string.Empty;
 
-        var tlsJson = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.IngressTlsCertificates");
-        var ingressClassName = KubernetesPropertyParser.GetProperty(properties, "Squid.Action.KubernetesContainers.IngressClassName");
-        var annotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, "Squid.Action.KubernetesContainers.IngressAnnotations");
+        var tlsJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressTlsCertificates);
+        var ingressClassName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressClassName);
+        var annotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.IngressAnnotations);
 
         var sb = new StringBuilder();
 

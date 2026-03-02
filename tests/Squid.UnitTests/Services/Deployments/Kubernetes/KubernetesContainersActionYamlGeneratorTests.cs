@@ -602,6 +602,58 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("nodePort: 30080");
     }
 
+    // === Service annotations ===
+
+    [Fact]
+    public async Task GenerateAsync_ServiceAnnotations_IncludedInMetadata()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceName", "web-svc");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServicePorts",
+            """[{"name":"http","port":"80","targetPort":"80","protocol":"TCP"}]""");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceAnnotations",
+            """[{"Key":"service.beta.kubernetes.io/aws-load-balancer-type","Value":"nlb"}]""");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
+
+        yaml.ShouldContain("annotations:");
+        yaml.ShouldContain("service.beta.kubernetes.io/aws-load-balancer-type: nlb");
+    }
+
+    // === Service clusterIP ===
+
+    [Fact]
+    public async Task GenerateAsync_ServiceClusterIp_IncludedInSpec()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceName", "web-svc");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServicePorts",
+            """[{"name":"http","port":"80","targetPort":"80","protocol":"TCP"}]""");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceClusterIp", "10.96.0.100");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
+
+        yaml.ShouldContain("clusterIP: 10.96.0.100");
+    }
+
+    // === Service named targetPort ===
+
+    [Fact]
+    public async Task GenerateAsync_ServiceNamedTargetPort_IncludedAsString()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServiceName", "web-svc");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ServicePorts",
+            """[{"name":"http","port":"80","targetPort":"http","protocol":"TCP"}]""");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
+
+        yaml.ShouldContain("targetPort: http");
+    }
+
     // === Malformed JSON resilience ===
 
     [Fact]
