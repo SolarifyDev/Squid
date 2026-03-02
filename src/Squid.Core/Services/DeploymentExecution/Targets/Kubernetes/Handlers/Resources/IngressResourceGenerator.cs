@@ -17,7 +17,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         var ingressName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressName);
 
         if (string.IsNullOrWhiteSpace(ingressName))
-            ingressName = "ingress";
+            ingressName = KubernetesIngressDefaultValues.Name;
 
         var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
         var rulesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressRules);
@@ -73,7 +73,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var rule in doc.RootElement.EnumerateArray())
             {
-                var host = rule.TryGetProperty("host", out var hostProp) ? hostProp.GetString() : null;
+                var host = rule.TryGetProperty(KubernetesIngressPayloadProperties.Host, out var hostProp) ? hostProp.GetString() : null;
                 sb.AppendLine($"  - host: {host ?? string.Empty}");
                 AppendRuleHttp(sb, rule);
             }
@@ -87,9 +87,9 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         var pathsElement = default(JsonElement);
         var hasPaths = false;
 
-        if (rule.TryGetProperty("http", out var httpProp) && httpProp.TryGetProperty("paths", out pathsElement))
+        if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Http, out var httpProp) && httpProp.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out pathsElement))
             hasPaths = true;
-        else if (rule.TryGetProperty("paths", out pathsElement))
+        else if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out pathsElement))
             hasPaths = true;
 
         if (!hasPaths || pathsElement.ValueKind != JsonValueKind.Array)
@@ -100,15 +100,15 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 
         foreach (var path in pathsElement.EnumerateArray())
         {
-            var pathStr = path.TryGetProperty("path", out var pathProp) ? pathProp.GetString() : "/";
-            var pathType = path.TryGetProperty("pathType", out var pathTypeProp) ? pathTypeProp.GetString() : "Prefix";
+            var pathStr = path.TryGetProperty(KubernetesIngressPayloadProperties.Path, out var pathProp) ? pathProp.GetString() : KubernetesIngressDefaultValues.Path;
+            var pathType = path.TryGetProperty(KubernetesIngressPayloadProperties.PathType, out var pathTypeProp) ? pathTypeProp.GetString() : KubernetesIngressDefaultValues.PathType;
             sb.AppendLine($"      - path: {pathStr}");
             sb.AppendLine($"        pathType: {pathType}");
             sb.AppendLine("        backend:");
 
-            if (path.TryGetProperty("backend", out var backend))
+            if (path.TryGetProperty(KubernetesIngressPayloadProperties.Backend, out var backend))
                 AppendBackend(sb, backend);
-            else if (path.TryGetProperty("serviceName", out _))
+            else if (path.TryGetProperty(KubernetesIngressPayloadProperties.ServiceName, out _))
                 AppendBackend(sb, path);
         }
     }
@@ -116,12 +116,12 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
     private static void AppendBackend(StringBuilder sb, JsonElement backend)
     {
         // Frontend flat format: { serviceName: "...", servicePort: "..." or 80 }
-        if (backend.TryGetProperty("serviceName", out var serviceNameProp))
+        if (backend.TryGetProperty(KubernetesIngressPayloadProperties.ServiceName, out var serviceNameProp))
         {
             var serviceName = serviceNameProp.GetString();
             var servicePort = (string)null;
 
-            if (backend.TryGetProperty("servicePort", out var servicePortProp))
+            if (backend.TryGetProperty(KubernetesIngressPayloadProperties.ServicePort, out var servicePortProp))
                 servicePort = servicePortProp.ValueKind == JsonValueKind.Number
                     ? servicePortProp.GetRawText()
                     : servicePortProp.GetString();
@@ -134,13 +134,13 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine($"              number: {servicePort}");
         }
         // K8s v1 format: { service: { name: "...", port: { number: 80 } } }
-        else if (backend.TryGetProperty("service", out var service))
+        else if (backend.TryGetProperty(KubernetesIngressPayloadProperties.Service, out var service))
         {
-            var serviceName = service.TryGetProperty("name", out var sNameProp) ? sNameProp.GetString() : null;
+            var serviceName = service.TryGetProperty(KubernetesIngressPayloadProperties.Name, out var sNameProp) ? sNameProp.GetString() : null;
             sb.AppendLine("          service:");
             sb.AppendLine($"            name: {serviceName}");
 
-            if (service.TryGetProperty("port", out var portObj) && portObj.TryGetProperty("number", out var numProp))
+            if (service.TryGetProperty(KubernetesIngressPayloadProperties.Port, out var portObj) && portObj.TryGetProperty(KubernetesIngressPayloadProperties.Number, out var numProp))
             {
                 sb.AppendLine("            port:");
                 sb.AppendLine($"              number: {numProp.GetRawText()}");
@@ -161,9 +161,9 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var tls in doc.RootElement.EnumerateArray())
             {
-                var secretName = tls.TryGetProperty("secretName", out var secretNameProp) ? secretNameProp.GetString() : null;
+                var secretName = tls.TryGetProperty(KubernetesIngressPayloadProperties.SecretName, out var secretNameProp) ? secretNameProp.GetString() : null;
 
-                if (tls.TryGetProperty("hosts", out var hostsElement) && hostsElement.ValueKind == JsonValueKind.Array)
+                if (tls.TryGetProperty(KubernetesIngressPayloadProperties.Hosts, out var hostsElement) && hostsElement.ValueKind == JsonValueKind.Array)
                 {
                     sb.AppendLine("  - hosts:");
 

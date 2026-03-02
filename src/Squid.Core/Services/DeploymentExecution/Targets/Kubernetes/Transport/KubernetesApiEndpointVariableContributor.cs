@@ -39,15 +39,15 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         return new List<VariableDto>
         {
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterUrl", endpoint.ClusterUrl ?? string.Empty),
+            EndpointVariableFactory.Make(KubernetesApiVariableNames.ClusterUrl, endpoint.ClusterUrl ?? string.Empty),
             EndpointVariableFactory.Make("Squid.Account.AccountType", accountTypeStr),
             EndpointVariableFactory.Make("Squid.Account.CredentialsJson", accountData?.CredentialsJson ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.SkipTlsVerification", endpoint.SkipTlsVerification ?? "False"),
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.ClusterCertificate", ResolveClusterCertificate(context)),
-            EndpointVariableFactory.Make("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.OutputKubectlVersion", "True"),
-            EndpointVariableFactory.Make("SquidPrintEvaluatedVariables", "True")
+            EndpointVariableFactory.Make(KubernetesApiVariableNames.SkipTlsVerification, endpoint.SkipTlsVerification ?? KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? KubernetesDefaultValues.Namespace),
+            EndpointVariableFactory.Make(KubernetesApiVariableNames.ClusterCertificate, ResolveClusterCertificate(context)),
+            EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(KubernetesApiVariableNames.OutputKubectlVersion, KubernetesBooleanValues.True),
+            EndpointVariableFactory.Make(KubernetesCommonVariableNames.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };
     }
 

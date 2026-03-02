@@ -17,9 +17,9 @@ public class KubernetesRunScriptActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var userScript = ctx.Action.GetProperty("Squid.Action.Script.ScriptBody") ?? string.Empty;
-        var syntaxStr = ctx.Action.GetProperty("Squid.Action.Script.Syntax");
-        var syntax = string.Equals(syntaxStr, "Bash", StringComparison.OrdinalIgnoreCase)
+        var userScript = ctx.Action.GetProperty(KubernetesScriptProperties.ScriptBody) ?? string.Empty;
+        var syntaxStr = ctx.Action.GetProperty(KubernetesScriptProperties.Syntax);
+        var syntax = string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
             ? ScriptSyntax.Bash
             : ScriptSyntax.PowerShell;
 

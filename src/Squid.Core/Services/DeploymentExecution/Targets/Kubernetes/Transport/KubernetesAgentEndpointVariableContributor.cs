@@ -15,9 +15,9 @@ public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContr
 
         return new List<VariableDto>
         {
-            EndpointVariableFactory.Make("Squid.Action.Kubernetes.Namespace", endpoint.Namespace ?? "default"),
-            EndpointVariableFactory.Make("Squid.Action.Script.SuppressEnvironmentLogging", "False"),
-            EndpointVariableFactory.Make("SquidPrintEvaluatedVariables", "True")
+            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? KubernetesDefaultValues.Namespace),
+            EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(KubernetesCommonVariableNames.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };
     }
 }

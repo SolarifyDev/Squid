@@ -17,10 +17,10 @@ public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
     private static string ResolveNamespace(List<VariableDto> variables)
     {
         var ns = variables?
-            .FirstOrDefault(v => string.Equals(v.Name, "Squid.Action.Kubernetes.Namespace", StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(v => string.Equals(v.Name, KubernetesProperties.LegacyNamespace, StringComparison.OrdinalIgnoreCase))
             ?.Value;
 
-        return string.IsNullOrWhiteSpace(ns) ? "default" : ns;
+        return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
     }
 
     private static string WrapBash(string script, string ns)

@@ -16,7 +16,7 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
         if (endpoint == null) return script;
 
         var customKubectl = context.Variables?
-            .FirstOrDefault(v => string.Equals(v.Name, "Squid.Action.Kubernetes.CustomKubectlExecutable", StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(v => string.Equals(v.Name, KubernetesApiVariableNames.CustomKubectlExecutable, StringComparison.OrdinalIgnoreCase))
             ?.Value;
 
         return _builder.WrapWithContext(script, context, customKubectl);

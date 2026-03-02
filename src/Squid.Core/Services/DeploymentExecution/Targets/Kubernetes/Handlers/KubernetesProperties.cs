@@ -74,3 +74,347 @@ internal static class KubernetesProperties
     // Legacy fallback
     internal const string LegacyNamespace = "Squid.Action.Kubernetes.Namespace";
 }
+
+/// <summary>
+/// Keys inside <see cref="KubernetesProperties.Containers"/> JSON payload.
+/// These are container item fields (not action property names).
+/// </summary>
+internal static class KubernetesContainerPayloadProperties
+{
+    // Container basic fields
+    internal const string Name = "Name";
+    internal const string Image = "Image";
+    internal const string PackageId = "PackageId";
+    internal const string CreateFeedSecrets = "CreateFeedSecrets";
+    internal const string IsInitContainer = "IsInitContainer";
+
+    // Nested objects/arrays
+    internal const string Ports = "Ports";
+    internal const string Resources = "Resources";
+    internal const string VolumeMounts = "VolumeMounts";
+    internal const string ConfigMapEnvFromSource = "ConfigMapEnvFromSource";
+    internal const string LivenessProbe = "LivenessProbe";
+    internal const string ReadinessProbe = "ReadinessProbe";
+    internal const string StartupProbe = "StartupProbe";
+    internal const string SecurityContext = "SecurityContext";
+    internal const string Lifecycle = "Lifecycle";
+}
+
+/// <summary>
+/// Keys for each item inside Containers[].Ports.
+/// </summary>
+internal static class KubernetesContainerPortPayloadProperties
+{
+    internal const string Name = "key";
+    internal const string ContainerPort = "value";
+    internal const string Protocol = "option";
+}
+
+/// <summary>
+/// Keys for Containers[].Resources.
+/// </summary>
+internal static class KubernetesContainerResourcePayloadProperties
+{
+    internal const string Requests = "requests";
+    internal const string Limits = "limits";
+    internal const string Cpu = "cpu";
+    internal const string Memory = "memory";
+}
+
+/// <summary>
+/// Keys for each item inside Containers[].VolumeMounts.
+/// </summary>
+internal static class KubernetesContainerVolumeMountPayloadProperties
+{
+    internal const string VolumeName = "key";
+    internal const string MountPath = "value";
+    internal const string SubPath = "option";
+}
+
+/// <summary>
+/// Keys for each item inside Containers[].ConfigMapEnvFromSource.
+/// </summary>
+internal static class KubernetesContainerEnvFromPayloadProperties
+{
+    internal const string ConfigMapName = "key";
+}
+
+/// <summary>
+/// Keys for Containers[].SecurityContext.
+/// </summary>
+internal static class KubernetesContainerSecurityContextPayloadProperties
+{
+    internal const string RunAsUser = "runAsUser";
+    internal const string RunAsGroup = "runAsGroup";
+    internal const string RunAsNonRoot = "runAsNonRoot";
+    internal const string ReadOnlyRootFilesystem = "readOnlyRootFilesystem";
+    internal const string AllowPrivilegeEscalation = "allowPrivilegeEscalation";
+    internal const string Privileged = "privileged";
+}
+
+/// <summary>
+/// Keys for Containers[].Lifecycle.
+/// </summary>
+internal static class KubernetesContainerLifecyclePayloadProperties
+{
+    internal const string PostStart = "postStart";
+    internal const string PreStop = "preStop";
+    internal const string Type = "type";
+    internal const string Command = "command";
+}
+
+/// <summary>
+/// Keys for Containers[].{LivenessProbe, ReadinessProbe, StartupProbe}.
+/// </summary>
+internal static class KubernetesContainerProbePayloadProperties
+{
+    internal const string Type = "type";
+    internal const string HttpGet = "httpGet";
+    internal const string TcpSocket = "tcpSocket";
+    internal const string Exec = "exec";
+    internal const string InitialDelaySeconds = "initialDelaySeconds";
+    internal const string PeriodSeconds = "periodSeconds";
+    internal const string TimeoutSeconds = "timeoutSeconds";
+    internal const string SuccessThreshold = "successThreshold";
+    internal const string FailureThreshold = "failureThreshold";
+}
+
+/// <summary>
+/// Generic key/value item keys used by list editors.
+/// </summary>
+internal static class KubernetesKeyValuePayloadProperties
+{
+    internal const string PascalKey = "Key";
+    internal const string PascalValue = "Value";
+    internal const string LowerKey = "key";
+    internal const string LowerValue = "value";
+}
+
+/// <summary>
+/// Keys for each item inside ServicePorts payload.
+/// </summary>
+internal static class KubernetesServicePortPayloadProperties
+{
+    internal const string Name = "name";
+    internal const string Port = "port";
+    internal const string TargetPort = "targetPort";
+    internal const string NodePort = "nodePort";
+    internal const string Protocol = "protocol";
+}
+
+/// <summary>
+/// Keys for each item inside CombinedVolumes payload.
+/// </summary>
+internal static class KubernetesVolumePayloadProperties
+{
+    internal const string Name = "Name";
+    internal const string Type = "Type";
+    internal const string ReferenceName = "ReferenceName";
+}
+
+/// <summary>
+/// Volume type values used in CombinedVolumes payload.
+/// </summary>
+internal static class KubernetesVolumeTypeValues
+{
+    internal const string ConfigMap = "ConfigMap";
+    internal const string Secret = "Secret";
+    internal const string EmptyDir = "EmptyDir";
+    internal const string PersistentVolumeClaim = "PVC";
+    internal const string HostPath = "HostPath";
+}
+
+/// <summary>
+/// Nested keys under probe/httpGet/tcpSocket/exec payloads.
+/// </summary>
+internal static class KubernetesProbeActionPayloadProperties
+{
+    internal const string Command = "command";
+    internal const string Host = "host";
+    internal const string Path = "path";
+    internal const string Port = "port";
+    internal const string Scheme = "scheme";
+    internal const string HttpHeaders = "httpHeaders";
+    internal const string Name = "name";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Nested keys under securityContext payload.
+/// </summary>
+internal static class KubernetesSecurityContextPayloadProperties
+{
+    internal const string Capabilities = "capabilities";
+    internal const string Add = "add";
+    internal const string Drop = "drop";
+    internal const string SeLinuxOptions = "seLinuxOptions";
+    internal const string Level = "level";
+    internal const string Role = "role";
+    internal const string Type = "type";
+    internal const string User = "user";
+}
+
+/// <summary>
+/// Keys for ingress rules/paths/backend/tls payload.
+/// </summary>
+internal static class KubernetesIngressPayloadProperties
+{
+    internal const string Host = "host";
+    internal const string Http = "http";
+    internal const string Paths = "paths";
+    internal const string Path = "path";
+    internal const string PathType = "pathType";
+    internal const string Backend = "backend";
+    internal const string ServiceName = "serviceName";
+    internal const string ServicePort = "servicePort";
+    internal const string Service = "service";
+    internal const string Name = "name";
+    internal const string Port = "port";
+    internal const string Number = "number";
+    internal const string SecretName = "secretName";
+    internal const string Hosts = "hosts";
+}
+
+/// <summary>
+/// Keys for hostAliases payload.
+/// </summary>
+internal static class KubernetesHostAliasPayloadProperties
+{
+    internal const string Ip = "ip";
+    internal const string Hostnames = "hostnames";
+}
+
+/// <summary>
+/// Keys for imagePullSecrets payload.
+/// </summary>
+internal static class KubernetesImagePullSecretPayloadProperties
+{
+    internal const string Name = "name";
+}
+
+internal static class KubernetesLabelKeys
+{
+    internal const string App = "app";
+}
+
+internal static class KubernetesBooleanValues
+{
+    internal const string True = "True";
+    internal const string False = "False";
+}
+
+internal static class KubernetesJsonLiterals
+{
+    internal const string EmptyArray = "[]";
+    internal const string EmptyObject = "{}";
+}
+
+internal static class KubernetesDeploymentStrategyValues
+{
+    internal const string Recreate = "Recreate";
+    internal const string RollingUpdate = "RollingUpdate";
+}
+
+internal static class KubernetesPodDefaultValues
+{
+    internal const string RestartPolicyAlways = "Always";
+    internal const string DnsPolicyClusterFirst = "ClusterFirst";
+}
+
+internal static class KubernetesServiceTypeValues
+{
+    internal const string ClusterIp = "ClusterIP";
+    internal const string NodePort = "NodePort";
+    internal const string LoadBalancer = "LoadBalancer";
+}
+
+internal static class KubernetesDefaultValues
+{
+    internal const string Namespace = "default";
+    internal const string ContainerName = "container";
+    internal const string ContainerImage = "nginx:latest";
+    internal const string PortName = "http";
+    internal const string ProtocolTcp = "TCP";
+}
+
+internal static class KubernetesIngressDefaultValues
+{
+    internal const string Name = "ingress";
+    internal const string Path = "/";
+    internal const string PathType = "Prefix";
+}
+
+/// <summary>
+/// Keys for each item inside tolerations payload.
+/// </summary>
+internal static class KubernetesTolerationPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Operator = "operator";
+    internal const string Value = "value";
+    internal const string Effect = "effect";
+}
+
+/// <summary>
+/// Keys for each item inside pod security sysctls payload.
+/// </summary>
+internal static class KubernetesSysctlPayloadProperties
+{
+    internal const string Name = "name";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for each item inside dns config options payload.
+/// </summary>
+internal static class KubernetesDnsOptionPayloadProperties
+{
+    internal const string Name = "name";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for each item inside readiness gates payload.
+/// </summary>
+internal static class KubernetesReadinessGatePayloadProperties
+{
+    internal const string ConditionType = "conditionType";
+}
+
+internal static class KubernetesScriptProperties
+{
+    internal const string Syntax = "Squid.Action.Script.Syntax";
+    internal const string ScriptBody = "Squid.Action.Script.ScriptBody";
+    internal const string SuppressEnvironmentLogging = "Squid.Action.Script.SuppressEnvironmentLogging";
+}
+
+internal static class KubernetesRawYamlProperties
+{
+    internal const string InlineYaml = "Squid.Action.KubernetesYaml.InlineYaml";
+}
+
+internal static class KubernetesApiVariableNames
+{
+    internal const string ClusterUrl = "Squid.Action.Kubernetes.ClusterUrl";
+    internal const string SkipTlsVerification = "Squid.Action.Kubernetes.SkipTlsVerification";
+    internal const string ClusterCertificate = "Squid.Action.Kubernetes.ClusterCertificate";
+    internal const string OutputKubectlVersion = "Squid.Action.Kubernetes.OutputKubectlVersion";
+    internal const string CustomKubectlExecutable = "Squid.Action.Kubernetes.CustomKubectlExecutable";
+}
+
+internal static class KubernetesCommonVariableNames
+{
+    internal const string PrintEvaluatedVariables = "SquidPrintEvaluatedVariables";
+}
+
+internal static class KubernetesHelmProperties
+{
+    internal const string ReleaseName = "Squid.Action.Helm.ReleaseName";
+    internal const string ChartPath = "Squid.Action.Helm.ChartPath";
+    internal const string CustomHelmExecutable = "Squid.Action.Helm.CustomHelmExecutable";
+    internal const string ResetValues = "Squid.Action.Helm.ResetValues";
+    internal const string ClientVersion = "Squid.Action.Helm.ClientVersion";
+    internal const string AdditionalArgs = "Squid.Action.Helm.AdditionalArgs";
+    internal const string YamlValues = "Squid.Action.Helm.YamlValues";
+    internal const string KeyValues = "Squid.Action.Helm.KeyValues";
+}

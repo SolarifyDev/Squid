@@ -36,7 +36,7 @@ internal static class KubernetesPropertyParser
             ns = GetProperty(properties, KubernetesProperties.LegacyNamespace);
 
         if (string.IsNullOrWhiteSpace(ns))
-            ns = "default";
+            ns = KubernetesDefaultValues.Namespace;
 
         return ns;
     }
@@ -59,12 +59,12 @@ internal static class KubernetesPropertyParser
                     if (element.ValueKind != JsonValueKind.Object)
                         continue;
 
-                    var key = element.TryGetProperty("Key", out var keyProp) ? keyProp.GetString()
-                        : element.TryGetProperty("key", out var lowerKeyProp) ? lowerKeyProp.GetString()
+                    var key = element.TryGetProperty(KubernetesKeyValuePayloadProperties.PascalKey, out var keyProp) ? keyProp.GetString()
+                        : element.TryGetProperty(KubernetesKeyValuePayloadProperties.LowerKey, out var lowerKeyProp) ? lowerKeyProp.GetString()
                         : null;
 
-                    var value = element.TryGetProperty("Value", out var valueProp) ? valueProp.GetString()
-                        : element.TryGetProperty("value", out var lowerValueProp) ? lowerValueProp.GetString()
+                    var value = element.TryGetProperty(KubernetesKeyValuePayloadProperties.PascalValue, out var valueProp) ? valueProp.GetString()
+                        : element.TryGetProperty(KubernetesKeyValuePayloadProperties.LowerValue, out var lowerValueProp) ? lowerValueProp.GetString()
                         : null;
 
                     if (string.IsNullOrWhiteSpace(key) || value == null)
@@ -111,11 +111,11 @@ internal static class KubernetesPropertyParser
 
             foreach (var element in doc.RootElement.EnumerateArray())
             {
-                var name = element.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var portText = element.TryGetProperty("port", out var portProp) ? GetStringOrNumber(portProp) : null;
-                var targetPortText = element.TryGetProperty("targetPort", out var targetPortProp) ? GetStringOrNumber(targetPortProp) : null;
-                var nodePortText = element.TryGetProperty("nodePort", out var nodePortProp) ? GetStringOrNumber(nodePortProp) : null;
-                var protocol = element.TryGetProperty("protocol", out var protocolProp) ? protocolProp.GetString() ?? string.Empty : string.Empty;
+                var name = element.TryGetProperty(KubernetesServicePortPayloadProperties.Name, out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+                var portText = element.TryGetProperty(KubernetesServicePortPayloadProperties.Port, out var portProp) ? GetStringOrNumber(portProp) : null;
+                var targetPortText = element.TryGetProperty(KubernetesServicePortPayloadProperties.TargetPort, out var targetPortProp) ? GetStringOrNumber(targetPortProp) : null;
+                var nodePortText = element.TryGetProperty(KubernetesServicePortPayloadProperties.NodePort, out var nodePortProp) ? GetStringOrNumber(nodePortProp) : null;
+                var protocol = element.TryGetProperty(KubernetesServicePortPayloadProperties.Protocol, out var protocolProp) ? protocolProp.GetString() ?? string.Empty : string.Empty;
 
                 if (!int.TryParse(portText, out var port))
                     continue;
@@ -127,11 +127,11 @@ internal static class KubernetesPropertyParser
 
                 result.Add(new ServicePortSpec
                 {
-                    Name = string.IsNullOrWhiteSpace(name) ? "http" : name,
+                    Name = string.IsNullOrWhiteSpace(name) ? KubernetesDefaultValues.PortName : name,
                     Port = port,
                     TargetPort = string.IsNullOrWhiteSpace(targetPortText) ? null : targetPortText,
                     NodePort = nodePort,
-                    Protocol = string.IsNullOrWhiteSpace(protocol) ? "TCP" : protocol
+                    Protocol = string.IsNullOrWhiteSpace(protocol) ? KubernetesDefaultValues.ProtocolTcp : protocol
                 });
             }
         }
@@ -160,12 +160,12 @@ internal static class KubernetesPropertyParser
 
             foreach (var element in doc.RootElement.EnumerateArray())
             {
-                var name = element.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var image = GetFirstImagePropertyFromContainer(element) ?? "nginx:latest";
+                var name = element.TryGetProperty(KubernetesContainerPayloadProperties.Name, out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+                var image = GetFirstImagePropertyFromContainer(element) ?? KubernetesDefaultValues.ContainerImage;
 
                 var container = new ContainerSpec
                 {
-                    Name = string.IsNullOrWhiteSpace(name) ? "container" : name,
+                    Name = string.IsNullOrWhiteSpace(name) ? KubernetesDefaultValues.ContainerName : name,
                     Image = image
                 };
 
@@ -177,8 +177,8 @@ internal static class KubernetesPropertyParser
                 FillContainerSecurityContext(element, container);
                 FillContainerLifecycle(element, container);
 
-                container.IsInitContainer = element.TryGetProperty("IsInitContainer", out var initProp)
-                    && string.Equals(initProp.GetString(), "True", StringComparison.OrdinalIgnoreCase);
+                container.IsInitContainer = element.TryGetProperty(KubernetesContainerPayloadProperties.IsInitContainer, out var initProp)
+                    && string.Equals(initProp.GetString(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
 
                 result.Add(container);
             }
@@ -208,24 +208,24 @@ internal static class KubernetesPropertyParser
 
             foreach (var element in doc.RootElement.EnumerateArray())
             {
-                var name = element.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var type = element.TryGetProperty("Type", out var typeProp) ? typeProp.GetString() ?? string.Empty : string.Empty;
-                var referenceName = element.TryGetProperty("ReferenceName", out var referenceProp) ? referenceProp.GetString() ?? string.Empty : string.Empty;
+                var name = element.TryGetProperty(KubernetesVolumePayloadProperties.Name, out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
+                var type = element.TryGetProperty(KubernetesVolumePayloadProperties.Type, out var typeProp) ? typeProp.GetString() ?? string.Empty : string.Empty;
+                var referenceName = element.TryGetProperty(KubernetesVolumePayloadProperties.ReferenceName, out var referenceProp) ? referenceProp.GetString() ?? string.Empty : string.Empty;
 
                 if (string.IsNullOrWhiteSpace(name))
                     continue;
 
                 var volume = new VolumeSpec { Name = name };
 
-                if (string.Equals(type, "ConfigMap", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(type, KubernetesVolumeTypeValues.ConfigMap, StringComparison.OrdinalIgnoreCase))
                     volume.ConfigMapName = referenceName;
-                else if (string.Equals(type, "Secret", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(type, KubernetesVolumeTypeValues.Secret, StringComparison.OrdinalIgnoreCase))
                     volume.SecretName = referenceName;
-                else if (string.Equals(type, "EmptyDir", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(type, KubernetesVolumeTypeValues.EmptyDir, StringComparison.OrdinalIgnoreCase))
                     volume.EmptyDir = true;
-                else if (string.Equals(type, "PVC", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(type, KubernetesVolumeTypeValues.PersistentVolumeClaim, StringComparison.OrdinalIgnoreCase))
                     volume.PvcClaimName = referenceName;
-                else if (string.Equals(type, "HostPath", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(type, KubernetesVolumeTypeValues.HostPath, StringComparison.OrdinalIgnoreCase))
                     volume.HostPath = referenceName;
 
                 result.Add(volume);
@@ -240,10 +240,10 @@ internal static class KubernetesPropertyParser
 
     private static string GetFirstImagePropertyFromContainer(JsonElement containerElement)
     {
-        if (containerElement.TryGetProperty("Image", out var imageProp))
+        if (containerElement.TryGetProperty(KubernetesContainerPayloadProperties.Image, out var imageProp))
             return imageProp.GetString() ?? string.Empty;
 
-        if (containerElement.TryGetProperty("PackageId", out var packageIdProp))
+        if (containerElement.TryGetProperty(KubernetesContainerPayloadProperties.PackageId, out var packageIdProp))
         {
             var packageId = packageIdProp.GetString();
 
@@ -256,33 +256,33 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerPorts(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("Ports", out var portsElement) || portsElement.ValueKind != JsonValueKind.Array)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.Ports, out var portsElement) || portsElement.ValueKind != JsonValueKind.Array)
             return;
 
         foreach (var portElement in portsElement.EnumerateArray())
         {
-            var name = portElement.TryGetProperty("key", out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
-            var portText = portElement.TryGetProperty("value", out var valueProp) ? valueProp.GetString() : null;
-            var protocol = portElement.TryGetProperty("option", out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var name = portElement.TryGetProperty(KubernetesContainerPortPayloadProperties.Name, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var portText = portElement.TryGetProperty(KubernetesContainerPortPayloadProperties.ContainerPort, out var valueProp) ? valueProp.GetString() : null;
+            var protocol = portElement.TryGetProperty(KubernetesContainerPortPayloadProperties.Protocol, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
 
             if (!int.TryParse(portText, out var port))
                 continue;
 
             container.Ports.Add(new ContainerPortSpec
             {
-                Name = string.IsNullOrWhiteSpace(name) ? "http" : name,
+                Name = string.IsNullOrWhiteSpace(name) ? KubernetesDefaultValues.PortName : name,
                 Port = port,
-                Protocol = string.IsNullOrWhiteSpace(protocol) ? "TCP" : protocol
+                Protocol = string.IsNullOrWhiteSpace(protocol) ? KubernetesDefaultValues.ProtocolTcp : protocol
             });
         }
     }
 
     private static void FillContainerResources(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("Resources", out var resourcesElement) || resourcesElement.ValueKind != JsonValueKind.Object)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.Resources, out var resourcesElement) || resourcesElement.ValueKind != JsonValueKind.Object)
             return;
 
-        if (resourcesElement.TryGetProperty("requests", out var requestsElement) && requestsElement.ValueKind == JsonValueKind.Object)
+        if (resourcesElement.TryGetProperty(KubernetesContainerResourcePayloadProperties.Requests, out var requestsElement) && requestsElement.ValueKind == JsonValueKind.Object)
         {
             foreach (var property in requestsElement.EnumerateObject())
             {
@@ -293,7 +293,7 @@ internal static class KubernetesPropertyParser
             }
         }
 
-        if (resourcesElement.TryGetProperty("limits", out var limitsElement) && limitsElement.ValueKind == JsonValueKind.Object)
+        if (resourcesElement.TryGetProperty(KubernetesContainerResourcePayloadProperties.Limits, out var limitsElement) && limitsElement.ValueKind == JsonValueKind.Object)
         {
             foreach (var property in limitsElement.EnumerateObject())
             {
@@ -307,14 +307,14 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerVolumeMounts(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("VolumeMounts", out var mountsElement) || mountsElement.ValueKind != JsonValueKind.Array)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.VolumeMounts, out var mountsElement) || mountsElement.ValueKind != JsonValueKind.Array)
             return;
 
         foreach (var mountElement in mountsElement.EnumerateArray())
         {
-            var name = mountElement.TryGetProperty("key", out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
-            var mountPath = mountElement.TryGetProperty("value", out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
-            var subPath = mountElement.TryGetProperty("option", out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var name = mountElement.TryGetProperty(KubernetesContainerVolumeMountPayloadProperties.VolumeName, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var mountPath = mountElement.TryGetProperty(KubernetesContainerVolumeMountPayloadProperties.MountPath, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+            var subPath = mountElement.TryGetProperty(KubernetesContainerVolumeMountPayloadProperties.SubPath, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
 
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(mountPath))
                 continue;
@@ -330,12 +330,12 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerConfigMapEnvFrom(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("ConfigMapEnvFromSource", out var envFromElement) || envFromElement.ValueKind != JsonValueKind.Array)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.ConfigMapEnvFromSource, out var envFromElement) || envFromElement.ValueKind != JsonValueKind.Array)
             return;
 
         foreach (var itemElement in envFromElement.EnumerateArray())
         {
-            var name = itemElement.TryGetProperty("key", out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var name = itemElement.TryGetProperty(KubernetesContainerEnvFromPayloadProperties.ConfigMapName, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
 
             if (!string.IsNullOrWhiteSpace(name))
                 container.ConfigMapEnvFromSource.Add(name);
@@ -344,7 +344,7 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerProbes(JsonElement element, ContainerSpec container)
     {
-        if (element.TryGetProperty("LivenessProbe", out var livenessElement))
+        if (element.TryGetProperty(KubernetesContainerPayloadProperties.LivenessProbe, out var livenessElement))
         {
             var probe = ParseProbe(livenessElement);
 
@@ -352,7 +352,7 @@ internal static class KubernetesPropertyParser
                 container.LivenessProbe = probe;
         }
 
-        if (element.TryGetProperty("ReadinessProbe", out var readinessElement))
+        if (element.TryGetProperty(KubernetesContainerPayloadProperties.ReadinessProbe, out var readinessElement))
         {
             var probe = ParseProbe(readinessElement);
 
@@ -360,7 +360,7 @@ internal static class KubernetesPropertyParser
                 container.ReadinessProbe = probe;
         }
 
-        if (element.TryGetProperty("StartupProbe", out var startupElement))
+        if (element.TryGetProperty(KubernetesContainerPayloadProperties.StartupProbe, out var startupElement))
         {
             var probe = ParseProbe(startupElement);
 
@@ -376,20 +376,20 @@ internal static class KubernetesPropertyParser
 
         var result = new ProbeSpec
         {
-            FailureThreshold = GetOptionalString(probeElement, "failureThreshold"),
-            InitialDelaySeconds = GetOptionalString(probeElement, "initialDelaySeconds"),
-            PeriodSeconds = GetOptionalString(probeElement, "periodSeconds"),
-            SuccessThreshold = GetOptionalString(probeElement, "successThreshold"),
-            TimeoutSeconds = GetOptionalString(probeElement, "timeoutSeconds")
+            FailureThreshold = GetOptionalString(probeElement, KubernetesContainerProbePayloadProperties.FailureThreshold),
+            InitialDelaySeconds = GetOptionalString(probeElement, KubernetesContainerProbePayloadProperties.InitialDelaySeconds),
+            PeriodSeconds = GetOptionalString(probeElement, KubernetesContainerProbePayloadProperties.PeriodSeconds),
+            SuccessThreshold = GetOptionalString(probeElement, KubernetesContainerProbePayloadProperties.SuccessThreshold),
+            TimeoutSeconds = GetOptionalString(probeElement, KubernetesContainerProbePayloadProperties.TimeoutSeconds)
         };
 
-        if (probeElement.TryGetProperty("exec", out var execElement))
+        if (probeElement.TryGetProperty(KubernetesContainerProbePayloadProperties.Exec, out var execElement))
             result.Exec = ParseExecAction(execElement);
 
-        if (probeElement.TryGetProperty("httpGet", out var httpGetElement))
+        if (probeElement.TryGetProperty(KubernetesContainerProbePayloadProperties.HttpGet, out var httpGetElement))
             result.HttpGet = ParseHttpGetAction(httpGetElement);
 
-        if (probeElement.TryGetProperty("tcpSocket", out var tcpSocketElement))
+        if (probeElement.TryGetProperty(KubernetesContainerProbePayloadProperties.TcpSocket, out var tcpSocketElement))
             result.TcpSocket = ParseTcpSocketAction(tcpSocketElement);
 
         if (result.Exec == null && result.HttpGet == null && result.TcpSocket == null
@@ -410,7 +410,7 @@ internal static class KubernetesPropertyParser
         if (execElement.ValueKind != JsonValueKind.Object)
             return null;
 
-        if (!execElement.TryGetProperty("command", out var commandElement))
+        if (!execElement.TryGetProperty(KubernetesProbeActionPayloadProperties.Command, out var commandElement))
             return null;
 
         var result = new ExecActionSpec();
@@ -449,21 +449,21 @@ internal static class KubernetesPropertyParser
 
         var result = new HttpGetActionSpec
         {
-            Host = GetOptionalString(httpGetElement, "host"),
-            Path = GetOptionalString(httpGetElement, "path"),
-            Port = GetOptionalString(httpGetElement, "port"),
-            Scheme = GetOptionalString(httpGetElement, "scheme")
+            Host = GetOptionalString(httpGetElement, KubernetesProbeActionPayloadProperties.Host),
+            Path = GetOptionalString(httpGetElement, KubernetesProbeActionPayloadProperties.Path),
+            Port = GetOptionalString(httpGetElement, KubernetesProbeActionPayloadProperties.Port),
+            Scheme = GetOptionalString(httpGetElement, KubernetesProbeActionPayloadProperties.Scheme)
         };
 
-        if (httpGetElement.TryGetProperty("httpHeaders", out var headersElement) && headersElement.ValueKind == JsonValueKind.Array)
+        if (httpGetElement.TryGetProperty(KubernetesProbeActionPayloadProperties.HttpHeaders, out var headersElement) && headersElement.ValueKind == JsonValueKind.Array)
         {
             foreach (var headerElement in headersElement.EnumerateArray())
             {
                 if (headerElement.ValueKind != JsonValueKind.Object)
                     continue;
 
-                var name = headerElement.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
-                var value = headerElement.TryGetProperty("value", out var valueProp) ? valueProp.GetString() : null;
+                var name = headerElement.TryGetProperty(KubernetesProbeActionPayloadProperties.Name, out var nameProp) ? nameProp.GetString() : null;
+                var value = headerElement.TryGetProperty(KubernetesProbeActionPayloadProperties.Value, out var valueProp) ? valueProp.GetString() : null;
 
                 if (!string.IsNullOrWhiteSpace(name))
                     result.HttpHeaders.Add(new HttpHeaderSpec { Name = name, Value = value });
@@ -489,8 +489,8 @@ internal static class KubernetesPropertyParser
 
         var result = new TcpSocketActionSpec
         {
-            Host = GetOptionalString(tcpSocketElement, "host"),
-            Port = GetOptionalString(tcpSocketElement, "port")
+            Host = GetOptionalString(tcpSocketElement, KubernetesProbeActionPayloadProperties.Host),
+            Port = GetOptionalString(tcpSocketElement, KubernetesProbeActionPayloadProperties.Port)
         };
 
         if (string.IsNullOrWhiteSpace(result.Host) && string.IsNullOrWhiteSpace(result.Port))
@@ -512,24 +512,24 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerSecurityContext(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("SecurityContext", out var contextElement) || contextElement.ValueKind != JsonValueKind.Object)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecurityContext, out var contextElement) || contextElement.ValueKind != JsonValueKind.Object)
             return;
 
         var securityContext = new SecurityContextSpec
         {
-            AllowPrivilegeEscalation = GetOptionalString(contextElement, "allowPrivilegeEscalation"),
-            Privileged = GetOptionalString(contextElement, "privileged"),
-            ReadOnlyRootFilesystem = GetOptionalString(contextElement, "readOnlyRootFilesystem"),
-            RunAsGroup = GetOptionalString(contextElement, "runAsGroup"),
-            RunAsNonRoot = GetOptionalString(contextElement, "runAsNonRoot"),
-            RunAsUser = GetOptionalString(contextElement, "runAsUser")
+            AllowPrivilegeEscalation = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.AllowPrivilegeEscalation),
+            Privileged = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.Privileged),
+            ReadOnlyRootFilesystem = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.ReadOnlyRootFilesystem),
+            RunAsGroup = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.RunAsGroup),
+            RunAsNonRoot = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.RunAsNonRoot),
+            RunAsUser = GetOptionalString(contextElement, KubernetesContainerSecurityContextPayloadProperties.RunAsUser)
         };
 
-        if (contextElement.TryGetProperty("capabilities", out var capabilitiesElement) && capabilitiesElement.ValueKind == JsonValueKind.Object)
+        if (contextElement.TryGetProperty(KubernetesSecurityContextPayloadProperties.Capabilities, out var capabilitiesElement) && capabilitiesElement.ValueKind == JsonValueKind.Object)
         {
             var capabilities = new CapabilitiesSpec();
 
-            if (capabilitiesElement.TryGetProperty("add", out var addElement) && addElement.ValueKind == JsonValueKind.Array)
+            if (capabilitiesElement.TryGetProperty(KubernetesSecurityContextPayloadProperties.Add, out var addElement) && addElement.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in addElement.EnumerateArray())
                 {
@@ -540,7 +540,7 @@ internal static class KubernetesPropertyParser
                 }
             }
 
-            if (capabilitiesElement.TryGetProperty("drop", out var dropElement) && dropElement.ValueKind == JsonValueKind.Array)
+            if (capabilitiesElement.TryGetProperty(KubernetesSecurityContextPayloadProperties.Drop, out var dropElement) && dropElement.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in dropElement.EnumerateArray())
                 {
@@ -555,14 +555,14 @@ internal static class KubernetesPropertyParser
                 securityContext.Capabilities = capabilities;
         }
 
-        if (contextElement.TryGetProperty("seLinuxOptions", out var seLinuxOptionsElement) && seLinuxOptionsElement.ValueKind == JsonValueKind.Object)
+        if (contextElement.TryGetProperty(KubernetesSecurityContextPayloadProperties.SeLinuxOptions, out var seLinuxOptionsElement) && seLinuxOptionsElement.ValueKind == JsonValueKind.Object)
         {
             var seLinuxOptions = new SeLinuxOptionsSpec
             {
-                Level = GetOptionalString(seLinuxOptionsElement, "level"),
-                Role = GetOptionalString(seLinuxOptionsElement, "role"),
-                Type = GetOptionalString(seLinuxOptionsElement, "type"),
-                User = GetOptionalString(seLinuxOptionsElement, "user")
+                Level = GetOptionalString(seLinuxOptionsElement, KubernetesSecurityContextPayloadProperties.Level),
+                Role = GetOptionalString(seLinuxOptionsElement, KubernetesSecurityContextPayloadProperties.Role),
+                Type = GetOptionalString(seLinuxOptionsElement, KubernetesSecurityContextPayloadProperties.Type),
+                User = GetOptionalString(seLinuxOptionsElement, KubernetesSecurityContextPayloadProperties.User)
             };
 
             if (!string.IsNullOrWhiteSpace(seLinuxOptions.Level)
@@ -591,13 +591,13 @@ internal static class KubernetesPropertyParser
 
     private static void FillContainerLifecycle(JsonElement element, ContainerSpec container)
     {
-        if (!element.TryGetProperty("Lifecycle", out var lifecycleElement) || lifecycleElement.ValueKind != JsonValueKind.Object)
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.Lifecycle, out var lifecycleElement) || lifecycleElement.ValueKind != JsonValueKind.Object)
             return;
 
         var lifecycle = new LifecycleSpec
         {
-            PreStop = ParseLifecycleHandler(lifecycleElement, "preStop"),
-            PostStart = ParseLifecycleHandler(lifecycleElement, "postStart")
+            PreStop = ParseLifecycleHandler(lifecycleElement, KubernetesContainerLifecyclePayloadProperties.PreStop),
+            PostStart = ParseLifecycleHandler(lifecycleElement, KubernetesContainerLifecyclePayloadProperties.PostStart)
         };
 
         if (lifecycle.PreStop == null && lifecycle.PostStart == null)
@@ -625,23 +625,23 @@ internal static class KubernetesPropertyParser
             return null;
 
         var handler = new LifecycleHandlerSpec();
-        var type = GetOptionalString(handlerElement, "type") ?? string.Empty;
+        var type = GetOptionalString(handlerElement, KubernetesContainerLifecyclePayloadProperties.Type) ?? string.Empty;
 
-        if (string.Equals(type, "exec", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(type, KubernetesContainerProbePayloadProperties.Exec, StringComparison.OrdinalIgnoreCase))
             handler.Exec = ParseExecAction(handlerElement);
-        else if (string.Equals(type, "httpGet", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(type, KubernetesContainerProbePayloadProperties.HttpGet, StringComparison.OrdinalIgnoreCase))
             handler.HttpGet = ParseHttpGetAction(handlerElement);
-        else if (string.Equals(type, "tcpSocket", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(type, KubernetesContainerProbePayloadProperties.TcpSocket, StringComparison.OrdinalIgnoreCase))
             handler.TcpSocket = ParseTcpSocketAction(handlerElement);
         else
         {
-            if (handlerElement.TryGetProperty("exec", out var execElement))
+            if (handlerElement.TryGetProperty(KubernetesContainerProbePayloadProperties.Exec, out var execElement))
                 handler.Exec = ParseExecAction(execElement);
 
-            if (handlerElement.TryGetProperty("httpGet", out var httpGetElement))
+            if (handlerElement.TryGetProperty(KubernetesContainerProbePayloadProperties.HttpGet, out var httpGetElement))
                 handler.HttpGet = ParseHttpGetAction(httpGetElement);
 
-            if (handlerElement.TryGetProperty("tcpSocket", out var tcpSocketElement))
+            if (handlerElement.TryGetProperty(KubernetesContainerProbePayloadProperties.TcpSocket, out var tcpSocketElement))
                 handler.TcpSocket = ParseTcpSocketAction(tcpSocketElement);
         }
 
@@ -669,18 +669,18 @@ internal static class KubernetesPropertyParser
 
         var innerIndent = indent + "  ";
 
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "failureThreshold", probe.FailureThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "initialDelaySeconds", probe.InitialDelaySeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "periodSeconds", probe.PeriodSeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "successThreshold", probe.SuccessThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, "timeoutSeconds", probe.TimeoutSeconds);
+        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.FailureThreshold, probe.FailureThreshold);
+        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.InitialDelaySeconds, probe.InitialDelaySeconds);
+        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.PeriodSeconds, probe.PeriodSeconds);
+        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.SuccessThreshold, probe.SuccessThreshold);
+        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.TimeoutSeconds, probe.TimeoutSeconds);
 
         if (probe.Exec != null && probe.Exec.Command.Count > 0)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("exec:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.Exec}:");
             sb.Append(innerIndent);
-            sb.AppendLine("  command:");
+            sb.AppendLine($"  {KubernetesProbeActionPayloadProperties.Command}:");
 
             foreach (var command in probe.Exec.Command)
             {
@@ -695,19 +695,19 @@ internal static class KubernetesPropertyParser
         if (probe.HttpGet != null)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("httpGet:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.HttpGet}:");
 
             var httpIndent = innerIndent + "  ";
 
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "host", probe.HttpGet.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "path", probe.HttpGet.Path);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "port", probe.HttpGet.Port);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "scheme", probe.HttpGet.Scheme);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Host, probe.HttpGet.Host);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Path, probe.HttpGet.Path);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, probe.HttpGet.Port);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Scheme, probe.HttpGet.Scheme);
 
             if (probe.HttpGet.HttpHeaders.Count > 0)
             {
                 sb.Append(httpIndent);
-                sb.AppendLine("httpHeaders:");
+                sb.AppendLine($"{KubernetesProbeActionPayloadProperties.HttpHeaders}:");
 
                 foreach (var header in probe.HttpGet.HttpHeaders)
                 {
@@ -715,12 +715,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - name: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    value: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
                     }
                 }
             }
@@ -729,12 +729,12 @@ internal static class KubernetesPropertyParser
         if (probe.TcpSocket != null)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("tcpSocket:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.TcpSocket}:");
 
             var tcpIndent = innerIndent + "  ";
 
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, "host", probe.TcpSocket.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, "port", probe.TcpSocket.Port);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Host, probe.TcpSocket.Host);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, probe.TcpSocket.Port);
         }
     }
 
@@ -748,9 +748,9 @@ internal static class KubernetesPropertyParser
         if (handler.Exec != null && handler.Exec.Command.Count > 0)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("exec:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.Exec}:");
             sb.Append(innerIndent);
-            sb.AppendLine("  command:");
+            sb.AppendLine($"  {KubernetesProbeActionPayloadProperties.Command}:");
 
             foreach (var command in handler.Exec.Command)
             {
@@ -765,19 +765,19 @@ internal static class KubernetesPropertyParser
         if (handler.HttpGet != null)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("httpGet:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.HttpGet}:");
 
             var httpIndent = innerIndent + "  ";
 
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "host", handler.HttpGet.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "path", handler.HttpGet.Path);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "port", handler.HttpGet.Port);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, "scheme", handler.HttpGet.Scheme);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Host, handler.HttpGet.Host);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Path, handler.HttpGet.Path);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, handler.HttpGet.Port);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Scheme, handler.HttpGet.Scheme);
 
             if (handler.HttpGet.HttpHeaders.Count > 0)
             {
                 sb.Append(httpIndent);
-                sb.AppendLine("httpHeaders:");
+                sb.AppendLine($"{KubernetesProbeActionPayloadProperties.HttpHeaders}:");
 
                 foreach (var header in handler.HttpGet.HttpHeaders)
                 {
@@ -785,12 +785,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - name: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    value: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
                     }
                 }
             }
@@ -799,12 +799,12 @@ internal static class KubernetesPropertyParser
         if (handler.TcpSocket != null)
         {
             sb.Append(innerIndent);
-            sb.AppendLine("tcpSocket:");
+            sb.AppendLine($"{KubernetesContainerProbePayloadProperties.TcpSocket}:");
 
             var tcpIndent = innerIndent + "  ";
 
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, "host", handler.TcpSocket.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, "port", handler.TcpSocket.Port);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Host, handler.TcpSocket.Host);
+            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, handler.TcpSocket.Port);
         }
     }
 

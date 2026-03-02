@@ -18,9 +18,9 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var inlineYaml = ctx.Action.GetProperty("Squid.Action.KubernetesYaml.InlineYaml") ?? string.Empty;
-        var syntaxStr = ctx.Action.GetProperty("Squid.Action.Script.Syntax");
-        var syntax = string.Equals(syntaxStr, "Bash", StringComparison.OrdinalIgnoreCase)
+        var inlineYaml = ctx.Action.GetProperty(KubernetesRawYamlProperties.InlineYaml) ?? string.Empty;
+        var syntaxStr = ctx.Action.GetProperty(KubernetesScriptProperties.Syntax);
+        var syntax = string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
             ? ScriptSyntax.Bash
             : ScriptSyntax.PowerShell;
 

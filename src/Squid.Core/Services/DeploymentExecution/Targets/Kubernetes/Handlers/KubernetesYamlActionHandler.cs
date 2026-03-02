@@ -99,8 +99,8 @@ public class KubernetesYamlActionHandler : IActionHandler
 
             foreach (var container in doc.RootElement.EnumerateArray())
             {
-                if (container.TryGetProperty("CreateFeedSecrets", out var prop)
-                    && string.Equals(prop.GetString(), "True", StringComparison.OrdinalIgnoreCase))
+                if (container.TryGetProperty(KubernetesContainerPayloadProperties.CreateFeedSecrets, out var prop)
+                    && string.Equals(prop.GetString(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
         }
@@ -136,12 +136,12 @@ public class KubernetesYamlActionHandler : IActionHandler
         try
         {
             var secrets = JsonSerializer.Deserialize<List<Dictionary<string, string>>>(
-                existingProp.PropertyValue ?? "[]") ?? new();
+                existingProp.PropertyValue ?? KubernetesJsonLiterals.EmptyArray) ?? new();
 
-            if (secrets.Any(s => s.TryGetValue("name", out var n) && n == secretName))
+            if (secrets.Any(s => s.TryGetValue(KubernetesImagePullSecretPayloadProperties.Name, out var n) && n == secretName))
                 return;
 
-            secrets.Add(new Dictionary<string, string> { ["name"] = secretName });
+            secrets.Add(new Dictionary<string, string> { [KubernetesImagePullSecretPayloadProperties.Name] = secretName });
             existingProp.PropertyValue = JsonSerializer.Serialize(secrets);
         }
         catch
@@ -197,7 +197,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             ns = action.Properties?
                 .FirstOrDefault(p => p.PropertyName == KubernetesProperties.LegacyNamespace)?.PropertyValue;
 
-        return string.IsNullOrWhiteSpace(ns) ? "default" : ns;
+        return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
     }
 
     private async Task ResolveContainerImagesAsync(ActionExecutionContext ctx, CancellationToken ct)
@@ -242,7 +242,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             if (containers == null) return;
 
             foreach (var container in containers)
-                container["Image"] = JsonSerializer.SerializeToElement(resolvedImage);
+                container[KubernetesContainerPayloadProperties.Image] = JsonSerializer.SerializeToElement(resolvedImage);
 
             containersProp.PropertyValue = JsonSerializer.Serialize(containers);
         }

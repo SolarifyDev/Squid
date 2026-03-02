@@ -79,12 +79,12 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
                 if (element.ValueKind != JsonValueKind.Object)
                     continue;
 
-                var key = element.TryGetProperty("Key", out var keyProp) ? keyProp.GetString()
-                    : element.TryGetProperty("key", out var lowerKeyProp) ? lowerKeyProp.GetString()
+                var key = element.TryGetProperty(KubernetesKeyValuePayloadProperties.PascalKey, out var keyProp) ? keyProp.GetString()
+                    : element.TryGetProperty(KubernetesKeyValuePayloadProperties.LowerKey, out var lowerKeyProp) ? lowerKeyProp.GetString()
                     : null;
 
-                var value = element.TryGetProperty("Value", out var valueProp) ? valueProp.GetString() ?? string.Empty
-                    : element.TryGetProperty("value", out var lowerValueProp) ? lowerValueProp.GetString() ?? string.Empty
+                var value = element.TryGetProperty(KubernetesKeyValuePayloadProperties.PascalValue, out var valueProp) ? valueProp.GetString() ?? string.Empty
+                    : element.TryGetProperty(KubernetesKeyValuePayloadProperties.LowerValue, out var lowerValueProp) ? lowerValueProp.GetString() ?? string.Empty
                     : string.Empty;
 
                 if (!string.IsNullOrWhiteSpace(key))

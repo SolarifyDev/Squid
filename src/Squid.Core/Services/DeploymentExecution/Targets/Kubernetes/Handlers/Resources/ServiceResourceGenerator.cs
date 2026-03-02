@@ -25,12 +25,12 @@ internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
 
         var selectorLabels = deploymentLabels.Count > 0
             ? deploymentLabels
-            : new Dictionary<string, string> { ["app"] = string.IsNullOrWhiteSpace(deploymentName) ? serviceName : deploymentName };
+            : new Dictionary<string, string> { [KubernetesLabelKeys.App] = string.IsNullOrWhiteSpace(deploymentName) ? serviceName : deploymentName };
 
         var serviceType = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ServiceType);
 
         if (string.IsNullOrWhiteSpace(serviceType))
-            serviceType = "ClusterIP";
+            serviceType = KubernetesServiceTypeValues.ClusterIp;
 
         var serviceClusterIp = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ServiceClusterIp);
         var serviceAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.ServiceAnnotations);

@@ -28,7 +28,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         var deploymentStrategy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DeploymentStyle);
 
         if (string.IsNullOrWhiteSpace(deploymentStrategy))
-            deploymentStrategy = "RollingUpdate";
+            deploymentStrategy = KubernetesDeploymentStrategyValues.RollingUpdate;
 
         var volumes = KubernetesPropertyParser.ParseVolumes(properties);
         var deploymentAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.DeploymentAnnotations);
@@ -37,7 +37,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
         var selectorLabels = deploymentLabels.Count > 0
             ? deploymentLabels
-            : new Dictionary<string, string> { ["app"] = deploymentName };
+            : new Dictionary<string, string> { [KubernetesLabelKeys.App] = deploymentName };
 
         var sb = new StringBuilder();
 
@@ -63,9 +63,9 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         foreach (var kvp in selectorLabels)
             KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "      ", kvp.Key, kvp.Value);
 
-        var k8sStrategyType = string.Equals(deploymentStrategy, "Recreate", StringComparison.OrdinalIgnoreCase)
-            ? "Recreate"
-            : "RollingUpdate";
+        var k8sStrategyType = string.Equals(deploymentStrategy, KubernetesDeploymentStrategyValues.Recreate, StringComparison.OrdinalIgnoreCase)
+            ? KubernetesDeploymentStrategyValues.Recreate
+            : KubernetesDeploymentStrategyValues.RollingUpdate;
 
         sb.AppendLine("  strategy:");
         sb.AppendLine($"    type: {k8sStrategyType}");
@@ -181,7 +181,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendRollingUpdateIfPresent(StringBuilder sb, string deploymentStrategy, Dictionary<string, string> properties)
     {
-        if (!string.Equals(deploymentStrategy, "RollingUpdate", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(deploymentStrategy, KubernetesDeploymentStrategyValues.RollingUpdate, StringComparison.OrdinalIgnoreCase))
             return;
 
         var maxUnavailable = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.MaxUnavailable);
@@ -199,7 +199,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
     {
         var restartPolicy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodRestartPolicy);
 
-        if (string.IsNullOrWhiteSpace(restartPolicy) || string.Equals(restartPolicy, "Always", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(restartPolicy) || string.Equals(restartPolicy, KubernetesPodDefaultValues.RestartPolicyAlways, StringComparison.OrdinalIgnoreCase))
             return;
 
         sb.AppendLine($"      restartPolicy: {restartPolicy}");
@@ -209,7 +209,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
     {
         var dnsPolicy = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodDnsPolicy);
 
-        if (string.IsNullOrWhiteSpace(dnsPolicy) || string.Equals(dnsPolicy, "ClusterFirst", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(dnsPolicy) || string.Equals(dnsPolicy, KubernetesPodDefaultValues.DnsPolicyClusterFirst, StringComparison.OrdinalIgnoreCase))
             return;
 
         sb.AppendLine($"      dnsPolicy: {dnsPolicy}");
@@ -219,7 +219,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
     {
         var raw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodHostNetworking);
 
-        if (string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(raw, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase))
             sb.AppendLine("      hostNetwork: true");
     }
 
@@ -238,25 +238,25 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("      readinessGates:");
 
         foreach (var gate in gates)
-            sb.AppendLine($"      - conditionType: {gate}");
+            sb.AppendLine($"      - {KubernetesReadinessGatePayloadProperties.ConditionType}: {gate}");
     }
 
     private static void AppendAffinityIfPresent(StringBuilder sb, Dictionary<string, string> properties)
     {
         var hasNodeAffinity = properties.TryGetValue(KubernetesProperties.NodeAffinity, out var nodeAffinityRaw)
             && !string.IsNullOrWhiteSpace(nodeAffinityRaw)
-            && !string.Equals(nodeAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
-            && !string.Equals(nodeAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
+            && !string.Equals(nodeAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal)
+            && !string.Equals(nodeAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal);
 
         var hasPodAffinity = properties.TryGetValue(KubernetesProperties.PodAffinity, out var podAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAffinityRaw)
-            && !string.Equals(podAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
-            && !string.Equals(podAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
+            && !string.Equals(podAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal)
+            && !string.Equals(podAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal);
 
         var hasPodAntiAffinity = properties.TryGetValue(KubernetesProperties.PodAntiAffinity, out var podAntiAffinityRaw)
             && !string.IsNullOrWhiteSpace(podAntiAffinityRaw)
-            && !string.Equals(podAntiAffinityRaw.Trim(), "[]", StringComparison.Ordinal)
-            && !string.Equals(podAntiAffinityRaw.Trim(), "{}", StringComparison.Ordinal);
+            && !string.Equals(podAntiAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal)
+            && !string.Equals(podAntiAffinityRaw.Trim(), KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal);
 
         if (!hasNodeAffinity && !hasPodAffinity && !hasPodAntiAffinity)
             return;
@@ -304,8 +304,8 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         var searchesRaw = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodDnsSearches);
 
         var hasOptions = !string.IsNullOrWhiteSpace(optionsRaw)
-            && !string.Equals(optionsRaw, "[]", StringComparison.Ordinal)
-            && !string.Equals(optionsRaw, "{}", StringComparison.Ordinal);
+            && !string.Equals(optionsRaw, KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal)
+            && !string.Equals(optionsRaw, KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal);
 
         var nameservers = SplitCommaSeparated(nameserversRaw);
         var searches = SplitCommaSeparated(searchesRaw);
@@ -357,11 +357,11 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         var seLinuxUser = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.PodSecuritySeLinuxUser);
 
         var hasSysctls = !string.IsNullOrWhiteSpace(sysctlsRaw)
-            && !string.Equals(sysctlsRaw, "[]", StringComparison.Ordinal)
-            && !string.Equals(sysctlsRaw, "{}", StringComparison.Ordinal);
+            && !string.Equals(sysctlsRaw, KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal)
+            && !string.Equals(sysctlsRaw, KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal);
 
         var supplementalGroups = SplitCommaSeparated(supplementalGroupsRaw);
-        var hasRunAsNonRoot = string.Equals(runAsNonRoot, "True", StringComparison.OrdinalIgnoreCase);
+        var hasRunAsNonRoot = string.Equals(runAsNonRoot, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
         var hasSeLinux = !string.IsNullOrWhiteSpace(seLinuxLevel) || !string.IsNullOrWhiteSpace(seLinuxRole)
             || !string.IsNullOrWhiteSpace(seLinuxType) || !string.IsNullOrWhiteSpace(seLinuxUser);
 
@@ -398,10 +398,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (hasSeLinux)
         {
             sb.AppendLine("        seLinuxOptions:");
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "level", seLinuxLevel);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "role", seLinuxRole);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "type", seLinuxType);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "user", seLinuxUser);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesSecurityContextPayloadProperties.Level, seLinuxLevel);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesSecurityContextPayloadProperties.Role, seLinuxRole);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesSecurityContextPayloadProperties.Type, seLinuxType);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesSecurityContextPayloadProperties.User, seLinuxUser);
         }
 
         if (hasSysctls)
@@ -426,7 +426,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
         raw = raw.Trim();
 
-        if (string.Equals(raw, "[]", StringComparison.Ordinal) || string.Equals(raw, "{}", StringComparison.Ordinal))
+        if (string.Equals(raw, KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal) || string.Equals(raw, KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal))
             return;
 
         try
@@ -440,7 +440,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var secret in doc.RootElement.EnumerateArray())
             {
-                if (secret.TryGetProperty("name", out var nameElement))
+                if (secret.TryGetProperty(KubernetesImagePullSecretPayloadProperties.Name, out var nameElement))
                     sb.AppendLine($"      - name: {nameElement.GetString()}");
             }
         }
@@ -455,7 +455,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
         raw = raw.Trim();
 
-        if (string.Equals(raw, "[]", StringComparison.Ordinal) || string.Equals(raw, "{}", StringComparison.Ordinal))
+        if (string.Equals(raw, KubernetesJsonLiterals.EmptyArray, StringComparison.Ordinal) || string.Equals(raw, KubernetesJsonLiterals.EmptyObject, StringComparison.Ordinal))
             return;
 
         try
@@ -469,7 +469,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var element in doc.RootElement.EnumerateArray())
             {
-                var ip = element.TryGetProperty("ip", out var ipProp) ? ipProp.GetString() : null;
+                var ip = element.TryGetProperty(KubernetesHostAliasPayloadProperties.Ip, out var ipProp) ? ipProp.GetString() : null;
 
                 if (string.IsNullOrWhiteSpace(ip))
                     continue;
@@ -498,7 +498,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static string[] ParseHostnames(JsonElement element)
     {
-        if (!element.TryGetProperty("hostnames", out var hostnamesProp))
+        if (!element.TryGetProperty(KubernetesHostAliasPayloadProperties.Hostnames, out var hostnamesProp))
             return [];
 
         if (hostnamesProp.ValueKind == JsonValueKind.String)
@@ -621,21 +621,21 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         {
             sb.AppendLine("        securityContext:");
 
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "allowPrivilegeEscalation", container.SecurityContext.AllowPrivilegeEscalation);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "privileged", container.SecurityContext.Privileged);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "readOnlyRootFilesystem", container.SecurityContext.ReadOnlyRootFilesystem);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "runAsGroup", container.SecurityContext.RunAsGroup);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "runAsNonRoot", container.SecurityContext.RunAsNonRoot);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", "runAsUser", container.SecurityContext.RunAsUser);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.AllowPrivilegeEscalation, container.SecurityContext.AllowPrivilegeEscalation);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.Privileged, container.SecurityContext.Privileged);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.ReadOnlyRootFilesystem, container.SecurityContext.ReadOnlyRootFilesystem);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsGroup, container.SecurityContext.RunAsGroup);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsNonRoot, container.SecurityContext.RunAsNonRoot);
+            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsUser, container.SecurityContext.RunAsUser);
 
             if (container.SecurityContext.Capabilities != null
                 && (container.SecurityContext.Capabilities.Add.Count > 0 || container.SecurityContext.Capabilities.Drop.Count > 0))
             {
-                sb.AppendLine("          capabilities:");
+                sb.AppendLine($"          {KubernetesSecurityContextPayloadProperties.Capabilities}:");
 
                 if (container.SecurityContext.Capabilities.Add.Count > 0)
                 {
-                    sb.AppendLine("            add:");
+                    sb.AppendLine($"            {KubernetesSecurityContextPayloadProperties.Add}:");
 
                     foreach (var capability in container.SecurityContext.Capabilities.Add)
                     {
@@ -646,7 +646,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
                 if (container.SecurityContext.Capabilities.Drop.Count > 0)
                 {
-                    sb.AppendLine("            drop:");
+                    sb.AppendLine($"            {KubernetesSecurityContextPayloadProperties.Drop}:");
 
                     foreach (var capability in container.SecurityContext.Capabilities.Drop)
                     {
@@ -658,12 +658,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
             if (container.SecurityContext.SeLinuxOptions != null)
             {
-                sb.AppendLine("          seLinuxOptions:");
+                sb.AppendLine($"          {KubernetesSecurityContextPayloadProperties.SeLinuxOptions}:");
 
-                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", "level", container.SecurityContext.SeLinuxOptions.Level);
-                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", "role", container.SecurityContext.SeLinuxOptions.Role);
-                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", "type", container.SecurityContext.SeLinuxOptions.Type);
-                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", "user", container.SecurityContext.SeLinuxOptions.User);
+                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", KubernetesSecurityContextPayloadProperties.Level, container.SecurityContext.SeLinuxOptions.Level);
+                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", KubernetesSecurityContextPayloadProperties.Role, container.SecurityContext.SeLinuxOptions.Role);
+                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", KubernetesSecurityContextPayloadProperties.Type, container.SecurityContext.SeLinuxOptions.Type);
+                KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "            ", KubernetesSecurityContextPayloadProperties.User, container.SecurityContext.SeLinuxOptions.User);
             }
         }
     }
