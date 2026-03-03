@@ -1,4 +1,3 @@
-using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Process.Action;
@@ -29,33 +28,25 @@ public class DeploymentStepService : IDeploymentStepService
     private readonly IDeploymentStepPropertyDataProvider _stepPropertyDataProvider;
     private readonly IDeploymentActionDataProvider _actionDataProvider;
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
-    private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
-    private readonly IActionChannelDataProvider _actionChannelDataProvider;
-    private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
 
     public DeploymentStepService(
         IMapper mapper,
         IDeploymentStepDataProvider stepDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
         IDeploymentActionDataProvider actionDataProvider,
-        IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
-        IActionEnvironmentDataProvider actionEnvironmentDataProvider,
-        IActionChannelDataProvider actionChannelDataProvider,
-        IActionMachineRoleDataProvider actionMachineRoleDataProvider)
+        IDeploymentActionPropertyDataProvider actionPropertyDataProvider)
     {
         _mapper = mapper;
         _stepDataProvider = stepDataProvider;
         _stepPropertyDataProvider = stepPropertyDataProvider;
         _actionDataProvider = actionDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
-        _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
-        _actionChannelDataProvider = actionChannelDataProvider;
-        _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
     public async Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken)
     {
         var step = _mapper.Map<DeploymentStep>(command.Step);
+        
         step.ProcessId = command.ProcessId;
         step.CreatedAt = DateTimeOffset.UtcNow;
         step.StepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
@@ -65,6 +56,7 @@ public class DeploymentStepService : IDeploymentStepService
         if (command.Step.Properties?.Any() == true)
         {
             var properties = _mapper.Map<List<DeploymentStepProperty>>(command.Step.Properties);
+            
             properties.ForEach(p => p.StepId = step.Id);
 
             await _stepPropertyDataProvider.AddDeploymentStepPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
@@ -75,18 +67,16 @@ public class DeploymentStepService : IDeploymentStepService
             await CreateActionsAsync(step.Id, command.Step.Actions, cancellationToken).ConfigureAwait(false);
         }
 
-        var stepDto = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
+        var stepWithRelatedData = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
 
-        return new DeploymentStepCreatedEvent { Data = stepDto };
+        return new DeploymentStepCreatedEvent { Data = stepWithRelatedData };
     }
 
     public async Task<DeploymentStepUpdatedEvent> UpdateDeploymentStepAsync(UpdateDeploymentStepCommand command, CancellationToken cancellationToken)
     {
         var step = await _stepDataProvider.GetDeploymentStepByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
-        if (step == null)
-        {
-            throw new DeploymentEntityNotFoundException("DeploymentStep", command.Id);
-        }
+        
+        if (step == null) throw new DeploymentEntityNotFoundException("DeploymentStep", command.Id);
 
         _mapper.Map(command.Step, step);
 
@@ -97,6 +87,7 @@ public class DeploymentStepService : IDeploymentStepService
         if (command.Step.Properties?.Any() == true)
         {
             var properties = _mapper.Map<List<DeploymentStepProperty>>(command.Step.Properties);
+            
             properties.ForEach(p => p.StepId = step.Id);
 
             await _stepPropertyDataProvider.AddDeploymentStepPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
@@ -109,9 +100,9 @@ public class DeploymentStepService : IDeploymentStepService
             await CreateActionsAsync(step.Id, command.Step.Actions, cancellationToken).ConfigureAwait(false);
         }
 
-        var stepDto = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
+        var stepWithRelatedData = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
 
-        return new DeploymentStepUpdatedEvent { Data = stepDto };
+        return new DeploymentStepUpdatedEvent { Data = stepWithRelatedData };
     }
 
     public async Task<DeploymentStepDeletedEvent> DeleteDeploymentStepsAsync(DeleteDeploymentStepCommand command, CancellationToken cancellationToken)
@@ -131,13 +122,11 @@ public class DeploymentStepService : IDeploymentStepService
 
     public async Task<GetDeploymentStepResponse> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken)
     {
-        var stepDto = await GetStepWithRelatedDataAsync(id, cancellationToken).ConfigureAwait(false);
-        if (stepDto == null)
-        {
-            throw new DeploymentEntityNotFoundException("DeploymentStep", id);
-        }
-
-        return new GetDeploymentStepResponse { Data = stepDto };
+        var step = await GetStepWithRelatedDataAsync(id, cancellationToken).ConfigureAwait(false);
+        
+        if (step == null) throw new DeploymentEntityNotFoundException("DeploymentStep", id);
+        
+        return new GetDeploymentStepResponse { Data = step };
     }
 
     public async Task<GetDeploymentStepsResponse> GetDeploymentStepsAsync(GetDeploymentStepsRequest request, CancellationToken cancellationToken)
@@ -145,40 +134,43 @@ public class DeploymentStepService : IDeploymentStepService
         var (count, data) = await _stepDataProvider.GetDeploymentStepPagingAsync(
             request.ProcessId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
-        var stepDtos = new List<DeploymentStepDto>();
+        var steps = new List<DeploymentStepDto>();
 
         foreach (var step in data)
         {
             var stepDto = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
-            stepDtos.Add(stepDto);
+            
+            steps.Add(stepDto);
         }
 
         return new GetDeploymentStepsResponse
         {
-            Data = new GetDeploymentStepsResponseData { Count = count, Steps = stepDtos }
+            Data = new GetDeploymentStepsResponseData { Count = count, Steps = steps }
         };
     }
 
     private async Task<DeploymentStepDto> GetStepWithRelatedDataAsync(int stepId, CancellationToken cancellationToken)
     {
         var step = await _stepDataProvider.GetDeploymentStepByIdAsync(stepId, cancellationToken).ConfigureAwait(false);
+        
         if (step == null) return null;
 
-        var stepDto = _mapper.Map<DeploymentStepDto>(step);
+        var mappedStep = _mapper.Map<DeploymentStepDto>(step);
 
         var stepProperties = await _stepPropertyDataProvider.GetDeploymentStepPropertiesByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
-        stepDto.Properties = _mapper.Map<List<DeploymentStepPropertyDto>>(stepProperties);
+        mappedStep.Properties = _mapper.Map<List<DeploymentStepPropertyDto>>(stepProperties);
 
         var actions = await _actionDataProvider.GetDeploymentActionsByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
-        stepDto.Actions = new List<DeploymentActionDto>();
+        mappedStep.Actions = new List<DeploymentActionDto>();
 
         foreach (var action in actions)
         {
             var actionDto = await MapActionWithRelatedDataAsync(action, cancellationToken).ConfigureAwait(false);
-            stepDto.Actions.Add(actionDto);
+            
+            mappedStep.Actions.Add(actionDto);
         }
 
-        return stepDto;
+        return mappedStep;
     }
 
     private async Task<DeploymentActionDto> MapActionWithRelatedDataAsync(DeploymentAction action, CancellationToken cancellationToken)
@@ -186,6 +178,7 @@ public class DeploymentStepService : IDeploymentStepService
         var actionDto = _mapper.Map<DeploymentActionDto>(action);
 
         var properties = await _actionPropertyDataProvider.GetDeploymentActionPropertiesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+        
         actionDto.Properties = _mapper.Map<List<DeploymentActionPropertyDto>>(properties);
 
         return actionDto;
@@ -198,29 +191,25 @@ public class DeploymentStepService : IDeploymentStepService
         return existingSteps.Count == 0 ? 1 : existingSteps.Max(s => s.StepOrder) + 1;
     }
 
-    private async Task CreateActionsAsync(int stepId, List<DeploymentActionDto> actionDtos, CancellationToken cancellationToken)
+    private async Task CreateActionsAsync(int stepId, List<DeploymentActionDto> actions, CancellationToken cancellationToken)
     {
-        var actions = new List<DeploymentAction>();
-        var allProperties = new List<DeploymentActionProperty>();
-
-        foreach (var actionDto in actionDtos)
+        foreach (var action in actions)
         {
-            var action = _mapper.Map<DeploymentAction>(actionDto);
-            action.StepId = stepId;
-            action.CreatedAt = DateTimeOffset.UtcNow;
-            actions.Add(action);
+            var mappedAction = _mapper.Map<DeploymentAction>(action);
+            
+            mappedAction.StepId = stepId;
+            mappedAction.CreatedAt = DateTimeOffset.UtcNow;
 
-            if (actionDto.Properties?.Any() == true)
-            {
-                var properties = _mapper.Map<List<DeploymentActionProperty>>(actionDto.Properties);
-                properties.ForEach(p => p.ActionId = action.Id);
-                allProperties.AddRange(properties);
-            }
+            await _actionDataProvider.AddDeploymentActionAsync(mappedAction, true, cancellationToken).ConfigureAwait(false);
+
+            if (action.Properties?.Any() != true) continue;
+
+            var properties = _mapper.Map<List<DeploymentActionProperty>>(action.Properties);
+            
+            properties.ForEach(p => p.ActionId = mappedAction.Id);
+
+            await _actionPropertyDataProvider.AddDeploymentActionPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
         }
-
-        await _actionDataProvider.AddDeploymentActionsAsync(actions, false, cancellationToken).ConfigureAwait(false);
-
-        await _actionPropertyDataProvider.AddDeploymentActionPropertiesAsync(allProperties, cancellationToken).ConfigureAwait(false);
     }
 }
 
