@@ -51,7 +51,7 @@ public class DeploymentStepService : IDeploymentStepService
         step.CreatedAt = DateTimeOffset.UtcNow;
         step.StepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
 
-        await _stepDataProvider.AddDeploymentStepAsync(step, false, cancellationToken).ConfigureAwait(false);
+        await _stepDataProvider.AddDeploymentStepAsync(step, true, cancellationToken).ConfigureAwait(false);
 
         if (command.Step.Properties?.Any() == true)
         {
@@ -80,7 +80,7 @@ public class DeploymentStepService : IDeploymentStepService
 
         _mapper.Map(command.Step, step);
 
-        await _stepDataProvider.UpdateDeploymentStepAsync(step, false, cancellationToken).ConfigureAwait(false);
+        await _stepDataProvider.UpdateDeploymentStepAsync(step, true, cancellationToken).ConfigureAwait(false);
 
         await _stepPropertyDataProvider.DeleteDeploymentStepPropertiesByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
 
