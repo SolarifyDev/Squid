@@ -49,4 +49,13 @@ public class ExternalFeedController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("test")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(TestExternalFeedResponse))]
+    public async Task<IActionResult> TestExternalFeedAsync([FromBody] TestExternalFeedCommand command)
+    {
+        var response = await _mediator.SendAsync<TestExternalFeedCommand, TestExternalFeedResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }
