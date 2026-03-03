@@ -241,7 +241,12 @@ internal static class KubernetesPropertyParser
     private static string GetFirstImagePropertyFromContainer(JsonElement containerElement)
     {
         if (containerElement.TryGetProperty(KubernetesContainerPayloadProperties.Image, out var imageProp))
-            return imageProp.GetString() ?? string.Empty;
+        {
+            var image = imageProp.GetString();
+
+            if (!string.IsNullOrWhiteSpace(image))
+                return image;
+        }
 
         if (containerElement.TryGetProperty(KubernetesContainerPayloadProperties.PackageId, out var packageIdProp))
         {

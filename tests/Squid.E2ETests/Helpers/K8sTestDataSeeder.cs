@@ -75,7 +75,7 @@ public class K8sTestDataSeeder
             ("Squid.Action.KubernetesContainers.ConfigMapName", "demo-config"),
             ("Squid.Action.KubernetesContainers.ConfigMapValues", configMapValues),
             ("Squid.Action.KubernetesContainers.CombinedVolumes",
-                "[{\"Name\":\"data-vol\",\"Type\":\"EmptyDir\",\"EmptyDirMedium\":\"\"}]"),
+                "[{\"Name\":\"data-vol\",\"Type\":\"EmptyDir\",\"ReferenceName\":\"\"}]"),
             ("Squid.Action.KubernetesContainers.DeploymentAnnotations", "[]"),
             ("Squid.Action.KubernetesContainers.DeploymentLabels", "{}"),
             ("Squid.Action.KubernetesContainers.PodAnnotations", "[]"),
@@ -84,8 +84,7 @@ public class K8sTestDataSeeder
             ("Squid.Action.KubernetesContainers.PodAffinity", "[]"),
             ("Squid.Action.KubernetesContainers.PodAntiAffinity", "[]"),
             ("Squid.Action.KubernetesContainers.DnsConfigOptions", "[]"),
-            ("Squid.Action.KubernetesContainers.PodSecuritySysctls", "[]"),
-            ("Squid.Action.KubernetesContainers.PersistentVolumeClaims", "[]")).ConfigureAwait(false);
+            ("Squid.Action.KubernetesContainers.PodSecuritySysctls", "[]")).ConfigureAwait(false);
 
         // Update action with FeedId and PackageId
         action.FeedId = 1;
@@ -296,7 +295,7 @@ public class K8sTestDataSeeder
                 ["StartupProbe"] = BuildEmptyProbe(),
                 ["Command"] = Array.Empty<string>(),
                 ["Args"] = Array.Empty<string>(),
-                ["InitContainer"] = "False",
+                ["IsInitContainer"] = "False",
                 ["SecurityContext"] = BuildEmptySecurityContext(),
                 ["Lifecycle"] = new Dictionary<string, object>(),
                 ["CreateFeedSecrets"] = createFeedSecrets ? "True" : "False"
