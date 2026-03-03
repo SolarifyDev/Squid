@@ -287,6 +287,19 @@ public class DeploymentResourceGeneratorTests
     }
 
     [Fact]
+    public async Task Generate_DnsNameservers_NewlineSeparated_GeneratedAsYamlList()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.PodDnsNameservers", "8.8.8.8\n8.8.4.4");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("nameservers:");
+        yaml.ShouldContain("- 8.8.8.8");
+        yaml.ShouldContain("- 8.8.4.4");
+    }
+
+    [Fact]
     public async Task Generate_DnsSearches_GeneratedAsYamlList()
     {
         var (step, action) = CreateMinimal();

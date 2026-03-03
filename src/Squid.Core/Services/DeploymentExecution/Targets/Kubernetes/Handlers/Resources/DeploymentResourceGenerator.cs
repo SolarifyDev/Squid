@@ -529,7 +529,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (string.IsNullOrWhiteSpace(raw))
             return [];
 
-        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return raw.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private static void AppendContainerYaml(StringBuilder sb, ContainerSpec container)
