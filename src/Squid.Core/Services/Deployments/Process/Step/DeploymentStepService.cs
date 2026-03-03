@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Process.Action;
@@ -57,6 +58,7 @@ public class DeploymentStepService : IDeploymentStepService
         var step = _mapper.Map<DeploymentStep>(command.Step);
         step.ProcessId = command.ProcessId;
         step.CreatedAt = DateTimeOffset.UtcNow;
+        step.StepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
 
         await _stepDataProvider.AddDeploymentStepAsync(step, false, cancellationToken).ConfigureAwait(false);
 
@@ -187,6 +189,13 @@ public class DeploymentStepService : IDeploymentStepService
         actionDto.Properties = _mapper.Map<List<DeploymentActionPropertyDto>>(properties);
 
         return actionDto;
+    }
+
+    private async Task<int> ResolveNextStepOrderAsync(int processId, CancellationToken cancellationToken)
+    {
+        var existingSteps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(processId, cancellationToken).ConfigureAwait(false);
+
+        return existingSteps.Count == 0 ? 1 : existingSteps.Max(s => s.StepOrder) + 1;
     }
 
     private async Task CreateActionsAsync(int stepId, List<DeploymentActionDto> actionDtos, CancellationToken cancellationToken)

@@ -39,6 +39,24 @@ public static class DeploymentActionTypeParser
             return true;
         }
 
+        if (string.Equals(actionType, "Squid.KubernetesDeployService", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.KubernetesDeployService;
+            return true;
+        }
+
+        if (string.Equals(actionType, "Squid.KubernetesDeployConfigMap", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.KubernetesDeployConfigMap;
+            return true;
+        }
+
+        if (string.Equals(actionType, "Squid.KubernetesDeploySecret", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.KubernetesDeploySecret;
+            return true;
+        }
+
         return false;
     }
 

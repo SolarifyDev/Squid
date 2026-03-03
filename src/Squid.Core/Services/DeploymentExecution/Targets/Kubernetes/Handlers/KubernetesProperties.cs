@@ -3,6 +3,8 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 internal static class KubernetesProperties
 {
     // Deployment
+    // DeploymentResourceType: reserved for future use — accepted from the frontend (Deployment/StatefulSet/DaemonSet/Job)
+    // but the generator currently always produces kind: Deployment.
     internal const string DeploymentResourceType = "Squid.Action.KubernetesContainers.DeploymentResourceType";
     internal const string DeploymentName = "Squid.Action.KubernetesContainers.DeploymentName";
     internal const string Namespace = "Squid.Action.KubernetesContainers.Namespace";
@@ -61,6 +63,8 @@ internal static class KubernetesProperties
     internal const string SecretValues = "Squid.Action.KubernetesContainers.SecretValues";
 
     // Scheduling and pod extras
+    // ObjectStatusCheck: reserved for future use — accepted from the frontend but not consumed by any generator.
+    // When implemented, it will control whether the deployment waits for pod readiness before marking success.
     internal const string ObjectStatusCheck = "Squid.Action.KubernetesContainers.ObjectStatusCheck";
     internal const string HostAliases = "Squid.Action.KubernetesContainers.HostAliases";
     internal const string Tolerations = "Squid.Action.KubernetesContainers.Tolerations";

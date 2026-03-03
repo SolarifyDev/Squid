@@ -142,7 +142,12 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
             sb.AppendLine("            port:");
 
             if (!string.IsNullOrWhiteSpace(servicePort))
-                sb.AppendLine($"              number: {servicePort}");
+            {
+                if (int.TryParse(servicePort, out _))
+                    sb.AppendLine($"              number: {servicePort}");
+                else
+                    sb.AppendLine($"              name: {servicePort}");
+            }
         }
         // K8s v1 format: { service: { name: "...", port: { number: 80 } } }
         else if (backend.TryGetProperty(KubernetesIngressPayloadProperties.Service, out var service))

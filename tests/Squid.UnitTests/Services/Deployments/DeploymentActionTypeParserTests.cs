@@ -10,7 +10,11 @@ public class DeploymentActionTypeParserTests
     [InlineData("Squid.KubernetesDeployContainers", DeploymentActionType.KubernetesDeployContainers)]
     [InlineData("Squid.HelmChartUpgrade", DeploymentActionType.HelmChartUpgrade)]
     [InlineData("Squid.KubernetesDeployIngress", DeploymentActionType.KubernetesDeployIngress)]
+    [InlineData("Squid.KubernetesDeployService", DeploymentActionType.KubernetesDeployService)]
+    [InlineData("Squid.KubernetesDeployConfigMap", DeploymentActionType.KubernetesDeployConfigMap)]
+    [InlineData("Squid.KubernetesDeploySecret", DeploymentActionType.KubernetesDeploySecret)]
     [InlineData("squid.kubernetesrunscript", DeploymentActionType.KubernetesRunScript)]
+    [InlineData("SQUID.KUBERNETESDEPLOYSERVICE", DeploymentActionType.KubernetesDeployService)]
     public void TryParse_KnownActionType_ReturnsEnum(string input, DeploymentActionType expected)
     {
         var ok = DeploymentActionTypeParser.TryParse(input, out var parsed);

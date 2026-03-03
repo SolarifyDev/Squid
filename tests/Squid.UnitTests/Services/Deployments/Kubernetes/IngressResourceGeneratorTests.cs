@@ -186,6 +186,20 @@ public class IngressResourceGeneratorTests
     }
 
     [Fact]
+    public async Task Generate_FlatBackendWithNamedPort_UsesNameField()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.IngressRules");
+        Add(action, "Squid.Action.KubernetesContainers.IngressRules",
+            """[{"host":"example.com","paths":[{"path":"/","pathType":"Prefix","backend":{"serviceName":"my-svc","servicePort":"http"}}]}]""");
+
+        var yaml = await GetIngressYaml(step, action);
+
+        yaml.ShouldContain("name: http");
+        yaml.ShouldNotContain("number: http");
+    }
+
+    [Fact]
     public async Task Generate_K8sV1BackendFormat_GeneratesServiceRef()
     {
         var (step, action) = CreateMinimal();
