@@ -887,6 +887,52 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldNotContain("lifecycle:");
     }
 
+    // === Container: envFrom ===
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvFromSource_GeneratesEnvFromBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvFromSource":[{"key":"app-config","value":"","option":""}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("envFrom:");
+        yaml.ShouldContain("- configMapRef:");
+        yaml.ShouldContain("name: app-config");
+    }
+
+    [Fact]
+    public async Task Generate_MultipleConfigMapEnvFromSources_GeneratesMultipleConfigMapRefs()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvFromSource":[{"key":"config-a","value":"","option":""},{"key":"config-b","value":"","option":""}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("envFrom:");
+        yaml.ShouldContain("name: config-a");
+        yaml.ShouldContain("name: config-b");
+
+        var firstRef = yaml.IndexOf("configMapRef:", StringComparison.Ordinal);
+        var secondRef = yaml.IndexOf("configMapRef:", firstRef + 1, StringComparison.Ordinal);
+        secondRef.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Generate_NoConfigMapEnvFromSource_EnvFromBlockOmitted()
+    {
+        var (step, action) = CreateMinimal();
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("envFrom:");
+    }
+
     // === Helpers ===
 
     private async Task<string> GetDeploymentYaml(DeploymentStepDto step, DeploymentActionDto action)

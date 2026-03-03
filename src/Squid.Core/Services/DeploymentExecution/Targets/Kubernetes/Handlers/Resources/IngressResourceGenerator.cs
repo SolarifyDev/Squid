@@ -9,7 +9,18 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
     {
         var rulesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressRules);
 
-        return !string.IsNullOrWhiteSpace(rulesJson);
+        if (string.IsNullOrWhiteSpace(rulesJson))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rulesJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public string Generate(Dictionary<string, string> properties)

@@ -61,7 +61,7 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("stringData:");
 
         foreach (var kvp in values)
-            sb.AppendLine($"  {kvp.Key}: {kvp.Value}");
+            KubernetesPropertyParser.AppendDataValue(sb, "  ", kvp.Key, kvp.Value);
 
         return sb.ToString();
     }

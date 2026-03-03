@@ -42,26 +42,7 @@ internal sealed class ConfigMapResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("data:");
 
         foreach (var kvp in values)
-        {
-            if (string.IsNullOrWhiteSpace(kvp.Value))
-            {
-                sb.AppendLine($"  {kvp.Key}: \"\"");
-                continue;
-            }
-
-            if (kvp.Value.Contains('\n', StringComparison.Ordinal))
-            {
-                var indented = kvp.Value.Replace("\r\n", "\n", StringComparison.Ordinal);
-                indented = indented.Replace("\n", "\n    ", StringComparison.Ordinal);
-
-                sb.AppendLine($"  {kvp.Key}: |");
-                sb.AppendLine("    " + indented);
-            }
-            else
-            {
-                sb.AppendLine($"  {kvp.Key}: {kvp.Value}");
-            }
-        }
+            KubernetesPropertyParser.AppendDataValue(sb, "  ", kvp.Key, kvp.Value);
 
         return sb.ToString();
     }

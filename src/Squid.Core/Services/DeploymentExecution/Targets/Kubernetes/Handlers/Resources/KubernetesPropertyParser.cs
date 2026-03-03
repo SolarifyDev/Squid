@@ -667,6 +667,23 @@ internal static class KubernetesPropertyParser
         sb.AppendLine(value);
     }
 
+    internal static void AppendDataValue(StringBuilder sb, string indent, string key, string value)
+    {
+        if (value.Contains('\n', StringComparison.Ordinal))
+        {
+            var innerIndent = indent + "  ";
+            var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal);
+            var indented = normalized.Replace("\n", "\n" + innerIndent, StringComparison.Ordinal);
+            sb.AppendLine($"{indent}{key}: |");
+            sb.AppendLine(innerIndent + indented);
+            return;
+        }
+
+        sb.Append($"{indent}{key}: ");
+        AppendYamlString(sb, value);
+        sb.AppendLine();
+    }
+
     internal static void AppendProbeYaml(StringBuilder sb, string indent, string name, ProbeSpec probe)
     {
         sb.Append(indent);

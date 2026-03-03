@@ -545,7 +545,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
-        yaml.ShouldContain("EMPTY_VAR: \"\"");
+        yaml.ShouldContain("EMPTY_VAR: ''");
     }
 
     [Fact]
@@ -562,7 +562,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("kind: ConfigMap");
         yaml.ShouldContain("name: test-config");
         yaml.ShouldContain("APP_ENV: production");
-        yaml.ShouldContain("APP_PORT: 8080");
+        yaml.ShouldContain("APP_PORT: '8080'");
     }
 
     // === Service ports integer values ===
