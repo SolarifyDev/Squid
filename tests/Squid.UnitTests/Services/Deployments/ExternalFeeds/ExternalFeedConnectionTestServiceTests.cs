@@ -105,7 +105,7 @@ public class ExternalFeedConnectionTestServiceTests
         result.Success.ShouldBeTrue();
         result.Message.ShouldBe("Connected successfully (HTTP 401).");
         requestedUri.ShouldBe(new Uri("https://registry.example.com/v2"));
-        configuredTimeout.ShouldBe(TimeSpan.FromSeconds(10));
+        configuredTimeout.ShouldBe(TimeSpan.FromSeconds(30));
 
         configuredHeaders.ShouldNotBeNull();
         configuredHeaders.ContainsKey("Authorization").ShouldBeTrue();
@@ -253,6 +253,40 @@ public class ExternalFeedConnectionTestServiceTests
         requestedUris.ShouldBe(["https://registry.example.com/v1"]);
     }
 
+    [Theory]
+    [InlineData("AWS Elastic Container Registry")]
+    [InlineData("Azure Container Registry")]
+    [InlineData("Google Container Registry")]
+    [InlineData("OCI Registry Feed")]
+    public async Task TestAsync_ContainerRegistryLikeFeedTypes_ShouldUseDockerStyleProbe(string feedType)
+    {
+        var requestedUri = default(Uri);
+
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(15, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 15,
+                FeedType = feedType,
+                FeedUri = "https://registry.example.com"
+            });
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(15, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        requestedUri.ShouldBe(new Uri("https://registry.example.com/v2"));
+    }
+
     [Fact]
     public async Task TestAsync_UsesHelmProbeRule_AndTreats404AsUnreachable()
     {
@@ -315,6 +349,40 @@ public class ExternalFeedConnectionTestServiceTests
 
         result.Success.ShouldBeTrue();
         result.Message.ShouldBe("Connected successfully (HTTP 200).");
+        requestedUri.ShouldBe(new Uri("https://packages.example.com/feed/"));
+    }
+
+    [Theory]
+    [InlineData("Artifactory Generic Feed")]
+    [InlineData("AWS S3 Bucket Feed")]
+    [InlineData("Maven Feed")]
+    [InlineData("NuGet Feed")]
+    public async Task TestAsync_NonRegistryAndNonSpecialFeedTypes_ShouldUseDefaultProbeRule(string feedType)
+    {
+        var requestedUri = default(Uri);
+
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(16, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 16,
+                FeedType = feedType,
+                FeedUri = "https://packages.example.com/feed"
+            });
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(16, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
         requestedUri.ShouldBe(new Uri("https://packages.example.com/feed/"));
     }
 

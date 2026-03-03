@@ -13,13 +13,27 @@ public abstract class ExternalFeedProbeRuleBase : IExternalFeedProbeRule<Externa
     protected static bool FeedTypeContains(ExternalFeed feed, string feedTypeKeyword) =>
         !string.IsNullOrWhiteSpace(feed?.FeedType) &&
         feed.FeedType.Contains(feedTypeKeyword, StringComparison.OrdinalIgnoreCase);
+
+    protected static bool FeedTypeContainsAny(ExternalFeed feed, params string[] feedTypeKeywords) =>
+        feedTypeKeywords is { Length: > 0 } && feedTypeKeywords.Any(keyword => FeedTypeContains(feed, keyword));
 }
 
 public sealed class ExternalFeedDockerProbeRule : ExternalFeedProbeRuleBase
 {
+    private static readonly string[] ContainerRegistryTypeKeywords =
+    [
+        "Docker",
+        "Container Registry",
+        "Elastic Container Registry",
+        "OCI Registry",
+        "ECR",
+        "ACR",
+        "GCR"
+    ];
+
     public override int Order => 100;
 
-    public override bool Matches(ExternalFeed feed) => FeedTypeContains(feed, "Docker");
+    public override bool Matches(ExternalFeed feed) => FeedTypeContainsAny(feed, ContainerRegistryTypeKeywords);
 
     public override ExternalFeedProbePlan Resolve(ExternalFeed feed, Uri normalizedBaseUri)
     {
