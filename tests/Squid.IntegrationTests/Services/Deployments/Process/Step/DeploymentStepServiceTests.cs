@@ -27,7 +27,7 @@ public class DeploymentStepServiceTests : TestBase
             var command = new CreateDeploymentStepCommand
             {
                 ProcessId = processId,
-                Step = new DeploymentStepDto
+                Step = new CreateOrUpdateDeploymentStepModel
                 {
                     Name = "Deploy Step",
                     StepType = "Action",
@@ -36,7 +36,7 @@ public class DeploymentStepServiceTests : TestBase
                     PackageRequirement = "",
                     Properties =
                     [
-                        new DeploymentStepPropertyDto { PropertyName = "Squid.Step.TargetRoles", PropertyValue = "web-server" }
+                        new StepPropertyModel { PropertyName = "Squid.Step.TargetRoles", PropertyValue = "web-server" }
                     ]
                 }
             };
@@ -68,7 +68,7 @@ public class DeploymentStepServiceTests : TestBase
             var command = new CreateDeploymentStepCommand
             {
                 ProcessId = processId,
-                Step = new DeploymentStepDto
+                Step = new CreateOrUpdateDeploymentStepModel
                 {
                     Name = "Deploy Step",
                     StepType = "Action",
@@ -77,7 +77,7 @@ public class DeploymentStepServiceTests : TestBase
                     PackageRequirement = "",
                     Actions =
                     [
-                        new DeploymentActionDto { Name = "Deploy Containers", ActionType = "Squid.KubernetesDeployContainers" }
+                        new CreateOrUpdateDeploymentActionModel { Name = "Deploy Containers", ActionType = "Squid.KubernetesDeployContainers" }
                     ]
                 }
             };
@@ -108,7 +108,7 @@ public class DeploymentStepServiceTests : TestBase
             var command = new CreateDeploymentStepCommand
             {
                 ProcessId = processId,
-                Step = new DeploymentStepDto
+                Step = new CreateOrUpdateDeploymentStepModel
                 {
                     Name = "Deploy Step",
                     StepType = "Action",
@@ -117,14 +117,14 @@ public class DeploymentStepServiceTests : TestBase
                     PackageRequirement = "",
                     Actions =
                     [
-                        new DeploymentActionDto
+                        new CreateOrUpdateDeploymentActionModel
                         {
                             Name = "Deploy Containers",
                             ActionType = "Squid.KubernetesDeployContainers",
                             Properties =
                             [
-                                new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.Namespace", PropertyValue = "production" },
-                                new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.DeploymentName", PropertyValue = "my-app" }
+                                new ActionPropertyModel { PropertyName = "Squid.Action.KubernetesContainers.Namespace", PropertyValue = "production" },
+                                new ActionPropertyModel { PropertyName = "Squid.Action.KubernetesContainers.DeploymentName", PropertyValue = "my-app" }
                             ]
                         }
                     ]
@@ -170,8 +170,8 @@ public class DeploymentStepServiceTests : TestBase
         var processId = await SeedProcessAsync();
 
         var created = await CreateStepAsync(processId, "Original Step",
-            properties: [new DeploymentStepPropertyDto { PropertyName = "OldProp", PropertyValue = "old" }],
-            actions: [new DeploymentActionDto { Name = "Old Action", ActionType = "Squid.KubernetesRunScript" }]);
+            properties: [new StepPropertyModel { PropertyName = "OldProp", PropertyValue = "old" }],
+            actions: [new CreateOrUpdateDeploymentActionModel { Name = "Old Action", ActionType = "Squid.KubernetesRunScript" }]);
 
         var stepId = created.Id;
 
@@ -180,7 +180,7 @@ public class DeploymentStepServiceTests : TestBase
             var command = new UpdateDeploymentStepCommand
             {
                 Id = stepId,
-                Step = new DeploymentStepDto
+                Step = new CreateOrUpdateDeploymentStepModel
                 {
                     Name = "Updated Step",
                     StepType = "Action",
@@ -189,11 +189,11 @@ public class DeploymentStepServiceTests : TestBase
                     PackageRequirement = "",
                     Properties =
                     [
-                        new DeploymentStepPropertyDto { PropertyName = "NewProp", PropertyValue = "new" }
+                        new StepPropertyModel { PropertyName = "NewProp", PropertyValue = "new" }
                     ],
                     Actions =
                     [
-                        new DeploymentActionDto { Name = "New Action", ActionType = "Squid.KubernetesDeployContainers" }
+                        new CreateOrUpdateDeploymentActionModel { Name = "New Action", ActionType = "Squid.KubernetesDeployContainers" }
                     ]
                 }
             };
@@ -230,7 +230,7 @@ public class DeploymentStepServiceTests : TestBase
             var command = new UpdateDeploymentStepCommand
             {
                 Id = created.Id,
-                Step = new DeploymentStepDto { Name = "After", StepType = "Action", Condition = "Success", StartTrigger = "", PackageRequirement = "" }
+                Step = new CreateOrUpdateDeploymentStepModel { Name = "After", StepType = "Action", Condition = "Success", StartTrigger = "", PackageRequirement = "" }
             };
 
             await service.UpdateDeploymentStepAsync(command, CancellationToken.None).ConfigureAwait(false);
@@ -260,15 +260,15 @@ public class DeploymentStepServiceTests : TestBase
     private async Task<DeploymentStepDto> CreateStepAsync(
         int processId,
         string name,
-        List<DeploymentStepPropertyDto> properties = null,
-        List<DeploymentActionDto> actions = null)
+        List<StepPropertyModel> properties = null,
+        List<CreateOrUpdateDeploymentActionModel> actions = null)
     {
         var result = await Run<IDeploymentStepService, DeploymentStepCreatedEvent>(async service =>
         {
             var command = new CreateDeploymentStepCommand
             {
                 ProcessId = processId,
-                Step = new DeploymentStepDto
+                Step = new CreateOrUpdateDeploymentStepModel
                 {
                     Name = name,
                     StepType = "Action",

@@ -113,7 +113,7 @@ public class VariableService : IVariableService
         };
     }
 
-    private async Task AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableDto> variableDtos, CancellationToken cancellationToken)
+    private async Task AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableModel> variableDtos, CancellationToken cancellationToken)
     {
         if (variableDtos?.Any() != true) return;
 

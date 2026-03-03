@@ -14,7 +14,7 @@ public class CreateProjectCommandValidatorTests
     {
         var command = new CreateProjectCommand
         {
-            Project = new ProjectDto { Name = "Test Project", LifecycleId = 1, ProjectGroupId = 1 }
+            Project = new CreateOrUpdateProjectModel { Name = "Test Project", LifecycleId = 1, ProjectGroupId = 1 }
         };
 
         var result = _validator.Validate(command);
@@ -41,7 +41,7 @@ public class CreateProjectCommandValidatorTests
     {
         var command = new CreateProjectCommand
         {
-            Project = new ProjectDto { Name = name, LifecycleId = 1, ProjectGroupId = 1 }
+            Project = new CreateOrUpdateProjectModel { Name = name, LifecycleId = 1, ProjectGroupId = 1 }
         };
 
         var result = _validator.Validate(command);
@@ -55,7 +55,7 @@ public class CreateProjectCommandValidatorTests
     {
         var command = new CreateProjectCommand
         {
-            Project = new ProjectDto { Name = new string('a', 201), LifecycleId = 1, ProjectGroupId = 1 }
+            Project = new CreateOrUpdateProjectModel { Name = new string('a', 201), LifecycleId = 1, ProjectGroupId = 1 }
         };
 
         var result = _validator.Validate(command);
@@ -71,7 +71,7 @@ public class CreateProjectCommandValidatorTests
     {
         var command = new CreateProjectCommand
         {
-            Project = new ProjectDto { Name = "Test", LifecycleId = lifecycleId, ProjectGroupId = 1 }
+            Project = new CreateOrUpdateProjectModel { Name = "Test", LifecycleId = lifecycleId, ProjectGroupId = 1 }
         };
 
         var result = _validator.Validate(command);
@@ -87,7 +87,7 @@ public class CreateProjectCommandValidatorTests
     {
         var command = new CreateProjectCommand
         {
-            Project = new ProjectDto { Name = "Test", LifecycleId = 1, ProjectGroupId = projectGroupId }
+            Project = new CreateOrUpdateProjectModel { Name = "Test", LifecycleId = 1, ProjectGroupId = projectGroupId }
         };
 
         var result = _validator.Validate(command);

@@ -70,10 +70,10 @@ public class ReleaseService : IReleaseService
         if (command.Release == null)
             throw new ArgumentException("Release cannot be null", nameof(command.Release));
 
-        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.Release.Id, cancellationToken).ConfigureAwait(false);
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
 
         if (release == null)
-            throw new Exception($"Release {command.Release.Id} not found");
+            throw new Exception($"Release {command.Id} not found");
 
         _mapper.Map(command.Release, release);
 

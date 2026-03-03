@@ -22,5 +22,15 @@ public class VariableMapping : Profile
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.Version, opt => opt.MapFrom(src => 1))
             .ForMember(dest => dest.LastModified, opt => opt.MapFrom(src => DateTimeOffset.UtcNow));
+
+        CreateMap<VariableModel, Variable>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.VariableSetId, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedOn, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
+
+        CreateMap<VariableScopeModel, VariableScope>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.VariableId, opt => opt.Ignore());
     }
 }

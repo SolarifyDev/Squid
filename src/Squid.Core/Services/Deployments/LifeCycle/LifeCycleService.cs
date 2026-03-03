@@ -37,29 +37,39 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
         {
             Data = new CreateLifeCycleResponseData
             {
-                LifecyclePhase = command.LifecyclePhase
+                LifecyclePhase = BuildLifecycleDetailDto(lifecycle, phases)
             }
         };
     }
 
     public async Task<LifeCycleUpdatedEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken)
     {
-        var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(command.LifecyclePhase.Lifecycle.Id, cancellationToken).ConfigureAwait(false);
-        var phases = await lifeCycleDataProvider.GetPhasesByIdAsync(command.LifecyclePhase.Phases.Select(x => x.Id).ToList(), cancellationToken).ConfigureAwait(false);
+        var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
 
-        lifecycle = mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
-        phases = mapper.Map(command.LifecyclePhase.Phases, phases);
+        mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
 
         await lifeCycleDataProvider.UpdateLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await lifeCycleDataProvider.UpdatePhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        await ReplaceLifecyclePhaseEnvironmentsAsync(command.LifecyclePhase.Phases, phases, cancellationToken).ConfigureAwait(false);
+        var existingPhases = await lifeCycleDataProvider.GetPhasesByLifecycleIdAsync(lifecycle.Id, cancellationToken).ConfigureAwait(false);
+
+        foreach (var phase in existingPhases)
+        {
+            await lifeCycleDataProvider.DeletePhaseEnvironmentsByPhaseIdAsync(phase.Id, cancellationToken).ConfigureAwait(false);
+            await lifeCycleDataProvider.DeletePhaseAsync(phase, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        var newPhases = mapper.Map<List<LifecyclePhase>>(command.LifecyclePhase.Phases);
+        newPhases.ForEach(x => x.LifecycleId = lifecycle.Id);
+
+        await lifeCycleDataProvider.AddPhasesAsync(newPhases, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await InsertLifecyclePhaseEnvironmentsAsync(command.LifecyclePhase.Phases, newPhases, cancellationToken).ConfigureAwait(false);
 
         return new LifeCycleUpdatedEvent
         {
             Data = new UpdateLifeCycleResponseData
             {
-                LifecyclePhase = command.LifecyclePhase
+                LifecyclePhase = BuildLifecycleDetailDto(lifecycle, newPhases)
             }
         };
     }
@@ -123,41 +133,40 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
         }
     }
 
-    private async Task InsertLifecyclePhaseEnvironmentsAsync(List<LifecyclePhaseDto> phaseDtos, List<LifecyclePhase> phases, CancellationToken cancellationToken)
+    private LifecycleDetailDto BuildLifecycleDetailDto(Lifecycle lifecycle, List<LifecyclePhase> phases)
     {
-        var phaseEnvironments = BuildLifecyclePhaseEnvironments(phaseDtos, phases);
+        return new LifecycleDetailDto
+        {
+            Lifecycle = mapper.Map<LifeCycleDto>(lifecycle),
+            Phases = mapper.Map<List<LifecyclePhaseDto>>(phases)
+        };
+    }
+
+    private async Task InsertLifecyclePhaseEnvironmentsAsync(List<LifecyclePhaseModel> phaseModels, List<LifecyclePhase> phases, CancellationToken cancellationToken)
+    {
+        var phaseEnvironments = BuildLifecyclePhaseEnvironments(phaseModels, phases);
         if (phaseEnvironments.Count == 0) return;
 
         await lifeCycleDataProvider.AddPhaseEnvironmentsAsync(phaseEnvironments, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task ReplaceLifecyclePhaseEnvironmentsAsync(List<LifecyclePhaseDto> phaseDtos, List<LifecyclePhase> phases, CancellationToken cancellationToken)
-    {
-        foreach (var phase in phases)
-        {
-            await lifeCycleDataProvider.DeletePhaseEnvironmentsByPhaseIdAsync(phase.Id, cancellationToken).ConfigureAwait(false);
-        }
-
-        await InsertLifecyclePhaseEnvironmentsAsync(phaseDtos, phases, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static List<LifecyclePhaseEnvironment> BuildLifecyclePhaseEnvironments(List<LifecyclePhaseDto> phaseDtos, List<LifecyclePhase> phases)
+    private static List<LifecyclePhaseEnvironment> BuildLifecyclePhaseEnvironments(List<LifecyclePhaseModel> phaseModels, List<LifecyclePhase> phases)
     {
         var result = new List<LifecyclePhaseEnvironment>();
 
-        for (var i = 0; i < phaseDtos.Count && i < phases.Count; i++)
+        for (var i = 0; i < phaseModels.Count && i < phases.Count; i++)
         {
-            var dto = phaseDtos[i];
+            var model = phaseModels[i];
             var phaseId = phases[i].Id;
 
-            result.AddRange(dto.AutomaticDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
+            result.AddRange(model.AutomaticDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
             {
                 PhaseId = phaseId,
                 EnvironmentId = envId,
                 TargetType = LifecyclePhaseEnvironmentTargetType.Automatic
             }));
 
-            result.AddRange(dto.OptionalDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
+            result.AddRange(model.OptionalDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
             {
                 PhaseId = phaseId,
                 EnvironmentId = envId,

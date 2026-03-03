@@ -16,7 +16,7 @@ public class CreateVariableSetCommand : ICommand
 
     public int SpaceId { get; set; }
 
-    public List<VariableDto> Variables { get; set; } = new List<VariableDto>();
+    public List<VariableModel> Variables { get; set; } = new List<VariableModel>();
 }
 
 public class CreateVariableSetResponse : SquidResponse<CreateVariableSetResponseData>

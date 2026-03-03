@@ -191,7 +191,7 @@ public class DeploymentStepService : IDeploymentStepService
         return existingSteps.Count == 0 ? 1 : existingSteps.Max(s => s.StepOrder) + 1;
     }
 
-    private async Task CreateActionsAsync(int stepId, List<DeploymentActionDto> actions, CancellationToken cancellationToken)
+    private async Task CreateActionsAsync(int stepId, List<CreateOrUpdateDeploymentActionModel> actions, CancellationToken cancellationToken)
     {
         foreach (var action in actions)
         {

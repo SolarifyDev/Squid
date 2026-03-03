@@ -5,7 +5,7 @@ namespace Squid.Message.Commands.Deployments.ProjectGroup;
 
 public class CreateProjectGroupCommand : ICommand
 {
-    public ProjectGroupDto ProjectGroup { get; set; }
+    public CreateOrUpdateProjectGroupModel ProjectGroup { get; set; }
 }
 
 public class CreateProjectGroupResponse : SquidResponse<ProjectGroupDto>

@@ -1,0 +1,12 @@
+namespace Squid.Message.Models.Deployments.Channel;
+
+public class CreateOrUpdateChannelModel
+{
+    public string Name { get; set; }
+    public string Description { get; set; }
+    public int ProjectId { get; set; }
+    public int? LifecycleId { get; set; }
+    public int SpaceId { get; set; }
+    public string Slug { get; set; }
+    public bool IsDefault { get; set; }
+}

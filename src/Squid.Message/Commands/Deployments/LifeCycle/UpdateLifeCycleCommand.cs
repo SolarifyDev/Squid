@@ -5,7 +5,8 @@ namespace Squid.Message.Commands.Deployments.LifeCycle;
 
 public class UpdateLifeCycleCommand : ICommand
 {
-    public LifecycleDetailDto LifecyclePhase { get; set; }
+    public int Id { get; set; }
+    public CreateOrUpdateLifeCycleModel LifecyclePhase { get; set; }
 }
 
 public class UpdateLifeCycleResponse : SquidResponse<UpdateLifeCycleResponseData>

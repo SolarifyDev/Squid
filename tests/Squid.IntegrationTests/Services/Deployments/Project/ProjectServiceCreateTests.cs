@@ -29,7 +29,7 @@ public class ProjectServiceCreateTests : TestBase
         {
             var command = new CreateProjectCommand
             {
-                Project = new ProjectDto
+                Project = new CreateOrUpdateProjectModel
                 {
                     Name = "My New Project",
                     LifecycleId = 1,
@@ -105,7 +105,7 @@ public class ProjectServiceCreateTests : TestBase
         {
             var command = new CreateProjectCommand
             {
-                Project = new ProjectDto
+                Project = new CreateOrUpdateProjectModel
                 {
                     Name = "My Cool Project",
                     LifecycleId = 1,

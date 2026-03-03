@@ -78,7 +78,7 @@ public class CreateDeploymentStepCommandValidatorTests
     public void Action_With_Empty_ActionType_Fails(string actionType)
     {
         var command = ValidCommand();
-        command.Step.Actions.Add(new DeploymentActionDto { ActionType = actionType, Name = "bad-action" });
+        command.Step.Actions.Add(new CreateOrUpdateDeploymentActionModel { ActionType = actionType, Name = "bad-action" });
 
         var result = _validator.Validate(command);
 
@@ -100,7 +100,7 @@ public class CreateDeploymentStepCommandValidatorTests
     private static CreateDeploymentStepCommand ValidCommand() => new()
     {
         ProcessId = 1,
-        Step = new DeploymentStepDto
+        Step = new CreateOrUpdateDeploymentStepModel
         {
             Name = "Deploy Step",
             Actions = [new() { ActionType = "Squid.KubernetesDeployContainers", Name = "deploy" }]
