@@ -34,7 +34,7 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.tentacle.terminationGracePeriodSeconds }}
       containers:
       - name: kubernetes-agent
-        image: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag }}"
+        image: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.tentacle.image.pullPolicy }}
         ports:
         - name: health

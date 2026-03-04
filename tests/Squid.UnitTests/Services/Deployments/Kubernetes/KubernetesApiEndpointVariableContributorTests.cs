@@ -120,11 +120,11 @@ public class KubernetesApiEndpointVariableContributorTests
     // === ContributeVariables — count & all names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns8Variables()
+    public void ContributeVariables_ValidEndpoint_Returns9Variables()
     {
         var vars = _contributor.ContributeVariables(TokenContext());
 
-        vars.Count.ShouldBe(8);
+        vars.Count.ShouldBe(9);
     }
 
     [Fact]

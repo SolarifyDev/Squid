@@ -15,6 +15,7 @@ public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContr
 
         return new List<VariableDto>
         {
+            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? string.Empty),
             EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
             EndpointVariableFactory.Make(KubernetesCommonVariableNames.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };

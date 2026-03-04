@@ -99,7 +99,7 @@ public class ExternalFeedConnectionTestService(
         if (!tokenRequest.Success)
             return Fail(tokenRequest.FailureMessage);
 
-        using var authClient = httpClientFactory.CreateClient(timeout: TestTimeout);
+        var authClient = httpClientFactory.CreateClient(timeout: TestTimeout);
         using var authenticatedProbeRequest = new HttpRequestMessage(HttpMethod.Get, probeUri);
         authenticatedProbeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokenRequest.Token);
 
@@ -118,7 +118,7 @@ public class ExternalFeedConnectionTestService(
     private async Task<(bool Success, string Token, string FailureMessage)> RequestDockerBearerTokenAsync(
         Uri tokenEndpoint, string username, string password, CancellationToken cancellationToken)
     {
-        using var authClient = httpClientFactory.CreateClient(timeout: TestTimeout);
+        var authClient = httpClientFactory.CreateClient(timeout: TestTimeout);
         using var tokenRequest = new HttpRequestMessage(HttpMethod.Get, tokenEndpoint);
         tokenRequest.Headers.Authorization = new AuthenticationHeaderValue("Basic", ToBasicAuthValue(username, password));
 

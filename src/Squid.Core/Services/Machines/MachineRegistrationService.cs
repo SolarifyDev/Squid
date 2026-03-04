@@ -5,13 +5,13 @@ using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
-using System.Linq;
 
 namespace Squid.Core.Services.Machines;
 
 public interface IMachineRegistrationService : IScopedDependency
 {
     Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default);
+    
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
 }
 

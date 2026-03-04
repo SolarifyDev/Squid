@@ -88,7 +88,7 @@ public class MachineInstallScriptServiceTests
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
         result.AgentInstallScript.ShouldContain("--create-namespace --namespace squid-agent");
-        result.AgentInstallScript.ShouldNotContain("--version");
+        result.AgentInstallScript.ShouldContain("--version \"1.*.*\"");
     }
 
     [Theory]
