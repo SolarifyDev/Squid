@@ -1,6 +1,3 @@
-using System.Collections.Generic;
-using System.IO;
-using System.IO.Compression;
 using Squid.Core.Services.Common;
 
 namespace Squid.IntegrationTests.Deployments.Pipeline;

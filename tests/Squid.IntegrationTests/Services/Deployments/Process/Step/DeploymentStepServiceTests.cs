@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Threading;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;

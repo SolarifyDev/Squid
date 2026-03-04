@@ -5,6 +5,8 @@ global using System.IO.Compression;
 global using System.Linq;
 global using System.Text;
 global using System.Threading.Tasks;
+global using Autofac;
+global using Mediator.Net;
 global using Shouldly;
 global using Squid.Core;
 global using Squid.Core.Persistence;

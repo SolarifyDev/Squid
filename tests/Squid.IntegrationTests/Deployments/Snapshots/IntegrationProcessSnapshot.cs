@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Snapshots;

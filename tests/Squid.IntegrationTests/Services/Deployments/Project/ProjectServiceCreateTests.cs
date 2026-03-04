@@ -1,6 +1,4 @@
-using System.Threading;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Project;

@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Linq.Expressions;
 using Hangfire.Storage;
 using Squid.Core.Services.Jobs;

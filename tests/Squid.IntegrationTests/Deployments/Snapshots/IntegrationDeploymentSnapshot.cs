@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.IntegrationTests.Helpers;

@@ -1,10 +1,6 @@
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using Newtonsoft.Json;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;

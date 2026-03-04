@@ -1,8 +1,4 @@
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Requests.Deployments.Project;
