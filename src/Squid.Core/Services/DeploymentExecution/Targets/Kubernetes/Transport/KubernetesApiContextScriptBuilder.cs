@@ -44,7 +44,7 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             .Replace("{{ClusterUrl}}", endpoint?.ClusterUrl ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{AccountType}}", accountData?.AuthenticationAccountType.ToString() ?? "Token", StringComparison.Ordinal)
             .Replace("{{SkipTlsVerification}}", endpoint?.SkipTlsVerification ?? KubernetesBooleanValues.False, StringComparison.Ordinal)
-            .Replace("{{Namespace}}", endpoint?.Namespace ?? KubernetesDefaultValues.Namespace, StringComparison.Ordinal)
+            .Replace("{{Namespace}}", ResolveNamespace(context, endpoint), StringComparison.Ordinal)
             .Replace("{{ClusterCertificate}}", clusterCert ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{Token}}", tokenCreds?.Token ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{Username}}", upCreds?.Username ?? string.Empty, StringComparison.Ordinal)
@@ -58,5 +58,13 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             .Replace("{{UserScript}}", userScript ?? string.Empty, StringComparison.Ordinal);
 
         return template;
+    }
+
+    private static string ResolveNamespace(ScriptContext context, Message.Models.Deployments.Machine.KubernetesApiEndpointDto endpoint)
+    {
+        if (context?.ActionProperties != null && context.ActionProperties.Count > 0)
+            return KubernetesPropertyParser.GetNamespace(context.ActionProperties);
+
+        return endpoint?.Namespace ?? KubernetesDefaultValues.Namespace;
     }
 }

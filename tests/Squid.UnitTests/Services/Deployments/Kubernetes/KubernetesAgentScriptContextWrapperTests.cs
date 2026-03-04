@@ -1,8 +1,8 @@
+using System;
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
-using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -10,11 +10,11 @@ public class KubernetesAgentScriptContextWrapperTests
 {
     private readonly KubernetesAgentScriptContextWrapper _wrapper = new();
 
-    private static ScriptContext MakeContext(ScriptSyntax syntax, List<VariableDto> variables) => new()
+    private static ScriptContext MakeContext(ScriptSyntax syntax, Dictionary<string, string> actionProperties = null) => new()
     {
         Endpoint = new EndpointContext { EndpointJson = "{}" },
         Syntax = syntax,
-        Variables = variables
+        ActionProperties = actionProperties
     };
 
     // === WrapScript — Bash ===
@@ -22,9 +22,9 @@ public class KubernetesAgentScriptContextWrapperTests
     [Fact]
     public void WrapScript_Bash_PrependsNamespaceContext()
     {
-        var variables = MakeVariables("production");
+        var props = MakeActionProperties("production");
 
-        var result = _wrapper.WrapScript("echo hello", MakeContext(ScriptSyntax.Bash, variables));
+        var result = _wrapper.WrapScript("echo hello", MakeContext(ScriptSyntax.Bash, props));
 
         result.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         result.ShouldContain("echo hello");
@@ -33,9 +33,9 @@ public class KubernetesAgentScriptContextWrapperTests
     [Fact]
     public void WrapScript_Bash_NamespaceBeforeScript()
     {
-        var variables = MakeVariables("staging");
+        var props = MakeActionProperties("staging");
 
-        var result = _wrapper.WrapScript("kubectl get pods", MakeContext(ScriptSyntax.Bash, variables));
+        var result = _wrapper.WrapScript("kubectl get pods", MakeContext(ScriptSyntax.Bash, props));
 
         var nsIndex = result.IndexOf("set-context", System.StringComparison.Ordinal);
         var scriptIndex = result.IndexOf("kubectl get pods", System.StringComparison.Ordinal);
@@ -48,9 +48,9 @@ public class KubernetesAgentScriptContextWrapperTests
     [Fact]
     public void WrapScript_PowerShell_PrependsNamespaceContext()
     {
-        var variables = MakeVariables("production");
+        var props = MakeActionProperties("production");
 
-        var result = _wrapper.WrapScript("Get-Process", MakeContext(ScriptSyntax.PowerShell, variables));
+        var result = _wrapper.WrapScript("Get-Process", MakeContext(ScriptSyntax.PowerShell, props));
 
         result.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         result.ShouldContain("| Out-Null");
@@ -65,15 +65,15 @@ public class KubernetesAgentScriptContextWrapperTests
     [InlineData("  ", "default")]
     public void WrapScript_EmptyOrNullNamespace_DefaultsToDefault(string ns, string expected)
     {
-        var variables = MakeVariables(ns);
+        var props = MakeActionProperties(ns);
 
-        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, variables));
+        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, props));
 
         result.ShouldContain($"--namespace=\"{expected}\"");
     }
 
     [Fact]
-    public void WrapScript_NullVariables_DefaultsToDefault()
+    public void WrapScript_NullActionProperties_DefaultsToDefault()
     {
         var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, null));
 
@@ -81,14 +81,22 @@ public class KubernetesAgentScriptContextWrapperTests
     }
 
     [Fact]
-    public void WrapScript_NoNamespaceVariable_DefaultsToDefault()
+    public void WrapScript_EmptyActionProperties_DefaultsToDefault()
     {
-        var variables = new List<VariableDto>
+        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, new Dictionary<string, string>()));
+
+        result.ShouldContain("--namespace=\"default\"");
+    }
+
+    [Fact]
+    public void WrapScript_NoNamespaceProperty_DefaultsToDefault()
+    {
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            new() { Name = "SomeOtherVariable", Value = "some-value" }
+            ["SomeOtherProperty"] = "some-value"
         };
 
-        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, variables));
+        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, props));
 
         result.ShouldContain("--namespace=\"default\"");
     }
@@ -96,20 +104,33 @@ public class KubernetesAgentScriptContextWrapperTests
     [Fact]
     public void WrapScript_CustomNamespace_UsesProvidedNamespace()
     {
-        var variables = MakeVariables("my-custom-ns");
+        var props = MakeActionProperties("my-custom-ns");
 
-        var result = _wrapper.WrapScript("kubectl apply -f deploy.yaml", MakeContext(ScriptSyntax.Bash, variables));
+        var result = _wrapper.WrapScript("kubectl apply -f deploy.yaml", MakeContext(ScriptSyntax.Bash, props));
 
         result.ShouldContain("--namespace=\"my-custom-ns\"");
     }
 
+    [Fact]
+    public void WrapScript_LegacyNamespaceProperty_UsesLegacyNamespace()
+    {
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Squid.Action.Kubernetes.Namespace"] = "legacy-ns"
+        };
+
+        var result = _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, props));
+
+        result.ShouldContain("--namespace=\"legacy-ns\"");
+    }
+
     // === Helpers ===
 
-    private static List<VariableDto> MakeVariables(string ns)
+    private static Dictionary<string, string> MakeActionProperties(string ns)
     {
-        return new List<VariableDto>
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            new() { Name = "Squid.Action.Kubernetes.Namespace", Value = ns }
+            ["Squid.Action.KubernetesContainers.Namespace"] = ns
         };
     }
 }

@@ -169,9 +169,11 @@ public class KubernetesVariableSubstitutionE2ETests
 
             var capturedRequest = ExecutionCapture.CapturedRequests[0];
 
-            // Script body should contain the resolved version, not the template
+            // Script body should contain the resolved values, not templates
             capturedRequest.ScriptBody.ShouldNotContain("#{ImageTag}");
             capturedRequest.ScriptBody.ShouldContain("2.5.0");
+            capturedRequest.ScriptBody.ShouldNotContain("#{Namespace}");
+            capturedRequest.ScriptBody.ShouldContain(testNs);
         }
         finally
         {

@@ -34,20 +34,20 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet("list")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
-    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)
-    {
-        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request, ct).ConfigureAwait(false);
-
-        return Ok(response);
-    }
-
     [HttpPost("generate-kubernetes-agent-install-script")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
     public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
     {
         var response = await _mediator.SendAsync<GenerateKubernetesAgentInstallScriptCommand, GenerateKubernetesAgentInstallScriptResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+    
+    [HttpGet("list")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
+    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)
+    {
+        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

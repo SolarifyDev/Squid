@@ -22,6 +22,8 @@ public class ActionExecutionResult
 
     public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
 
+    public Dictionary<string, string> ActionProperties { get; set; }
+
     public Dictionary<string, string> OutputVariables { get; set; } = new();
 
     public HashSet<string> SensitiveOutputVariableNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);

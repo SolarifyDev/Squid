@@ -30,7 +30,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
         var releaseName = ctx.Action.GetProperty(KubernetesHelmProperties.ReleaseName) ?? ctx.Action.Name ?? "release";
         var chartPath = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
-        var namespace_ = ctx.Action.GetProperty(KubernetesProperties.LegacyNamespace) ?? KubernetesDefaultValues.Namespace;
+        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
         var helmExe = ctx.Action.GetProperty(KubernetesHelmProperties.CustomHelmExecutable) ?? string.Empty;
         var resetValues = ctx.Action.GetProperty(KubernetesHelmProperties.ResetValues) ?? KubernetesBooleanValues.True;
         var helmWait = ctx.Action.GetProperty(KubernetesHelmProperties.ClientVersion) != null ? KubernetesBooleanValues.True : KubernetesBooleanValues.False;

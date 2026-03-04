@@ -28,18 +28,17 @@ public class KubernetesAgentPipelineBehaviorTests
     // === Transport ScriptWrapper wiring ===
 
     [Fact]
-    public void AgentWrapper_WrapsScriptWithNamespaceFromEndpointVariables()
+    public void AgentWrapper_WrapsScriptWithNamespaceFromActionProperties()
     {
-        var contributor = new KubernetesAgentEndpointVariableContributor();
-        var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = "production" });
-        var endpointVars = contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
-
         var wrapper = new KubernetesAgentScriptContextWrapper();
         var ctx = new ScriptContext
         {
-            Endpoint = new EndpointContext { EndpointJson = json },
+            Endpoint = new EndpointContext { EndpointJson = "{}" },
             Syntax = Message.Models.Deployments.Execution.ScriptSyntax.Bash,
-            Variables = endpointVars
+            ActionProperties = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.KubernetesContainers.Namespace"] = "production"
+            }
         };
         var result = wrapper.WrapScript("kubectl get pods", ctx);
 
@@ -60,7 +59,7 @@ public class KubernetesAgentPipelineBehaviorTests
 
         tc.EndpointVariables.AddRange(endpointVars);
 
-        tc.EndpointVariables.Count.ShouldBe(3);
+        tc.EndpointVariables.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -81,8 +80,8 @@ public class KubernetesAgentPipelineBehaviorTests
         var agentVars = agentContributor.ContributeVariables(new EndpointContext { EndpointJson = agentJson });
         var apiVars = apiContributor.ContributeVariables(new EndpointContext { EndpointJson = apiJson });
 
-        agentVars.Count.ShouldBe(3);
-        apiVars.Count.ShouldBe(9);
+        agentVars.Count.ShouldBe(2);
+        apiVars.Count.ShouldBe(8);
     }
 
     [Fact]
@@ -94,7 +93,6 @@ public class KubernetesAgentPipelineBehaviorTests
         var vars = contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
         var names = vars.Select(v => v.Name).ToList();
 
-        names.ShouldContain("Squid.Action.Kubernetes.Namespace");
         names.ShouldContain("Squid.Action.Script.SuppressEnvironmentLogging");
         names.ShouldContain("SquidPrintEvaluatedVariables");
     }

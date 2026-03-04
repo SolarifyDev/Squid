@@ -31,11 +31,11 @@ public class KubernetesAgentEndpointVariableContributorTests
     // === ContributeVariables — count & names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns3Variables()
+    public void ContributeVariables_ValidEndpoint_Returns2Variables()
     {
         var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson() });
 
-        vars.Count.ShouldBe(3);
+        vars.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -44,29 +44,8 @@ public class KubernetesAgentEndpointVariableContributorTests
         var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson() });
         var names = vars.Select(v => v.Name).ToList();
 
-        names.ShouldContain("Squid.Action.Kubernetes.Namespace");
         names.ShouldContain("Squid.Action.Script.SuppressEnvironmentLogging");
         names.ShouldContain("SquidPrintEvaluatedVariables");
-    }
-
-    // === ContributeVariables — namespace ===
-
-    [Fact]
-    public void ContributeVariables_Namespace_MappedCorrectly()
-    {
-        var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson(ns: "staging") });
-
-        vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "staging");
-    }
-
-    [Fact]
-    public void ContributeVariables_NullNamespace_DefaultsToDefault()
-    {
-        var json = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", Namespace = (string)null });
-
-        var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = json });
-
-        vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "default");
     }
 
     // === ContributeVariables — static/fixed variables ===
@@ -104,11 +83,11 @@ public class KubernetesAgentEndpointVariableContributorTests
     // === ContributeVariables — null account still works ===
 
     [Fact]
-    public void ContributeVariables_NullAccount_StillReturns3Variables()
+    public void ContributeVariables_NullAccount_StillReturns2Variables()
     {
         var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson() });
 
-        vars.Count.ShouldBe(3);
+        vars.Count.ShouldBe(2);
     }
 
     // === ContributeVariables — bad input ===

@@ -83,6 +83,22 @@ data:
             "kubectl config set-context --current --namespace=\"default\"");
     }
 
+    [Fact]
+    public async Task Agent_RunScript_VariableTemplateNamespace_ExpandedCorrectly()
+    {
+        var serverTaskId = await SeedRunScriptWithVariableNamespaceAsync(
+            "kubectl get pods", "#{TargetNamespace}", "resolved-ns");
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        ExecutionCapture.CapturedRequests.ShouldNotBeEmpty();
+
+        var captured = ExecutionCapture.CapturedRequests[0];
+        captured.ScriptBody.ShouldContain(
+            "kubectl config set-context --current --namespace=\"resolved-ns\"");
+        captured.ScriptBody.ShouldNotContain("#{TargetNamespace}");
+    }
+
     [Theory]
     [InlineData("KubernetesApi")]
     [InlineData("KubernetesAgent")]
@@ -118,14 +134,126 @@ data:
         => SeedRunScriptAsync(scriptBody, ns, "KubernetesAgent");
 
     private Task<int> SeedDeployYamlForAgentAsync(string inlineYaml, string ns)
-        => SeedActionAsync("Squid.KubernetesDeployRawYaml", ns, "KubernetesAgent",
+    {
+        var props = new List<(string, string)>
+        {
             ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
-            ("Squid.Action.Script.Syntax", "Bash"));
+            ("Squid.Action.Script.Syntax", "Bash")
+        };
+
+        if (ns != null)
+            props.Add(("Squid.Action.KubernetesContainers.Namespace", ns));
+
+        return SeedActionAsync("Squid.KubernetesDeployRawYaml", ns, "KubernetesAgent", props.ToArray());
+    }
 
     private Task<int> SeedRunScriptAsync(string scriptBody, string ns, string communicationStyle)
-        => SeedActionAsync("Squid.KubernetesRunScript", ns, communicationStyle,
+    {
+        var props = new List<(string, string)>
+        {
             ("Squid.Action.Script.ScriptBody", scriptBody),
-            ("Squid.Action.Script.Syntax", "Bash"));
+            ("Squid.Action.Script.Syntax", "Bash")
+        };
+
+        if (ns != null)
+            props.Add(("Squid.Action.KubernetesContainers.Namespace", ns));
+
+        return SeedActionAsync("Squid.KubernetesRunScript", ns, communicationStyle, props.ToArray());
+    }
+
+    private async Task<int> SeedRunScriptWithVariableNamespaceAsync(
+        string scriptBody, string nsTemplate, string nsVariableValue)
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = 0;
+
+        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
+            await builder.CreateVariablesAsync(variableSet.Id,
+                ("TargetNamespace", nsVariableValue, Squid.Message.Enums.VariableType.String, false)).ConfigureAwait(false);
+
+            var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
+            await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
+            await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
+
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Test Step").ConfigureAwait(false);
+            await builder.CreateStepPropertiesAsync(step.Id,
+                ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
+
+            var action = await builder.CreateDeploymentActionAsync(
+                step.Id, 1, "Test Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+
+            await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
+            await builder.CreateActionPropertiesAsync(action.Id,
+                ("Squid.Action.Script.ScriptBody", scriptBody),
+                ("Squid.Action.Script.Syntax", "Bash"),
+                ("Squid.Action.KubernetesContainers.Namespace", nsTemplate)).ConfigureAwait(false);
+
+            var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync("Var Namespace Test Env").ConfigureAwait(false);
+
+            var machine = CreateMachine(environment, "KubernetesAgent", "machine-ns");
+            await repository.InsertAsync(machine).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
+
+            var deployment = new Deployment
+            {
+                Name = "Var Namespace Test",
+                SpaceId = 1,
+                ChannelId = channel.Id,
+                ProjectId = project.Id,
+                ReleaseId = release.Id,
+                EnvironmentId = environment.Id,
+                DeployedBy = 1,
+                Created = DateTimeOffset.UtcNow,
+                Json = string.Empty
+            };
+
+            await repository.InsertAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var serverTask = new ServerTask
+            {
+                Name = "Var Namespace Test Task",
+                Description = "Test variable namespace expansion",
+                QueueTime = DateTimeOffset.UtcNow,
+                State = TaskState.Pending,
+                ServerTaskType = "Deploy",
+                ProjectId = project.Id,
+                EnvironmentId = environment.Id,
+                SpaceId = 1,
+                LastModified = DateTimeOffset.UtcNow,
+                BusinessProcessState = "Queued",
+                StateOrder = 1,
+                Weight = 1,
+                BatchId = 0,
+                JSON = string.Empty,
+                HasWarningsOrErrors = false,
+                ServerNodeId = Guid.NewGuid(),
+                DurationSeconds = 0,
+                DataVersion = Array.Empty<byte>()
+            };
+
+            await repository.InsertAsync(serverTask).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            deployment.TaskId = serverTask.Id;
+            await repository.UpdateAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            serverTaskId = serverTask.Id;
+        }).ConfigureAwait(false);
+
+        return serverTaskId;
+    }
 
     private async Task<int> SeedActionAsync(
         string actionType, string ns, string communicationStyle,

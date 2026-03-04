@@ -21,7 +21,8 @@ public class KubernetesApiContextScriptBuilderTests
         string clusterCert = null,
         AccountType? accountType = null,
         string credentialsJson = null,
-        ScriptSyntax syntax = ScriptSyntax.Bash)
+        ScriptSyntax syntax = ScriptSyntax.Bash,
+        Dictionary<string, string> actionProperties = null)
     {
         var endpoint = new EndpointContext
         {
@@ -39,7 +40,7 @@ public class KubernetesApiContextScriptBuilderTests
         if (accountType.HasValue && credentialsJson != null)
             endpoint.SetAccountData(accountType.Value, credentialsJson);
 
-        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax, ActionProperties = actionProperties };
     }
 
     private static ScriptContext TokenContext(ScriptSyntax syntax = ScriptSyntax.Bash, string token = "test-token-123")
@@ -183,8 +184,13 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomNamespace_Bash_ContainsNamespace()
     {
-        var ctx = CreateContext(ns: "production", accountType: AccountType.Token,
-            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Squid.Action.KubernetesContainers.Namespace"] = "production"
+        };
+        var ctx = CreateContext(accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            actionProperties: props);
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
@@ -194,13 +200,46 @@ public class KubernetesApiContextScriptBuilderTests
     [Fact]
     public void WrapWithContext_CustomNamespace_PowerShell_ContainsNamespace()
     {
-        var ctx = CreateContext(ns: "production", accountType: AccountType.Token,
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Squid.Action.KubernetesContainers.Namespace"] = "production"
+        };
+        var ctx = CreateContext(accountType: AccountType.Token,
             credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
-            syntax: ScriptSyntax.PowerShell);
+            syntax: ScriptSyntax.PowerShell,
+            actionProperties: props);
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
         result.ShouldContain("production");
+    }
+
+    [Fact]
+    public void WrapWithContext_NoActionProperties_FallsBackToEndpointNamespace()
+    {
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("endpoint-ns");
+    }
+
+    [Fact]
+    public void WrapWithContext_ActionProperties_OverridesEndpointNamespace()
+    {
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Squid.Action.KubernetesContainers.Namespace"] = "action-ns"
+        };
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            actionProperties: props);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("action-ns");
+        result.ShouldNotContain("endpoint-ns");
     }
 
     // === TLS Skip Tests ===

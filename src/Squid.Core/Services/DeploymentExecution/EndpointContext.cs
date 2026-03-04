@@ -47,4 +47,5 @@ public class ScriptContext
     public EndpointContext Endpoint { get; set; }
     public ScriptSyntax Syntax { get; set; }
     public List<VariableDto> Variables { get; set; }
+    public Dictionary<string, string> ActionProperties { get; set; }
 }

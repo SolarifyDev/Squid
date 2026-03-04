@@ -120,11 +120,11 @@ public class KubernetesApiEndpointVariableContributorTests
     // === ContributeVariables — count & all names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns9Variables()
+    public void ContributeVariables_ValidEndpoint_Returns8Variables()
     {
         var vars = _contributor.ContributeVariables(TokenContext());
 
-        vars.Count.ShouldBe(9);
+        vars.Count.ShouldBe(8);
     }
 
     [Fact]
@@ -137,7 +137,6 @@ public class KubernetesApiEndpointVariableContributorTests
         names.ShouldContain("Squid.Account.AccountType");
         names.ShouldContain("Squid.Account.CredentialsJson");
         names.ShouldContain("Squid.Action.Kubernetes.SkipTlsVerification");
-        names.ShouldContain("Squid.Action.Kubernetes.Namespace");
         names.ShouldContain("Squid.Action.Kubernetes.ClusterCertificate");
         names.ShouldContain("Squid.Action.Script.SuppressEnvironmentLogging");
         names.ShouldContain("Squid.Action.Kubernetes.OutputKubectlVersion");
@@ -154,16 +153,6 @@ public class KubernetesApiEndpointVariableContributorTests
         var vars = _contributor.ContributeVariables(ctx);
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterUrl" && v.Value == "https://my-cluster:6443");
-    }
-
-    [Fact]
-    public void ContributeVariables_Namespace_MappedCorrectly()
-    {
-        var ctx = TokenContext();
-        ctx.EndpointJson = MakeEndpointJson(ns: "production");
-        var vars = _contributor.ContributeVariables(ctx);
-
-        vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "production");
     }
 
     [Fact]
@@ -280,16 +269,6 @@ public class KubernetesApiEndpointVariableContributorTests
     }
 
     // === ContributeVariables — default endpoint values ===
-
-    [Fact]
-    public void ContributeVariables_NullNamespace_DefaultsToDefault()
-    {
-        var ctx = TokenContext();
-        ctx.EndpointJson = MakeEndpointJson(ns: null);
-        var vars = _contributor.ContributeVariables(ctx);
-
-        vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.Namespace" && v.Value == "default");
-    }
 
     [Fact]
     public void ContributeVariables_NullSkipTls_DefaultsToFalse()

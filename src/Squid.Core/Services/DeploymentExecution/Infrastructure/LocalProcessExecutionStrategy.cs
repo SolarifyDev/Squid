@@ -143,7 +143,8 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         {
             Endpoint = request.EndpointContext,
             Syntax = request.Syntax,
-            Variables = request.Variables
+            Variables = request.Variables,
+            ActionProperties = request.ActionProperties
         };
 
         return _scriptContextWrapper.WrapScript(scriptBody, scriptContext);

@@ -128,6 +128,8 @@ public partial class DeploymentTaskExecutor
 
             if (prepared != null)
             {
+                prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
+
                 var executionMode = prepared.ResolveExecutionMode();
                 var contextPreparationPolicy = ResolveContextPreparationPolicy(prepared, tc);
 
@@ -157,7 +159,8 @@ public partial class DeploymentTaskExecutor
         {
             Endpoint = tc.EndpointContext,
             Syntax = prepared.Syntax,
-            Variables = effectiveVariables
+            Variables = effectiveVariables,
+            ActionProperties = prepared.ActionProperties
         };
 
         prepared.ScriptBody = wrapper.WrapScript(prepared.ScriptBody, scriptContext);
@@ -233,11 +236,25 @@ public partial class DeploymentTaskExecutor
             PayloadKind = actionResult.PayloadKind,
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
+            ActionProperties = actionResult.ActionProperties,
             EndpointContext = tc.EndpointContext,
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version
         };
+    }
+
+    private static Dictionary<string, string> BuildActionPropertyDictionary(DeploymentActionDto action)
+    {
+        if (action.Properties == null || action.Properties.Count == 0)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var dict = new Dictionary<string, string>(action.Properties.Count, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var prop in action.Properties)
+            dict[prop.PropertyName] = prop.PropertyValue;
+
+        return dict;
     }
 
     private static ContextPreparationPolicy ResolveContextPreparationPolicy(

@@ -1,5 +1,4 @@
 using Squid.Message.Models.Deployments.Execution;
-using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -7,20 +6,19 @@ public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 {
     public string WrapScript(string script, ScriptContext context)
     {
-        var ns = ResolveNamespace(context?.Variables);
+        var ns = ResolveNamespace(context);
 
         return context?.Syntax == ScriptSyntax.Bash
             ? WrapBash(script, ns)
             : WrapPowerShell(script, ns);
     }
 
-    private static string ResolveNamespace(List<VariableDto> variables)
+    private static string ResolveNamespace(ScriptContext context)
     {
-        var ns = variables?
-            .FirstOrDefault(v => string.Equals(v.Name, KubernetesProperties.LegacyNamespace, StringComparison.OrdinalIgnoreCase))
-            ?.Value;
+        if (context?.ActionProperties != null && context.ActionProperties.Count > 0)
+            return KubernetesPropertyParser.GetNamespace(context.ActionProperties);
 
-        return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
+        return KubernetesDefaultValues.Namespace;
     }
 
     private static string WrapBash(string script, string ns)
