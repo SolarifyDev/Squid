@@ -52,6 +52,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("delete")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
+    public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<DeleteMachinesCommand, DeleteMachinesResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("connection-status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
     public async Task<IActionResult> GetConnectionStatusAsync([FromQuery] GetConnectionStatusRequest request, CancellationToken ct)

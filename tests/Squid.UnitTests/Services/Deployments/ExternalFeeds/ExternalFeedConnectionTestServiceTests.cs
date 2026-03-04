@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
@@ -111,6 +112,153 @@ public class ExternalFeedConnectionTestServiceTests
         configuredHeaders.ContainsKey("Authorization").ShouldBeTrue();
         configuredHeaders["Authorization"]
             .ShouldBe($"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes("user:pass"))}");
+    }
+
+    [Fact]
+    public async Task TestAsync_DockerContainerRegistryWithV2AndNoPassword_ShouldSucceed()
+    {
+        var requestedUri = default(Uri);
+        Dictionary<string, string> configuredHeaders = null;
+
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(101, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 101,
+                ApiVersion = "",
+                FeedType = "Docker Container Registry",
+                FeedUri = "https://index.docker.io/v2",
+                Name = "Squid hub",
+                PackageAcquisitionLocationOptions = "",
+                Password = null,
+                RegistryPath = "",
+                Slug = "squid-hub",
+                SpaceId = 1,
+                Username = "squidcd"
+            });
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Callback<TimeSpan?, bool, Dictionary<string, string>>((_, _, headers) => configuredHeaders = headers)
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(101, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Message.ShouldBe("Connected successfully (HTTP 401).");
+        requestedUri.ShouldBe(new Uri("https://index.docker.io/v2/"));
+        configuredHeaders.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TestAsync_DockerRegistryWithCredentials_ShouldUseBearerTokenFlow()
+    {
+        var requestedUris = new List<string>();
+        var tokenServiceAuthorization = default(string);
+        var retryAuthorization = default(string);
+
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(102, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 102,
+                FeedType = "Docker Container Registry",
+                FeedUri = "https://index.docker.io/v2",
+                Username = "squidcd",
+                Password = "password123"
+            });
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            requestedUris.Add(request.RequestUri.AbsoluteUri);
+
+            if (request.RequestUri.Host.Equals("index.docker.io", StringComparison.OrdinalIgnoreCase))
+            {
+                if (request.Headers.Authorization?.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    retryAuthorization = request.Headers.Authorization.ToString();
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+                }
+
+                var challengeResponse = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+                challengeResponse.Headers.WwwAuthenticate.Add(new AuthenticationHeaderValue(
+                    "Bearer",
+                    "realm=\"https://auth.docker.io/token\",service=\"registry.docker.io\""));
+                return Task.FromResult(challengeResponse);
+            }
+
+            if (request.RequestUri.Host.Equals("auth.docker.io", StringComparison.OrdinalIgnoreCase))
+            {
+                tokenServiceAuthorization = request.Headers.Authorization?.ToString();
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"token\":\"docker-bearer-token\"}")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(102, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Message.ShouldBe("Connected successfully (HTTP 200).");
+        requestedUris.ShouldContain("https://auth.docker.io/token?service=registry.docker.io");
+        tokenServiceAuthorization.ShouldBe($"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes("squidcd:password123"))}");
+        retryAuthorization.ShouldBe("Bearer docker-bearer-token");
+    }
+
+    [Fact]
+    public async Task TestAsync_DockerRegistryWithCredentials_ShouldFailWhenTokenServiceRejectsCredentials()
+    {
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(103, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 103,
+                FeedType = "Docker Container Registry",
+                FeedUri = "https://index.docker.io/v2",
+                Username = "squidcd",
+                Password = "wrong-password"
+            });
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            if (request.RequestUri.Host.Equals("index.docker.io", StringComparison.OrdinalIgnoreCase))
+            {
+                var challengeResponse = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+                challengeResponse.Headers.WwwAuthenticate.Add(new AuthenticationHeaderValue(
+                    "Bearer",
+                    "realm=\"https://auth.docker.io/token\",service=\"registry.docker.io\""));
+                return Task.FromResult(challengeResponse);
+            }
+
+            if (request.RequestUri.Host.Equals("auth.docker.io", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(103, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.Message.ShouldBe("Registry credentials were rejected by token service (HTTP 401).");
     }
 
     [Fact]
@@ -321,6 +469,35 @@ public class ExternalFeedConnectionTestServiceTests
         requestedUri.ShouldBe(new Uri("https://helm.example.com/charts/index.yaml"));
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Moved)]
+    [InlineData(HttpStatusCode.Redirect)]
+    [InlineData(HttpStatusCode.TemporaryRedirect)]
+    [InlineData(HttpStatusCode.PermanentRedirect)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task TestAsync_DefaultProbe_ShouldTreatRedirectAnd429AsReachable(HttpStatusCode statusCode)
+    {
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(21, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed
+            {
+                Id = 21,
+                FeedType = "NuGet",
+                FeedUri = "https://packages.example.com/feed"
+            });
+
+        var client = CreateHttpClient((_, _) => Task.FromResult(new HttpResponseMessage(statusCode)));
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+
+        var result = await sut.TestAsync(21, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Message.ShouldBe($"Connected successfully (HTTP {(int)statusCode}).");
+    }
+
     [Fact]
     public async Task TestAsync_UsesDefaultProbeRule_ForUnknownFeedType()
     {
@@ -462,6 +639,17 @@ public class ExternalFeedConnectionTestServiceTests
     [InlineData("https://example.com", "https://example.com/")]
     [InlineData("https://example.com/root", "https://example.com/root/")]
     public void TryNormalize_ShouldEnsureTrailingSlash(string input, string expected)
+    {
+        var success = ExternalFeedProbeUri.TryNormalize(input, out var normalized);
+
+        success.ShouldBeTrue();
+        normalized.ShouldBe(new Uri(expected));
+    }
+
+    [Theory]
+    [InlineData("  https://example.com  ", "https://example.com/")]
+    [InlineData("\thttps://index.docker.io/v2\t", "https://index.docker.io/v2/")]
+    public void TryNormalize_ShouldTrimWhitespace(string input, string expected)
     {
         var success = ExternalFeedProbeUri.TryNormalize(input, out var normalized);
 

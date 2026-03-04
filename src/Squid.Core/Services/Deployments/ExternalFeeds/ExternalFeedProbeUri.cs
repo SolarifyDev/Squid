@@ -9,6 +9,8 @@ public static class ExternalFeedProbeUri
         if (string.IsNullOrWhiteSpace(rawFeedUri))
             return false;
 
+        rawFeedUri = rawFeedUri.Trim();
+
         if (!Uri.TryCreate(rawFeedUri, UriKind.Absolute, out var parsed))
             return false;
 

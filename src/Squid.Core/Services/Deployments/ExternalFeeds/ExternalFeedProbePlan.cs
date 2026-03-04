@@ -7,8 +7,14 @@ public sealed class ExternalFeedProbePlan
     private static readonly HashSet<HttpStatusCode> DefaultReachableStatuses =
     [
         HttpStatusCode.OK,
+        HttpStatusCode.MovedPermanently,
+        HttpStatusCode.Found,
+        HttpStatusCode.RedirectMethod,
+        HttpStatusCode.RedirectKeepVerb,
+        HttpStatusCode.PermanentRedirect,
         HttpStatusCode.Unauthorized,
-        HttpStatusCode.Forbidden
+        HttpStatusCode.Forbidden,
+        HttpStatusCode.TooManyRequests
     ];
 
     public ExternalFeedProbePlan(IEnumerable<Uri> probeUris, Func<HttpStatusCode, bool> isReachable = null)
@@ -28,6 +34,5 @@ public sealed class ExternalFeedProbePlan
     public static ExternalFeedProbePlan Single(Uri probeUri, Func<HttpStatusCode, bool> isReachable = null) =>
         new([probeUri], isReachable);
 
-    public static bool IsDefaultReachable(HttpStatusCode status) =>
-        DefaultReachableStatuses.Contains(status);
+    public static bool IsDefaultReachable(HttpStatusCode status) => DefaultReachableStatuses.Contains(status);
 }
