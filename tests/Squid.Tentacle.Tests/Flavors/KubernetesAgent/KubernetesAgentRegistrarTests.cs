@@ -20,7 +20,7 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
                 BearerToken = "reg-token",
                 MachineName = "agent-01",
                 Roles = "web",
-                EnvironmentIds = "2,3",
+                Environments = "Test,Production",
                 SpaceId = 9
             },
             new KubernetesSettings

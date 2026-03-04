@@ -63,7 +63,13 @@ public sealed class TentacleApp
         await using var halibutHost = _dependencies.HalibutHostFactory(tentacleCert, scriptService, tentacleSettings);
 
         if (runtime.CommunicationMode == TentacleCommunicationMode.Polling)
+        {
+            if (string.IsNullOrWhiteSpace(tentacleSettings.ServerCommsUrl))
+                throw new InvalidOperationException(
+                    "ServerCommsUrl is required for polling mode. Set it to the Halibut polling endpoint (e.g., https://server:10943)");
+
             halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId, registration.SubscriptionUri);
+        }
         else
             halibutHost.StartListening(runtime.ListeningPort ?? tentacleSettings.ListeningPort);
 

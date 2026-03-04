@@ -29,6 +29,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     public string TentacleSubscriptionId { get; private set; }
     public string TentacleThumbprint { get; private set; }
     public int TentacleEnvironmentId { get; private set; }
+    public string TentacleEnvironmentName { get; private set; }
 
     private TentacleHalibutHost _tentacleHost;
     private int _pollingPort;
@@ -110,6 +111,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             var env = await builder.CreateEnvironmentAsync("Real Tentacle E2E Environment").ConfigureAwait(false);
 
             TentacleEnvironmentId = env.Id;
+            TentacleEnvironmentName = env.Name;
         }).ConfigureAwait(false);
     }
 
@@ -131,7 +133,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
                 Thumbprint = tentacleCert.Thumbprint,
                 SubscriptionId = TentacleSubscriptionId,
                 Roles = "k8s",
-                EnvironmentIds = TentacleEnvironmentId.ToString(),
+                Environments = TentacleEnvironmentName,
                 Namespace = "default"
             }).ConfigureAwait(false);
         }).ConfigureAwait(false);

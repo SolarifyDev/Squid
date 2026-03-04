@@ -71,7 +71,7 @@ public class SquidTentacleE2ETests
                     Thumbprint = _fixture.TentacleThumbprint,
                     SubscriptionId = _fixture.TentacleSubscriptionId,
                     Roles = "k8s,web",
-                    EnvironmentIds = _fixture.TentacleEnvironmentId.ToString(),
+                    Environments = _fixture.TentacleEnvironmentName,
                     Namespace = "production"
                 }).ConfigureAwait(false);
 
@@ -100,7 +100,7 @@ public class SquidTentacleE2ETests
                     Thumbprint = _fixture.TentacleThumbprint,
                     SubscriptionId = _fixture.TentacleSubscriptionId,
                     Roles = "k8s",
-                    EnvironmentIds = _fixture.TentacleEnvironmentId.ToString(),
+                    Environments = _fixture.TentacleEnvironmentName,
                     Namespace = "default"
                 }).ConfigureAwait(false);
             }).ConfigureAwait(false);

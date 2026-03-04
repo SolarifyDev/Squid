@@ -9,7 +9,7 @@ public class RegisterKubernetesAgentCommand : ICommand
     public string SubscriptionId { get; set; }
     public int SpaceId { get; set; }
     public string Roles { get; set; }
-    public string EnvironmentIds { get; set; }
+    public string Environments { get; set; }
     public string Namespace { get; set; } = "default";
 }
 

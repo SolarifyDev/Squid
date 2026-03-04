@@ -107,7 +107,7 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
             ["Tentacle__BearerToken"] = "unit-test-token",
             ["Tentacle__MachineName"] = machineName,
             ["Tentacle__Roles"] = "web,api",
-            ["Tentacle__EnvironmentIds"] = "1,2",
+            ["Tentacle__Environments"] = "Test,Production",
             ["Tentacle__HealthCheckPort"] = healthPort.ToString(),
             ["Tentacle__CertsPath"] = sandbox.CertsPath,
             ["Tentacle__WorkspacePath"] = sandbox.WorkspacePath,
@@ -130,7 +130,7 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
             var root = doc.RootElement;
             root.GetProperty("machineName").GetString().ShouldBe(machineName);
             root.GetProperty("roles").GetString().ShouldBe("web,api");
-            root.GetProperty("environmentIds").GetString().ShouldBe("1,2");
+            root.GetProperty("environments").GetString().ShouldBe("Test,Production");
             root.GetProperty("namespace").GetString().ShouldBe("test-namespace");
 
             var subscriptionId = root.GetProperty("subscriptionId").GetString();

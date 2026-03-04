@@ -89,8 +89,8 @@ public class TentacleRegistrationClient
             ["thumbprint"] = thumbprint,
             ["subscriptionId"] = subscriptionId,
             ["spaceId"] = _settings.SpaceId,
-            ["roles"] = _settings.Roles,
-            ["environmentIds"] = _settings.EnvironmentIds
+            ["roles"] = _settings.Roles ?? string.Empty,
+            ["environments"] = _settings.Environments ?? string.Empty
         };
 
         foreach (var kv in _extraProperties)

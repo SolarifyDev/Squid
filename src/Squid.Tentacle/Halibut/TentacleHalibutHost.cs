@@ -39,6 +39,8 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         var pollUri = ResolvePollUri(subscriptionId, subscriptionUri);
         var pollingEndpointUri = new Uri(_settings.ServerCommsUrl);
 
+        WarnIfCommsUrlMatchesApiUrl(pollingEndpointUri);
+
         var serverEndpoint = new ServiceEndPoint(
             pollingEndpointUri,
             serverThumbprint,
@@ -47,8 +49,31 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         _runtime.Poll(pollUri, serverEndpoint, CancellationToken.None);
 
         Log.Information(
-            "Halibut polling started. SubscriptionId={SubscriptionId}, SubscriptionUri={SubscriptionUri}, ServerEndpoint={ServerEndpoint}",
-            subscriptionId, pollUri, pollingEndpointUri);
+            "Halibut polling started. SubscriptionId={SubscriptionId}, SubscriptionUri={SubscriptionUri}, ServerEndpoint={ServerEndpoint}, ServerThumbprint={ServerThumbprint}",
+            subscriptionId, pollUri, pollingEndpointUri, serverThumbprint);
+    }
+
+    private void WarnIfCommsUrlMatchesApiUrl(Uri commsUri)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.ServerUrl)) return;
+
+        try
+        {
+            var apiUri = new Uri(_settings.ServerUrl);
+
+            if (string.Equals(apiUri.Host, commsUri.Host, StringComparison.OrdinalIgnoreCase) &&
+                apiUri.Port == commsUri.Port)
+            {
+                Log.Warning(
+                    "ServerCommsUrl ({ServerCommsUrl}) has the same host:port as ServerUrl ({ServerUrl}). " +
+                    "ServerCommsUrl should point to the Halibut polling port (default 10943), not the HTTP API port",
+                    commsUri, apiUri);
+            }
+        }
+        catch (UriFormatException)
+        {
+            // ServerUrl is invalid, skip comparison
+        }
     }
 
     public void StartListening(int port)

@@ -28,6 +28,8 @@ public class HalibutModule : Module
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
                 .Build();
 
+            Log.Information("HalibutRuntime created. ServerCertThumbprint={Thumbprint}", serverCert.Thumbprint);
+
             StartPollingListenerIfEnabled(ctx, halibutRuntime);
 
             return halibutRuntime;
@@ -39,9 +41,17 @@ public class HalibutModule : Module
 
     private static void StartPollingListenerIfEnabled(IComponentContext ctx, HalibutRuntime halibutRuntime)
     {
-        if (!ctx.TryResolve<HalibutSetting>(out var halibutSetting)) return;
+        if (!ctx.TryResolve<HalibutSetting>(out var halibutSetting))
+        {
+            Log.Warning("HalibutSetting not found in configuration. Polling listener will NOT start");
+            return;
+        }
 
-        if (!halibutSetting.Polling.Enabled) return;
+        if (!halibutSetting.Polling.Enabled)
+        {
+            Log.Information("Halibut polling is disabled (Halibut:Polling:Enabled=false). Agents cannot connect via polling");
+            return;
+        }
 
         var port = halibutSetting.Polling.Port;
 

@@ -10,7 +10,7 @@ tentacle:
   roles:
     - "k8s"
   machineName: ""
-  environmentIds: []
+  environments: []
   spaceId: 1
   flavor: "KubernetesAgent"
   subscriptionId: ""

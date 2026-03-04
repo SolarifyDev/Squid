@@ -93,25 +93,32 @@ public class MachineInstallScriptService : IMachineInstallScriptService
             ? releaseName
             : command.AgentName;
 
-        var environmentIds = FormatHelmArray(command.EnvironmentIds);
+        var environments = FormatHelmArray(command.Environments);
         var roles = FormatHelmArray(command.Tags);
 
-        return JoinLines(
+        var lines = new List<string>
+        {
             "helm upgrade --install --rollback-on-failure",
             $"--set tentacle.serverUrl=\"{command.ServerUrl}\"",
             $"--set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"",
             $"--set tentacle.bearerToken=\"{bearerToken}\"",
             $"--set tentacle.machineName=\"{agentName}\"",
-            $"--set \"tentacle.roles={roles}\"",
-            $"--set \"tentacle.environmentIds={environmentIds}\"",
+            $"--set tentacle.roles=\"{roles}\"",
+            $"--set tentacle.environments=\"{environments}\"",
             $"--set tentacle.spaceId=\"{command.SpaceId}\"",
             $"--set tentacle.flavor=\"KubernetesAgent\"",
-            $"--set tentacle.subscriptionId=\"{subscriptionId}\"",
-            $"--set kubernetes.namespace=\"default\"",
-            "--create-namespace --namespace squid-agent",
-            "--version \"0.*.*\"",
-            releaseName,
-            "oci://registry-1.docker.io/squidcd/kubernetes-agent");
+            $"--set tentacle.subscriptionId=\"{subscriptionId}\""
+        };
+
+        if (!string.IsNullOrWhiteSpace(command.DefaultNamespace))
+            lines.Add($"--set kubernetes.namespace=\"{command.DefaultNamespace}\"");
+
+        lines.Add("--create-namespace --namespace squid-agent");
+        lines.Add("--version \"0.*.*\"");
+        lines.Add(releaseName);
+        lines.Add("oci://registry-1.docker.io/squidcd/kubernetes-agent");
+
+        return JoinLines(lines.ToArray());
     }
 
     private static string FormatHelmArray<T>(IReadOnlyList<T> items)

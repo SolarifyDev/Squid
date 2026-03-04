@@ -16,6 +16,8 @@ public interface IEnvironmentDataProvider : IScopedDependency
     Task<List<DeploymentEnvironment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task<DeploymentEnvironment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default);
+
+    Task<List<DeploymentEnvironment>> GetEnvironmentsByNamesAsync(List<string> names, CancellationToken cancellationToken);
 }
 
 public class EnvironmentDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IEnvironmentDataProvider
@@ -61,5 +63,10 @@ public class EnvironmentDataProvider(IUnitOfWork unitOfWork, IRepository reposit
     public async Task<DeploymentEnvironment> GetEnvironmentByIdAsync(int environmentId, CancellationToken cancellationToken = default)
     {
         return await repository.GetByIdAsync<DeploymentEnvironment>(environmentId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<DeploymentEnvironment>> GetEnvironmentsByNamesAsync(List<string> names, CancellationToken cancellationToken)
+    {
+        return await repository.Query<DeploymentEnvironment>(x => names.Contains(x.Name)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

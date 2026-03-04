@@ -43,7 +43,7 @@ public class MachineInstallScriptServiceTests
             AgentName = agentName,
             ServerUrl = serverUrl,
             ServerCommsUrl = serverCommsUrl,
-            EnvironmentIds = [1, 2],
+            Environments = ["Test", "Production"],
             Tags = ["k8s", "web"],
             SpaceId = 1
         };
@@ -91,6 +91,23 @@ public class MachineInstallScriptServiceTests
         result.AgentInstallScript.ShouldContain("--version \"0.*.*\"");
     }
 
+    [Theory]
+    [InlineData("production", true)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public async Task GenerateScript_AgentInstallScript_DefaultNamespaceOnlyWhenProvided(string defaultNamespace, bool shouldContain)
+    {
+        var command = CreateCommand();
+        command.DefaultNamespace = defaultNamespace;
+
+        var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
+
+        if (shouldContain)
+            result.AgentInstallScript.ShouldContain("kubernetes.namespace=\"production\"");
+        else
+            result.AgentInstallScript.ShouldNotContain("kubernetes.namespace");
+    }
+
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsOciRegistry()
     {
@@ -121,8 +138,8 @@ public class MachineInstallScriptServiceTests
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
-        result.AgentInstallScript.ShouldContain("\"tentacle.roles={k8s,web}\"");
-        result.AgentInstallScript.ShouldContain("\"tentacle.environmentIds={1,2}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.roles=\"{k8s,web}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.environments=\"{Test,Production}\"");
     }
 
     [Fact]
@@ -130,12 +147,12 @@ public class MachineInstallScriptServiceTests
     {
         var command = CreateCommand();
         command.Tags = ["web"];
-        command.EnvironmentIds = [1];
+        command.Environments = ["Test"];
 
         var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
 
-        result.AgentInstallScript.ShouldContain("\"tentacle.roles={web}\"");
-        result.AgentInstallScript.ShouldContain("\"tentacle.environmentIds={1}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.roles=\"{web}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.environments=\"{Test}\"");
     }
 
     [Fact]
@@ -143,12 +160,12 @@ public class MachineInstallScriptServiceTests
     {
         var command = CreateCommand();
         command.Tags = [];
-        command.EnvironmentIds = [];
+        command.Environments = [];
 
         var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
 
-        result.AgentInstallScript.ShouldContain("\"tentacle.roles={}\"");
-        result.AgentInstallScript.ShouldContain("\"tentacle.environmentIds={}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.roles=\"{}\"");
+        result.AgentInstallScript.ShouldContain("tentacle.environments=\"{}\"");
     }
 
     [Fact]

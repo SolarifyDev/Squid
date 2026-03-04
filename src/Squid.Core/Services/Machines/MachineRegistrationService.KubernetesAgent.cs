@@ -11,6 +11,8 @@ public partial class MachineRegistrationService
     public async Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default)
     {
         _halibutRuntime.Trust(command.Thumbprint);
+        
+        var resolvedEnvironmentIds = await ResolveEnvironmentIdsAsync(command.Environments, cancellationToken).ConfigureAwait(false);
 
         var existing = await _dataProvider.GetMachineBySubscriptionIdAsync(command.SubscriptionId, cancellationToken).ConfigureAwait(false);
 
@@ -20,7 +22,7 @@ public partial class MachineRegistrationService
         {
             existing.Thumbprint = command.Thumbprint;
             existing.Roles = command.Roles ?? existing.Roles;
-            existing.EnvironmentIds = command.EnvironmentIds ?? existing.EnvironmentIds;
+            existing.EnvironmentIds = resolvedEnvironmentIds ?? existing.EnvironmentIds;
             existing.Endpoint = BuildKubernetesAgentEndpointJson(command);
 
             await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -31,7 +33,7 @@ public partial class MachineRegistrationService
         }
         else
         {
-            machine = BuildKubernetesAgentMachine(command);
+            machine = BuildKubernetesAgentMachine(command, resolvedEnvironmentIds);
 
             await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -57,13 +59,13 @@ public partial class MachineRegistrationService
         });
     }
 
-    private static Machine BuildKubernetesAgentMachine(RegisterKubernetesAgentCommand command)
+    private Machine BuildKubernetesAgentMachine(RegisterKubernetesAgentCommand command, string resolvedEnvironmentIds)
     {
         var endpointJson = BuildKubernetesAgentEndpointJson(command);
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
-            command.Roles, command.EnvironmentIds, command.SpaceId, endpointJson);
+            command.Roles, resolvedEnvironmentIds, command.SpaceId, endpointJson);
 
         machine.Thumbprint = command.Thumbprint;
         machine.PollingSubscriptionId = command.SubscriptionId;
