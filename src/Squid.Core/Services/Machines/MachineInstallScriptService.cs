@@ -78,7 +78,6 @@ public class MachineInstallScriptService : IMachineInstallScriptService
             "helm upgrade --install --rollback-on-failure",
             "--repo https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts",
             "--namespace kube-system",
-            "--version \"v4.*.*\"",
             "csi-driver-nfs",
             "csi-driver-nfs");
     }
@@ -114,7 +113,6 @@ public class MachineInstallScriptService : IMachineInstallScriptService
             lines.Add($"--set kubernetes.namespace=\"{command.DefaultNamespace}\"");
 
         lines.Add("--create-namespace --namespace squid-agent");
-        lines.Add("--version \"0.*.*\"");
         lines.Add(releaseName);
         lines.Add("oci://registry-1.docker.io/squidcd/kubernetes-agent");
 

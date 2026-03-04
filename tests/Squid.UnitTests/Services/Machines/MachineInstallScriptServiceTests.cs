@@ -83,12 +83,12 @@ public class MachineInstallScriptServiceTests
     }
 
     [Fact]
-    public async Task GenerateScript_AgentInstallScript_ContainsNamespaceAndVersion()
+    public async Task GenerateScript_AgentInstallScript_ContainsNamespace()
     {
         var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
 
         result.AgentInstallScript.ShouldContain("--create-namespace --namespace squid-agent");
-        result.AgentInstallScript.ShouldContain("--version \"0.*.*\"");
+        result.AgentInstallScript.ShouldNotContain("--version");
     }
 
     [Theory]
