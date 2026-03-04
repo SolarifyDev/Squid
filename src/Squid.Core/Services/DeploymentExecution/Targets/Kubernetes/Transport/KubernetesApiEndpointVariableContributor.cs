@@ -43,6 +43,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
             EndpointVariableFactory.Make("Squid.Account.AccountType", accountTypeStr),
             EndpointVariableFactory.Make("Squid.Account.CredentialsJson", accountData?.CredentialsJson ?? string.Empty, isSensitive: true),
             EndpointVariableFactory.Make(KubernetesApiVariableNames.SkipTlsVerification, endpoint.SkipTlsVerification ?? KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? string.Empty),
             EndpointVariableFactory.Make(KubernetesApiVariableNames.ClusterCertificate, ResolveClusterCertificate(context)),
             EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
             EndpointVariableFactory.Make(KubernetesApiVariableNames.OutputKubectlVersion, KubernetesBooleanValues.True),

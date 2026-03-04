@@ -59,7 +59,7 @@ public class KubernetesAgentPipelineBehaviorTests
 
         tc.EndpointVariables.AddRange(endpointVars);
 
-        tc.EndpointVariables.Count.ShouldBe(2);
+        tc.EndpointVariables.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -80,8 +80,8 @@ public class KubernetesAgentPipelineBehaviorTests
         var agentVars = agentContributor.ContributeVariables(new EndpointContext { EndpointJson = agentJson });
         var apiVars = apiContributor.ContributeVariables(new EndpointContext { EndpointJson = apiJson });
 
-        agentVars.Count.ShouldBe(2);
-        apiVars.Count.ShouldBe(8);
+        agentVars.Count.ShouldBe(3);
+        apiVars.Count.ShouldBe(9);
     }
 
     [Fact]

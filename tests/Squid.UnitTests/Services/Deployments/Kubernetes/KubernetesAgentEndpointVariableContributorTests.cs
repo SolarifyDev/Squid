@@ -31,11 +31,11 @@ public class KubernetesAgentEndpointVariableContributorTests
     // === ContributeVariables — count & names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns2Variables()
+    public void ContributeVariables_ValidEndpoint_Returns3Variables()
     {
         var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson() });
 
-        vars.Count.ShouldBe(2);
+        vars.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -83,11 +83,11 @@ public class KubernetesAgentEndpointVariableContributorTests
     // === ContributeVariables — null account still works ===
 
     [Fact]
-    public void ContributeVariables_NullAccount_StillReturns2Variables()
+    public void ContributeVariables_NullAccount_StillReturns3Variables()
     {
         var vars = _contributor.ContributeVariables(new EndpointContext { EndpointJson = MakeEndpointJson() });
 
-        vars.Count.ShouldBe(2);
+        vars.Count.ShouldBe(3);
     }
 
     // === ContributeVariables — bad input ===

@@ -67,6 +67,9 @@ public class EnvironmentDataProvider(IUnitOfWork unitOfWork, IRepository reposit
 
     public async Task<List<DeploymentEnvironment>> GetEnvironmentsByNamesAsync(List<string> names, CancellationToken cancellationToken)
     {
-        return await repository.Query<DeploymentEnvironment>(x => names.Contains(x.Name)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var lowerNames = names.Select(n => n.ToLower()).ToList();
+
+        return await repository.Query<DeploymentEnvironment>(x => lowerNames.Contains(x.Name.ToLower()))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }
