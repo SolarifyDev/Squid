@@ -1,6 +1,7 @@
+using Correlate.AspNetCore;
+using Correlate.DependencyInjection;
 using Squid.Api.Filters;
-using Squid.Core.Persistence;
-using Squid.Core.Settings.SelfCert;
+using Squid.Core.Constants;
 
 namespace Squid.Api;
 
@@ -8,52 +9,29 @@ public class Startup
 {
     private IConfiguration Configuration { get; }
 
-    private IServiceCollection _serviceCollection;
-
     public Startup(IConfiguration configuration)
     {
         Configuration = configuration;
     }
 
-    // ConfigureServices is where you register dependencies. This gets
-    // called by the runtime before the ConfigureContainer method, below.
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddCorrelate(options => options.RequestHeaders = SquidApiConstants.CorrelationIdHeaders);
         services.AddControllers();
         services.AddOptions();
         services.AddCustomSwagger();
         services.AddHttpContextAccessor();
+        services.AddHttpClientInternal();
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
-        services.AddHangfireInternal(Configuration);
-        services.AddHostedService<Squid.Core.Services.Deployments.DeploymentTaskHostedService>();
+        services.AddCustomAuthentication(Configuration);
+        services.AddSquidHangfire(Configuration);
         services.AddMvc(options =>
         {
             options.Filters.Add<GlobalExceptionFilter>();
-            options.Filters.Add<GlobalSuccessFilter>();
         });
-        
-        _serviceCollection = services;
     }
 
-    // ConfigureContainer is where you can register things directly
-    // with Autofac. This runs after ConfigureServices so the things
-    // here will override registrations made in ConfigureServices.
-    // Don't build the container; that gets done for you by the factory.
-    public void ConfigureContainer(ContainerBuilder builder)
-    {
-        var serviceProvider = _serviceCollection.BuildServiceProvider();
-
-        var selfCertSetting = Configuration.GetSection("SelfCert").Get<SelfCertSetting>();
-
-        var storeSetting = Configuration.GetSection("SquidStore").Get<SquidStoreSetting>();
-
-        ApplicationStartup.Initialize(builder, storeSetting, Log.Logger, Configuration, selfCertSetting);
-    }
-
-    // Configure is where you add middleware. This is called after
-    // ConfigureContainer. You can use IApplicationBuilder.ApplicationServices
-    // here if you need to resolve things from the container.
     public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
     {
         if (env.IsDevelopment())
@@ -62,9 +40,13 @@ public class Startup
             app.UseSwaggerUI(c => { c.SwaggerEndpoint("/swagger/v1/swagger.json", "Squid.Api.xml"); });
         }
 
+        app.UseSerilogRequestLogging();
+        app.UseCorrelate();
         app.UseRouting();
         app.UseCors();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
-        app.UseHangfireInternal(Configuration);
+        app.UseSquidHangfire(Configuration);
     }
 }

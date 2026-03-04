@@ -5,9 +5,9 @@ namespace Squid.Message.Requests.Deployments.Release;
 
 public class GetReleasesRequest : IPaginatedRequest
 {
-    public int PageIndex { get; set; }
-    
-    public int PageSize { get; set; }
+    public int PageIndex { get; set; } = 1;
+
+    public int PageSize { get; set; } = 20;
     
     public int ChannelId { get; set; }
     

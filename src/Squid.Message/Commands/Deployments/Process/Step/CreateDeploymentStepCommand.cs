@@ -7,7 +7,7 @@ public class CreateDeploymentStepCommand : ICommand
 {
     public int ProcessId { get; set; }
 
-    public DeploymentStepDto Step { get; set; }
+    public CreateOrUpdateDeploymentStepModel Step { get; set; }
 }
 
 public class CreateDeploymentStepResponse : SquidResponse<DeploymentStepDto>

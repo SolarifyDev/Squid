@@ -4,7 +4,7 @@ using Squid.Message.Requests.Deployments.LifeCycle;
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/lifecycles")]
 public class LifeCycleController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -14,7 +14,7 @@ public class LifeCycleController : ControllerBase
         _mediator = mediator;
     }
     
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateLifeCycleResponse))]
     public async Task<IActionResult> CreateLifeCycleAsync([FromBody] CreateLifeCycleCommand command)
     {
@@ -23,7 +23,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateLifeCycleResponse))]
     public async Task<IActionResult> UpdateLifeCycleAsync([FromBody] UpdateLifeCycleCommand command)
     {
@@ -32,7 +32,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteLifeCyclesResponse))]
     public async Task<IActionResult> DeleteLifeCyclesAsync([FromBody] DeleteLifeCyclesCommand command)
     {
@@ -41,7 +41,7 @@ public class LifeCycleController : ControllerBase
         return Ok(response);
     }
     
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetLifeCycleResponse))]
     public async Task<IActionResult> GetLifeCyclesAsync([FromQuery] GetLifecycleRequest request)
     {

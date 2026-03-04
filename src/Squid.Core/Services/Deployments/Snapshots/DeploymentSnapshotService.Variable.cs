@@ -1,5 +1,3 @@
-using System.Text;
-using Newtonsoft.Json;
 using Squid.Core.Services.Common;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -29,11 +27,21 @@ public partial class DeploymentSnapshotService
     {
         var variables = await _variableDataProvider
             .GetVariablesByVariableSetIdsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
-        
-        var snapshotData = GenerateVariableSetSnapshotData(variables);
 
-        var variableSetSnapshot = BuildVariableSetSnapshot(snapshotData);
-        
+        var snapshotData = await GenerateVariableSetSnapshotDataAsync(variables, cancellationToken).ConfigureAwait(false);
+        var blob = UtilService.BuildSnapshotBlob(snapshotData);
+
+        var existing = await _deploymentSnapshotDataProvider
+            .GetExistingVariableSetSnapshotAsync(blob.ContentHash, cancellationToken).ConfigureAwait(false);
+
+        if (existing != null)
+        {
+            return _mapper.Map<VariableSetSnapshotDto>(existing,
+                opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
+        }
+
+        var variableSetSnapshot = BuildVariableSetSnapshot(blob);
+
         await _deploymentSnapshotDataProvider.AddVariableSetSnapshotAsync(variableSetSnapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetSnapshotDto>(variableSetSnapshot,
@@ -53,27 +61,37 @@ public partial class DeploymentSnapshotService
         return snapshot;
     }
 
-    private VariableSetSnapshot BuildVariableSetSnapshot(VariableSetSnapshotDataDto snapshotData)
+    private static VariableSetSnapshot BuildVariableSetSnapshot(SnapshotBlob blob)
     {
-        var compressedData = UtilService.CompressToGzip(snapshotData);
-        var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
-        var contentHash = UtilService.ComputeSha256Hash(JsonConvert.SerializeObject(snapshotData));
-        
         return new VariableSetSnapshot
         {
             CreatedBy = "System",
-            ContentHash = contentHash,
-            SnapshotData = compressedData,
-            UncompressedSize = uncompressedSize,
+            ContentHash = blob.ContentHash,
+            SnapshotData = blob.CompressedData,
+            UncompressedSize = blob.UncompressedSize,
             CompressionType = "GZIP"
         };
     }
     
-    private VariableSetSnapshotDataDto GenerateVariableSetSnapshotData(List<Variable> variables)
+    private async Task<VariableSetSnapshotDataDto> GenerateVariableSetSnapshotDataAsync(
+        List<Variable> variables, CancellationToken ct)
     {
-        return new VariableSetSnapshotDataDto
+        var dtos = _mapper.Map<List<VariableDto>>(variables);
+
+        var variableIds = variables.Select(v => v.Id).ToList();
+        var allScopes = await _variableScopeDataProvider
+            .GetVariableScopesByVariableIdsAsync(variableIds, ct).ConfigureAwait(false);
+
+        var scopesByVariableId = allScopes
+            .GroupBy(s => s.VariableId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var dto in dtos)
         {
-            Variables = _mapper.Map<List<VariableDto>>(variables)
-        };
+            if (scopesByVariableId.TryGetValue(dto.Id, out var scopes))
+                dto.Scopes = _mapper.Map<List<VariableScopeDto>>(scopes);
+        }
+
+        return new VariableSetSnapshotDataDto { Variables = dtos };
     }
 }

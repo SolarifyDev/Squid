@@ -16,6 +16,10 @@ public interface IChannelDataProvider : IScopedDependency
     Task<List<Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task<Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default);
+
+    Task<List<Channel>> GetChannelsByProjectIdAsync(int projectId, CancellationToken ct = default);
+
+    Task<Channel> GetDefaultChannelByProjectIdAsync(int projectId, CancellationToken ct = default);
 }
 
 public class ChannelDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IChannelDataProvider
@@ -63,5 +67,17 @@ public class ChannelDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<Channel> GetChannelByIdAsync(int channelId, CancellationToken cancellationToken = default)
     {
         return await repository.GetByIdAsync<Channel>(channelId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<Channel>> GetChannelsByProjectIdAsync(int projectId, CancellationToken ct = default)
+    {
+        return await repository.Query<Channel>(c => c.ProjectId == projectId)
+            .ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<Channel> GetDefaultChannelByProjectIdAsync(int projectId, CancellationToken ct = default)
+    {
+        return await repository.Query<Channel>(c => c.ProjectId == projectId && c.IsDefault)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 }

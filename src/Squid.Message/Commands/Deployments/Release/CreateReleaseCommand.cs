@@ -13,7 +13,7 @@ public class CreateReleaseCommand : ICommand
     
     public string ReleaseNote { get; set; }
     
-    public CreateReleaseSelectedPackageDto SelectedPackages { get; set; }
+    public List<CreateReleaseSelectedPackageDto> SelectedPackages { get; set; } = new();
 }
 
 public class CreateReleaseResponse : SquidResponse<ReleaseDto>

@@ -8,13 +8,17 @@ public class UpdateVariableSetCommand : ICommand
 {
     public int Id { get; set; }
 
+    public string Name { get; set; }
+
+    public string Description { get; set; }
+
     public int OwnerId { get; set; }
 
     public VariableSetOwnerType OwnerType { get; set; }
 
     public int SpaceId { get; set; }
 
-    public List<VariableDto> Variables { get; set; } = new List<VariableDto>();
+    public List<VariableModel> Variables { get; set; } = new List<VariableModel>();
 }
 
 public class UpdateVariableSetResponse : SquidResponse<UpdateVariableSetResponseData>

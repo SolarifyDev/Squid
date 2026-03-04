@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Environment;
 using Squid.Message.Requests.Deployments.Environment;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/environments")]
 public class EnvironmentController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class EnvironmentController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateEnvironmentResponse))]
     public async Task<IActionResult> CreateEnvironmentAsync([FromBody] CreateEnvironmentCommand command)
     {
@@ -24,7 +23,7 @@ public class EnvironmentController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateEnvironmentResponse))]
     public async Task<IActionResult> UpdateEnvironmentAsync([FromBody] UpdateEnvironmentCommand command)
     {
@@ -33,7 +32,7 @@ public class EnvironmentController : ControllerBase
         return Ok(response);
     }
 
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteEnvironmentsResponse))]
     public async Task<IActionResult> DeleteEnvironmentsAsync([FromBody] DeleteEnvironmentsCommand command)
     {
@@ -42,7 +41,7 @@ public class EnvironmentController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetEnvironmentsResponse))]
     public async Task<IActionResult> GetEnvironmentsAsync([FromQuery] GetEnvironmentsRequest request)
     {

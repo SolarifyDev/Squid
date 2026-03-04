@@ -20,5 +20,5 @@ public class GetLifeCycleResponseData
 {
     public int Count { get; set; }
     
-    public List<LifecyclePhaseDto> LifeCycles { get; set; }
+    public List<LifecycleDetailDto> LifeCycles { get; set; }
 }

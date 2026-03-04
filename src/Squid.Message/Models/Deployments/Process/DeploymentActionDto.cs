@@ -27,4 +27,10 @@ public class DeploymentActionDto
     public DateTimeOffset CreatedAt { get; set; }
 
     public List<DeploymentActionPropertyDto> Properties { get; set; } = new List<DeploymentActionPropertyDto>();
+
+    public List<int> Environments { get; set; } = new List<int>();
+
+    public List<int> ExcludedEnvironments { get; set; } = new List<int>();
+
+    public List<int> Channels { get; set; } = new List<int>();
 }

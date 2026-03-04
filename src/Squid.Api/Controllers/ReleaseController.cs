@@ -4,7 +4,7 @@ using Squid.Message.Requests.Deployments.Release;
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/releases")]
 public class ReleaseController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -14,7 +14,7 @@ public class ReleaseController : ControllerBase
         _mediator = mediator;
     }
     
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateReleaseResponse))]
     public async Task<IActionResult> CreateReleaseAsync([FromBody] CreateReleaseCommand command)
     {
@@ -23,7 +23,7 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateReleaseResponse))]
     public async Task<IActionResult> UpdateReleaseAsync([FromBody] UpdateReleaseCommand command)
     {
@@ -32,7 +32,7 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
-    [HttpPut("variable")]
+    [HttpPost("update-variables")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateReleaseVariableAsync([FromBody] UpdateReleaseVariableCommand command)
     {
@@ -41,7 +41,7 @@ public class ReleaseController : ControllerBase
         return Ok();
     }
     
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteReleaseResponse))]
     public async Task<IActionResult> DeleteReleaseAsync([FromBody] DeleteReleaseCommand command)
     {
@@ -50,7 +50,7 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
     
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleasesResponse))]
     public async Task<IActionResult> GetReleasesAsync([FromQuery] GetReleasesRequest request)
     {

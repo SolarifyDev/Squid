@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Requests.Deployments.Variable;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/variable-sets")]
 public class VariableSetController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,7 +14,7 @@ public class VariableSetController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateVariableSetResponse))]
     public async Task<IActionResult> CreateVariableSetAsync([FromBody] CreateVariableSetCommand command)
     {
@@ -24,7 +23,7 @@ public class VariableSetController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPut]
+    [HttpPost("update")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateVariableSetResponse))]
     public async Task<IActionResult> UpdateVariableSetAsync([FromBody] UpdateVariableSetCommand command)
     {
@@ -33,7 +32,7 @@ public class VariableSetController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet]
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetVariableSetsResponse))]
     public async Task<IActionResult> GetVariableSetsAsync([FromQuery] GetVariableSetsRequest request)
     {
@@ -42,7 +41,7 @@ public class VariableSetController : ControllerBase
         return Ok(response);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetVariableSetResponse))]
     public async Task<IActionResult> GetVariableSetAsync(int id)
     {
@@ -52,7 +51,7 @@ public class VariableSetController : ControllerBase
         return Ok(response);
     }
 
-    [HttpDelete]
+    [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteVariableSetResponse))]
     public async Task<IActionResult> DeleteVariableSetAsync([FromBody] DeleteVariableSetCommand command)
     {
@@ -60,5 +59,4 @@ public class VariableSetController : ControllerBase
 
         return Ok(response);
     }
-
 }

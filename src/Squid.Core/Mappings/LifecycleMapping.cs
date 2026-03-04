@@ -1,5 +1,4 @@
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Message.Models.Deployments;
 using Squid.Message.Models.Deployments.LifeCycle;
 
 namespace Squid.Core.Mappings;
@@ -9,12 +8,17 @@ public class LifecycleMapping : Profile
     public LifecycleMapping()
     {
         CreateMap<Lifecycle, LifeCycleDto>().ReverseMap();
-        CreateMap<Phase, PhaseDto>()
-            .ForMember(x => x.AutomaticDeploymentTargets, x => x.MapFrom(y => y.AutomaticDeploymentTargets.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList()))
-            .ForMember(x => x.OptionalDeploymentTargets, x => x.MapFrom(y => y.OptionalDeploymentTargets.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList()));
-        CreateMap<PhaseDto, Phase>()
-            .ForMember(x => x.AutomaticDeploymentTargets, x => x.MapFrom(y => string.Join(',', y.AutomaticDeploymentTargets)))
-            .ForMember(x => x.OptionalDeploymentTargets, x => x.MapFrom(y => string.Join(',', y.OptionalDeploymentTargets)));
-        CreateMap<RetentionPolicy, RetentionPolicyDto>().ReverseMap();
+        CreateMap<LifecyclePhase, LifecyclePhaseDto>()
+            .ForMember(x => x.AutomaticDeploymentTargetIds, x => x.Ignore())
+            .ForMember(x => x.OptionalDeploymentTargetIds, x => x.Ignore());
+        CreateMap<LifecyclePhaseDto, LifecyclePhase>();
+
+        CreateMap<LifeCycleModel, Lifecycle>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.DataVersion, opt => opt.Ignore());
+
+        CreateMap<LifecyclePhaseModel, LifecyclePhase>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.LifecycleId, opt => opt.Ignore());
     }
 }

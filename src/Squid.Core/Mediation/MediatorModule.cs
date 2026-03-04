@@ -1,3 +1,4 @@
+using Squid.Core.Middlewares.UnifyResponse;
 using Squid.Core.Middlewares.UnitOfWork;
 
 namespace Squid.Core.Mediation;
@@ -21,6 +22,7 @@ public class MediatorModule : Module
         {
             c.UseLogger();
             c.UseUnitOfWork();
+            c.UseUnifyResponse();
             c.UseMessageValidator();
         });
 

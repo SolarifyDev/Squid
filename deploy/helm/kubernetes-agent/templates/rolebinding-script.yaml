@@ -1,0 +1,24 @@
+{{- if .Values.scriptPod.rbac.useNamespacedRoles }}
+{{- $namespaces := .Values.scriptPod.rbac.targetNamespaces }}
+{{- if not $namespaces }}
+{{- $namespaces = list .Release.Namespace }}
+{{- end }}
+{{- range $ns := $namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kubernetes-agent.fullname" $ }}-script
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kubernetes-agent.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kubernetes-agent.fullname" $ }}-script
+subjects:
+- kind: ServiceAccount
+  name: {{ include "kubernetes-agent.script-sa-name" $ }}
+  namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

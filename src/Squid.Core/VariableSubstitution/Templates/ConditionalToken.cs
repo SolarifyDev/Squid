@@ -1,0 +1,63 @@
+using System.Collections.Generic;
+using System.Linq;
+
+namespace Squid.Core.VariableSubstitution.Templates
+{
+    class ConditionalToken : TemplateToken
+    {
+        public ConditionalToken(ConditionalExpressionToken token, IEnumerable<TemplateToken> truthyBranch, IEnumerable<TemplateToken> falsyBranch)
+        {
+            Token = token;
+            TruthyTemplate = truthyBranch.ToArray();
+            FalsyTemplate = falsyBranch.ToArray();
+        }
+
+        public ConditionalExpressionToken Token { get; }
+
+        public TemplateToken[] TruthyTemplate { get; }
+
+        public TemplateToken[] FalsyTemplate { get; }
+
+        public override string ToString()
+        {
+            return "#{if " + Token.LeftSide + Token.EqualityText + "}" + string.Join("", TruthyTemplate.Cast<object>()) + "#{else}" + string.Join("", FalsyTemplate.Cast<object>()) + "#{/if}";
+        }
+    }
+
+    class ConditionalExpressionToken : TemplateToken
+    {
+        public SymbolExpression LeftSide { get; }
+        public virtual string EqualityText => "";
+
+        public ConditionalExpressionToken(SymbolExpression leftSide)
+        {
+            LeftSide = leftSide;
+        }
+    }
+
+    class ConditionalStringExpressionToken : ConditionalExpressionToken
+    {
+        public string RightSide { get; }
+        public bool Equality { get; }
+        public override string EqualityText => " " + (Equality ? "==" : "!=") + " " + RightSide + " ";
+
+        public ConditionalStringExpressionToken(SymbolExpression leftSide, bool eq, string rightSide) : base(leftSide)
+        {
+            Equality = eq;
+            RightSide = rightSide;
+        }
+    }
+
+    class ConditionalSymbolExpressionToken : ConditionalExpressionToken
+    {
+        public SymbolExpression RightSide { get; }
+        public bool Equality { get; }
+        public override string EqualityText => " " + (Equality ? "==" : "!=") + " " + RightSide + " ";
+
+        public ConditionalSymbolExpressionToken(SymbolExpression leftSide, bool eq, SymbolExpression rightSide) : base(leftSide)
+        {
+            Equality = eq;
+            RightSide = rightSide;
+        }
+    }
+}

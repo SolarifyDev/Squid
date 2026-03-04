@@ -51,4 +51,6 @@ public class ServerTask : IEntity<int>
     public int StateOrder { get; set; }
 
     public int Weight { get; set; }
+
+    public string JobId { get; set; }
 }

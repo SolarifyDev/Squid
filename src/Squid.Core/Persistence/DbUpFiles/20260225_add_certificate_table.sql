@@ -1,0 +1,28 @@
+CREATE TABLE IF NOT EXISTS certificate
+(
+    id                           SERIAL       PRIMARY KEY,
+    space_id                     INT          NOT NULL,
+    name                         VARCHAR(255) NOT NULL,
+    notes                        TEXT,
+    certificate_data             TEXT         NOT NULL,
+    password                     TEXT,
+    certificate_data_format      INT          NOT NULL DEFAULT 0,
+    thumbprint                   VARCHAR(255) NOT NULL,
+    subject_distinguished_name   TEXT,
+    subject_common_name          VARCHAR(255),
+    issuer_distinguished_name    TEXT,
+    issuer_common_name           VARCHAR(255),
+    self_signed                  BOOLEAN      NOT NULL DEFAULT FALSE,
+    not_after                    TIMESTAMPTZ  NOT NULL,
+    not_before                   TIMESTAMPTZ  NOT NULL,
+    has_private_key              BOOLEAN      NOT NULL DEFAULT FALSE,
+    version                      INT          NOT NULL DEFAULT 0,
+    serial_number                VARCHAR(255),
+    signature_algorithm_name     VARCHAR(255),
+    subject_alternative_names    TEXT,
+    environment_ids              TEXT,
+    archived                     TIMESTAMPTZ,
+    replaced_by                  INT,
+    last_modified_on             TIMESTAMPTZ,
+    last_modified_by             VARCHAR(255)
+);

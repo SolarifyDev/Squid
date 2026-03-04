@@ -16,14 +16,11 @@ public interface IExternalFeedService : IScopedDependency
     Task<GetExternalFeedsResponse> GetExternalFeedsAsync(GetExternalFeedsRequest request, CancellationToken cancellationToken);
 }
 
-public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider externalFeedDataProvider)
-    : IExternalFeedService
+public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider externalFeedDataProvider) : IExternalFeedService
 {
     public async Task<ExternalFeedCreatedEvent> CreateExternalFeedAsync(CreateExternalFeedCommand command, CancellationToken cancellationToken)
     {
         var externalFeed = mapper.Map<Persistence.Entities.Deployments.ExternalFeed>(command);
-
-        // externalFeed.Id = Guid.NewGuid(); // int 主键由数据库自增
 
         await externalFeedDataProvider.AddExternalFeedAsync(externalFeed, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -44,7 +41,12 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
             throw new Exception("ExternalFeed not found");
         }
 
+        // Keep existing password when update request doesn't provide a new one.
+        var existingPassword = entity.Password;
+        
         mapper.Map(command, entity);
+        
+        if (string.IsNullOrWhiteSpace(command.PasswordNewValue)) entity.Password = existingPassword;
 
         await externalFeedDataProvider.UpdateExternalFeedAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 

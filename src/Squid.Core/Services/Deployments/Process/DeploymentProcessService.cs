@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Process;
@@ -69,7 +70,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
         if (process == null)
         {
-            throw new InvalidOperationException($"DeploymentProcess with id {command.Id} not found");
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", command.Id);
         }
 
         _mapper.Map(command, process);
@@ -88,7 +89,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
         {
-            throw new InvalidOperationException($"DeploymentProcess with id {id} not found");
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", id);
         }
 
         await _stepDataProvider.DeleteDeploymentStepsByProcessIdAsync(id, cancellationToken).ConfigureAwait(false);
@@ -100,7 +101,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(id, cancellationToken).ConfigureAwait(false);
         if (process == null)
         {
-            throw new InvalidOperationException($"DeploymentProcess with id {id} not found");
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", id);
         }
 
         return await BuildDeploymentProcessDtoAsync(process, cancellationToken).ConfigureAwait(false);

@@ -2,30 +2,21 @@ using System.Security.Cryptography.X509Certificates;
 using Halibut;
 using Halibut.Diagnostics;
 using Halibut.ServiceModel;
+using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.SelfCert;
 
 namespace Squid.Core.Halibut;
 
 public class HalibutModule : Module
 {
-    private readonly SelfCertSetting _selfCertSetting;
-    
-    public HalibutModule(SelfCertSetting selfCertSetting)
-    {
-        _selfCertSetting = selfCertSetting;
-    }
-    
     protected override void Load(ContainerBuilder builder)
     {
-        builder.Register(_ =>
+        builder.Register(ctx =>
         {
-            var selfCertBase64 = _selfCertSetting.Base64;
+            var selfCertSetting = ctx.Resolve<SelfCertSetting>();
 
-            if (string.IsNullOrEmpty(selfCertBase64))
-                throw new InvalidOperationException("缺少HALIBUT_CERT_BASE64环境变量");
-
-            var certBytes = Convert.FromBase64String(selfCertBase64);
-            var serverCert = new X509Certificate2(certBytes, _selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
+            var certBytes = Convert.FromBase64String(selfCertSetting.Base64);
+            var serverCert = X509CertificateLoader.LoadPkcs12(certBytes, selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
 
             var services = new DelegateServiceFactory();
 
@@ -37,7 +28,35 @@ public class HalibutModule : Module
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
                 .Build();
 
+            Log.Information("HalibutRuntime created. ServerCertThumbprint={Thumbprint}", serverCert.Thumbprint);
+
+            StartPollingListenerIfEnabled(ctx, halibutRuntime);
+
             return halibutRuntime;
+            
         }).As<HalibutRuntime>().SingleInstance();
+
+        builder.RegisterType<HalibutTrustInitializer>().As<IStartable>().SingleInstance();
+    }
+
+    private static void StartPollingListenerIfEnabled(IComponentContext ctx, HalibutRuntime halibutRuntime)
+    {
+        if (!ctx.TryResolve<HalibutSetting>(out var halibutSetting))
+        {
+            Log.Warning("HalibutSetting not found in configuration. Polling listener will NOT start");
+            return;
+        }
+
+        if (!halibutSetting.Polling.Enabled)
+        {
+            Log.Information("Halibut polling is disabled (Halibut:Polling:Enabled=false). Agents cannot connect via polling");
+            return;
+        }
+
+        var port = halibutSetting.Polling.Port;
+
+        halibutRuntime.Listen(port);
+
+        Log.Information("Halibut polling listener started on port {Port}", port);
     }
 }

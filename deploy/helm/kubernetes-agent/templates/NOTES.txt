@@ -1,0 +1,14 @@
+Squid Tentacle has been deployed.
+
+Tentacle Pod:
+  kubectl get pods -l {{ include "kubernetes-agent.selectorLabels" . | replace ": " "=" | replace "\n" "," }}
+
+Logs:
+  kubectl logs -l {{ include "kubernetes-agent.selectorLabels" . | replace ": " "=" | replace "\n" "," }}
+
+Script Pods:
+  kubectl get pods -l app.kubernetes.io/managed-by=kubernetes-agent
+
+Verify registration:
+  The tentacle will register with the Squid Server at {{ .Values.tentacle.serverUrl }}
+  and begin polling via {{ .Values.tentacle.serverCommsUrl }}.

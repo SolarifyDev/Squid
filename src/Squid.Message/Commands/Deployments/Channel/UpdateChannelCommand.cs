@@ -5,7 +5,7 @@ namespace Squid.Message.Commands.Deployments.Channel;
 
 public class UpdateChannelCommand : ICommand
 {
-    public ChannelDto Channel { get; set; }
+    public CreateOrUpdateChannelModel Channel { get; set; }
 }
 
 public class UpdateChannelResponse : SquidResponse<ChannelDto>

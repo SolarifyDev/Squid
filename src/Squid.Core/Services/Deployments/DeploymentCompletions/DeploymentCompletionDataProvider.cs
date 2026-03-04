@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.Core.Services.Deployments.DeploymentCompletions;
 
@@ -29,7 +30,7 @@ public class DeploymentCompletionDataProvider(IRepository repository, IUnitOfWor
 
     public async Task<List<DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default)
     {
-        var query = repository.QueryNoTracking<DeploymentCompletion>(dc => dc.State == "Success");
+        var query = repository.QueryNoTracking<DeploymentCompletion>(dc => dc.State == TaskState.Success);
 
         if (projectId.HasValue)
         {

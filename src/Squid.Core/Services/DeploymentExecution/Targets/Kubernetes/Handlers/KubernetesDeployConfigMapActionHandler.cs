@@ -1,0 +1,40 @@
+using System.Text;
+using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Models.Deployments.Process;
+
+namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+
+public class KubernetesDeployConfigMapActionHandler : IActionHandler
+{
+    private readonly ConfigMapResourceGenerator _generator = new();
+
+    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployConfigMap;
+
+    public bool CanHandle(DeploymentActionDto action)
+    {
+        if (action == null) return false;
+
+        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
+    }
+
+    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    {
+        var properties = KubernetesPropertyParser.BuildPropertyDictionary(ctx.Action);
+
+        if (!_generator.CanGenerate(properties))
+            return Task.FromResult<ActionExecutionResult>(null);
+
+        var yaml = _generator.Generate(properties);
+
+        return Task.FromResult(new ActionExecutionResult
+        {
+            ScriptBody = "kubectl apply -f \"./configmap.yaml\"",
+            Files = new Dictionary<string, byte[]> { ["configmap.yaml"] = Encoding.UTF8.GetBytes(yaml) },
+            CalamariCommand = null,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Syntax = ScriptSyntax.Bash
+        });
+    }
+}

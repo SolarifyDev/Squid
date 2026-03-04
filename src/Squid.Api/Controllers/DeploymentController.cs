@@ -1,10 +1,9 @@
-using Microsoft.AspNetCore.Mvc;
 using Squid.Message.Commands.Deployments.Deployment;
 
 namespace Squid.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/deployments")]
 public class DeploymentController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -14,7 +13,7 @@ public class DeploymentController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
+    [HttpPost("create")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateDeploymentResponse))]
     public async Task<IActionResult> CreateDeploymentAsync([FromBody] CreateDeploymentCommand command)
     {
@@ -23,7 +22,7 @@ public class DeploymentController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost("validate")]
+    [HttpPost("validate-environment")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(bool))]
     public async Task<IActionResult> ValidateDeploymentEnvironmentAsync([FromBody] ValidateDeploymentEnvironmentRequest request)
     {

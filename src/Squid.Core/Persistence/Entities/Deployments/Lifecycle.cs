@@ -1,3 +1,5 @@
+using Squid.Message.Enums.Deployments;
+
 namespace Squid.Core.Persistence.Entities.Deployments;
 
 public class Lifecycle : IEntity<int>
@@ -6,13 +8,19 @@ public class Lifecycle : IEntity<int>
 
     public string Name { get; set; }
 
-    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
-
     public int SpaceId { get; set; }
 
     public string Slug { get; set; }
+
+    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
     
-    public int ReleaseRetentionPolicyId { get; set; }
-    
-    public int TentacleRetentionPolicyId { get; set; }
+    // Release retention (inline)
+    public int ReleaseRetentionQuantity { get; set; }
+    public bool ReleaseRetentionKeepForever { get; set; } = true;
+    public RetentionPolicyUnit ReleaseRetentionUnit { get; set; }
+
+    // Tentacle retention (inline)
+    public int TentacleRetentionQuantity { get; set; }
+    public bool TentacleRetentionKeepForever { get; set; } = true;
+    public RetentionPolicyUnit TentacleRetentionUnit { get; set; }
 }

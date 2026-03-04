@@ -1,5 +1,3 @@
-using System.Text;
-using Newtonsoft.Json;
 using Squid.Core.Services.Common;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -29,15 +27,24 @@ public partial class DeploymentSnapshotService
     public async Task<DeploymentProcessSnapshotDto> SnapshotProcessFromIdAsync(int processId, CancellationToken cancellationToken = default)
     {
         var process = await _deploymentProcessDataProvider.GetDeploymentProcessByIdAsync(processId, cancellationToken).ConfigureAwait(false);
-        
-        var snapshotData = await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
 
-        var processSnapshot = BuildProcessSnapshot(process, snapshotData);
+        var snapshotData = await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
+        
+        var blob = UtilService.BuildSnapshotBlob(snapshotData);
+
+        var existing = await _deploymentSnapshotDataProvider
+            .GetExistingDeploymentSnapshotAsync(process.Id, blob.ContentHash, cancellationToken).ConfigureAwait(false);
+
+        if (existing != null)
+        {
+            return _mapper.Map<DeploymentProcessSnapshotDto>(existing, opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
+        }
+
+        var processSnapshot = BuildProcessSnapshot(process, blob);
 
         await _deploymentSnapshotDataProvider.AddDeploymentProcessSnapshotAsync(processSnapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
-        return _mapper.Map<DeploymentProcessSnapshotDto>(processSnapshot,
-            opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
+
+        return _mapper.Map<DeploymentProcessSnapshotDto>(processSnapshot, opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
     }
 
     public async Task<DeploymentProcessSnapshotDto> LoadProcessSnapshotAsync(int processSnapshotId, CancellationToken cancellationToken = default)
@@ -53,21 +60,17 @@ public partial class DeploymentSnapshotService
         return snapshot;
     }
     
-    private DeploymentProcessSnapshot BuildProcessSnapshot(DeploymentProcess process, DeploymentProcessSnapshotDataDto snapshotData)
+    private static DeploymentProcessSnapshot BuildProcessSnapshot(DeploymentProcess process, SnapshotBlob blob)
     {
-        var compressedData = UtilService.CompressToGzip(snapshotData);
-        var uncompressedSize = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(snapshotData));
-        var contentHash = UtilService.ComputeSha256Hash(JsonConvert.SerializeObject(snapshotData));
-        
         return new DeploymentProcessSnapshot
         {
             Version = process.Version,
-            OriginalProcessId =  process.Id,
+            OriginalProcessId = process.Id,
             CreatedBy = "System",
             CreatedAt = process.LastModified,
-            ContentHash = contentHash,
-            SnapshotData = compressedData,
-            UncompressedSize = uncompressedSize,
+            ContentHash = blob.ContentHash,
+            SnapshotData = blob.CompressedData,
+            UncompressedSize = blob.UncompressedSize,
             CompressionType = "GZIP"
         };
     }
@@ -132,6 +135,9 @@ public partial class DeploymentSnapshotService
                 StepType = step.StepType,
                 StepOrder = step.StepOrder,
                 Condition = step.Condition,
+                StartTrigger = step.StartTrigger,
+                IsDisabled = step.IsDisabled,
+                IsRequired = step.IsRequired,
                 CreatedAt = step.CreatedAt,
                 ActionSnapshots = actionSnapshots,
                 Properties = stepProperties.ToDictionary(p => p.PropertyName, p => p.PropertyValue)

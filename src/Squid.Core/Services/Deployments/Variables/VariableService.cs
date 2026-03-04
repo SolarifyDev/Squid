@@ -36,13 +36,12 @@ public class VariableService : IVariableService
 
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
     {
-        var variableSet = CreateBaseVariableSet(command);
+        var variableSet = _mapper.Map<VariableSet>(command);
+        variableSet.LastModified = DateTimeOffset.UtcNow;
 
         await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        await AddVariablesToSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
-
-        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await AddVariablesToSetAsync(variableSet.Id, command.Variables, cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
     }
@@ -51,9 +50,17 @@ public class VariableService : IVariableService
     {
         var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
-        UpdateVariableSetProperties(variableSet, command);
+        variableSet.Name = command.Name;
+        variableSet.Description = command.Description;
+        variableSet.OwnerId = command.OwnerId;
+        variableSet.OwnerType = command.OwnerType;
+        variableSet.SpaceId = command.SpaceId;
+        variableSet.LastModified = DateTimeOffset.UtcNow;
+        variableSet.Version++;
 
-        await ReplaceVariablesInSet(variableSet, command.Variables, cancellationToken).ConfigureAwait(false);
+        await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
+
+        await AddVariablesToSetAsync(variableSet.Id, command.Variables, cancellationToken).ConfigureAwait(false);
 
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -63,6 +70,7 @@ public class VariableService : IVariableService
     public async Task DeleteVariableSetAsync(int id, CancellationToken cancellationToken)
     {
         var variableSet = await GetAndValidateVariableSet(id, cancellationToken).ConfigureAwait(false);
+
         await _variableDataProvider.DeleteVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -71,16 +79,21 @@ public class VariableService : IVariableService
         var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken).ConfigureAwait(false);
 
         if (variableSet == null) return null;
-        
-        var variableSetDto = _mapper.Map<VariableSetDto>(variableSet);
 
+        var variableSetDto = _mapper.Map<VariableSetDto>(variableSet);
         var variables = await _variableDataProvider.GetVariablesByVariableSetIdAsync(id, cancellationToken).ConfigureAwait(false);
+
         variableSetDto.Variables = _mapper.Map<List<VariableDto>>(variables);
+
+        var variableIds = variableSetDto.Variables.Select(v => v.Id).ToList();
+        var allScopes = await _variableScopeDataProvider.GetVariableScopesByVariableIdsAsync(variableIds, cancellationToken).ConfigureAwait(false);
+        var scopesByVariableId = allScopes.GroupBy(s => s.VariableId).ToDictionary(g => g.Key, g => g.ToList());
 
         foreach (var variableDto in variableSetDto.Variables)
         {
-            var scopes = await _variableScopeDataProvider.GetVariableScopesByVariableIdAsync(variableDto.Id, cancellationToken).ConfigureAwait(false);
-            variableDto.Scopes = _mapper.Map<List<VariableScopeDto>>(scopes);
+            variableDto.Scopes = scopesByVariableId.TryGetValue(variableDto.Id, out var scopes)
+                ? _mapper.Map<List<VariableScopeDto>>(scopes)
+                : new();
         }
 
         return _sensitiveVariableHandler.MaskSensitiveValues(variableSetDto);
@@ -100,64 +113,46 @@ public class VariableService : IVariableService
         };
     }
 
-    private VariableSet CreateBaseVariableSet(CreateVariableSetCommand command)
-    {
-        var variableSet = _mapper.Map<VariableSet>(command);
-        variableSet.LastModified = DateTimeOffset.UtcNow;
-        return variableSet;
-    }
-
-    private async Task AddVariablesToSet(VariableSet variableSet, IEnumerable<VariableDto> variableDtos, CancellationToken cancellationToken)
+    private async Task AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableModel> variableDtos, CancellationToken cancellationToken)
     {
         if (variableDtos?.Any() != true) return;
 
-        foreach (var dto in variableDtos)
-        {
-            var variable = CreateVariableFromDto(dto, variableSet.Id);
-            await _variableDataProvider.AddVariablesAsync(variableSet.Id, new List<Variable> { variable }, cancellationToken).ConfigureAwait(false);
+        var dtoList = variableDtos.ToList();
 
-            if (dto.Scopes?.Any() == true)
+        var variables = dtoList.Select(dto =>
+        {
+            var variable = _mapper.Map<Variable>(dto);
+            variable.VariableSetId = variableSetId;
+            return variable;
+        }).ToList();
+
+        await _variableDataProvider.AddVariablesAsync(variableSetId, variables, cancellationToken).ConfigureAwait(false);
+
+        var allScopes = new List<VariableScope>();
+
+        for (var i = 0; i < dtoList.Count; i++)
+        {
+            if (dtoList[i].Scopes?.Any() != true) continue;
+
+            foreach (var scopeDto in dtoList[i].Scopes)
             {
-                var scopes = dto.Scopes.Select(s => _mapper.Map<VariableScope>(s)).ToList();
-                foreach (var scope in scopes)
-                {
-                    scope.VariableId = variable.Id;
-                }
-                await _variableScopeDataProvider.AddVariableScopesAsync(scopes, cancellationToken).ConfigureAwait(false);
+                var scope = _mapper.Map<VariableScope>(scopeDto);
+                scope.VariableId = variables[i].Id;
+                allScopes.Add(scope);
             }
         }
+
+        if (allScopes.Count > 0)
+            await _variableScopeDataProvider.AddVariableScopesAsync(allScopes, cancellationToken).ConfigureAwait(false);
     }
 
-    private Variable CreateVariableFromDto(VariableDto dto, int variableSetId)
-    {
-        var variable = _mapper.Map<Variable>(dto);
-        variable.VariableSetId = variableSetId;
-        return variable;
-    }
-    
     private async Task<VariableSet> GetAndValidateVariableSet(int id, CancellationToken cancellationToken)
     {
-        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken);
+        var variableSet = await _variableDataProvider.GetVariableSetByIdAsync(id, cancellationToken).ConfigureAwait(false);
+
         if (variableSet == null)
-        {
             throw new Exception($"VariableSet {id} not found");
-        }
+
         return variableSet;
-    }
-
-    private void UpdateVariableSetProperties(VariableSet variableSet, UpdateVariableSetCommand command)
-    {
-        variableSet.OwnerId = command.OwnerId;
-        variableSet.OwnerType = command.OwnerType;
-        variableSet.SpaceId = command.SpaceId;
-        variableSet.LastModified = DateTimeOffset.UtcNow;
-        variableSet.Version++;
-    }
-
-    private async Task ReplaceVariablesInSet(VariableSet variableSet, IEnumerable<VariableDto> variableDtos, CancellationToken cancellationToken)
-    {
-        await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
-
-        await AddVariablesToSet(variableSet, variableDtos, cancellationToken).ConfigureAwait(false);
     }
 }

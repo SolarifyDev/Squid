@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubernetes-agent.fullname" . }}
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+    {{- with .Values.tentacle.metadata.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.tentacle.metadata.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "kubernetes-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.tentacle.metadata.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.tentacle.metadata.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kubernetes-agent.tentacle-sa-name" . }}
+      terminationGracePeriodSeconds: {{ .Values.tentacle.terminationGracePeriodSeconds }}
+      containers:
+      - name: kubernetes-agent
+        image: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag }}"
+        imagePullPolicy: {{ .Values.tentacle.image.pullPolicy }}
+        ports:
+        - name: health
+          containerPort: {{ .Values.tentacle.healthCheckPort }}
+          protocol: TCP
+        startupProbe:
+          exec:
+            command: ["test", "-f", "/squid/initialized"]
+          failureThreshold: {{ .Values.tentacle.startupProbe.failureThreshold }}
+          periodSeconds: {{ .Values.tentacle.startupProbe.periodSeconds }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        env:
+        - name: Tentacle__ServerUrl
+          value: "{{ .Values.tentacle.serverUrl }}"
+        - name: Tentacle__ServerCommsUrl
+          value: "{{ .Values.tentacle.serverCommsUrl }}"
+        - name: Tentacle__BearerToken
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "kubernetes-agent.fullname" . }}-secret
+              key: bearer-token
+        - name: Tentacle__Roles
+          value: {{ join "," .Values.tentacle.roles | quote }}
+        - name: Tentacle__Flavor
+          value: "{{ .Values.tentacle.flavor }}"
+        - name: Tentacle__MachineName
+          value: "{{ .Values.tentacle.machineName }}"
+        - name: Tentacle__Environments
+          value: {{ join "," .Values.tentacle.environments | quote }}
+        - name: Tentacle__SpaceId
+          value: "{{ .Values.tentacle.spaceId }}"
+        {{- if .Values.tentacle.subscriptionId }}
+        - name: Tentacle__SubscriptionId
+          value: "{{ .Values.tentacle.subscriptionId }}"
+        {{- end }}
+        - name: Tentacle__HealthCheckPort
+          value: "{{ .Values.tentacle.healthCheckPort }}"
+        - name: Tentacle__WorkspacePath
+          value: "/squid/work"
+        - name: Tentacle__CertsPath
+          value: "/squid/certs"
+        {{- if .Values.tentacle.serverCertificate }}
+        - name: Tentacle__ServerCertificate
+          value: "{{ .Values.tentacle.serverCertificate }}"
+        {{- end }}
+        - name: Kubernetes__Namespace
+          value: "{{ .Values.kubernetes.namespace }}"
+        - name: Kubernetes__TentacleNamespace
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: Kubernetes__PvcClaimName
+          value: {{ include "kubernetes-agent.pvc-name" . }}
+        - name: Kubernetes__ScriptPodImage
+          value: "{{ .Values.scriptPod.image }}"
+        - name: Kubernetes__ScriptPodServiceAccount
+          value: {{ include "kubernetes-agent.script-sa-name" . }}
+        - name: Kubernetes__ScriptPodTimeoutSeconds
+          value: "{{ .Values.scriptPod.timeoutSeconds }}"
+        - name: Kubernetes__ScriptPodCpuRequest
+          value: "{{ .Values.scriptPod.cpuRequest }}"
+        - name: Kubernetes__ScriptPodMemoryRequest
+          value: "{{ .Values.scriptPod.memoryRequest }}"
+        - name: Kubernetes__ScriptPodCpuLimit
+          value: "{{ .Values.scriptPod.cpuLimit }}"
+        - name: Kubernetes__ScriptPodMemoryLimit
+          value: "{{ .Values.scriptPod.memoryLimit }}"
+        - name: Kubernetes__UseScriptPods
+          value: "true"
+        resources:
+          {{- toYaml .Values.tentacle.resources | nindent 10 }}
+        volumeMounts:
+        - name: workspace
+          mountPath: /squid/work
+        - name: certs
+          mountPath: /squid/certs
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: {{ include "kubernetes-agent.pvc-name" . }}
+      - name: certs
+        emptyDir: {}
+      {{- with .Values.tentacle.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tentacle.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

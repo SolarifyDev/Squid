@@ -1,11 +1,12 @@
-using Microsoft.AspNetCore.Mvc;
-using Squid.Message.Commands.Deployments.Machine;
-using Squid.Message.Requests.Deployments.Machine;
+using Squid.Message.Commands.Machine;
+using Squid.Message.Requests.Machines;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Squid.Api.Controllers;
 
+[Authorize]
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/machines")]
 public class MachineController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,39 +16,57 @@ public class MachineController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpPost]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateMachineResponse))]
-    public async Task<IActionResult> CreateMachineAsync([FromBody] CreateMachineCommand command)
+    [HttpPost("register/kubernetes-agent")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterKubernetesAgentAsync([FromBody] RegisterKubernetesAgentCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<CreateMachineCommand, CreateMachineResponse>(command).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterKubernetesAgentCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
 
-    [HttpPut]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateMachineResponse))]
-    public async Task<IActionResult> UpdateMachineAsync([FromBody] UpdateMachineCommand command)
+    [HttpPost("register/kubernetes-api")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterKubernetesApiAsync([FromBody] RegisterKubernetesApiCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<UpdateMachineCommand, UpdateMachineResponse>(command).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterKubernetesApiCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
 
-    [HttpDelete]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
-    public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command)
+    [HttpPost("generate-kubernetes-agent-install-script")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
+    public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<DeleteMachinesCommand, DeleteMachinesResponse>(command).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<GenerateKubernetesAgentInstallScriptCommand, GenerateKubernetesAgentInstallScriptResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
-
-    [HttpGet]
+    
+    [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
-    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request)
+    public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)
     {
-        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request).ConfigureAwait(false);
+        var response = await _mediator.RequestAsync<GetMachinesRequest, GetMachinesResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
-} 
+
+    [HttpPost("delete")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteMachinesResponse))]
+    public async Task<IActionResult> DeleteMachinesAsync([FromBody] DeleteMachinesCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<DeleteMachinesCommand, DeleteMachinesResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("connection-status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
+    public async Task<IActionResult> GetConnectionStatusAsync([FromQuery] GetConnectionStatusRequest request, CancellationToken ct)
+    {
+        var response = await _mediator.RequestAsync<GetConnectionStatusRequest, GetConnectionStatusResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+}

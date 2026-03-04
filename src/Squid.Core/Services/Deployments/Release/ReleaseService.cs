@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
@@ -24,13 +25,20 @@ public class ReleaseService : IReleaseService
 {
     private readonly IMapper _mapper;
     private readonly IReleaseDataProvider _releaseDataProvider;
+    private readonly IReleaseSelectedPackageDataProvider _releaseSelectedPackageDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
-    
-    public ReleaseService(IMapper mapper, IReleaseDataProvider releaseDataProvider, IDeploymentCompletionDataProvider deploymentCompletionDataProvider, IDeploymentSnapshotService deploymentSnapshotService)
+
+    public ReleaseService(
+        IMapper mapper,
+        IReleaseDataProvider releaseDataProvider,
+        IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
+        IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
+        IDeploymentSnapshotService deploymentSnapshotService)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
+        _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
     }
@@ -47,7 +55,9 @@ public class ReleaseService : IReleaseService
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
         
-        await _releaseDataProvider.CreateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await PersistSelectedPackagesAsync(release.Id, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
 
         return new ReleaseCreatedEvent
         {
@@ -60,10 +70,10 @@ public class ReleaseService : IReleaseService
         if (command.Release == null)
             throw new ArgumentException("Release cannot be null", nameof(command.Release));
 
-        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.Release.Id, cancellationToken).ConfigureAwait(false);
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
 
         if (release == null)
-            throw new Exception($"Release {command.Release.Id} not found");
+            throw new Exception($"Release {command.Id} not found");
 
         _mapper.Map(command.Release, release);
 
@@ -118,21 +128,40 @@ public class ReleaseService : IReleaseService
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task PersistSelectedPackagesAsync(
+        int releaseId, List<CreateReleaseSelectedPackageDto> selectedPackages, CancellationToken ct)
+    {
+        if (selectedPackages == null || selectedPackages.Count == 0) return;
+
+        var entities = selectedPackages
+            .Where(sp => !string.IsNullOrWhiteSpace(sp.ActionName))
+            .Select(sp => new ReleaseSelectedPackage
+            {
+                ReleaseId = releaseId,
+                ActionName = sp.ActionName,
+                Version = sp.Version ?? string.Empty
+            });
+
+        await _releaseSelectedPackageDataProvider.InsertAllAsync(entities, ct).ConfigureAwait(false);
+    }
+
     private async Task<List<int>> GetCurrentDeployedReleaseIdsAsync(int? projectId, CancellationToken cancellationToken)
     {
         try
         {
-            // 查询最新的成功部署完成记录，获取当前已部署的Release版本
-            var completions = await _deploymentCompletionDataProvider.GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
+            var completions = await _deploymentCompletionDataProvider
+                .GetLatestSuccessfulCompletionsAsync(projectId, cancellationToken).ConfigureAwait(false);
 
-            var releaseIds = completions
-                    // TODO: 从project开始查LifeCycle=>Phase=>Environments=>Deployment=>Release
-                .Distinct()
-                .ToList();
+            if (completions.Count == 0) return new List<int>();
+
+            var deploymentIds = completions.Select(c => c.DeploymentId).Distinct().ToList();
+
+            var releaseIds = await _releaseDataProvider
+                .GetReleaseIdsByDeploymentIdsAsync(deploymentIds, cancellationToken).ConfigureAwait(false);
 
             Log.Information("Found {Count} currently deployed releases for project {ProjectId}", releaseIds.Count, projectId);
 
-            return [];
+            return releaseIds;
         }
         catch (Exception ex)
         {

@@ -1,7 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.LifeCycle;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Events.Deployments.LifeCycle;
-using Squid.Message.Models.Deployments;
 using Squid.Message.Models.Deployments.LifeCycle;
 using Squid.Message.Requests.Deployments.LifeCycle;
 
@@ -10,11 +10,11 @@ namespace Squid.Core.Services.Deployments.LifeCycle;
 public interface ILifeCycleService : IScopedDependency
 {
     Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken);
-    
+
     Task<LifeCycleUpdatedEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken);
-    
+
     Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken);
-    
+
     Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken);
 }
 
@@ -23,63 +23,53 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
 {
     public async Task<LifeCycleCreateEvent> CreateLifeCycleAsync(CreateLifeCycleCommand command, CancellationToken cancellationToken)
     {
-        var retentionPolicies = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy).Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy)).ToList();
         var lifecycle = mapper.Map<Lifecycle>(command.LifecyclePhase.Lifecycle);
-        var phases = mapper.Map<List<Phase>>(command.LifecyclePhase.Phases);
-        
-        retentionPolicies.Add(command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy);
-        retentionPolicies.Add(command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy);
+        var phases = mapper.Map<List<LifecyclePhase>>(command.LifecyclePhase.Phases);
 
-        await lifeCycleDataProvider.AddRetentionPoliciesAsync(mapper.Map<List<RetentionPolicy>>(retentionPolicies), cancellationToken: cancellationToken).ConfigureAwait(false);
         await lifeCycleDataProvider.AddLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
+
         phases.ForEach(x => x.LifecycleId = lifecycle.Id);
         await lifeCycleDataProvider.AddPhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await InsertLifecyclePhaseEnvironmentsAsync(command.LifecyclePhase.Phases, phases, cancellationToken).ConfigureAwait(false);
 
         return new LifeCycleCreateEvent
         {
             Data = new CreateLifeCycleResponseData
             {
-                LifecyclePhase = command.LifecyclePhase
+                LifecyclePhase = BuildLifecycleDetailDto(lifecycle, phases)
             }
         };
     }
 
     public async Task<LifeCycleUpdatedEvent> UpdateLifeCycleAsync(UpdateLifeCycleCommand command, CancellationToken cancellationToken)
     {
-        var retentionPoliciesIds = command.LifecyclePhase.Phases.Select(x => x.ReleaseRetentionPolicy.Id)
-            .Concat(command.LifecyclePhase.Phases.Select(x => x.TentacleRetentionPolicy.Id))
-            .Concat(new[] { command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id, command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id }).ToList();
-        var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(command.LifecyclePhase.Lifecycle.Id, cancellationToken).ConfigureAwait(false);
-        var phases = await lifeCycleDataProvider.GetPhasesByIdAsync(command.LifecyclePhase.Phases.Select(x => x.Id).ToList(), cancellationToken).ConfigureAwait(false);
-        var retentionPolicies = await lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPoliciesIds, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var lifecycle = await lifeCycleDataProvider.GetLifecycleByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
 
-        lifecycle = mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
-        phases = mapper.Map(command.LifecyclePhase.Phases, phases);
-        retentionPolicies.ForEach(x =>
-        {
-            var rrpPhase = command.LifecyclePhase.Phases.FirstOrDefault(phase => x.Id == phase.ReleaseRetentionPolicy.Id);
-            var trpPhase = command.LifecyclePhase.Phases.FirstOrDefault(phase => x.Id == phase.TentacleRetentionPolicy.Id);
-            
-            if (rrpPhase != null) x = mapper.Map(rrpPhase.ReleaseRetentionPolicy, x);
-            
-            if (trpPhase != null) x = mapper.Map(trpPhase.TentacleRetentionPolicy, x);
-
-            if (command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy.Id == x.Id)
-                x = mapper.Map(command.LifecyclePhase.Lifecycle.ReleaseRetentionPolicy, x);
-            
-            if (command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy.Id == x.Id)
-                x = mapper.Map(command.LifecyclePhase.Lifecycle.TentacleRetentionPolicy, x);
-        });
+        mapper.Map(command.LifecyclePhase.Lifecycle, lifecycle);
 
         await lifeCycleDataProvider.UpdateLifecycleAsync(lifecycle, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await lifeCycleDataProvider.UpdatePhasesAsync(phases, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await lifeCycleDataProvider.UpdateRetentionPoliciesAsync(retentionPolicies, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
+
+        var existingPhases = await lifeCycleDataProvider.GetPhasesByLifecycleIdAsync(lifecycle.Id, cancellationToken).ConfigureAwait(false);
+
+        foreach (var phase in existingPhases)
+        {
+            await lifeCycleDataProvider.DeletePhaseEnvironmentsByPhaseIdAsync(phase.Id, cancellationToken).ConfigureAwait(false);
+            await lifeCycleDataProvider.DeletePhaseAsync(phase, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        var newPhases = mapper.Map<List<LifecyclePhase>>(command.LifecyclePhase.Phases);
+        newPhases.ForEach(x => x.LifecycleId = lifecycle.Id);
+
+        await lifeCycleDataProvider.AddPhasesAsync(newPhases, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await InsertLifecyclePhaseEnvironmentsAsync(command.LifecyclePhase.Phases, newPhases, cancellationToken).ConfigureAwait(false);
+
         return new LifeCycleUpdatedEvent
         {
             Data = new UpdateLifeCycleResponseData
             {
-                LifecyclePhase = command.LifecyclePhase
+                LifecyclePhase = BuildLifecycleDetailDto(lifecycle, newPhases)
             }
         };
     }
@@ -106,7 +96,7 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
     {
         var (count, lifecyclePhases) = await lifeCycleDataProvider.GetLifecyclePhasePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
-        lifecyclePhases = await EnhanceRetentionPolicyToLifecycleAsync(lifecyclePhases, cancellationToken).ConfigureAwait(false);
+        await PopulateLifecyclePhaseEnvironmentTargetIdsAsync(lifecyclePhases, cancellationToken).ConfigureAwait(false);
 
         return new GetLifeCycleResponse
         {
@@ -117,31 +107,73 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
         };
     }
 
-    private async Task<List<LifecyclePhaseDto>> EnhanceRetentionPolicyToLifecycleAsync(List<LifecyclePhaseDto> lifecyclePhases, CancellationToken cancellationToken)
+    private async Task PopulateLifecyclePhaseEnvironmentTargetIdsAsync(List<LifecycleDetailDto> lifecycleDetails, CancellationToken cancellationToken)
     {
-        var retentionPolicyIds = lifecyclePhases.SelectMany(x => x.Phases.Select(p => p.ReleaseRetentionPolicyId))
-            .Concat(lifecyclePhases.SelectMany(x => x.Phases.Select(p => p.TentacleRetentionPolicyId))).ToList();
-        
-        retentionPolicyIds.AddRange(lifecyclePhases.Select(x => x.Lifecycle.ReleaseRetentionPolicyId).Concat(lifecyclePhases.Select(x => x.Lifecycle.TentacleRetentionPolicyId)));
+        var allPhaseIds = lifecycleDetails.SelectMany(lp => lp.Phases.Select(p => p.Id)).ToList();
+        if (allPhaseIds.Count == 0) return;
 
-        var retentionPolicies = await lifeCycleDataProvider.GetRetentionPoliciesByIdAsync(retentionPolicyIds, cancellationToken: cancellationToken).ConfigureAwait(false);
-        
-        foreach (var lifecyclePhase in lifecyclePhases)
+        var phaseEnvironments = await lifeCycleDataProvider.GetPhaseEnvironmentsByPhaseIdsAsync(allPhaseIds, cancellationToken).ConfigureAwait(false);
+
+        var grouped = phaseEnvironments.GroupBy(pe => pe.PhaseId).ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var lp in lifecycleDetails)
         {
-            GetRetentionPolicyById(retentionPolicies, lifecyclePhase.Lifecycle);
-            
-            lifecyclePhase.Phases.ForEach(x => { GetRetentionPolicyById(retentionPolicies, x); });
-        }
+            foreach (var phase in lp.Phases)
+            {
+                if (!grouped.TryGetValue(phase.Id, out var envs)) continue;
 
-        return lifecyclePhases;
+                phase.AutomaticDeploymentTargetIds = envs
+                    .Where(e => e.TargetType == LifecyclePhaseEnvironmentTargetType.Automatic)
+                    .Select(e => e.EnvironmentId).ToList();
+
+                phase.OptionalDeploymentTargetIds = envs
+                    .Where(e => e.TargetType == LifecyclePhaseEnvironmentTargetType.Optional)
+                    .Select(e => e.EnvironmentId).ToList();
+            }
+        }
     }
 
-    private void GetRetentionPolicyById<T>(List<RetentionPolicy> retentionPolicies, T data) where T : IHasDualRetentionPolicies
+    private LifecycleDetailDto BuildLifecycleDetailDto(Lifecycle lifecycle, List<LifecyclePhase> phases)
     {
-        var rrp = retentionPolicies.FirstOrDefault(r => r.Id == data.ReleaseRetentionPolicyId);
-        if (rrp != null) data.ReleaseRetentionPolicy = mapper.Map<RetentionPolicyDto>(rrp);
-        
-        var trp = retentionPolicies.FirstOrDefault(r => r.Id == data.TentacleRetentionPolicyId);
-        if (trp != null) data.TentacleRetentionPolicy = mapper.Map<RetentionPolicyDto>(trp);
+        return new LifecycleDetailDto
+        {
+            Lifecycle = mapper.Map<LifeCycleDto>(lifecycle),
+            Phases = mapper.Map<List<LifecyclePhaseDto>>(phases)
+        };
+    }
+
+    private async Task InsertLifecyclePhaseEnvironmentsAsync(List<LifecyclePhaseModel> phaseModels, List<LifecyclePhase> phases, CancellationToken cancellationToken)
+    {
+        var phaseEnvironments = BuildLifecyclePhaseEnvironments(phaseModels, phases);
+        if (phaseEnvironments.Count == 0) return;
+
+        await lifeCycleDataProvider.AddPhaseEnvironmentsAsync(phaseEnvironments, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static List<LifecyclePhaseEnvironment> BuildLifecyclePhaseEnvironments(List<LifecyclePhaseModel> phaseModels, List<LifecyclePhase> phases)
+    {
+        var result = new List<LifecyclePhaseEnvironment>();
+
+        for (var i = 0; i < phaseModels.Count && i < phases.Count; i++)
+        {
+            var model = phaseModels[i];
+            var phaseId = phases[i].Id;
+
+            result.AddRange(model.AutomaticDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
+            {
+                PhaseId = phaseId,
+                EnvironmentId = envId,
+                TargetType = LifecyclePhaseEnvironmentTargetType.Automatic
+            }));
+
+            result.AddRange(model.OptionalDeploymentTargetIds.Select(envId => new LifecyclePhaseEnvironment
+            {
+                PhaseId = phaseId,
+                EnvironmentId = envId,
+                TargetType = LifecyclePhaseEnvironmentTargetType.Optional
+            }));
+        }
+
+        return result;
     }
 }

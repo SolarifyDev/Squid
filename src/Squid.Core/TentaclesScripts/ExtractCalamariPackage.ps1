@@ -2,7 +2,7 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "##octopus[stdout-verbose]"
+Write-Host "##squid[stdout-verbose]"
 
 Write-Host "Checking for ${env:TentacleHome}\Calamari\{{CalamariPath}}{{CalamariPackageVersion}}\Success.txt"
 if ((Test-Path "${env:TentacleHome}\Calamari\{{CalamariPath}}{{CalamariPackageVersion}}\Success.txt") -eq $true)
@@ -69,5 +69,5 @@ if([bool]::Parse("{{UsesCustomPackageDirectory}}")) {
     Delete-CalamariFolders @(Get-ChildItem -Path "${env:TentacleHome}\Calamari\{{CalamariPath}}" | ? { $_.Name -ne "{{CalamariPackageVersion}}" } | Select-Object -Property FullName)
 }
 
-Write-Host "##octopus[stdout-default]"
+Write-Host "##squid[stdout-default]"
 

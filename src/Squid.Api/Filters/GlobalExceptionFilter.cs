@@ -12,6 +12,7 @@ public class GlobalExceptionFilter : IExceptionFilter
         var statusCode = context.Exception switch
         {
             ValidationException => HttpStatusCode.BadRequest,
+            UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             _ => HttpStatusCode.InternalServerError
         };
 

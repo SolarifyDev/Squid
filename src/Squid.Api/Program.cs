@@ -1,28 +1,45 @@
 using Autofac.Extensions.DependencyInjection;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Settings.Logging;
+using Squid.Core.Settings.System;
 
 namespace Squid.Api;
 
-public partial class Program
+public class Program
 {
     public static void Main(string[] args)
     {
-        var configuration = GetConfiguration();
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json")
+            .AddEnvironmentVariables()
+            .Build();
 
-        Log.Logger = CreateSerilogLogger(configuration);
+        var apiKey = new SerilogApiKeySetting(configuration).Value;
+        var serverUrl = new SerilogServerUrlSetting(configuration).Value;
+        var application = new SerilogApplicationSetting(configuration).Value;
+
+        Log.Logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Application", application)
+            .WriteTo.Console()
+            .WriteTo.Seq(serverUrl, apiKey: apiKey)
+            .CreateLogger();
 
         try
         {
-            Log.Information("Configuring api host ({ApplicationContext})... ", AppName);
-            
-            var webHost = CreateWebHostBuilder(args).Build();
-            
-            Log.Information("Starting api host ({ApplicationContext})...", AppName);
+            Log.Information("Configuring api host ({ApplicationContext})...", application);
+
+            new DbUpRunner(new SquidConnectionString(configuration).Value).Run();
+
+            var webHost = CreateHostBuilder(args, configuration).Build();
+
+            Log.Information("Starting api host ({ApplicationContext})...", application);
 
             webHost.Run();
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "Program terminated unexpectedly!");
+            Log.Fatal(ex, "Program terminated unexpectedly ({ApplicationContext})!", application);
         }
         finally
         {
@@ -30,43 +47,14 @@ public partial class Program
         }
     }
 
-    private static IHostBuilder CreateWebHostBuilder(string[] args) =>
+    private static IHostBuilder CreateHostBuilder(string[] args, IConfiguration configuration) =>
         Host.CreateDefaultBuilder(args)
-            .AddConfiguration()
+            .UseSerilog()
             .ConfigureLogging(l => l.AddSerilog(Log.Logger))
             .UseServiceProviderFactory(new AutofacServiceProviderFactory())
-            .ConfigureWebHostDefaults(builder => { builder.UseStartup<Startup>(); }).UseSerilog();
-
-    private static IConfiguration GetConfiguration()
-    {
-        var builder = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", false, true)
-            .AddEnvironmentVariables();
-
-        return builder.Build();
-    }
-
-    private static ILogger CreateSerilogLogger(IConfiguration configuration)
-    {
-        var seqServerUrl = configuration["Serilog:Seq:ServerUrl"];
-        var seqApiKey = configuration["Serilog:Seq:ApiKey"];
-
-        return new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .Enrich.WithProperty("ApplicationContext", AppName)
-            .Enrich.FromLogContext()
-            .Enrich.WithCorrelationId()
-            .WriteTo.Console()
-            .WriteTo.Seq(seqServerUrl, apiKey: seqApiKey)
-            .CreateLogger();
-    }
-}
-
-public partial class Program
-{
-    private static readonly string Namespace = typeof(Startup).Namespace;
-
-    private static readonly string AppName =
-        Namespace[(Namespace.LastIndexOf('.', Namespace.LastIndexOf('.') - 1) + 1)..];
+            .ConfigureContainer<ContainerBuilder>(builder =>
+            {
+                builder.RegisterModule(new SquidModule(Log.Logger, configuration));
+            })
+            .ConfigureWebHostDefaults(webBuilder => { webBuilder.UseStartup<Startup>(); });
 }

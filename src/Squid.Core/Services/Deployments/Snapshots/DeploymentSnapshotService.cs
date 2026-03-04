@@ -24,20 +24,22 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
-    
+    private readonly IVariableScopeDataProvider _variableScopeDataProvider;
+
     public DeploymentSnapshotService(
-        IMapper mapper, 
-        IProjectDataProvider projectDataProvider, 
-        IVariableDataProvider variableDataProvider, 
-        IDeploymentSnapshotDataProvider deploymentSnapshotDataProvider, 
-        IDeploymentProcessDataProvider deploymentProcessDataProvider, 
-        IDeploymentStepDataProvider deploymentStepDataProvider, 
-        IDeploymentActionDataProvider deploymentActionDataProvider, 
-        IDeploymentActionPropertyDataProvider deploymentActionPropertyDataProvider, 
+        IMapper mapper,
+        IProjectDataProvider projectDataProvider,
+        IVariableDataProvider variableDataProvider,
+        IDeploymentSnapshotDataProvider deploymentSnapshotDataProvider,
+        IDeploymentProcessDataProvider deploymentProcessDataProvider,
+        IDeploymentStepDataProvider deploymentStepDataProvider,
+        IDeploymentActionDataProvider deploymentActionDataProvider,
+        IDeploymentActionPropertyDataProvider deploymentActionPropertyDataProvider,
         IDeploymentStepPropertyDataProvider deploymentStepPropertyDataProvider,
-        IActionChannelDataProvider actionChannelDataProvider, 
-        IActionEnvironmentDataProvider actionEnvironmentDataProvider, 
-        IActionMachineRoleDataProvider actionMachineRoleDataProvider)
+        IActionChannelDataProvider actionChannelDataProvider,
+        IActionEnvironmentDataProvider actionEnvironmentDataProvider,
+        IActionMachineRoleDataProvider actionMachineRoleDataProvider,
+        IVariableScopeDataProvider variableScopeDataProvider)
     {
         _mapper = mapper;
         _projectDataProvider = projectDataProvider;
@@ -51,5 +53,6 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
         _actionChannelDataProvider = actionChannelDataProvider;
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
+        _variableScopeDataProvider = variableScopeDataProvider;
     }
 }

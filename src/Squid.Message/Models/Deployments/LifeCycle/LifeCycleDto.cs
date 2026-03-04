@@ -1,6 +1,8 @@
+using Squid.Message.Enums.Deployments;
+
 namespace Squid.Message.Models.Deployments.LifeCycle;
 
-public class LifeCycleDto : IHasDualRetentionPolicies
+public class LifeCycleDto
 {
     public int Id { get; set; }
 
@@ -11,12 +13,14 @@ public class LifeCycleDto : IHasDualRetentionPolicies
     public int SpaceId { get; set; }
 
     public string Slug { get; set; }
-    
-    public int ReleaseRetentionPolicyId { get; set; }
-    
-    public int TentacleRetentionPolicyId { get; set; }
 
-    public RetentionPolicyDto ReleaseRetentionPolicy { get; set; } = null;
-    
-    public RetentionPolicyDto TentacleRetentionPolicy { get; set; } = null;
+    // Release retention
+    public RetentionPolicyUnit ReleaseRetentionUnit { get; set; }
+    public int ReleaseRetentionQuantity { get; set; }
+    public bool ReleaseRetentionKeepForever { get; set; } = true;
+
+    // Tentacle retention
+    public RetentionPolicyUnit TentacleRetentionUnit { get; set; }
+    public int TentacleRetentionQuantity { get; set; }
+    public bool TentacleRetentionKeepForever { get; set; } = true;
 }
