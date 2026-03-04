@@ -112,6 +112,7 @@ public class MachineInstallScriptService : IMachineInstallScriptService
         if (!string.IsNullOrWhiteSpace(command.DefaultNamespace))
             lines.Add($"--set kubernetes.namespace=\"{command.DefaultNamespace}\"");
 
+        lines.Add("--version \"1.*.*\"");
         lines.Add("--create-namespace --namespace squid-agent");
         lines.Add(releaseName);
         lines.Add("oci://registry-1.docker.io/squidcd/kubernetes-agent");
