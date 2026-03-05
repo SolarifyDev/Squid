@@ -1,16 +1,19 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+ARG TARGETARCH
 WORKDIR /src
 COPY NuGet.Config .
 COPY src/Squid.Message/ Squid.Message/
 COPY src/Squid.Tentacle/ Squid.Tentacle/
 COPY src/Squid.Calamari/ Squid.Calamari/
 RUN dotnet publish Squid.Tentacle/Squid.Tentacle.csproj -c Release -o /app
-RUN dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r linux-x64 --self-contained true -o /calamari
+RUN if [ "$TARGETARCH" = "amd64" ]; then RID="linux-x64"; else RID="linux-$TARGETARCH"; fi && \
+    dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r $RID --self-contained true -o /calamari && \
+    chmod +x /calamari/squid-calamari
+RUN mkdir -p /squid-dirs/squid/work /squid-dirs/squid/certs /squid-dirs/squid/bin
 
-FROM mcr.microsoft.com/dotnet/runtime:9.0
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/runtime:9.0
 WORKDIR /app
-RUN mkdir -p /squid/work /squid/certs /squid/bin
+COPY --from=build /squid-dirs/squid/ /squid/
 COPY --from=build /app .
 COPY --from=build /calamari/squid-calamari /squid/bin/squid-calamari
-RUN chmod +x /squid/bin/squid-calamari
 ENTRYPOINT ["dotnet", "Squid.Tentacle.dll"]

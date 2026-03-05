@@ -360,7 +360,7 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("echo hi", TokenContext());
 
-        result.ShouldContain("#!/bin/bash");
+        result.ShouldContain("#!/usr/bin/env bash");
     }
 
     [Fact]
@@ -430,6 +430,63 @@ public class KubernetesApiContextScriptBuilderTests
 
         result.ShouldNotContain("{{");
         result.ShouldNotContain("}}");
+    }
+
+    // === Security — Credential Escaping ===
+
+    [Fact]
+    public void WrapWithContext_TokenWithDollarSign_Bash_IsEscaped()
+    {
+        var ctx = CreateContext(accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "token$with`special\"chars" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldNotContain("token$with");
+        result.ShouldContain("token\\$with");
+        result.ShouldContain("\\`special");
+        result.ShouldContain("\\\"chars");
+    }
+
+    [Fact]
+    public void WrapWithContext_PasswordWithSpecialChars_PowerShell_IsEscaped()
+    {
+        var ctx = CreateContext(accountType: AccountType.UsernamePassword,
+            credentialsJson: JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "p@ss$word`test\"quote" }),
+            syntax: ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("`$word");
+        result.ShouldContain("``test");
+        result.ShouldContain("`\"quote");
+    }
+
+    // === EKS Auth — AwsClusterName/AwsRegion ===
+
+    [Fact]
+    public void WrapWithContext_AwsAuth_Bash_ContainsClusterNameAndRegion()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                AwsClusterName = "my-eks-cluster",
+                AwsRegion = "us-west-2"
+            })
+        };
+        endpoint.SetAccountData(AccountType.AmazonWebServicesAccount,
+            JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIA123", SecretKey = "secret123" }));
+
+        var ctx = new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash };
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("my-eks-cluster");
+        result.ShouldContain("us-west-2");
     }
 
     // === Security — No eval in Bash Template ===

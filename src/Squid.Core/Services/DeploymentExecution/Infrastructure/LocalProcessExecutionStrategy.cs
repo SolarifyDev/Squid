@@ -59,10 +59,13 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
         scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
 
+        var scriptPath = Path.Combine(workDir, "calamari-deploy.ps1");
+        await File.WriteAllTextAsync(scriptPath, scriptBody, Encoding.UTF8, ct).ConfigureAwait(false);
+
         Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
         return await _processRunner.RunAsync(
-            "pwsh", $"-NoProfile -NonInteractive -Command \"{EscapeForCommandLine(scriptBody)}\"",
+            "pwsh", $"-NoProfile -NonInteractive -File \"{scriptPath}\"",
             workDir, ct).ConfigureAwait(false);
     }
 
@@ -85,9 +88,15 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     {
         if (files == null) return;
 
+        var normalizedWorkDir = Path.GetFullPath(workDir);
+
         foreach (var file in files)
         {
-            var filePath = Path.Combine(workDir, file.Key);
+            var filePath = Path.GetFullPath(Path.Combine(workDir, file.Key));
+
+            if (!filePath.StartsWith(normalizedWorkDir, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Path traversal detected: file key '{file.Key}' resolves outside work directory.");
+
             var dir = Path.GetDirectoryName(filePath);
 
             if (!string.IsNullOrEmpty(dir))
@@ -116,9 +125,6 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
             Log.Warning(ex, "Failed to clean up work directory {WorkDir}", workDir);
         }
     }
-
-    private static string EscapeForCommandLine(string script)
-        => script.Replace("\"", "\\\"", StringComparison.Ordinal);
 
     private static (string Executable, string Arguments, string ScriptFileName) BuildDirectScriptInvocation(
         DirectScriptExecutionPlan plan)

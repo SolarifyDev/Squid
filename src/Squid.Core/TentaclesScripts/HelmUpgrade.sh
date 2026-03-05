@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # --- Helm upgrade/install ---
@@ -14,14 +14,14 @@ if [ -z "$HELM_EXE" ]; then
     HELM_EXE="helm"
 fi
 
-HELM_ARGS="upgrade --install $RELEASE_NAME $CHART_PATH --namespace $HELM_NAMESPACE"
+HELM_CMD=("$HELM_EXE" "upgrade" "--install" "$RELEASE_NAME" "$CHART_PATH" "--namespace" "$HELM_NAMESPACE")
 
 if [ "$RESET_VALUES" = "True" ]; then
-    HELM_ARGS="$HELM_ARGS --reset-values"
+    HELM_CMD+=("--reset-values")
 fi
 
 if [ "$HELM_WAIT" = "True" ]; then
-    HELM_ARGS="$HELM_ARGS --wait"
+    HELM_CMD+=("--wait")
 fi
 
 # Values files
@@ -31,10 +31,10 @@ fi
 {{SetValuesBlock}}
 
 if [ -n "$ADDITIONAL_ARGS" ]; then
-    HELM_ARGS="$HELM_ARGS $ADDITIONAL_ARGS"
+    HELM_CMD+=($ADDITIONAL_ARGS)
 fi
 
-echo "Running: $HELM_EXE $HELM_ARGS"
-eval $HELM_EXE $HELM_ARGS
+echo "Running: ${HELM_CMD[*]}"
+"${HELM_CMD[@]}"
 
 echo "Helm upgrade completed successfully"

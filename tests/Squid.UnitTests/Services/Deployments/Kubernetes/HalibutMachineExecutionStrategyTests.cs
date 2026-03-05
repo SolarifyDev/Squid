@@ -111,6 +111,27 @@ public class HalibutMachineExecutionStrategyTests
         result.Success.ShouldBeTrue();
     }
 
+    // === Calamari script body uses Unix forward-slash paths ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_CalamariCommand_UsesForwardSlashPaths()
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient(machine.Uri);
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("path-check"));
+
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(machine, calamariCommand: "calamari-run-script"), CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptBody.ShouldNotContain(".\\");
+        capturedCommand.ScriptBody.ShouldContain("./");
+    }
+
     // === StartScriptCommand uses 30-minute timeout ===
 
     [Theory]
@@ -141,16 +162,18 @@ public class HalibutMachineExecutionStrategyTests
         var payloadBuilder = new Mock<ICalamariPayloadBuilder>();
         var observer = new Mock<IHalibutScriptObserver>();
 
-        payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
-            .Returns(new CalamariPayload
-            {
-                PackageFileName = "squid.1.0.0.nupkg",
-                PackageBytes = Array.Empty<byte>(),
-                VariableBytes = Array.Empty<byte>(),
-                SensitiveBytes = Array.Empty<byte>(),
-                SensitivePassword = string.Empty,
-                TemplateBody = "pkg={{PackageFilePath}}"
-            });
+        var dummyPayload = new CalamariPayload
+        {
+            PackageFileName = "squid.1.0.0.nupkg",
+            PackageBytes = Array.Empty<byte>(),
+            VariableBytes = Array.Empty<byte>(),
+            SensitiveBytes = Array.Empty<byte>(),
+            SensitivePassword = string.Empty,
+            TemplateBody = "pkg={{PackageFilePath}}"
+        };
+
+        payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>(), It.IsAny<ScriptSyntax>()))
+            .Returns(dummyPayload);
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .ReturnsAsync(new ScriptTicket("ticket-calamari"));
@@ -175,7 +198,7 @@ public class HalibutMachineExecutionStrategyTests
             CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>()), Times.Once);
+        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.Bash), Times.Once);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
             scriptClient.Object,

@@ -22,7 +22,7 @@ public class ProjectDto
 
     public string Json { get; set; }
 
-    public string IncludedLibraryVariableSetIds { get; set; }
+    public List<int> IncludedLibraryVariableSetIds { get; set; } = new();
 
     public bool DiscreteChannelRelease { get; set; }
 

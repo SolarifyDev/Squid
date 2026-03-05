@@ -98,7 +98,7 @@ public class ScriptPodServiceTests : IDisposable
     [InlineData("Failed", ProcessState.Complete)]
     [InlineData("Running", ProcessState.Running)]
     [InlineData("Pending", ProcessState.Running)]
-    [InlineData(null, ProcessState.Complete)]
+    [InlineData(null, ProcessState.Running)]
     public void GetStatus_MapsPodPhaseToProcessState(string phase, ProcessState expectedState)
     {
         var service = CreateService();
@@ -110,6 +110,25 @@ public class ScriptPodServiceTests : IDisposable
         var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
 
         status.State.ShouldBe(expectedState);
+    }
+
+    [Fact]
+    public void GetStatus_PodNotFound_ReturnsComplete()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
+            .Throws(new k8s.Autorest.HttpOperationException
+            {
+                Response = new k8s.Autorest.HttpResponseMessageWrapper(
+                    new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), string.Empty)
+            });
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
     }
 
     [Fact]

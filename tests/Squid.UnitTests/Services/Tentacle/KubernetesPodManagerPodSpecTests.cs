@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using k8s.Models;
@@ -95,7 +96,7 @@ public class KubernetesPodManagerPodSpecTests
         var container = pod.Spec.Containers.ShouldHaveSingleItem();
         container.Name.ShouldBe("script");
         container.Image.ShouldBe("bitnami/kubectl:1.28");
-        container.Command.ShouldBe(new[] { "squid-calamari" });
+        container.Command.ShouldBe(new[] { "/squid/bin/squid-calamari" });
         container.Args.ShouldBe(new[]
         {
             "run-script",
@@ -122,12 +123,291 @@ public class KubernetesPodManagerPodSpecTests
     {
         var pod = CaptureCreatedPod();
 
-        var volume = pod.Spec.Volumes.ShouldHaveSingleItem();
-        volume.Name.ShouldBe("workspace");
-        volume.PersistentVolumeClaim.ClaimName.ShouldBe("squid-workspace");
+        var workspaceVolume = pod.Spec.Volumes.First(v => v.Name == "workspace");
+        workspaceVolume.PersistentVolumeClaim.ClaimName.ShouldBe("squid-workspace");
 
-        var mount = pod.Spec.Containers[0].VolumeMounts.ShouldHaveSingleItem();
-        mount.Name.ShouldBe("workspace");
-        mount.MountPath.ShouldBe("/squid/work");
+        var workspaceMount = pod.Spec.Containers[0].VolumeMounts.First(m => m.Name == "workspace");
+        workspaceMount.MountPath.ShouldBe("/squid/work");
+    }
+
+    // ========================================================================
+    // Init Container — TentacleImage set
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_AddsInitContainer()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        var initContainer = pod.Spec.InitContainers.ShouldHaveSingleItem();
+        initContainer.Name.ShouldBe("copy-calamari");
+        initContainer.Image.ShouldBe("squidcd/squid-tentacle:1.0.0");
+        initContainer.Command.ShouldBe(new[] { "cp", "/squid/bin/squid-calamari", "/squid-bin/squid-calamari" });
+    }
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_AddsSquidBinEmptyDirVolume()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        pod.Spec.Volumes.Count.ShouldBe(2);
+        var squidBinVolume = pod.Spec.Volumes.First(v => v.Name == "squid-bin");
+        squidBinVolume.EmptyDir.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_MountsSquidBinInMainContainer()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        var mounts = pod.Spec.Containers[0].VolumeMounts;
+        mounts.Count.ShouldBe(2);
+
+        var squidBinMount = mounts.First(m => m.Name == "squid-bin");
+        squidBinMount.MountPath.ShouldBe("/squid/bin");
+    }
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_InitContainerMountsSquidBin()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        var initMount = pod.Spec.InitContainers[0].VolumeMounts.ShouldHaveSingleItem();
+        initMount.Name.ShouldBe("squid-bin");
+        initMount.MountPath.ShouldBe("/squid-bin");
+    }
+
+    [Fact]
+    public void CreatePod_DefaultSettings_NoSecurityContext()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.SecurityContext.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_SetsImagePullPolicyIfNotPresent()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].ImagePullPolicy.ShouldBe("IfNotPresent");
+    }
+
+    // ========================================================================
+    // Backward Compatibility — TentacleImage empty
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithoutTentacleImage_HasNoInitContainers()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.InitContainers.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_WithoutTentacleImage_HasSingleVolume()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Volumes.ShouldHaveSingleItem().Name.ShouldBe("workspace");
+    }
+
+    [Fact]
+    public void CreatePod_WithoutTentacleImage_HasSingleVolumeMount()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].VolumeMounts.ShouldHaveSingleItem().Name.ShouldBe("workspace");
+    }
+
+    // ========================================================================
+    // Security Context — Configurable
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_RunAsUserConfigured_SetsSecurityContext()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodRunAsUser = 1000);
+
+        pod.Spec.SecurityContext.ShouldNotBeNull();
+        pod.Spec.SecurityContext.RunAsUser.ShouldBe(1000);
+    }
+
+    [Fact]
+    public void CreatePod_RunAsNonRootTrue_SetsSecurityContext()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodRunAsNonRoot = true);
+
+        pod.Spec.SecurityContext.ShouldNotBeNull();
+        pod.Spec.SecurityContext.RunAsNonRoot.ShouldBe(true);
+    }
+
+    [Fact]
+    public void CreatePod_RunAsUserAndNonRoot_BothSet()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.ScriptPodRunAsUser = 1000;
+            s.ScriptPodRunAsNonRoot = true;
+        });
+
+        pod.Spec.SecurityContext.RunAsUser.ShouldBe(1000);
+        pod.Spec.SecurityContext.RunAsNonRoot.ShouldBe(true);
+    }
+
+    // ========================================================================
+    // ImagePullSecrets
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_NoImagePullSecrets_IsNull()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.ImagePullSecrets.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_SingleImagePullSecret_SetsCorrectly()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodImagePullSecrets = "my-registry-secret");
+
+        pod.Spec.ImagePullSecrets.ShouldHaveSingleItem().Name.ShouldBe("my-registry-secret");
+    }
+
+    [Fact]
+    public void CreatePod_MultipleImagePullSecrets_SetsCorrectly()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodImagePullSecrets = "secret1, secret2, secret3");
+
+        pod.Spec.ImagePullSecrets.Count.ShouldBe(3);
+        pod.Spec.ImagePullSecrets[0].Name.ShouldBe("secret1");
+        pod.Spec.ImagePullSecrets[1].Name.ShouldBe("secret2");
+        pod.Spec.ImagePullSecrets[2].Name.ShouldBe("secret3");
+    }
+
+    // ========================================================================
+    // Tolerations
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_NoTolerations_IsNull()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Tolerations.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_ValidTolerations_SetsCorrectly()
+    {
+        var tolerationsJson = "[{\"key\":\"dedicated\",\"operator\":\"Equal\",\"value\":\"squid\",\"effect\":\"NoSchedule\"}]";
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodTolerations = tolerationsJson);
+
+        pod.Spec.Tolerations.ShouldNotBeNull();
+        pod.Spec.Tolerations.Count.ShouldBe(1);
+        pod.Spec.Tolerations[0].Key.ShouldBe("dedicated");
+        pod.Spec.Tolerations[0].OperatorProperty.ShouldBe("Equal");
+        pod.Spec.Tolerations[0].Value.ShouldBe("squid");
+        pod.Spec.Tolerations[0].Effect.ShouldBe("NoSchedule");
+    }
+
+    [Fact]
+    public void CreatePod_InvalidTolerationsJson_IsNull()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodTolerations = "not-valid-json");
+
+        pod.Spec.Tolerations.ShouldBeNull();
+    }
+
+    // ========================================================================
+    // Init Container Resources & EmptyDir Limits
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_InitContainerHasResourceLimits()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        var initContainer = pod.Spec.InitContainers[0];
+        initContainer.Resources.ShouldNotBeNull();
+        initContainer.Resources.Requests["cpu"].ToString().ShouldBe("10m");
+        initContainer.Resources.Requests["memory"].ToString().ShouldBe("50Mi");
+        initContainer.Resources.Limits["cpu"].ToString().ShouldBe("100m");
+        initContainer.Resources.Limits["memory"].ToString().ShouldBe("128Mi");
+    }
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_EmptyDirHasSizeLimit()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
+
+        var squidBinVolume = pod.Spec.Volumes.First(v => v.Name == "squid-bin");
+        squidBinVolume.EmptyDir.SizeLimit.ShouldNotBeNull();
+        squidBinVolume.EmptyDir.SizeLimit.ToString().ShouldBe("256Mi");
+    }
+
+    // ========================================================================
+    // Helpers
+    // ========================================================================
+
+    private V1Pod CaptureCreatedPodWithSettings(Action<KubernetesSettings> configure)
+    {
+        V1Pod captured = null;
+        var ops = new Mock<IKubernetesPodOperations>();
+
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Callback<V1Pod, string>((pod, ns) => captured = pod)
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var customSettings = new KubernetesSettings
+        {
+            TentacleNamespace = _settings.TentacleNamespace,
+            ScriptPodServiceAccount = _settings.ScriptPodServiceAccount,
+            ScriptPodImage = _settings.ScriptPodImage,
+            ScriptPodTimeoutSeconds = _settings.ScriptPodTimeoutSeconds,
+            ScriptPodCpuRequest = _settings.ScriptPodCpuRequest,
+            ScriptPodMemoryRequest = _settings.ScriptPodMemoryRequest,
+            ScriptPodCpuLimit = _settings.ScriptPodCpuLimit,
+            ScriptPodMemoryLimit = _settings.ScriptPodMemoryLimit,
+            PvcClaimName = _settings.PvcClaimName
+        };
+
+        configure(customSettings);
+
+        var manager = new KubernetesPodManager(ops.Object, customSettings);
+        manager.CreatePod(TicketId);
+
+        return captured;
+    }
+
+    private V1Pod CaptureCreatedPodWithTentacleImage(string tentacleImage)
+    {
+        V1Pod captured = null;
+        var ops = new Mock<IKubernetesPodOperations>();
+
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Callback<V1Pod, string>((pod, ns) => captured = pod)
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var settingsWithImage = new KubernetesSettings
+        {
+            TentacleNamespace = _settings.TentacleNamespace,
+            ScriptPodServiceAccount = _settings.ScriptPodServiceAccount,
+            ScriptPodImage = _settings.ScriptPodImage,
+            ScriptPodTimeoutSeconds = _settings.ScriptPodTimeoutSeconds,
+            ScriptPodCpuRequest = _settings.ScriptPodCpuRequest,
+            ScriptPodMemoryRequest = _settings.ScriptPodMemoryRequest,
+            ScriptPodCpuLimit = _settings.ScriptPodCpuLimit,
+            ScriptPodMemoryLimit = _settings.ScriptPodMemoryLimit,
+            PvcClaimName = _settings.PvcClaimName,
+            TentacleImage = tentacleImage
+        };
+
+        var manager = new KubernetesPodManager(ops.Object, settingsWithImage);
+        manager.CreatePod(TicketId);
+
+        return captured;
     }
 }

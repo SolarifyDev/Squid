@@ -11,6 +11,7 @@ public class RegisterKubernetesAgentCommand : ICommand
     public string Roles { get; set; }
     public string Environments { get; set; }
     public string Namespace { get; set; } = "default";
+    public string AgentVersion { get; set; }
 }
 
 public class RegisterMachineResponse : SquidResponse<RegisterMachineResponseData>

@@ -1,4 +1,5 @@
 using Squid.Core.Services.Common;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
@@ -12,6 +13,9 @@ public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
     }
 
     public CalamariPayload Build(ScriptExecutionRequest request)
+        => Build(request, ScriptSyntax.PowerShell);
+
+    public CalamariPayload Build(ScriptExecutionRequest request, ScriptSyntax syntax)
     {
         var packageBytes = request.Files?.Count > 0
             ? _yamlNuGetPacker.CreateNuGetPackageFromYamlBytes(request.Files)
@@ -20,6 +24,8 @@ public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
         var (variableBytes, sensitiveBytes, password) =
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
+        var templateName = syntax == ScriptSyntax.Bash ? "DeployByCalamari.sh" : "DeployByCalamari.ps1";
+
         return new CalamariPayload
         {
             PackageFileName = $"squid.{request.ReleaseVersion}.nupkg",
@@ -27,7 +33,7 @@ public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
             VariableBytes = variableBytes,
             SensitiveBytes = sensitiveBytes,
             SensitivePassword = password,
-            TemplateBody = UtilService.GetEmbeddedScriptContent("DeployByCalamari.ps1")
+            TemplateBody = UtilService.GetEmbeddedScriptContent(templateName)
         };
     }
 }

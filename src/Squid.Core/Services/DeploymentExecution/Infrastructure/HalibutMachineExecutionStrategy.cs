@@ -15,18 +15,14 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
 
-    public HalibutMachineExecutionStrategy(
-        IHalibutClientFactory halibutClientFactory,
-        ICalamariPayloadBuilder payloadBuilder,
-        IHalibutScriptObserver observer)
+    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
     }
 
-    public async Task<ScriptExecutionResult> ExecuteScriptAsync(
-        ScriptExecutionRequest request, CancellationToken ct)
+    public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
     {
         var plan = ScriptExecutionPlanFactory.Create(request);
         var endpoint = ParseMachineEndpoint(request.Machine);
@@ -46,12 +42,12 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         var request = plan.Request;
-        var payload = _payloadBuilder.Build(request);
+        var payload = _payloadBuilder.Build(request, ScriptSyntax.Bash);
 
         var scriptBody = payload.FillTemplate(
-            $".\\{payload.PackageFileName}",
-            ".\\variables.json",
-            ".\\sensitiveVariables.json");
+            $"./{payload.PackageFileName}",
+            "./variables.json",
+            "./sensitiveVariables.json");
 
         var scriptFiles = new[]
         {

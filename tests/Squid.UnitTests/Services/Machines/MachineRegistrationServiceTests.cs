@@ -162,13 +162,73 @@ public class MachineRegistrationServiceTests : IDisposable
         captured.EnvironmentIds.ShouldBe("[1,2]");
     }
 
+    [Fact]
+    public async Task RegisterAgent_NewRegistration_StoresAgentVersion()
+    {
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(agentVersion: "1.0.3"), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.AgentVersion.ShouldBe("1.0.3");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ReRegistration_UpdatesAgentVersion()
+    {
+        var existing = new Machine
+        {
+            Id = 42,
+            Name = "existing-agent",
+            EnvironmentIds = "[1]",
+            Roles = "[\"k8s\"]",
+            Thumbprint = "old-thumb",
+            Endpoint = "{}",
+            PollingSubscriptionId = "sub-123",
+            AgentVersion = "1.0.0"
+        };
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync("sub-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment> { new() { Id = 1, Name = "Test" } });
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(
+            CreateCommand(subscriptionId: "sub-123", agentVersion: "1.0.3"), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.AgentVersion.ShouldBe("1.0.3");
+    }
+
     private static RegisterKubernetesAgentCommand CreateCommand(
         string machineName = "test-agent",
         string thumbprint = "AABBCCDD",
         string subscriptionId = "sub-test-001",
         string roles = "k8s",
         string environments = "Test,Production",
-        int spaceId = 1)
+        int spaceId = 1,
+        string agentVersion = null)
     {
         return new RegisterKubernetesAgentCommand
         {
@@ -178,7 +238,8 @@ public class MachineRegistrationServiceTests : IDisposable
             Roles = roles,
             Environments = environments,
             SpaceId = spaceId,
-            Namespace = "default"
+            Namespace = "default",
+            AgentVersion = agentVersion
         };
     }
 

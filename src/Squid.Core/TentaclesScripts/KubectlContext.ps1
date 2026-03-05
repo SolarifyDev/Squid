@@ -70,7 +70,7 @@ try {
             & $kubectlExe config set-credentials $userName `
                 --exec-api-version=client.authentication.k8s.io/v1beta1 `
                 --exec-command=aws `
-                --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg=$awsClusterName --exec-arg="--region" --exec-arg=$awsRegion
+                --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$awsClusterName" --exec-arg="--region" --exec-arg="$awsRegion"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
     }

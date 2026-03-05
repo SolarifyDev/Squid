@@ -124,6 +124,42 @@ public class KubernetesAgentScriptContextWrapperTests
         result.ShouldContain("--namespace=\"legacy-ns\"");
     }
 
+    // === Security — Namespace Sanitization ===
+
+    [Theory]
+    [InlineData("production")]
+    [InlineData("my-namespace")]
+    [InlineData("ns-123")]
+    [InlineData("default")]
+    public void WrapScript_ValidNamespace_DoesNotThrow(string ns)
+    {
+        var props = MakeActionProperties(ns);
+
+        Should.NotThrow(() => _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, props)));
+    }
+
+    [Theory]
+    [InlineData("$(cmd)")]
+    [InlineData("`rm -rf /`")]
+    [InlineData("ns;echo pwned")]
+    [InlineData("ns\"injection")]
+    [InlineData("NS_UPPER")]
+    [InlineData("ns with spaces")]
+    public void WrapScript_InvalidNamespace_Throws(string ns)
+    {
+        var props = MakeActionProperties(ns);
+
+        Should.Throw<ArgumentException>(() => _wrapper.WrapScript("echo hi", MakeContext(ScriptSyntax.Bash, props)));
+    }
+
+    [Fact]
+    public void ValidateKubernetesName_NullOrEmpty_DoesNotThrow()
+    {
+        Should.NotThrow(() => KubernetesAgentScriptContextWrapper.ValidateKubernetesName(null));
+        Should.NotThrow(() => KubernetesAgentScriptContextWrapper.ValidateKubernetesName(""));
+        Should.NotThrow(() => KubernetesAgentScriptContextWrapper.ValidateKubernetesName("  "));
+    }
+
     // === Helpers ===
 
     private static Dictionary<string, string> MakeActionProperties(string ns)

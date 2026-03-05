@@ -51,6 +51,8 @@ public partial class ScriptPodService
             {
                 if (File.Exists(tempPath))
                     File.Delete(tempPath);
+
+                throw;
             }
         }
     }

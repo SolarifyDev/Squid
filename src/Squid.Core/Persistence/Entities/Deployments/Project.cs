@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Squid.Core.Persistence.Entities.Deployments;
 
 public class Project : IEntity<int>
@@ -26,9 +28,17 @@ public class Project : IEntity<int>
     
     public List<int> GetIncludedLibraryVariableSetIdList()
     {
-        return string.IsNullOrWhiteSpace(IncludedLibraryVariableSetIds)
-            ? new List<int> { VariableSetId }
-            : IncludedLibraryVariableSetIds.Split(',').Select(int.Parse).Concat([VariableSetId]).ToList();
+        if (string.IsNullOrWhiteSpace(IncludedLibraryVariableSetIds))
+            return new List<int>();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(IncludedLibraryVariableSetIds) ?? new List<int>();
+        }
+        catch
+        {
+            return new List<int>();
+        }
     }
     
     public bool DiscreteChannelRelease { get; set; }

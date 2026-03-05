@@ -77,7 +77,7 @@ public class HelmUpgradeActionHandler : IActionHandler
         var sb = new StringBuilder();
 
         if (syntax == ScriptSyntax.Bash)
-            sb.AppendLine($"HELM_ARGS=\"$HELM_ARGS --values ./{rawYamlFileName}\"");
+            sb.AppendLine($"HELM_CMD+=(\"--values\" \"./{rawYamlFileName}\")");
         else
             sb.AppendLine($"$helmArgs += \"--values\"; $helmArgs += \".\\{rawYamlFileName}\"");
 
@@ -100,7 +100,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
             foreach (var kvp in keyValues)
             {
-                AppendSetValue(sb, syntax, $"{kvp.Key}={kvp.Value}");
+                AppendSetValue(sb, syntax, kvp.Key, kvp.Value);
             }
         }
         catch (JsonException)
@@ -109,18 +109,45 @@ public class HelmUpgradeActionHandler : IActionHandler
 
             foreach (var pair in pairs)
             {
-                AppendSetValue(sb, syntax, pair);
+                AppendSetValueRaw(sb, syntax, pair);
             }
         }
 
         return sb.ToString();
     }
 
-    private static void AppendSetValue(StringBuilder sb, ScriptSyntax syntax, string setValue)
+    private static void AppendSetValue(StringBuilder sb, ScriptSyntax syntax, string key, string value)
     {
         if (syntax == ScriptSyntax.Bash)
-            sb.AppendLine($"HELM_ARGS=\"$HELM_ARGS --set {setValue}\"");
+        {
+            var escapedValue = value.Replace("'", "'\\''", StringComparison.Ordinal);
+            sb.AppendLine($"HELM_CMD+=(\"--set\" \"{key}='{escapedValue}'\")");
+        }
         else
-            sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{setValue}\"");
+        {
+            var escapedValue = EscapePowerShellValue(value);
+            sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{key}={escapedValue}\"");
+        }
+    }
+
+    private static void AppendSetValueRaw(StringBuilder sb, ScriptSyntax syntax, string setValue)
+    {
+        if (syntax == ScriptSyntax.Bash)
+            sb.AppendLine($"HELM_CMD+=(\"--set\" \"{setValue}\")");
+        else
+        {
+            var escapedSetValue = EscapePowerShellValue(setValue);
+            sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{escapedSetValue}\"");
+        }
+    }
+
+    private static string EscapePowerShellValue(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+
+        return value
+            .Replace("`", "``", StringComparison.Ordinal)
+            .Replace("\"", "`\"", StringComparison.Ordinal)
+            .Replace("$", "`$", StringComparison.Ordinal);
     }
 }

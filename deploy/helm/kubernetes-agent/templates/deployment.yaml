@@ -115,6 +115,8 @@ spec:
           value: "{{ .Values.scriptPod.cpuLimit }}"
         - name: Kubernetes__ScriptPodMemoryLimit
           value: "{{ .Values.scriptPod.memoryLimit }}"
+        - name: Tentacle__AgentVersion
+          value: "{{ .Values.tentacle.image.tag | default .Chart.AppVersion }}"
         - name: Kubernetes__TentacleImage
           value: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag | default .Chart.AppVersion }}"
         - name: Kubernetes__UseScriptPods

@@ -9,7 +9,7 @@ public class CreateOrUpdateProjectModel
     public int LifecycleId { get; set; }
     public bool AutoCreateRelease { get; set; }
     public string Json { get; set; }
-    public string IncludedLibraryVariableSetIds { get; set; }
+    public List<int> IncludedLibraryVariableSetIds { get; set; } = new();
     public bool DiscreteChannelRelease { get; set; }
     public int? ClonedFromProjectId { get; set; }
     public int SpaceId { get; set; }

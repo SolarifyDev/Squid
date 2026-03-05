@@ -128,16 +128,43 @@ public class CalamariPayloadBuilderTests
         result.ShouldBe(string.Empty);
     }
 
+    // === Template Selection by Syntax ===
+
     [Fact]
-    public void Build_EmbeddedTemplate_ContainsToolPreflightChecks_AndArgumentSplatting()
+    public void Build_DefaultSyntax_UsesPowerShellTemplate()
     {
         var payload = _builder.Build(CreateRequest());
 
         payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
-        payload.TemplateBody.ShouldContain("Get-Command \"kubectl\"");
-        payload.TemplateBody.ShouldContain("Get-Command \"bash\"");
         payload.TemplateBody.ShouldContain("$commandArgs = @(");
+    }
+
+    [Fact]
+    public void Build_PowerShellSyntax_UsesPowerShellTemplate()
+    {
+        var payload = _builder.Build(CreateRequest(), ScriptSyntax.PowerShell);
+
+        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
         payload.TemplateBody.ShouldContain("& $squidCalamari.Source @commandArgs");
+    }
+
+    [Fact]
+    public void Build_BashSyntax_UsesBashTemplate()
+    {
+        var payload = _builder.Build(CreateRequest(), ScriptSyntax.Bash);
+
+        payload.TemplateBody.ShouldContain("#!/usr/bin/env bash");
+        payload.TemplateBody.ShouldContain("export PATH=\"/squid/bin:$PATH\"");
+        payload.TemplateBody.ShouldContain("squid-calamari \"${ARGS[@]}\"");
+    }
+
+    [Fact]
+    public void Build_BashSyntax_ChecksForCalamariAndKubectl()
+    {
+        var payload = _builder.Build(CreateRequest(), ScriptSyntax.Bash);
+
+        payload.TemplateBody.ShouldContain("command -v squid-calamari");
+        payload.TemplateBody.ShouldContain("command -v kubectl");
     }
 
     // === Helpers ===

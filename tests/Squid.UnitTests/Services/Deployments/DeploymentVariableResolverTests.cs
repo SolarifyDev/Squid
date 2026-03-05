@@ -10,6 +10,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Xunit;
@@ -21,6 +22,7 @@ public class DeploymentVariableResolverTests
     private readonly Mock<IProjectDataProvider> _projectDataProvider = new();
     private readonly Mock<IDeploymentDataProvider> _deploymentDataProvider = new();
     private readonly Mock<IDeploymentSnapshotService> _snapshotService = new();
+    private readonly Mock<ILibraryVariableSetDataProvider> _libraryVariableSetDataProvider = new();
     private readonly DeploymentVariableResolver _resolver;
 
     public DeploymentVariableResolverTests()
@@ -28,7 +30,8 @@ public class DeploymentVariableResolverTests
         _resolver = new DeploymentVariableResolver(
             _projectDataProvider.Object,
             _deploymentDataProvider.Object,
-            _snapshotService.Object);
+            _snapshotService.Object,
+            _libraryVariableSetDataProvider.Object);
     }
 
     // === ResolveVariablesAsync — Snapshot Path ===
@@ -128,7 +131,7 @@ public class DeploymentVariableResolverTests
     public async Task ResolveVariablesAsync_NoSnapshotId_IncludesLibraryVariableSetIds()
     {
         var deployment = CreateDeployment(variableSetSnapshotId: null, projectId: 5);
-        var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "200,300");
+        var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "[10,20]");
         List<int> capturedIds = null;
 
         _deploymentDataProvider
@@ -139,6 +142,14 @@ public class DeploymentVariableResolverTests
             .Setup(p => p.GetProjectByIdAsync(5, It.IsAny<CancellationToken>()))
             .ReturnsAsync(project);
 
+        _libraryVariableSetDataProvider
+            .Setup(l => l.GetByIdsAsync(It.Is<List<int>>(ids => ids.Contains(10) && ids.Contains(20)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LibraryVariableSet>
+            {
+                new() { Id = 10, VariableSetId = 200 },
+                new() { Id = 20, VariableSetId = 300 }
+            });
+
         _snapshotService
             .Setup(s => s.SnapshotVariableSetFromIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
             .Callback<List<int>, CancellationToken>((ids, _) => capturedIds = ids)
@@ -147,13 +158,13 @@ public class DeploymentVariableResolverTests
         await _resolver.ResolveVariablesAsync(1, CancellationToken.None);
 
         capturedIds.ShouldNotBeNull();
-        capturedIds.ShouldContain(200);
-        capturedIds.ShouldContain(300);
         capturedIds.ShouldContain(100); // project's own VariableSetId
+        capturedIds.ShouldContain(200); // resolved from LibraryVariableSet 10
+        capturedIds.ShouldContain(300); // resolved from LibraryVariableSet 20
     }
 
     [Fact]
-    public async Task ResolveVariablesAsync_NoSnapshotId_EmptyLibraryIds_UsesProjectVariableSetId()
+    public async Task ResolveVariablesAsync_NoSnapshotId_EmptyLibraryIds_UsesOnlyProjectVariableSetId()
     {
         var deployment = CreateDeployment(variableSetSnapshotId: null, projectId: 5);
         var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "");
@@ -176,7 +187,8 @@ public class DeploymentVariableResolverTests
 
         capturedIds.ShouldNotBeNull();
         capturedIds.Count.ShouldBe(1);
-        capturedIds.ShouldContain(100);
+        capturedIds.ShouldContain(100); // project's own VariableSetId only
+        _libraryVariableSetDataProvider.Verify(l => l.GetByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // === Error Cases ===
@@ -211,6 +223,113 @@ public class DeploymentVariableResolverTests
             () => _resolver.ResolveVariablesAsync(1, CancellationToken.None));
 
         ex.Message.ShouldContain("5");
+    }
+
+    // === LibraryVariableSet Resolution ===
+
+    [Fact]
+    public async Task ResolveVariablesAsync_LibraryIdsNotFoundInDb_UsesOnlyProjectVariableSetId()
+    {
+        var deployment = CreateDeployment(variableSetSnapshotId: null, projectId: 5);
+        var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "[999]");
+        List<int> capturedIds = null;
+
+        _deploymentDataProvider
+            .Setup(d => d.GetDeploymentByIdAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(deployment);
+
+        _projectDataProvider
+            .Setup(p => p.GetProjectByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        _libraryVariableSetDataProvider
+            .Setup(l => l.GetByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LibraryVariableSet>());
+
+        _snapshotService
+            .Setup(s => s.SnapshotVariableSetFromIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .Callback<List<int>, CancellationToken>((ids, _) => capturedIds = ids)
+            .ReturnsAsync(new VariableSetSnapshotDto { Id = 1, Data = new VariableSetSnapshotDataDto { Variables = new List<VariableDto>() } });
+
+        await _resolver.ResolveVariablesAsync(1, CancellationToken.None);
+
+        capturedIds.ShouldNotBeNull();
+        capturedIds.Count.ShouldBe(1);
+        capturedIds.ShouldContain(100);
+    }
+
+    [Fact]
+    public async Task ResolveVariablesAsync_MixedValidAndInvalidLibraryIds_ResolvesValidOnly()
+    {
+        var deployment = CreateDeployment(variableSetSnapshotId: null, projectId: 5);
+        var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "[10,999]");
+        List<int> capturedIds = null;
+
+        _deploymentDataProvider
+            .Setup(d => d.GetDeploymentByIdAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(deployment);
+
+        _projectDataProvider
+            .Setup(p => p.GetProjectByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        _libraryVariableSetDataProvider
+            .Setup(l => l.GetByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LibraryVariableSet>
+            {
+                new() { Id = 10, VariableSetId = 200 }
+            });
+
+        _snapshotService
+            .Setup(s => s.SnapshotVariableSetFromIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .Callback<List<int>, CancellationToken>((ids, _) => capturedIds = ids)
+            .ReturnsAsync(new VariableSetSnapshotDto { Id = 1, Data = new VariableSetSnapshotDataDto { Variables = new List<VariableDto>() } });
+
+        await _resolver.ResolveVariablesAsync(1, CancellationToken.None);
+
+        capturedIds.ShouldNotBeNull();
+        capturedIds.Count.ShouldBe(2);
+        capturedIds.ShouldContain(100);
+        capturedIds.ShouldContain(200);
+    }
+
+    [Fact]
+    public async Task ResolveVariablesAsync_ThreeLibrarySets_MapsAllVariableSetIds()
+    {
+        var deployment = CreateDeployment(variableSetSnapshotId: null, projectId: 5);
+        var project = CreateProject(id: 5, variableSetId: 100, includedLibraryVariableSetIds: "[10,20,30]");
+        List<int> capturedIds = null;
+
+        _deploymentDataProvider
+            .Setup(d => d.GetDeploymentByIdAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(deployment);
+
+        _projectDataProvider
+            .Setup(p => p.GetProjectByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        _libraryVariableSetDataProvider
+            .Setup(l => l.GetByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LibraryVariableSet>
+            {
+                new() { Id = 10, VariableSetId = 201 },
+                new() { Id = 20, VariableSetId = 202 },
+                new() { Id = 30, VariableSetId = 203 }
+            });
+
+        _snapshotService
+            .Setup(s => s.SnapshotVariableSetFromIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+            .Callback<List<int>, CancellationToken>((ids, _) => capturedIds = ids)
+            .ReturnsAsync(new VariableSetSnapshotDto { Id = 1, Data = new VariableSetSnapshotDataDto { Variables = new List<VariableDto>() } });
+
+        await _resolver.ResolveVariablesAsync(1, CancellationToken.None);
+
+        capturedIds.ShouldNotBeNull();
+        capturedIds.Count.ShouldBe(4);
+        capturedIds.ShouldContain(100);
+        capturedIds.ShouldContain(201);
+        capturedIds.ShouldContain(202);
+        capturedIds.ShouldContain(203);
     }
 
     // === Helpers ===

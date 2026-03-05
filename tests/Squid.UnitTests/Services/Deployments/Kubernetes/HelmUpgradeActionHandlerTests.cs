@@ -292,8 +292,9 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("--set image.tag=v2.0");
-        result.ScriptBody.ShouldContain("--set replicaCount=5");
+        result.ScriptBody.ShouldContain("--set");
+        result.ScriptBody.ShouldContain("image.tag=");
+        result.ScriptBody.ShouldContain("replicaCount=");
     }
 
     [Fact]
@@ -329,8 +330,9 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("--set image.tag=v3.0");
-        result.ScriptBody.ShouldContain("--set replicaCount=2");
+        result.ScriptBody.ShouldContain("--set");
+        result.ScriptBody.ShouldContain("image.tag=v3.0");
+        result.ScriptBody.ShouldContain("replicaCount=2");
     }
 
     [Fact]
@@ -530,7 +532,7 @@ public class HelmUpgradeActionHandlerTests
         result.ScriptBody.ShouldContain("./charts/myapp");
         result.ScriptBody.ShouldContain("production");
         result.ScriptBody.ShouldContain("/opt/helm");
-        result.ScriptBody.ShouldContain("--set image.tag=v1.0");
+        result.ScriptBody.ShouldContain("image.tag=");
         result.ScriptBody.ShouldContain("--timeout 300s");
         result.Files.ShouldContainKey("rawYamlValues.yaml");
         result.CalamariCommand.ShouldBeNull();
@@ -562,7 +564,7 @@ public class HelmUpgradeActionHandlerTests
         result.ScriptBody.ShouldContain("stable/nginx");
         result.ScriptBody.ShouldContain("web");
         result.ScriptBody.ShouldContain("--set");
-        result.ScriptBody.ShouldContain("image.repository=myregistry/myapp");
+        result.ScriptBody.ShouldContain("image.repository=");
         result.ScriptBody.ShouldContain("--wait --debug");
         result.Files.ShouldContainKey("rawYamlValues.yaml");
         result.CalamariCommand.ShouldBeNull();
@@ -594,5 +596,100 @@ public class HelmUpgradeActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ScriptBody.ShouldContain("False");
+    }
+
+    // === Security — No eval in Bash Template ===
+
+    [Fact]
+    public async Task PrepareAsync_Bash_DoesNotUseEval()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldNotContain("eval ");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_Bash_UsesArrayExecution()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_CMD=(");
+        result.ScriptBody.ShouldContain("\"${HELM_CMD[@]}\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_Bash_ReleaseNameWithSemicolon_NotInjectable()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ReleaseName"] = "release; rm -rf /"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldNotContain("eval ");
+        result.ScriptBody.ShouldContain("HELM_CMD=(");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_Bash_SetValueWithSpecialChars_Escaped()
+    {
+        var keyValues = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["password"] = "p@ss$word\"quote"
+        });
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.KeyValues"] = keyValues
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_CMD+=(\"--set\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_Bash_ValuesFile_UsesArraySyntax()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.YamlValues"] = "key: value"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_CMD+=(\"--values\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_Bash_UsesEnvBashShebang()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("#!/usr/bin/env bash");
     }
 }

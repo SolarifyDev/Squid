@@ -13,5 +13,9 @@ public class KubernetesSettings
     public string ScriptPodMemoryRequest { get; set; } = "100Mi";
     public string ScriptPodCpuLimit { get; set; } = "500m";
     public string ScriptPodMemoryLimit { get; set; } = "512Mi";
+    public long? ScriptPodRunAsUser { get; set; }
+    public bool ScriptPodRunAsNonRoot { get; set; } = false;
+    public string ScriptPodImagePullSecrets { get; set; } = "";
+    public string ScriptPodTolerations { get; set; } = "";
     public string TentacleImage { get; set; } = "";
 }
