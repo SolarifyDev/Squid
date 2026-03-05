@@ -20,7 +20,9 @@ public partial class DeploymentSnapshotService
     {
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
 
-        return await SnapshotVariableSetFromIdsAsync(project.GetIncludedLibraryVariableSetIdList(), cancellationToken).ConfigureAwait(false);
+        var variableSetIds = await ResolveVariableSetIdsFromProjectAsync(project, cancellationToken).ConfigureAwait(false);
+
+        return await SnapshotVariableSetFromIdsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<VariableSetSnapshotDto> SnapshotVariableSetFromIdsAsync(List<int> variableSetIds, CancellationToken cancellationToken = default)
@@ -61,6 +63,23 @@ public partial class DeploymentSnapshotService
         return snapshot;
     }
 
+    private async Task<List<int>> ResolveVariableSetIdsFromProjectAsync(Persistence.Entities.Deployments.Project project, CancellationToken ct)
+    {
+        var variableSetIds = new List<int> { project.VariableSetId };
+
+        var libraryIds = project.GetIncludedLibraryVariableSetIdList();
+
+        if (libraryIds.Count > 0)
+        {
+            var libraryVariableSets = await _libraryVariableSetDataProvider
+                .GetByIdsAsync(libraryIds, ct).ConfigureAwait(false);
+
+            variableSetIds.AddRange(libraryVariableSets.Select(lvs => lvs.VariableSetId));
+        }
+
+        return variableSetIds;
+    }
+    
     private static VariableSetSnapshot BuildVariableSetSnapshot(SnapshotBlob blob)
     {
         return new VariableSetSnapshot

@@ -2,6 +2,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution;
@@ -11,15 +12,18 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
+    private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
 
     public DeploymentVariableResolver(
         IProjectDataProvider projectDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
-        IDeploymentSnapshotService deploymentSnapshotService)
+        IDeploymentSnapshotService deploymentSnapshotService,
+        ILibraryVariableSetDataProvider libraryVariableSetDataProvider)
     {
         _projectDataProvider = projectDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
+        _libraryVariableSetDataProvider = libraryVariableSetDataProvider;
     }
 
     public async Task<List<VariableDto>> ResolveVariablesAsync(int deploymentId, CancellationToken cancellationToken)
@@ -51,7 +55,7 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         if (project == null)
             throw new DeploymentEntityNotFoundException("Project", deployment.ProjectId);
 
-        var variableSetIds = project.GetIncludedLibraryVariableSetIdList();
+        var variableSetIds = await ResolveAllVariableSetIdsAsync(project, ct).ConfigureAwait(false);
 
         if (variableSetIds.Count == 0)
             throw new DeploymentEntityNotFoundException("VariableSet", project.Id, $"No variable sets configured on project");
@@ -63,5 +67,23 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         await _deploymentDataProvider.UpdateDeploymentAsync(deployment, cancellationToken: ct).ConfigureAwait(false);
 
         return snapshot.Data.Variables;
+    }
+
+    private async Task<List<int>> ResolveAllVariableSetIdsAsync(
+        Persistence.Entities.Deployments.Project project, CancellationToken ct)
+    {
+        var variableSetIds = new List<int> { project.VariableSetId };
+
+        var libraryIds = project.GetIncludedLibraryVariableSetIdList();
+
+        if (libraryIds.Count > 0)
+        {
+            var libraryVariableSets = await _libraryVariableSetDataProvider
+                .GetByIdsAsync(libraryIds, ct).ConfigureAwait(false);
+
+            variableSetIds.AddRange(libraryVariableSets.Select(lvs => lvs.VariableSetId));
+        }
+
+        return variableSetIds;
     }
 }

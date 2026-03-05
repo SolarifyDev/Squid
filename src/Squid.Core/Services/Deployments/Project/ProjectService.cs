@@ -108,14 +108,15 @@ public partial class ProjectService : IProjectService
 
     public async Task<ProjectUpdatedEvent> UpdateProjectAsync(UpdateProjectCommand command, CancellationToken cancellationToken)
     {
-        var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
+        var project = await _projectDataProvider.GetProjectByIdAsync(command.Id, cancellationToken).ConfigureAwait(false);
+
+        if (project == null)
+            throw new DeploymentEntityNotFoundException("Project", command.Id);
+
+        _mapper.Map(command.Project, project);
 
         project.LastModified = DateTimeOffset.UtcNow;
-
-        if (project.IncludedLibraryVariableSetIds == null)
-        {
-            project.IncludedLibraryVariableSetIds = string.Empty;
-        }
+        project.IncludedLibraryVariableSetIds ??= "[]";
 
         await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -175,7 +176,7 @@ public partial class ProjectService : IProjectService
         var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
 
         project.LastModified = DateTimeOffset.UtcNow;
-        project.IncludedLibraryVariableSetIds ??= string.Empty;
+        project.IncludedLibraryVariableSetIds ??= "[]";
         project.Json ??= string.Empty;
         project.DataVersion ??= Array.Empty<byte>();
 

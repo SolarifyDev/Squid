@@ -95,7 +95,7 @@ public class TestDataBuilder
             LifecycleId = 1,
             AutoCreateRelease = false,
             Json = string.Empty,
-            IncludedLibraryVariableSetIds = string.Empty,
+            IncludedLibraryVariableSetIds = "[]",
             DiscreteChannelRelease = false,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
@@ -358,7 +358,7 @@ public class TestDataBuilder
             LifecycleId = lifecycleId,
             AutoCreateRelease = false,
             Json = string.Empty,
-            IncludedLibraryVariableSetIds = string.Empty,
+            IncludedLibraryVariableSetIds = "[]",
             DiscreteChannelRelease = false,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
@@ -470,6 +470,23 @@ public class TestDataBuilder
             State = state,
             CompletedTime = DateTimeOffset.UtcNow,
             SpaceId = 1
+        };
+
+        await _repository.InsertAsync(entity).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        return entity;
+    }
+
+    public async Task<LibraryVariableSet> CreateLibraryVariableSetAsync(int variableSetId, string name = "Test Library Variable Set")
+    {
+        var entity = new LibraryVariableSet
+        {
+            Name = name,
+            VariableSetId = variableSetId,
+            ContentType = "Variables",
+            Json = string.Empty,
+            SpaceId = 1,
+            Version = 1
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);

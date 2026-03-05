@@ -25,6 +25,7 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
     private readonly IVariableScopeDataProvider _variableScopeDataProvider;
+    private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
 
     public DeploymentSnapshotService(
         IMapper mapper,
@@ -39,7 +40,8 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
         IActionChannelDataProvider actionChannelDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IActionMachineRoleDataProvider actionMachineRoleDataProvider,
-        IVariableScopeDataProvider variableScopeDataProvider)
+        IVariableScopeDataProvider variableScopeDataProvider,
+        ILibraryVariableSetDataProvider libraryVariableSetDataProvider)
     {
         _mapper = mapper;
         _projectDataProvider = projectDataProvider;
@@ -54,5 +56,6 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
         _variableScopeDataProvider = variableScopeDataProvider;
+        _libraryVariableSetDataProvider = libraryVariableSetDataProvider;
     }
 }

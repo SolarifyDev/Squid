@@ -5,6 +5,7 @@ namespace Squid.Message.Commands.Deployments.Project;
 
 public class UpdateProjectCommand : ICommand
 {
+    public int Id { get; set; }
     public CreateOrUpdateProjectModel Project { get; set; }
 }
 
