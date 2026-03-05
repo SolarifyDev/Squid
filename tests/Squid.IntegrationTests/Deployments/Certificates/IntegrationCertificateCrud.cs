@@ -216,7 +216,7 @@ public class IntegrationCertificateCrud : CertificateFixtureBase
             entity.Name.ShouldBe("Read Back Test");
             entity.Thumbprint.ShouldBe(cert.Thumbprint);
             entity.CertificateData.ShouldNotBeNullOrEmpty();
-            entity.EnvironmentIds.ShouldBe("3");
+            entity.EnvironmentIds.ShouldBe("[3]");
         }).ConfigureAwait(false);
     }
 

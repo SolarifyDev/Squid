@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using Squid.Message.Commands.Deployments.Certificate;
 using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.Certificate;
@@ -33,7 +34,7 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
 
         entity.SpaceId = command.SpaceId;
         entity.Notes = command.Notes;
-        entity.EnvironmentIds = command.EnvironmentIds != null ? string.Join(',', command.EnvironmentIds) : null;
+        entity.EnvironmentIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
         entity.LastModifiedOn = DateTimeOffset.UtcNow;
 
         await certificateDataProvider.AddCertificateAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -107,7 +108,7 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
 
         entity.Name = command.Name;
         entity.Notes = command.Notes;
-        entity.EnvironmentIds = command.EnvironmentIds != null ? string.Join(',', command.EnvironmentIds) : null;
+        entity.EnvironmentIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
         entity.LastModifiedOn = DateTimeOffset.UtcNow;
 
         await certificateDataProvider.UpdateCertificateAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);

@@ -18,10 +18,12 @@ public partial class MachineRegistrationService
 
         Machine machine;
 
+        var serializedRoles = SerializeRolesFromCsv(command.Roles);
+
         if (existing != null)
         {
             existing.Thumbprint = command.Thumbprint;
-            existing.Roles = command.Roles ?? existing.Roles;
+            existing.Roles = serializedRoles ?? existing.Roles;
             existing.EnvironmentIds = resolvedEnvironmentIds ?? existing.EnvironmentIds;
             existing.Endpoint = BuildKubernetesAgentEndpointJson(command);
 
@@ -65,7 +67,7 @@ public partial class MachineRegistrationService
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
-            command.Roles, resolvedEnvironmentIds, command.SpaceId, endpointJson);
+            SerializeRolesFromCsv(command.Roles), resolvedEnvironmentIds, command.SpaceId, endpointJson);
 
         machine.Thumbprint = command.Thumbprint;
         machine.PollingSubscriptionId = command.SubscriptionId;

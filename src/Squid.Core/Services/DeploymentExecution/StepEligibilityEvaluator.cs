@@ -92,7 +92,7 @@ public static class StepEligibilityEvaluator
         if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
             return true;
 
-        var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
+        var stepRoles = DeploymentTargetFinder.ParseCsvRoles(stepRolesProperty.PropertyValue);
         
         return stepRoles.Overlaps(targetRoles);
     }

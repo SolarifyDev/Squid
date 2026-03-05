@@ -41,14 +41,14 @@ public class ExtractedPipelineComponentsTests
 
         var targets = new List<DeploymentTargetContext>
         {
-            new() { Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Roles = "web" } },
-            new() { Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Roles = "api" } }
+            new() { Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Roles = "[\"web\"]" } },
+            new() { Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Roles = "[\"api\"]" } }
         };
 
         var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(1);
-        result[0].Machine.Roles.ShouldBe("web");
+        result[0].Machine.Roles.ShouldBe("[\"web\"]");
     }
 
     [Fact]

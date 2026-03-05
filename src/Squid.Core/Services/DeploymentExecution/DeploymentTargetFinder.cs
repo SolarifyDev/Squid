@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Services.Machines;
 
 namespace Squid.Core.Services.DeploymentExecution;
@@ -71,22 +72,36 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
     // === Static utilities for per-step filtering (used by executor) ===
 
-    public static HashSet<int> ParseIds(string ids)
+    public static HashSet<int> ParseIds(string json)
     {
-        if (string.IsNullOrEmpty(ids)) return new HashSet<int>();
+        if (string.IsNullOrEmpty(json)) return new HashSet<int>();
 
-        return ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(s => int.TryParse(s, out var id) ? id : 0)
-            .Where(id => id > 0)
-            .ToHashSet();
+        return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
     }
 
-    public static HashSet<string> ParseRoles(string roles)
+    public static HashSet<string> ParseRoles(string json)
     {
-        if (string.IsNullOrEmpty(roles)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(json)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        return roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static HashSet<string> ParseCsvRoles(string csv)
+    {
+        if (string.IsNullOrEmpty(csv)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static string SerializeIds(IEnumerable<int> ids)
+    {
+        return JsonSerializer.Serialize(ids.ToList());
+    }
+
+    public static string SerializeRoles(IEnumerable<string> roles)
+    {
+        return JsonSerializer.Serialize(roles.ToList());
     }
 
     /// <summary>
@@ -136,7 +151,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             }
             else
             {
-                var stepRoles = ParseRoles(rolesProp.PropertyValue);
+                var stepRoles = ParseCsvRoles(rolesProp.PropertyValue);
                 allRoles.UnionWith(stepRoles);
             }
         }

@@ -35,9 +35,12 @@ public partial class MachineRegistrationService
 
     private static Machine BuildKubernetesApiMachine(RegisterKubernetesApiCommand command, string endpointJson)
     {
+        var serializedRoles = command.Roles != null ? JsonSerializer.Serialize(command.Roles) : null;
+        var serializedEnvIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
+
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"k8s-api-{Guid.NewGuid():N[..8]}",
-            command.Roles, command.EnvironmentIds, command.SpaceId, endpointJson);
+            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
 
         machine.Uri = command.ClusterUrl ?? string.Empty;
 

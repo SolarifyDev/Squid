@@ -1,10 +1,11 @@
 using Halibut;
+using System.Text.Json;
 using System.Security.Cryptography.X509Certificates;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Settings.SelfCert;
-using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
+using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Services.Machines;
 
@@ -40,8 +41,8 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         {
             Name = name,
             IsDisabled = false,
-            Roles = roles ?? string.Empty,
-            EnvironmentIds = environmentIds ?? string.Empty,
+            Roles = roles ?? "[]",
+            EnvironmentIds = environmentIds ?? "[]",
             Json = string.Empty,
             Thumbprint = string.Empty,
             Uri = string.Empty,
@@ -60,18 +61,27 @@ public partial class MachineRegistrationService : IMachineRegistrationService
     private async Task<string> ResolveEnvironmentIdsAsync(string environmentNames, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(environmentNames))
-            return string.Empty;
+            return "[]";
 
         var names = environmentNames
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
 
         if (names.Count == 0)
-            return string.Empty;
+            return "[]";
 
         var environments = await _environmentDataProvider.GetEnvironmentsByNamesAsync(names, ct).ConfigureAwait(false);
 
-        return string.Join(',', environments.Select(e => e.Id));
+        return JsonSerializer.Serialize(environments.Select(e => e.Id).ToList());
+    }
+
+    private static string SerializeRolesFromCsv(string csvRoles)
+    {
+        if (string.IsNullOrWhiteSpace(csvRoles)) return null;
+
+        var roles = csvRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        return JsonSerializer.Serialize(roles);
     }
 
     private string GetServerThumbprint()

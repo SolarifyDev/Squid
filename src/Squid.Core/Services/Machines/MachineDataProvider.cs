@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 
 namespace Squid.Core.Services.Machines;
 
@@ -73,20 +74,15 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
 
     public async Task<List<Machine>> GetMachinesByFilterAsync(HashSet<int> environmentIds, HashSet<string> machineRoles, CancellationToken cancellationToken = default)
     {
-        var query = repository.QueryNoTracking<Machine>(m => !m.IsDisabled);
+        var machines = await repository.QueryNoTracking<Machine>(m => !m.IsDisabled).ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        if (environmentIds.Any())
-        {
-            var envIdStrings = environmentIds.Select(id => id.ToString()).ToList();
-            query = query.Where(m => envIdStrings.Any(envId => m.EnvironmentIds.Contains(envId)));
-        }
+        if (environmentIds.Count > 0)
+            machines = machines.Where(m => DeploymentTargetFinder.ParseIds(m.EnvironmentIds).Overlaps(environmentIds)).ToList();
 
-        if (machineRoles.Any())
-        {
-            query = query.Where(m => machineRoles.Any(role => m.Roles.Contains(role)));
-        }
+        if (machineRoles.Count > 0)
+            machines = machines.Where(m => DeploymentTargetFinder.ParseRoles(m.Roles).Overlaps(machineRoles)).ToList();
 
-        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return machines;
     }
 
     public async Task<Machine?> GetMachineBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)

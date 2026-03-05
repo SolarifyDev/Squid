@@ -72,7 +72,7 @@ public class MachineRegistrationServiceTests : IDisposable
         await _service.RegisterKubernetesAgentAsync(CreateCommand(environments: inputNames), CancellationToken.None);
 
         captured.ShouldNotBeNull();
-        captured.EnvironmentIds.ShouldBe("1,2");
+        captured.EnvironmentIds.ShouldBe("[1,2]");
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public class MachineRegistrationServiceTests : IDisposable
         await _service.RegisterKubernetesAgentAsync(CreateCommand(environments: "NONEXISTENT"), CancellationToken.None);
 
         captured.ShouldNotBeNull();
-        captured.EnvironmentIds.ShouldBe(string.Empty);
+        captured.EnvironmentIds.ShouldBe("[]");
     }
 
     [Theory]
@@ -117,7 +117,7 @@ public class MachineRegistrationServiceTests : IDisposable
         await _service.RegisterKubernetesAgentAsync(CreateCommand(environments: environments), CancellationToken.None);
 
         captured.ShouldNotBeNull();
-        captured.EnvironmentIds.ShouldBe(string.Empty);
+        captured.EnvironmentIds.ShouldBe("[]");
         _environmentDataProvider.Verify(
             x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -159,7 +159,7 @@ public class MachineRegistrationServiceTests : IDisposable
 
         result.MachineId.ShouldBe(42);
         captured.ShouldNotBeNull();
-        captured.EnvironmentIds.ShouldBe("1,2");
+        captured.EnvironmentIds.ShouldBe("[1,2]");
     }
 
     private static RegisterKubernetesAgentCommand CreateCommand(

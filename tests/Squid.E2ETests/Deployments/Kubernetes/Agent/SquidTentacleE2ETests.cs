@@ -50,7 +50,7 @@ public class SquidTentacleE2ETests
             machine.Id.ShouldBe(_fixture.TentacleMachineId);
             machine.PollingSubscriptionId.ShouldBe(_fixture.TentacleSubscriptionId);
             machine.Thumbprint.ShouldBe(_fixture.TentacleThumbprint);
-            machine.Roles.ShouldBe("k8s");
+            machine.Roles.ShouldBe("[\"k8s\"]");
             machine.Endpoint.ShouldContain("KubernetesAgent");
             machine.Endpoint.ShouldContain(_fixture.TentacleSubscriptionId);
             machine.OperatingSystem.ShouldBe(OperatingSystemType.Linux);
@@ -85,7 +85,7 @@ public class SquidTentacleE2ETests
 
                 machine.ShouldNotBeNull();
                 machine.Id.ShouldBe(_fixture.TentacleMachineId);
-                machine.Roles.ShouldBe("k8s,web");
+                machine.Roles.ShouldBe("[\"k8s\",\"web\"]");
                 machine.Endpoint.ShouldContain("production");
             }).ConfigureAwait(false);
         }
@@ -334,7 +334,7 @@ public class SquidTentacleE2ETests
             if (customMachine != null)
             {
                 var env = await builder.CreateEnvironmentAsync("Real Tentacle Custom NS Env").ConfigureAwait(false);
-                customMachine.EnvironmentIds = env.Id.ToString();
+                customMachine.EnvironmentIds = $"[{env.Id}]";
 
                 await repository.InsertAsync(customMachine).ConfigureAwait(false);
                 await unitOfWork.SaveChangesAsync().ConfigureAwait(false);

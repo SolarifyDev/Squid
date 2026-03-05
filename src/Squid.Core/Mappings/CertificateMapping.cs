@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.Certificate;
 
@@ -13,6 +14,8 @@ public class CertificateMapping : Profile
                 : y.SubjectAlternativeNames.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList()))
             .ForMember(x => x.EnvironmentIds, x => x.MapFrom(y =>
                 string.IsNullOrEmpty(y.EnvironmentIds) ? new List<int>()
-                : y.EnvironmentIds.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToList()));
+                : DeserializeIds(y.EnvironmentIds)));
     }
+
+    private static List<int> DeserializeIds(string json) => JsonSerializer.Deserialize<List<int>>(json);
 }
