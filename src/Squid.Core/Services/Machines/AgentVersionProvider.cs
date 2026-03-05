@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Serilog;
 using Squid.Core.Services.Http;
 
 namespace Squid.Core.Services.Machines;
@@ -12,6 +11,7 @@ public interface IAgentVersionProvider : IScopedDependency
 public class AgentVersionProvider : IAgentVersionProvider
 {
     private const string DockerHubUrl = "https://hub.docker.com/v2/repositories/squidcd/squid-tentacle/tags/?page_size=100&ordering=last_updated";
+    
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
 
@@ -38,7 +38,7 @@ public class AgentVersionProvider : IAgentVersionProvider
             if (_cachedVersion != null && DateTimeOffset.UtcNow < _cacheExpiry)
                 return _cachedVersion;
 
-            var version = await FetchLatestVersionAsync(ct).ConfigureAwait(false);
+            var version = await FetchLatestKubernetesAgentVersionAsync(ct).ConfigureAwait(false);
 
             _cachedVersion = version;
             _cacheExpiry = DateTimeOffset.UtcNow.Add(CacheDuration);
@@ -56,7 +56,7 @@ public class AgentVersionProvider : IAgentVersionProvider
         }
     }
 
-    private async Task<string> FetchLatestVersionAsync(CancellationToken ct)
+    private async Task<string> FetchLatestKubernetesAgentVersionAsync(CancellationToken ct)
     {
         using var client = _httpClientFactory.CreateClient(timeout: RequestTimeout);
 
