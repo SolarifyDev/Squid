@@ -203,6 +203,9 @@ public partial class DeploymentTaskExecutor
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
 
+                await PersistScriptOutputAsync(_ctx.Task.Id, execResult.LogLines, tc.Machine.Name, ct)
+                    .ConfigureAwait(false);
+
                 if (!execResult.Success)
                     throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);
 
