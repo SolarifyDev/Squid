@@ -49,10 +49,17 @@ public partial class KubernetesPodManager
 
             var containerStatus = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
 
-            return containerStatus?.State?.Terminated?.ExitCode ?? -1;
+            if (containerStatus?.State?.Terminated == null)
+            {
+                Log.Warning("Pod {PodName} container 'script' has no Terminated state", podName);
+                return -1;
+            }
+
+            return containerStatus.State.Terminated.ExitCode;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to read exit code for pod {PodName}", podName);
             return -1;
         }
     }
@@ -66,8 +73,9 @@ public partial class KubernetesPodManager
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to read logs for pod {PodName}", podName);
             return string.Empty;
         }
     }

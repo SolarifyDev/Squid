@@ -21,7 +21,9 @@ public class DeploymentProcessMapping : Profile
 
         CreateMap<DeploymentAction, DeploymentActionDto>();
         CreateMap<DeploymentActionDto, DeploymentAction>()
-            .ForMember(dest => dest.Id, opt => opt.Ignore());
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.FeedId, opt => opt.Ignore())
+            .ForMember(dest => dest.PackageId, opt => opt.Ignore());
 
         CreateMap<DeploymentActionProperty, DeploymentActionPropertyDto>();
         CreateMap<DeploymentActionPropertyDto, DeploymentActionProperty>();
@@ -39,7 +41,9 @@ public class DeploymentProcessMapping : Profile
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.StepId, opt => opt.Ignore())
             .ForMember(dest => dest.ActionOrder, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore());
+            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.FeedId, opt => opt.Ignore())
+            .ForMember(dest => dest.PackageId, opt => opt.Ignore());
 
         CreateMap<ActionPropertyModel, DeploymentActionProperty>()
             .ForMember(dest => dest.ActionId, opt => opt.Ignore());

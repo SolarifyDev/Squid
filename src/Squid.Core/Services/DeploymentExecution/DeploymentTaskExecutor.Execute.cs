@@ -121,7 +121,14 @@ public partial class DeploymentTaskExecutor
                 Step = step,
                 Action = expandedAction,
                 Variables = actionVariables,
-                ReleaseVersion = _ctx.Release?.Version
+                ReleaseVersion = _ctx.Release?.Version,
+                SelectedPackages = _ctx.SelectedPackages?
+                    .Select(sp => new Message.Models.Deployments.Release.SelectedPackageDto
+                    {
+                        ActionName = sp.ActionName,
+                        PackageReferenceName = sp.PackageReferenceName,
+                        Version = sp.Version
+                    }).ToList() ?? new()
             };
 
             var prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
@@ -195,6 +202,9 @@ public partial class DeploymentTaskExecutor
                 var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
+
+                await PersistScriptOutputAsync(_ctx.Task.Id, execResult.LogLines, tc.Machine.Name, ct)
+                    .ConfigureAwait(false);
 
                 if (!execResult.Success)
                     throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);

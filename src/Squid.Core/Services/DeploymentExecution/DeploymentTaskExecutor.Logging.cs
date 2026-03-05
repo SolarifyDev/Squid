@@ -165,6 +165,30 @@ public partial class DeploymentTaskExecutor
         }
     }
 
+    private async Task PersistScriptOutputAsync(int serverTaskId, List<string> logLines, string source, CancellationToken ct)
+    {
+        if (logLines == null || logLines.Count == 0) return;
+
+        try
+        {
+            var entries = logLines.Select(line => new Persistence.Entities.Deployments.ServerTaskLog
+            {
+                ServerTaskId = serverTaskId,
+                Category = ServerTaskLogCategory.Info,
+                MessageText = line,
+                Source = source,
+                OccurredAt = DateTimeOffset.UtcNow,
+                SequenceNumber = _ctx.NextLogSequence()
+            }).ToList();
+
+            await _serverTaskLogDataProvider.AddLogsAsync(entries, ct: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to persist script output for task {TaskId}", serverTaskId);
+        }
+    }
+
     private Task UpdateActivityNodeStatusAsync(
         Persistence.Entities.Deployments.ActivityLog node,
         DeploymentActivityLogNodeStatus status,

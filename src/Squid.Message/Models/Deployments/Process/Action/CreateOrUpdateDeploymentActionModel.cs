@@ -5,8 +5,6 @@ public class CreateOrUpdateDeploymentActionModel
     public string Name { get; set; }
     public string ActionType { get; set; }
     public int? WorkerPoolId { get; set; }
-    public int? FeedId { get; set; }
-    public string PackageId { get; set; }
     public bool IsDisabled { get; set; }
     public bool IsRequired { get; set; }
     public bool CanBeUsedForProjectVersioning { get; set; }

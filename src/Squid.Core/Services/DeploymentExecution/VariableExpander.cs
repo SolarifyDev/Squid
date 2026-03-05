@@ -18,8 +18,6 @@ public static class VariableExpander
             Name = action.Name,
             ActionType = action.ActionType,
             WorkerPoolId = action.WorkerPoolId,
-            FeedId = action.FeedId,
-            PackageId = action.PackageId,
             IsDisabled = action.IsDisabled,
             IsRequired = action.IsRequired,
             CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,

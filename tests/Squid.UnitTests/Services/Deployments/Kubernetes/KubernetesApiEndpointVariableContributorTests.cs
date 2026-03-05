@@ -368,7 +368,7 @@ public class KubernetesApiEndpointVariableContributorTests
 
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp/backend");
+        var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp/backend");
         var release = new Release { Version = "1.2.3" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -383,7 +383,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var snapshot = MakeSnapshotWithoutFeed();
+        var snapshot = MakeSnapshotWithoutContainerPackage();
         var release = new Release { Version = "2.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -400,7 +400,7 @@ public class KubernetesApiEndpointVariableContributorTests
 
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var snapshot = MakeSnapshotWithFeed(feedId: 99, packageId: "myapp");
+        var snapshot = MakeSnapshotWithContainerPackage(feedId: 99, packageId: "myapp");
         var release = new Release { Version = "3.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -424,10 +424,9 @@ public class KubernetesApiEndpointVariableContributorTests
     [Fact]
     public async Task ContributeAdditionalVariablesAsync_NoFeedProvider_FallsBackToVersion()
     {
-        // Contributor created without feed provider (parameterless constructor)
         var contributor = new KubernetesApiEndpointVariableContributor();
 
-        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
+        var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp");
         var release = new Release { Version = "5.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -449,7 +448,7 @@ public class KubernetesApiEndpointVariableContributorTests
 
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "library/nginx");
+        var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "library/nginx");
         var release = new Release { Version = "1.25.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -471,7 +470,7 @@ public class KubernetesApiEndpointVariableContributorTests
 
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var snapshot = MakeSnapshotWithFeed(feedId: 10, packageId: "myapp");
+        var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp");
         var release = new Release { Version = "2.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
@@ -480,7 +479,21 @@ public class KubernetesApiEndpointVariableContributorTests
             && v.Value == "registry.internal.com:5000/myapp:2.0.0");
     }
 
-    private static DeploymentProcessSnapshotDto MakeSnapshotWithFeed(int feedId, string packageId)
+    private static string BuildContainerJson(int feedId, string packageId)
+    {
+        return System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new Dictionary<string, object>
+            {
+                ["Name"] = "web",
+                ["Image"] = packageId,
+                ["PackageId"] = packageId,
+                ["FeedId"] = feedId
+            }
+        });
+    }
+
+    private static DeploymentProcessSnapshotDto MakeSnapshotWithContainerPackage(int feedId, string packageId)
     {
         return new DeploymentProcessSnapshotDto
         {
@@ -497,7 +510,11 @@ public class KubernetesApiEndpointVariableContributorTests
                             new()
                             {
                                 Id = 1, Name = "Deploy", ActionType = "Octopus.KubernetesDeployContainers",
-                                ActionOrder = 1, FeedId = feedId, PackageId = packageId
+                                ActionOrder = 1,
+                                Properties = new Dictionary<string, string>
+                                {
+                                    ["Squid.Action.KubernetesContainers.Containers"] = BuildContainerJson(feedId, packageId)
+                                }
                             }
                         }
                     }
@@ -506,7 +523,7 @@ public class KubernetesApiEndpointVariableContributorTests
         };
     }
 
-    private static DeploymentProcessSnapshotDto MakeSnapshotWithoutFeed()
+    private static DeploymentProcessSnapshotDto MakeSnapshotWithoutContainerPackage()
     {
         return new DeploymentProcessSnapshotDto
         {
@@ -523,7 +540,7 @@ public class KubernetesApiEndpointVariableContributorTests
                             new()
                             {
                                 Id = 1, Name = "Script", ActionType = "Octopus.Script",
-                                ActionOrder = 1, FeedId = null, PackageId = null
+                                ActionOrder = 1
                             }
                         }
                     }

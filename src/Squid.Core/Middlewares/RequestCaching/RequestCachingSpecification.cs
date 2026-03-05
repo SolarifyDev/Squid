@@ -1,6 +1,6 @@
 ﻿using System.Runtime.ExceptionServices;
+using System.Text.Json;
 using Mediator.Net.Pipeline;
-using Newtonsoft.Json;
 using Squid.Core.Services.Caching;
 using Squid.Message.Requests;
 
@@ -31,7 +31,7 @@ public class RequestCachingSpecification<TContext> : IPipeSpecification<TContext
 
         if (!string.IsNullOrEmpty(cachedJson))
         {
-            context.Result = JsonConvert.DeserializeObject(cachedJson, context.ResultDataType);
+            context.Result = JsonSerializer.Deserialize(cachedJson, context.ResultDataType);
             
             Log.Information("Request result from cached. Cache key: {CacheKey}, Result type: {ResultType}", cacheKey, context.ResultDataType.Name);
             
@@ -54,7 +54,7 @@ public class RequestCachingSpecification<TContext> : IPipeSpecification<TContext
         Log.Information("Request caching. Cache key: {CacheKey}, Result type: {ResultType}", cacheKey, context.ResultDataType.Name);
         
         await _cacheManager.SetAsync(
-            cacheKey, JsonConvert.SerializeObject(context.Result), new RedisCachingSetting(expiry: cachingRequest.GetCacheExpiration()), cancellationToken).ConfigureAwait(false);
+            cacheKey, JsonSerializer.Serialize(context.Result), new RedisCachingSetting(expiry: cachingRequest.GetCacheExpiration()), cancellationToken).ConfigureAwait(false);
     }
 
     public Task OnException(Exception ex, TContext context)

@@ -49,8 +49,7 @@ public class DeploymentService : IDeploymentService
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
     {
-        Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}",
-            command.ReleaseId, command.EnvironmentId);
+        Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}", command.ReleaseId, command.EnvironmentId);
 
         var isValid = await ValidateDeploymentEnvironmentAsync(command.ReleaseId, command.EnvironmentId, cancellationToken).ConfigureAwait(false);
         if (!isValid)
@@ -107,9 +106,7 @@ public class DeploymentService : IDeploymentService
 
         await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var jobId = _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(
-            executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None),
-            queue: "deployment");
+        var jobId = _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None));
 
         if (!string.IsNullOrEmpty(jobId))
         {
@@ -121,8 +118,8 @@ public class DeploymentService : IDeploymentService
 
         return new DeploymentCreatedEvent
         {
-            Deployment = _mapper.Map<DeploymentDto>(deployment),
-            TaskId = serverTask.Id
+            TaskId = serverTask.Id,
+            Deployment = _mapper.Map<DeploymentDto>(deployment)
         };
     }
 

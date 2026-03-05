@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
@@ -20,6 +21,9 @@ public partial class DeploymentTaskExecutor
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
 
+        var targetNames = string.Join(", ", _ctx.AllTargets.Select(t => t.Name));
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {targetNames}", "System", ct);
+
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
     }
@@ -31,6 +35,9 @@ public partial class DeploymentTaskExecutor
             var tc = new DeploymentTargetContext { Machine = target };
 
             LoadTransportForTarget(tc);
+
+            if (tc.Transport == null)
+                Log.Warning("No transport resolved for target {TargetName} with style {CommunicationStyle}", target.Name, tc.CommunicationStyle);
 
             if (tc.Transport != null)
                 await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);

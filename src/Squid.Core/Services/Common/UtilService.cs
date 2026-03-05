@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
-using Newtonsoft.Json;
+using System.Text.Json;
 
 namespace Squid.Core.Services.Common;
 
@@ -18,14 +18,14 @@ public static class UtilService
 
     public static byte[] CompressToGzip<T>(T data)
     {
-        var json = JsonConvert.SerializeObject(data);
+        var json = JsonSerializer.Serialize(data);
 
         return CompressToGzip(json);
     }
 
     public static SnapshotBlob BuildSnapshotBlob<T>(T data)
     {
-        var json = JsonConvert.SerializeObject(data);
+        var json = JsonSerializer.Serialize(data);
 
         return new SnapshotBlob
         {
@@ -55,7 +55,7 @@ public static class UtilService
 
         var json = sr.ReadToEnd();
 
-        return JsonConvert.DeserializeObject<T>(json);
+        return JsonSerializer.Deserialize<T>(json);
     }
 
     public static string GetEmbeddedScriptContent(string resourceFileName)

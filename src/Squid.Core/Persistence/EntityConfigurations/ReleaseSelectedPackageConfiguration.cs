@@ -9,5 +9,6 @@ public class ReleaseSelectedPackageConfiguration : IEntityTypeConfiguration<Rele
         builder.ToTable("release_selected_package");
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id).ValueGeneratedOnAdd();
+        builder.Property(p => p.PackageReferenceName).HasMaxLength(200).HasDefaultValue(string.Empty);
     }
 }

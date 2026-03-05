@@ -163,46 +163,6 @@ public class ConvertProcessSnapshotToStepsTests
         steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "");
     }
 
-    [Fact]
-    public void ActionFeedIdAndPackageId_PreservedFromSnapshot()
-    {
-        var stepSnap = MakeStep(1, "Deploy");
-        stepSnap.ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
-        {
-            new()
-            {
-                Id = 1, Name = "Deploy Container", ActionType = "Squid.KubernetesDeployContainers",
-                ActionOrder = 1, FeedId = 42, PackageId = "smarttalk/webapi"
-            }
-        };
-
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
-
-        var action = steps[0].Actions[0];
-        action.FeedId.ShouldBe(42);
-        action.PackageId.ShouldBe("smarttalk/webapi");
-    }
-
-    [Fact]
-    public void ActionFeedIdNull_PreservedAsNull()
-    {
-        var stepSnap = MakeStep(1, "Script Step");
-        stepSnap.ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
-        {
-            new()
-            {
-                Id = 1, Name = "Run Script", ActionType = "Squid.Script",
-                ActionOrder = 1, FeedId = null, PackageId = null
-            }
-        };
-
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
-
-        var action = steps[0].Actions[0];
-        action.FeedId.ShouldBeNull();
-        action.PackageId.ShouldBeNull();
-    }
-
     private static DeploymentStepSnapshotDataDto MakeStep(
         int stepOrder, string name,
         bool isDisabled = false, bool isRequired = true,

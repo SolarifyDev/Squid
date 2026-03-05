@@ -1,5 +1,6 @@
+using System.Net.Http.Json;
 using System.Text;
-using Newtonsoft.Json;
+using System.Text.Json;
 
 namespace Squid.Core.Services.Http;
 
@@ -138,7 +139,7 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
     {
         return await SafelyProcessRequestAsync(requestUrl, async () =>
         {
-            var jsonContent = JsonConvert.SerializeObject(value, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            var jsonContent = JsonSerializer.Serialize(value, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
 
             var request = new HttpRequestMessage(HttpMethod.Post, requestUrl)
             {
@@ -212,15 +213,15 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
         if (typeof(T) == typeof(Stream))
             return (T)(object) await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         
-        return await response.Content.ReadAsAsync<T>(cancellationToken).ConfigureAwait(false);
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken).ConfigureAwait(false);
     }
     
     private static async Task LogHttpErrorAsync(string requestUrl, HttpMethod httpMethod, HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var responseAsString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         
-        Log.Error("Squid http {Method} {Url} error, The response: {ResponseJson}, As string: {ResponseAsString}", 
-            httpMethod.ToString(), requestUrl, JsonConvert.SerializeObject(response), responseAsString);
+        Log.Error("Squid http {Method} {Url} error, Status: {StatusCode}, As string: {ResponseAsString}",
+            httpMethod.ToString(), requestUrl, (int)response.StatusCode, responseAsString);
     }
     
     private static async Task<T> SafelyProcessRequestAsync<T>(string requestUrl, Func<Task<T>> func, CancellationToken cancellationToken, bool shouldLogError = true)

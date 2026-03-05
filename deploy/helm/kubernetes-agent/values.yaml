@@ -17,11 +17,11 @@ tentacle:
 
   resources:
     requests:
-      memory: "150Mi"
+      memory: "256Mi"
       cpu: "100m"
     limits:
-      memory: "256Mi"
-      cpu: "200m"
+      memory: "512Mi"
+      cpu: "500m"
 
   healthCheckPort: 8080
 

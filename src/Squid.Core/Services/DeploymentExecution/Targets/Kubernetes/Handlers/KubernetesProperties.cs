@@ -89,6 +89,7 @@ internal static class KubernetesContainerPayloadProperties
     internal const string Name = "Name";
     internal const string Image = "Image";
     internal const string PackageId = "PackageId";
+    internal const string FeedId = "FeedId";
     internal const string CreateFeedSecrets = "CreateFeedSecrets";
     internal const string IsInitContainer = "IsInitContainer";
 
