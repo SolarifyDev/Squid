@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Machines;
@@ -22,12 +23,14 @@ public class DeploymentTargetFinderTests
 
     // ========== Helpers ==========
 
+    private static string R(params string[] roles) => JsonSerializer.Serialize(roles);
+
     private static Machine CreateMachine(
         int id,
         string name = null,
         bool disabled = false,
-        string envIds = "1",
-        string roles = "web",
+        string envIds = "[1]",
+        string roles = "[\"web\"]",
         string endpoint = "{}") => new()
     {
         Id = id,
@@ -106,7 +109,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_ValidEnabledCorrectEnv_ReturnsMachine()
     {
-        var machine = CreateMachine(10, envIds: "1");
+        var machine = CreateMachine(10, envIds: "[1]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -118,7 +121,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_Disabled_ReturnsEmpty()
     {
-        var machine = CreateMachine(10, disabled: true, envIds: "1");
+        var machine = CreateMachine(10, disabled: true, envIds: "[1]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -129,7 +132,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_WrongEnvironment_ReturnsEmpty()
     {
-        var machine = CreateMachine(10, envIds: "2");
+        var machine = CreateMachine(10, envIds: "[2]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -150,7 +153,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_CommaSeparatedEnvIds_MatchesCorrectly()
     {
-        var machine = CreateMachine(10, envIds: "3,1,5");
+        var machine = CreateMachine(10, envIds: "[3,1,5]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -188,7 +191,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task AutoSelect_SingleMachineInEnv_ReturnsIt()
     {
-        var machines = new List<Machine> { CreateMachine(1, envIds: "1") };
+        var machines = new List<Machine> { CreateMachine(1, envIds: "[1]") };
         SetupGetByFilter(machines);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1), CancellationToken.None);
@@ -201,9 +204,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, envIds: "1"),
-            CreateMachine(2, envIds: "1"),
-            CreateMachine(3, envIds: "1")
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, envIds: "[1]"),
+            CreateMachine(3, envIds: "[1]")
         };
         SetupGetByFilter(machines);
 
@@ -217,9 +220,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, envIds: "1"),
-            CreateMachine(2, disabled: true, envIds: "1"),
-            CreateMachine(3, envIds: "1")
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, disabled: true, envIds: "[1]"),
+            CreateMachine(3, envIds: "[1]")
         };
         SetupGetByFilter(machines);
 
@@ -234,9 +237,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, envIds: "1"),
-            CreateMachine(2, envIds: "2"),
-            CreateMachine(3, envIds: "1,3")
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, envIds: "[2]"),
+            CreateMachine(3, envIds: "[1,3]")
         };
         SetupGetByFilter(machines);
 
@@ -286,7 +289,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_DoesNotCallGetByFilter()
     {
-        SetupGetById(10, CreateMachine(10, envIds: "1"));
+        SetupGetById(10, CreateMachine(10, envIds: "[1]"));
 
         await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
 
@@ -300,15 +303,12 @@ public class DeploymentTargetFinderTests
     // ============================
 
     [Theory]
-    [InlineData("1,2,3", 3)]
-    [InlineData("42", 1)]
+    [InlineData("[1,2,3]", 3)]
+    [InlineData("[42]", 1)]
+    [InlineData("[]", 0)]
     [InlineData("", 0)]
     [InlineData(null, 0)]
-    [InlineData("1,abc,3", 2)]
-    [InlineData("0,1,2", 2)]
-    [InlineData("-1,1,-5,3", 2)]
-    [InlineData(" 1 , 2 , 3 ", 3)]
-    [InlineData("1,1,2,2", 2)]
+    [InlineData("[1,1,2,2]", 2)]
     public void ParseIds_ReturnsCorrectCount(string input, int expectedCount)
     {
         var result = DeploymentTargetFinder.ParseIds(input);
@@ -319,11 +319,11 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void ParseIds_CorrectValues()
     {
-        var result = DeploymentTargetFinder.ParseIds("1,abc,-5,0,3");
+        var result = DeploymentTargetFinder.ParseIds("[1,5,3]");
 
         result.ShouldContain(1);
+        result.ShouldContain(5);
         result.ShouldContain(3);
-        result.ShouldNotContain(0);
     }
 
     // ============================
@@ -331,15 +331,12 @@ public class DeploymentTargetFinderTests
     // ============================
 
     [Theory]
-    [InlineData("web,api,worker", 3)]
-    [InlineData("web", 1)]
+    [InlineData("[\"web\",\"api\",\"worker\"]", 3)]
+    [InlineData("[\"web\"]", 1)]
+    [InlineData("[]", 0)]
     [InlineData("", 0)]
     [InlineData(null, 0)]
-    [InlineData(" web , api ", 2)]
-    [InlineData("web-server,api-gateway,k8s-worker", 3)]
-    [InlineData("k8s.cluster,aws.ec2", 2)]
-    [InlineData("web,Web,WEB,api,Api", 2)]
-    [InlineData("web_server,api_gateway", 2)]
+    [InlineData("[\"web\",\"Web\",\"WEB\",\"api\",\"Api\"]", 2)]
     public void ParseRoles_ReturnsCorrectCount(string input, int expectedCount)
     {
         var result = DeploymentTargetFinder.ParseRoles(input);
@@ -350,7 +347,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void ParseRoles_CaseInsensitiveLookup()
     {
-        var result = DeploymentTargetFinder.ParseRoles("Web,API");
+        var result = DeploymentTargetFinder.ParseRoles(R("Web", "API"));
 
         result.Contains("web").ShouldBeTrue();
         result.Contains("api").ShouldBeTrue();
@@ -366,8 +363,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web,api"),
-            CreateMachine(2, roles: "worker")
+            CreateMachine(1, roles: R("web", "api")),
+            CreateMachine(2, roles: R("worker"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -382,9 +379,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "api"),
-            CreateMachine(3, roles: "worker")
+            CreateMachine(1, roles: R("web")),
+            CreateMachine(2, roles: R("api")),
+            CreateMachine(3, roles: R("worker"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web", "api" };
 
@@ -400,8 +397,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "api")
+            CreateMachine(1, roles: R("web")),
+            CreateMachine(2, roles: R("api"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
 
@@ -415,8 +412,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "api")
+            CreateMachine(1, roles: R("web")),
+            CreateMachine(2, roles: R("api"))
         };
 
         var result = DeploymentTargetFinder.FilterByRoles(machines, new HashSet<string>());
@@ -429,8 +426,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "api")
+            CreateMachine(1, roles: R("web")),
+            CreateMachine(2, roles: R("api"))
         };
 
         var result = DeploymentTargetFinder.FilterByRoles(machines, null);
@@ -443,7 +440,7 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "Web,API")
+            CreateMachine(1, roles: R("Web", "API"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -458,7 +455,7 @@ public class DeploymentTargetFinderTests
         var machines = new List<Machine>
         {
             CreateMachine(1, roles: ""),
-            CreateMachine(2, roles: "web")
+            CreateMachine(2, roles: R("web"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -474,7 +471,7 @@ public class DeploymentTargetFinderTests
         var machines = new List<Machine>
         {
             CreateMachine(1, roles: null),
-            CreateMachine(2, roles: "web")
+            CreateMachine(2, roles: R("web"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -489,7 +486,7 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web,api,database,cache")
+            CreateMachine(1, roles: R("web", "api", "database", "cache"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "database" };
 
@@ -503,8 +500,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web"),
-            CreateMachine(2, roles: "web-server")
+            CreateMachine(1, roles: R("web")),
+            CreateMachine(2, roles: R("web-server"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web-server" };
 
@@ -519,7 +516,7 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web-server")
+            CreateMachine(1, roles: R("web-server"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -533,9 +530,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web,api"),
-            CreateMachine(2, roles: "web"),
-            CreateMachine(3, roles: "api,web")
+            CreateMachine(1, roles: R("web", "api")),
+            CreateMachine(2, roles: R("web")),
+            CreateMachine(3, roles: R("api", "web"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
@@ -549,9 +546,9 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "web,api,cache"),
-            CreateMachine(2, roles: "database,queue,scheduler"),
-            CreateMachine(3, roles: "web,database")
+            CreateMachine(1, roles: R("web", "api", "cache")),
+            CreateMachine(2, roles: R("database", "queue", "scheduler")),
+            CreateMachine(3, roles: R("web", "database"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "api", "queue" };
 
@@ -567,8 +564,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, roles: "k8s-worker.us-east-1,aws_ec2"),
-            CreateMachine(2, roles: "k8s-worker.eu-west-1")
+            CreateMachine(1, roles: R("k8s-worker.us-east-1", "aws_ec2")),
+            CreateMachine(2, roles: R("k8s-worker.eu-west-1"))
         };
         var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "k8s-worker.us-east-1" };
 
@@ -576,20 +573,6 @@ public class DeploymentTargetFinderTests
 
         result.Count.ShouldBe(1);
         result[0].Id.ShouldBe(1);
-    }
-
-    [Fact]
-    public void FilterByRoles_WhitespaceInMachineRoles_TrimmedCorrectly()
-    {
-        var machines = new List<Machine>
-        {
-            CreateMachine(1, roles: " web , api ")
-        };
-        var targetRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
-
-        var result = DeploymentTargetFinder.FilterByRoles(machines, targetRoles);
-
-        result.Count.ShouldBe(1);
     }
 
     [Fact]
@@ -746,8 +729,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, envIds: "1,2,3"),
-            CreateMachine(2, envIds: "4,5")
+            CreateMachine(1, envIds: "[1,2,3]"),
+            CreateMachine(2, envIds: "[4,5]")
         };
         SetupGetByFilter(machines);
 
@@ -762,8 +745,8 @@ public class DeploymentTargetFinderTests
     {
         var machines = new List<Machine>
         {
-            CreateMachine(1, disabled: true, envIds: "1"),
-            CreateMachine(2, disabled: true, envIds: "1")
+            CreateMachine(1, disabled: true, envIds: "[1]"),
+            CreateMachine(2, disabled: true, envIds: "[1]")
         };
         SetupGetByFilter(machines);
 
@@ -775,7 +758,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvIdSubstringNoFalsePositive()
     {
-        var machine = CreateMachine(10, envIds: "11");
+        var machine = CreateMachine(10, envIds: "[11]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -786,7 +769,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvId1InList11_NoFalsePositive()
     {
-        var machine = CreateMachine(10, envIds: "11,12");
+        var machine = CreateMachine(10, envIds: "[11,12]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 1, machineId: 10), CancellationToken.None);
@@ -797,7 +780,7 @@ public class DeploymentTargetFinderTests
     [Fact]
     public async Task SpecificMachine_EnvId11InList_CorrectMatch()
     {
-        var machine = CreateMachine(10, envIds: "1,11");
+        var machine = CreateMachine(10, envIds: "[1,11]");
         SetupGetById(10, machine);
 
         var result = await _finder.FindTargetsAsync(CreateDeployment(environmentId: 11, machineId: 10), CancellationToken.None);

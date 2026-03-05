@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.IntegrationTests.Helpers;
@@ -199,8 +200,8 @@ public class K8sTestDataSeeder
         {
             Name = "E2E K8s Target",
             IsDisabled = false,
-            Roles = "k8s",
-            EnvironmentIds = environment.Id.ToString(),
+            Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
+            EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
             Thumbprint = "E2E-THUMBPRINT",
             Uri = "https://localhost:10933",
@@ -236,8 +237,8 @@ public class K8sTestDataSeeder
         {
             Name = "E2E K8s Agent",
             IsDisabled = false,
-            Roles = "k8s",
-            EnvironmentIds = environment.Id.ToString(),
+            Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
+            EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Json = string.Empty,
             Thumbprint = thumbprint,
             Uri = string.Empty,

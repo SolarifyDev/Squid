@@ -116,8 +116,8 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
             {
                 Name = "Test Machine",
                 IsDisabled = false,
-                Roles = "web",
-                EnvironmentIds = environment.Id.ToString(),
+                Roles = "[\"web\"]",
+                EnvironmentIds = $"[{environment.Id}]",
                 Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"TEST-THUMBPRINT\"}}",
                 MachinePolicyId = null,
                 Thumbprint = "TEST-THUMBPRINT",

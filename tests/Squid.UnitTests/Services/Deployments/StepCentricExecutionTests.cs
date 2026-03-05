@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -24,7 +25,7 @@ public class StepCentricExecutionTests
         var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(1);
-        result[0].Machine.Roles.ShouldBe("web-server");
+        result[0].Machine.Roles.ShouldBe(JsonSerializer.Serialize(new[] { "web-server" }));
     }
 
     [Fact]
@@ -50,14 +51,15 @@ public class StepCentricExecutionTests
         {
             MakeTarget("web-server"),
             MakeTarget("api-server"),
-            MakeTarget("web-server,api-server"),
+            MakeTarget("web-server", "api-server"),
             MakeTarget("db-server")
         };
 
         var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(3);
-        result.ShouldNotContain(t => t.Machine.Roles == "db-server");
+        var dbRolesJson = JsonSerializer.Serialize(new[] { "db-server" });
+        result.ShouldNotContain(t => t.Machine.Roles == dbRolesJson);
     }
 
     [Fact]
@@ -81,7 +83,7 @@ public class StepCentricExecutionTests
         var step = MakeStep("api-server");
         var targets = new List<DeploymentTargetContext>
         {
-            MakeTarget("web-server,api-server")
+            MakeTarget("web-server", "api-server")
         };
 
         var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
@@ -333,14 +335,15 @@ public class StepCentricExecutionTests
         return step;
     }
 
-    private static DeploymentTargetContext MakeTarget(string roles)
+    private static DeploymentTargetContext MakeTarget(params string[] roles)
     {
+        var json = JsonSerializer.Serialize(roles);
         return new DeploymentTargetContext
         {
             Machine = new Squid.Core.Persistence.Entities.Deployments.Machine
             {
-                Name = $"machine-{roles}",
-                Roles = roles
+                Name = $"machine-{string.Join(",", roles)}",
+                Roles = json
             }
         };
     }

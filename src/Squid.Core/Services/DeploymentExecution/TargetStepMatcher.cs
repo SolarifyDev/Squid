@@ -12,7 +12,7 @@ public static class TargetStepMatcher
         if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
             return allTargets;
 
-        var stepRoles = DeploymentTargetFinder.ParseRoles(stepRolesProperty.PropertyValue);
+        var stepRoles = DeploymentTargetFinder.ParseCsvRoles(stepRolesProperty.PropertyValue);
 
         return allTargets
             .Where(tc => DeploymentTargetFinder.ParseRoles(tc.Machine.Roles).Overlaps(stepRoles))

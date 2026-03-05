@@ -7,8 +7,8 @@ public class RegisterKubernetesApiCommand : ICommand
 {
     public string MachineName { get; set; }
     public int SpaceId { get; set; }
-    public string Roles { get; set; }
-    public string EnvironmentIds { get; set; }
+    public List<string> Roles { get; set; }
+    public List<int> EnvironmentIds { get; set; }
 
     // Endpoint
     public string ClusterUrl { get; set; }

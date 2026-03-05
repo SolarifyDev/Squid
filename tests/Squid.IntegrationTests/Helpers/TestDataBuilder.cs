@@ -323,8 +323,8 @@ public class TestDataBuilder
         {
             Name = name,
             IsDisabled = false,
-            Roles = roles,
-            EnvironmentIds = environmentId.ToString(),
+            Roles = System.Text.Json.JsonSerializer.Serialize(new[] { roles }),
+            EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { environmentId }),
             SpaceId = 1,
             Endpoint = "{}",
             Json = "{}",

@@ -672,7 +672,7 @@ public class CertificateServiceTests
     public async Task ReplaceCertificateAsync_InheritsEnvironmentIds()
     {
         var original = CreateExistingCertificateEntity();
-        original.EnvironmentIds = "1,3,5";
+        original.EnvironmentIds = "[1,3,5]";
 
         var (pfxBytes, password, _) = GenerateSelfSignedPfx();
 
@@ -779,10 +779,10 @@ public class CertificateServiceTests
     // === AutoMapper — CSV to List Conversion ===
 
     [Fact]
-    public void Mapper_EnvironmentIds_CsvToList()
+    public void Mapper_EnvironmentIds_JsonToList()
     {
         var entity = CreateExistingCertificateEntity();
-        entity.EnvironmentIds = "1,2,3";
+        entity.EnvironmentIds = "[1,2,3]";
 
         var dto = _mapper.Map<CertificateDto>(entity);
 

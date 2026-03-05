@@ -221,7 +221,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Machine = new Machine
             {
                 Name = name,
-                Roles = roles
+                Roles = System.Text.Json.JsonSerializer.Serialize(new[] { roles })
             },
             EndpointContext = new EndpointContext { EndpointJson = endpointJson },
             Transport = transport,

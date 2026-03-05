@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
@@ -57,7 +58,7 @@ public class TargetRoleCombinationTests
     public void MultiRoleMachine_ExecutesAllMatchingSteps()
     {
         // Machine has both "web" and "api" roles
-        var machine = MakeMachine(1, "web,api");
+        var machine = MakeMachine(1, "web", "api");
         var machineRoles = ParseRoles(machine);
 
         var steps = new List<DeploymentStepDto>
@@ -81,7 +82,7 @@ public class TargetRoleCombinationTests
         var webMachine = ParseRoles(MakeMachine(1, "web"));
         var apiMachine = ParseRoles(MakeMachine(2, "api"));
         var dbMachine = ParseRoles(MakeMachine(3, "database"));
-        var multiMachine = ParseRoles(MakeMachine(4, "web,api,cache"));
+        var multiMachine = ParseRoles(MakeMachine(4, "web", "api", "cache"));
 
         ShouldExecute(step, webMachine).ShouldBeTrue();
         ShouldExecute(step, apiMachine).ShouldBeTrue();
@@ -98,7 +99,7 @@ public class TargetRoleCombinationTests
         ShouldExecute(step, ParseRoles(MakeMachine(1, "web"))).ShouldBeTrue();
         ShouldExecute(step, ParseRoles(MakeMachine(2, "api"))).ShouldBeTrue();
         ShouldExecute(step, ParseRoles(MakeMachine(3, "database"))).ShouldBeTrue();
-        ShouldExecute(step, ParseRoles(MakeMachine(4, ""))).ShouldBeTrue();
+        ShouldExecute(step, ParseRoles(MakeMachine(4))).ShouldBeTrue();
     }
 
     // ========== Pre-Filtering (CollectAllTargetRoles + FilterByRoles) ==========
@@ -112,7 +113,7 @@ public class TargetRoleCombinationTests
             MakeMachine(2, "api"),
             MakeMachine(3, "database"),
             MakeMachine(4, "cache"),
-            MakeMachine(5, "web,api")
+            MakeMachine(5, "web", "api")
         };
 
         var steps = new List<DeploymentStepDto>
@@ -256,7 +257,7 @@ public class TargetRoleCombinationTests
         var webServer = ParseRoles(MakeMachine(1, "web-server"));
         var apiServer = ParseRoles(MakeMachine(2, "api-server"));
         var dbServer = ParseRoles(MakeMachine(3, "database"));
-        var fullStack = ParseRoles(MakeMachine(4, "web-server,api-server,database"));
+        var fullStack = ParseRoles(MakeMachine(4, "web-server", "api-server", "database"));
 
         // web-server: steps 1 (no roles), 2, 5
         ShouldExecute(steps[0], webServer).ShouldBeTrue();
@@ -337,9 +338,9 @@ public class TargetRoleCombinationTests
     [Fact]
     public void K8sRoles_ClusterAndNamespace_CorrectMatching()
     {
-        var prodCluster = ParseRoles(MakeMachine(1, "k8s-prod,us-east-1"));
-        var stagCluster = ParseRoles(MakeMachine(2, "k8s-staging,us-west-2"));
-        var devCluster = ParseRoles(MakeMachine(3, "k8s-dev,eu-west-1"));
+        var prodCluster = ParseRoles(MakeMachine(1, "k8s-prod", "us-east-1"));
+        var stagCluster = ParseRoles(MakeMachine(2, "k8s-staging", "us-west-2"));
+        var devCluster = ParseRoles(MakeMachine(3, "k8s-dev", "eu-west-1"));
 
         var deployProd = MakeStep(1, "Deploy to Prod", targetRoles: "k8s-prod");
         var deployStaging = MakeStep(2, "Deploy to Staging", targetRoles: "k8s-staging");
@@ -406,7 +407,7 @@ public class TargetRoleCombinationTests
     [Fact]
     public void RoleNames_CaseMixed_MatchesCaseInsensitive()
     {
-        var machine = ParseRoles(MakeMachine(1, "Web-Server,API-Gateway"));
+        var machine = ParseRoles(MakeMachine(1, "Web-Server", "API-Gateway"));
 
         var step1 = MakeStep(1, "Step1", targetRoles: "web-server");
         var step2 = MakeStep(2, "Step2", targetRoles: "API-GATEWAY");
@@ -427,13 +428,13 @@ public class TargetRoleCombinationTests
     private static HashSet<string> ParseRoles(Machine machine)
         => DeploymentTargetFinder.ParseRoles(machine.Roles);
 
-    private static Machine MakeMachine(int id, string roles) => new()
+    private static Machine MakeMachine(int id, params string[] roles) => new()
     {
         Id = id,
         Name = $"Machine-{id}",
         IsDisabled = false,
-        EnvironmentIds = "1",
-        Roles = roles,
+        EnvironmentIds = "[1]",
+        Roles = JsonSerializer.Serialize(roles),
         SpaceId = 1,
         Endpoint = "{}",
         Uri = $"https://machine{id}:10933",
