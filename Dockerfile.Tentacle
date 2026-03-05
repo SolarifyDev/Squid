@@ -6,7 +6,8 @@ COPY src/Squid.Message/ Squid.Message/
 COPY src/Squid.Tentacle/ Squid.Tentacle/
 COPY src/Squid.Calamari/ Squid.Calamari/
 RUN dotnet publish Squid.Tentacle/Squid.Tentacle.csproj -c Release -o /app
-RUN dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r linux-$TARGETARCH --self-contained true -o /calamari
+RUN if [ "$TARGETARCH" = "amd64" ]; then RID="linux-x64"; else RID="linux-$TARGETARCH"; fi && \
+    dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r $RID --self-contained true -o /calamari
 
 FROM mcr.microsoft.com/dotnet/runtime:9.0
 WORKDIR /app
