@@ -1,5 +1,6 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 
@@ -36,8 +37,13 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
         var awsCreds = creds as AwsCredentials;
 
         var syntax = context?.Syntax ?? Message.Models.Deployments.Execution.ScriptSyntax.Bash;
-        var templateName = syntax == Message.Models.Deployments.Execution.ScriptSyntax.Bash ? "KubectlContext.sh" : "KubectlContext.ps1";
+        var isBash = syntax == Message.Models.Deployments.Execution.ScriptSyntax.Bash;
+        var templateName = isBash ? "KubectlContext.sh" : "KubectlContext.ps1";
         var template = UtilService.GetEmbeddedScriptContent(templateName);
+
+        string Esc(string value) => isBash
+            ? ShellEscapeHelper.EscapeBash(value ?? string.Empty)
+            : ShellEscapeHelper.EscapePowerShell(value ?? string.Empty);
 
         template = template
             .Replace("{{KubectlExe}}", customKubectlPath ?? string.Empty, StringComparison.Ordinal)
@@ -45,16 +51,16 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             .Replace("{{AccountType}}", accountData?.AuthenticationAccountType.ToString() ?? "Token", StringComparison.Ordinal)
             .Replace("{{SkipTlsVerification}}", endpoint?.SkipTlsVerification ?? KubernetesBooleanValues.False, StringComparison.Ordinal)
             .Replace("{{Namespace}}", ResolveNamespace(context, endpoint), StringComparison.Ordinal)
-            .Replace("{{ClusterCertificate}}", clusterCert ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{Token}}", tokenCreds?.Token ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{Username}}", upCreds?.Username ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{Password}}", upCreds?.Password ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{ClientCertificateData}}", certCreds?.ClientCertificateData ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{ClientCertificateKeyData}}", certCreds?.ClientCertificateKeyData ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{AccessKey}}", awsCreds?.AccessKey ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{SecretKey}}", awsCreds?.SecretKey ?? string.Empty, StringComparison.Ordinal)
-            .Replace("{{AwsClusterName}}", string.Empty, StringComparison.Ordinal)
-            .Replace("{{AwsRegion}}", string.Empty, StringComparison.Ordinal)
+            .Replace("{{ClusterCertificate}}", Esc(clusterCert), StringComparison.Ordinal)
+            .Replace("{{Token}}", Esc(tokenCreds?.Token), StringComparison.Ordinal)
+            .Replace("{{Username}}", Esc(upCreds?.Username), StringComparison.Ordinal)
+            .Replace("{{Password}}", Esc(upCreds?.Password), StringComparison.Ordinal)
+            .Replace("{{ClientCertificateData}}", Esc(certCreds?.ClientCertificateData), StringComparison.Ordinal)
+            .Replace("{{ClientCertificateKeyData}}", Esc(certCreds?.ClientCertificateKeyData), StringComparison.Ordinal)
+            .Replace("{{AccessKey}}", Esc(awsCreds?.AccessKey), StringComparison.Ordinal)
+            .Replace("{{SecretKey}}", Esc(awsCreds?.SecretKey), StringComparison.Ordinal)
+            .Replace("{{AwsClusterName}}", endpoint?.AwsClusterName ?? string.Empty, StringComparison.Ordinal)
+            .Replace("{{AwsRegion}}", endpoint?.AwsRegion ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{UserScript}}", userScript ?? string.Empty, StringComparison.Ordinal);
 
         return template;

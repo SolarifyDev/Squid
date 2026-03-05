@@ -21,7 +21,8 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
                 MachineName = "agent-01",
                 Roles = "web",
                 Environments = "Test,Production",
-                SpaceId = 9
+                SpaceId = 9,
+                AgentVersion = "1.0.3"
             },
             new KubernetesSettings
             {
@@ -39,5 +40,6 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
         server.LastRequestBody.ShouldContain("\"spaceId\":9");
         server.LastRequestBody.ShouldContain("\"namespace\":\"apps\"");
         server.LastRequestBody.ShouldContain("\"subscriptionId\":\"sub-123\"");
+        server.LastRequestBody.ShouldContain("\"agentVersion\":\"1.0.3\"");
     }
 }

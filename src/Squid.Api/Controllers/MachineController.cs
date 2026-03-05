@@ -61,6 +61,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpGet("latest-agent-version")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetLatestKubernetesAgentVersionResponse))]
+    public async Task<IActionResult> GetLatestKubernetesAgentVersionAsync(CancellationToken ct)
+    {
+        var response = await _mediator.RequestAsync<GetLatestKubernetesAgentVersionRequest, GetLatestKubernetesAgentVersionResponse>(new GetLatestKubernetesAgentVersionRequest(), ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("connection-status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
     public async Task<IActionResult> GetConnectionStatusAsync([FromQuery] GetConnectionStatusRequest request, CancellationToken ct)

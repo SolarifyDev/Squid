@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # --- Configure kubectl context ---
@@ -90,7 +90,7 @@ esac
 
 # Create namespace if it doesn't exist
 if [ "$NAMESPACE" != "default" ] && [ -n "$NAMESPACE" ]; then
-    "$KUBECTL_EXE" get namespace "$NAMESPACE" --ignore-not-found 2>/dev/null | grep -q "$NAMESPACE" || \
+    "$KUBECTL_EXE" get namespace -o name 2>/dev/null | grep -qx "namespace/$NAMESPACE" || \
         "$KUBECTL_EXE" create namespace "$NAMESPACE" || echo "Warning: Failed to create namespace $NAMESPACE, it may already exist"
 fi
 

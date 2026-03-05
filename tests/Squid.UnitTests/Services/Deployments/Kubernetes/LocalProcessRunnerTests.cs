@@ -49,4 +49,17 @@ public class LocalProcessRunnerTests
         await Should.ThrowAsync<OperationCanceledException>(
             () => _runner.RunAsync("bash", "-c \"sleep 60\"", Path.GetTempPath(), cts.Token));
     }
+
+    // === Concurrent Output ===
+
+    [Fact]
+    public async Task RunAsync_ConcurrentStdoutStderr_CollectsAllLines()
+    {
+        var script = "for i in $(seq 1 50); do echo \"out-$i\"; echo \"err-$i\" >&2; done";
+
+        var result = await _runner.RunAsync("bash", $"-c \"{script}\"", Path.GetTempPath(), CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.LogLines.Count.ShouldBeGreaterThanOrEqualTo(100);
+    }
 }

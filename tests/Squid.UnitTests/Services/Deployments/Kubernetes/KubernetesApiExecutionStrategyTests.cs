@@ -186,7 +186,8 @@ public class KubernetesApiExecutionStrategyTests
 
         await strategy.ExecuteScriptAsync(request, CancellationToken.None);
 
-        capturedArguments.ShouldContain("WRAPPED::");
+        capturedArguments.ShouldContain("-File");
+        capturedArguments.ShouldContain("calamari-deploy.ps1");
         contextBuilder.VerifyAll();
     }
 
@@ -312,10 +313,62 @@ public class KubernetesApiExecutionStrategyTests
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
 
         capturedExecutable.ShouldBe("pwsh");
-        capturedArguments.ShouldNotContain("{{PackageFilePath}}");
-        capturedArguments.ShouldContain("squid.1.0.0.nupkg");
-        capturedArguments.ShouldContain("variables.json");
-        capturedArguments.ShouldContain(capturedWorkDir);
+        capturedArguments.ShouldContain("-File");
+        capturedArguments.ShouldContain("calamari-deploy.ps1");
+    }
+
+    // === Path Traversal Prevention ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_PathTraversal_Throws()
+    {
+        var request = CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
+        {
+            ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
+        });
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            _strategy.ExecuteScriptAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExecuteScriptAsync_NormalFilePath_Succeeds()
+    {
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
+            {
+                ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("content")
+            }),
+            CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptAsync_NestedFilePath_Succeeds()
+    {
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
+            {
+                ["subdir/config.yaml"] = System.Text.Encoding.UTF8.GetBytes("content")
+            }),
+            CancellationToken.None);
+    }
+
+    // === PowerShell -File for Calamari ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_CalamariCommand_UsesPwshFile()
+    {
+        string capturedArguments = null;
+
+        _processRunner
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, args, _, _) => capturedArguments = args)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true });
+
+        await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
+
+        capturedArguments.ShouldContain("-File");
+        capturedArguments.ShouldNotContain("-Command");
     }
 
     // === Helpers ===

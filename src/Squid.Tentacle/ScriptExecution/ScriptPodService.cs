@@ -89,7 +89,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         {
             "Succeeded" => ProcessState.Complete,
             "Failed" => ProcessState.Complete,
-            null => ProcessState.Running,
+            KubernetesPodManager.PhaseNotFound => ProcessState.Complete,
             _ => ProcessState.Running
         };
     }

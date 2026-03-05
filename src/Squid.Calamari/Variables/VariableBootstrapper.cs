@@ -51,7 +51,10 @@ public static class VariableBootstrapper
             .Replace("\\", "\\\\", StringComparison.Ordinal)
             .Replace("\"", "\\\"", StringComparison.Ordinal)
             .Replace("$", "\\$", StringComparison.Ordinal)
-            .Replace("`", "\\`", StringComparison.Ordinal);
+            .Replace("`", "\\`", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\t", "\\t", StringComparison.Ordinal);
 
         return $"\"{escaped}\"";
     }

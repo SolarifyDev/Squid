@@ -77,6 +77,19 @@ public class VariableBootstrapperTests
         preamble.ShouldContain($"export VAR=\"{expectedEscaped}\"");
     }
 
+    [Theory]
+    [InlineData("line1\nline2", "line1\\nline2")]
+    [InlineData("col1\tcol2", "col1\\tcol2")]
+    [InlineData("win\r\nline", "win\\r\\nline")]
+    public void GeneratePreamble_EscapesNewlinesAndTabs(string value, string expectedEscaped)
+    {
+        var vars = new Dictionary<string, string> { ["VAR"] = value };
+
+        var preamble = VariableBootstrapper.GeneratePreamble(vars);
+
+        preamble.ShouldContain($"export VAR=\"{expectedEscaped}\"");
+    }
+
     [Fact]
     public void GeneratePreamble_MixedValidAndInvalid_OnlyExportsValid()
     {

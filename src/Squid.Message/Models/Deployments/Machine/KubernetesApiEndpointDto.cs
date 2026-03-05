@@ -7,6 +7,8 @@ public class KubernetesApiEndpointDto
     public string Namespace { get; set; }
     public string SkipTlsVerification { get; set; }
     public string ClusterCertificatePath { get; set; }
+    public string AwsClusterName { get; set; }
+    public string AwsRegion { get; set; }
     public string ProxyId { get; set; }
     public string DefaultWorkerPoolId { get; set; }
     public string ContainerOptions { get; set; }

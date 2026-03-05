@@ -30,7 +30,7 @@ if ($helmWait -eq "True") {
 {{SetValuesBlock}}
 
 if (-not [string]::IsNullOrEmpty($additionalArgs)) {
-    $helmArgs += $additionalArgs.Split(" ")
+    $helmArgs += ($additionalArgs -split '\s+(?=--?)')  | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
 }
 
 Write-Host "Running: $helmExe $($helmArgs -join ' ')"

@@ -5,6 +5,9 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class HalibutScriptObserver : IHalibutScriptObserver
 {
+    // NOTE: Halibut RPC proxy calls (GetStatusAsync, CompleteScriptAsync, CancelScriptAsync)
+    // do not accept CancellationToken — cancellation is only checked between polling intervals.
+    // This is a known Halibut 8.x limitation.
     public async Task<ScriptExecutionResult> ObserveAndCompleteAsync(
         Machine machine,
         IAsyncScriptService scriptClient,

@@ -41,4 +41,6 @@ public class MachineDto : IBaseModel
     public string LicenseHash { get; set; }
 
     public string Slug { get; set; }
-} 
+
+    public string AgentVersion { get; set; }
+}

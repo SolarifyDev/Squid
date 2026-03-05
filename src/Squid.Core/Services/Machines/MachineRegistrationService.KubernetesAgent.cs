@@ -26,6 +26,7 @@ public partial class MachineRegistrationService
             existing.Roles = serializedRoles ?? existing.Roles;
             existing.EnvironmentIds = resolvedEnvironmentIds ?? existing.EnvironmentIds;
             existing.Endpoint = BuildKubernetesAgentEndpointJson(command);
+            existing.AgentVersion = command.AgentVersion ?? existing.AgentVersion;
 
             await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -71,6 +72,7 @@ public partial class MachineRegistrationService
 
         machine.Thumbprint = command.Thumbprint;
         machine.PollingSubscriptionId = command.SubscriptionId;
+        machine.AgentVersion = command.AgentVersion;
 
         return machine;
     }

@@ -16,4 +16,5 @@ public class TentacleSettings
     public int HealthCheckPort { get; set; } = 8080;
     public int ListeningPort { get; set; } = 10933;
     public string SubscriptionId { get; set; } = string.Empty;
+    public string AgentVersion { get; set; } = string.Empty;
 }

@@ -113,6 +113,25 @@ public class ScriptPodServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetStatus_PodNotFound_ReturnsComplete()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
+            .Throws(new k8s.Autorest.HttpOperationException
+            {
+                Response = new k8s.Autorest.HttpResponseMessageWrapper(
+                    new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), string.Empty)
+            });
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+    }
+
+    [Fact]
     public void GetStatus_UnknownTicket_ReturnsCompletedWithMinusOne()
     {
         var service = CreateService();

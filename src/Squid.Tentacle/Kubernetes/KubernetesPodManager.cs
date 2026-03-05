@@ -6,6 +6,8 @@ namespace Squid.Tentacle.Kubernetes;
 
 public partial class KubernetesPodManager
 {
+    public const string PhaseNotFound = "NotFound";
+
     private readonly IKubernetesPodOperations _ops;
     private readonly KubernetesSettings _settings;
 
@@ -37,7 +39,7 @@ public partial class KubernetesPodManager
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             Log.Warning("Pod {PodName} not found", podName);
-            return null;
+            return PhaseNotFound;
         }
     }
 
@@ -106,7 +108,7 @@ public partial class KubernetesPodManager
         {
             var phase = GetPodPhase(podName);
 
-            if (phase is "Succeeded" or "Failed" or null)
+            if (phase is "Succeeded" or "Failed" or PhaseNotFound)
                 return;
 
             Thread.Sleep(1000);
