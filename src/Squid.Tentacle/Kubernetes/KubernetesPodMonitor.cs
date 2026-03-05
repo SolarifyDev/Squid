@@ -53,32 +53,62 @@ public class KubernetesPodMonitor
 
         foreach (var pod in pods)
         {
-            var phase = pod.Status?.Phase;
-
-            if (phase is not ("Succeeded" or "Failed"))
-                continue;
-
-            var finishedAt = pod.Status?.ContainerStatuses?
-                .FirstOrDefault()?.State?.Terminated?.FinishedAt;
-
-            if (finishedAt == null)
-                continue;
-
-            var age = DateTime.UtcNow - finishedAt.Value;
-
-            if (age < OrphanAge)
-                continue;
-
             var podName = pod.Metadata.Name;
             string ticketId = null;
             pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
 
-            if (ticketId != null && activeTickets.ContainsKey(ticketId))
-                continue;
+            var phase = pod.Status?.Phase;
 
-            Log.Information("Cleaning up orphaned pod {PodName} (age={AgeMinutes}m)", podName, age.TotalMinutes);
-            _podManager.DeletePod(podName);
+            if (phase is "Succeeded" or "Failed")
+            {
+                CleanupTerminatedPod(pod, podName, ticketId, activeTickets);
+                continue;
+            }
+
+            CleanupStaleRunningPod(pod, podName, ticketId, activeTickets);
         }
+    }
+
+    private void CleanupTerminatedPod(k8s.Models.V1Pod pod, string podName, string ticketId,
+        System.Collections.Concurrent.ConcurrentDictionary<string, ScriptPodContext> activeTickets)
+    {
+        var finishedAt = pod.Status?.ContainerStatuses?
+            .FirstOrDefault()?.State?.Terminated?.FinishedAt;
+
+        if (finishedAt == null)
+            return;
+
+        var age = DateTime.UtcNow - finishedAt.Value;
+
+        if (age < OrphanAge)
+            return;
+
+        if (ticketId != null && activeTickets.ContainsKey(ticketId))
+            return;
+
+        Log.Information("Cleaning up orphaned pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m)", podName, pod.Status?.Phase, age.TotalMinutes);
+        _podManager.DeletePod(podName);
+    }
+
+    private void CleanupStaleRunningPod(k8s.Models.V1Pod pod, string podName, string ticketId,
+        System.Collections.Concurrent.ConcurrentDictionary<string, ScriptPodContext> activeTickets)
+    {
+        if (ticketId != null && activeTickets.ContainsKey(ticketId))
+            return;
+
+        var startedAt = pod.Status?.StartTime;
+
+        if (startedAt == null)
+            return;
+
+        var age = DateTime.UtcNow - startedAt.Value;
+
+        if (age < OrphanAge)
+            return;
+
+        Log.Information("Cleaning up stale running pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m, no active ticket)",
+            podName, pod.Status?.Phase, age.TotalMinutes);
+        _podManager.DeletePod(podName);
     }
 
     private void CleanupOrphanedWorkspaces()
