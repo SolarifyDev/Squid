@@ -1,5 +1,6 @@
 using Hangfire;
 using Hangfire.Throttling;
+using Squid.Core.Constants;
 using Squid.Core.Jobs;
 using Squid.Core.Services.Jobs;
 
@@ -10,6 +11,16 @@ public class SquidHangfireRegistrar : HangfireRegistrarBase
     public override void RegisterHangfire(IServiceCollection services, IConfiguration configuration)
     {
         base.RegisterHangfire(services, configuration);
+        
+        services.AddHangfireServer(opt =>
+        {
+            opt.WorkerCount = 30;
+            opt.ServerTimeout = TimeSpan.FromHours(2);
+            opt.Queues = new[]
+            {
+                HangfireConstants.DefaultQueue
+            };
+        });
     }
 
     public override void ApplyHangfire(IApplicationBuilder app, IConfiguration configuration)
