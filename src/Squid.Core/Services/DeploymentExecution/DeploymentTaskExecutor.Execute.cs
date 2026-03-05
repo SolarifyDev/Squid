@@ -121,7 +121,14 @@ public partial class DeploymentTaskExecutor
                 Step = step,
                 Action = expandedAction,
                 Variables = actionVariables,
-                ReleaseVersion = _ctx.Release?.Version
+                ReleaseVersion = _ctx.Release?.Version,
+                SelectedPackages = _ctx.SelectedPackages?
+                    .Select(sp => new Message.Models.Deployments.Release.SelectedPackageDto
+                    {
+                        ActionName = sp.ActionName,
+                        PackageReferenceName = sp.PackageReferenceName,
+                        Version = sp.Version
+                    }).ToList() ?? new()
             };
 
             var prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);

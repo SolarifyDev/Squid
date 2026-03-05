@@ -1,4 +1,5 @@
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Message.Models.Deployments.Execution;
@@ -12,4 +13,6 @@ public class ActionExecutionContext
     public List<VariableDto> Variables { get; set; }
 
     public string ReleaseVersion { get; set; }
+
+    public List<SelectedPackageDto> SelectedPackages { get; set; } = new();
 }

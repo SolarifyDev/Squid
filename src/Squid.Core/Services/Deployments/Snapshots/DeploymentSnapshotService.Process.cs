@@ -113,8 +113,6 @@ public partial class DeploymentSnapshotService
                     ActionType = action.ActionType,
                     ActionOrder = action.ActionOrder,
                     WorkerPoolId = action.WorkerPoolId,
-                    FeedId = action.FeedId,
-                    PackageId = action.PackageId,
                     IsDisabled = action.IsDisabled,
                     IsRequired = action.IsRequired,
                     CreatedAt = action.CreatedAt,

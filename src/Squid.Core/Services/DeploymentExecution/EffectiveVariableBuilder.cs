@@ -19,8 +19,7 @@ public static class EffectiveVariableBuilder
 
     public static List<VariableDto> BuildActionVariables(List<VariableDto> effectiveVariables, DeploymentActionDto action, IEnumerable<Persistence.Entities.Deployments.ReleaseSelectedPackage> selectedPackages)
     {
-        var selectedPackage = selectedPackages?
-            .FirstOrDefault(sp => string.Equals(sp.ActionName, action.Name, StringComparison.OrdinalIgnoreCase));
+        var selectedPackage = FindPrimaryPackage(selectedPackages, action.Name);
 
         if (selectedPackage == null)
             return effectiveVariables;
@@ -35,5 +34,26 @@ public static class EffectiveVariableBuilder
         };
 
         return variables;
+    }
+
+    private static Persistence.Entities.Deployments.ReleaseSelectedPackage FindPrimaryPackage(
+        IEnumerable<Persistence.Entities.Deployments.ReleaseSelectedPackage> selectedPackages, string actionName)
+    {
+        if (selectedPackages == null) return null;
+
+        Persistence.Entities.Deployments.ReleaseSelectedPackage firstMatch = null;
+
+        foreach (var sp in selectedPackages)
+        {
+            if (!string.Equals(sp.ActionName, actionName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (string.IsNullOrEmpty(sp.PackageReferenceName))
+                return sp;
+
+            firstMatch ??= sp;
+        }
+
+        return firstMatch;
     }
 }

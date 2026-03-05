@@ -12,10 +12,6 @@ public class DeploymentActionSnapshotDataDto
 
     public int? WorkerPoolId { get; set; }
 
-    public int? FeedId { get; set; }
-
-    public string PackageId { get; set; }
-
     public bool IsDisabled { get; set; }
 
     public bool IsRequired { get; set; }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Enums;
@@ -74,26 +75,81 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         try
         {
-            var firstAction = processSnapshot?.Data?.StepSnapshots?
-                .SelectMany(s => s.ActionSnapshots)
-                .FirstOrDefault(a => a.FeedId.HasValue && !string.IsNullOrEmpty(a.PackageId));
+            if (_externalFeedDataProvider == null)
+                return fallback;
 
-            if (firstAction == null || _externalFeedDataProvider == null)
+            var (feedId, packageId) = FindFirstContainerPackage(processSnapshot);
+
+            if (feedId == null || string.IsNullOrEmpty(packageId))
                 return fallback;
 
             var feed = await _externalFeedDataProvider
-                .GetFeedByIdAsync(firstAction.FeedId.Value, ct).ConfigureAwait(false);
+                .GetFeedByIdAsync(feedId.Value, ct).ConfigureAwait(false);
 
             if (feed == null)
                 return fallback;
 
             var feedUri = ResolveFeedUri(feed);
-            return $"{feedUri}/{firstAction.PackageId ?? string.Empty}:{release?.Version ?? string.Empty}";
+            return $"{feedUri}/{packageId}:{release?.Version ?? string.Empty}";
         }
         catch
         {
             return fallback;
         }
+    }
+
+    public static (int? FeedId, string PackageId) FindFirstContainerPackage(DeploymentProcessSnapshotDto processSnapshot)
+    {
+        var actions = processSnapshot?.Data?.StepSnapshots?.SelectMany(s => s.ActionSnapshots);
+
+        if (actions == null)
+            return (null, null);
+
+        foreach (var action in actions)
+        {
+            if (action.Properties == null)
+                continue;
+
+            if (!action.Properties.TryGetValue(KubernetesProperties.Containers, out var containersJson))
+                continue;
+
+            if (string.IsNullOrWhiteSpace(containersJson))
+                continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(containersJson);
+
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) continue;
+
+                foreach (var container in doc.RootElement.EnumerateArray())
+                {
+                    if (!container.TryGetProperty(KubernetesContainerPayloadProperties.PackageId, out var pkgProp))
+                        continue;
+
+                    var packageId = pkgProp.GetString();
+
+                    if (string.IsNullOrEmpty(packageId))
+                        continue;
+
+                    if (!container.TryGetProperty(KubernetesContainerPayloadProperties.FeedId, out var feedProp))
+                        continue;
+
+                    int? feedId = feedProp.ValueKind == JsonValueKind.Number
+                        ? feedProp.GetInt32()
+                        : int.TryParse(feedProp.GetString(), out var parsed) ? parsed : null;
+
+                    if (feedId.HasValue)
+                        return (feedId, packageId);
+                }
+            }
+            catch
+            {
+                // Continue to next action on parse failure
+            }
+        }
+
+        return (null, null);
     }
 
     public static string ResolveFeedUri(ExternalFeed feed)

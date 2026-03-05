@@ -60,27 +60,70 @@ public class KubernetesYamlActionHandler : IActionHandler
 
     private async Task<string> GenerateFeedSecretAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        if (_externalFeedDataProvider == null || !ctx.Action.FeedId.HasValue)
+        if (_externalFeedDataProvider == null)
             return null;
 
-        if (!HasCreateFeedSecrets(ctx.Action))
+        var feedIds = CollectFeedIdsRequiringSecrets(ctx.Action);
+
+        if (feedIds.Count == 0)
             return null;
 
-        var feed = await _externalFeedDataProvider
-            .GetFeedByIdAsync(ctx.Action.FeedId.Value, ct).ConfigureAwait(false);
-
-        if (feed == null || !feed.PasswordHasValue)
-            return null;
-
-        var registryUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
-        var secretName = BuildFeedSecretName(feed);
         var namespaceName = GetNamespaceFromAction(ctx.Action);
+        var secretYamls = new List<string>();
 
-        InjectImagePullSecret(ctx.Action, secretName);
+        foreach (var feedId in feedIds)
+        {
+            var feed = await _externalFeedDataProvider
+                .GetFeedByIdAsync(feedId, ct).ConfigureAwait(false);
 
-        var dockerConfigJson = BuildDockerConfigJson(registryUri, feed.Username, feed.Password);
+            if (feed == null || !feed.PasswordHasValue)
+                continue;
 
-        return GenerateSecretYaml(secretName, namespaceName, dockerConfigJson);
+            var registryUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
+            var secretName = BuildFeedSecretName(feed);
+
+            InjectImagePullSecret(ctx.Action, secretName);
+
+            var dockerConfigJson = BuildDockerConfigJson(registryUri, feed.Username, feed.Password);
+            secretYamls.Add(GenerateSecretYaml(secretName, namespaceName, dockerConfigJson));
+        }
+
+        return secretYamls.Count > 0 ? string.Join("\n---\n", secretYamls) : null;
+    }
+
+    public static List<int> CollectFeedIdsRequiringSecrets(DeploymentActionDto action)
+    {
+        var containersProp = action.Properties?
+            .FirstOrDefault(p => p.PropertyName == KubernetesProperties.Containers);
+
+        if (containersProp == null || string.IsNullOrWhiteSpace(containersProp.PropertyValue))
+            return new List<int>();
+
+        var feedIds = new HashSet<int>();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(containersProp.PropertyValue);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new List<int>();
+
+            foreach (var container in doc.RootElement.EnumerateArray())
+            {
+                if (!container.TryGetProperty(KubernetesContainerPayloadProperties.CreateFeedSecrets, out var secretsProp)
+                    || !string.Equals(secretsProp.GetString(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (container.TryGetProperty(KubernetesContainerPayloadProperties.FeedId, out var feedProp)
+                    && TryGetFeedId(feedProp, out var feedId))
+                    feedIds.Add(feedId);
+            }
+        }
+        catch
+        {
+            // Parse failure should not block deployment
+        }
+
+        return feedIds.ToList();
     }
 
     public static bool HasCreateFeedSecrets(DeploymentActionDto action)
@@ -202,29 +245,10 @@ public class KubernetesYamlActionHandler : IActionHandler
 
     private async Task ResolveContainerImagesAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var packageVersion = ctx.Variables?
-            .FirstOrDefault(v => v.Name == SpecialVariables.Action.PackageVersion)?.Value;
-
-        if (string.IsNullOrEmpty(packageVersion) || !ctx.Action.FeedId.HasValue)
-            return;
-
         if (_externalFeedDataProvider == null)
             return;
 
-        var feed = await _externalFeedDataProvider
-            .GetFeedByIdAsync(ctx.Action.FeedId.Value, ct).ConfigureAwait(false);
-
-        if (feed == null) return;
-
-        var feedUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
-        var resolvedImage = $"{feedUri}/{ctx.Action.PackageId}:{packageVersion}";
-
-        UpdateContainerImages(ctx.Action, resolvedImage);
-    }
-
-    public static void UpdateContainerImages(DeploymentActionDto action, string resolvedImage)
-    {
-        var containersProp = action.Properties?
+        var containersProp = ctx.Action.Properties?
             .FirstOrDefault(p => p.PropertyName == KubernetesProperties.Containers);
 
         if (containersProp == null || string.IsNullOrWhiteSpace(containersProp.PropertyValue))
@@ -232,23 +256,93 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         try
         {
-            using var doc = JsonDocument.Parse(containersProp.PropertyValue);
-
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
-
-            var containers = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(
-                containersProp.PropertyValue);
+            var containers = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(containersProp.PropertyValue);
 
             if (containers == null) return;
 
-            foreach (var container in containers)
-                container[KubernetesContainerPayloadProperties.Image] = JsonSerializer.SerializeToElement(resolvedImage);
+            var feedCache = new Dictionary<int, ExternalFeed>();
+            var modified = false;
 
-            containersProp.PropertyValue = JsonSerializer.Serialize(containers);
+            foreach (var container in containers)
+            {
+                var resolvedImage = await ResolveContainerImageAsync(container, ctx, feedCache, ct).ConfigureAwait(false);
+
+                if (resolvedImage == null) continue;
+
+                container[KubernetesContainerPayloadProperties.Image] = JsonSerializer.SerializeToElement(resolvedImage);
+                modified = true;
+            }
+
+            if (modified)
+                containersProp.PropertyValue = JsonSerializer.Serialize(containers);
         }
         catch
         {
             // Parse failure should not block deployment
         }
+    }
+
+    private async Task<string> ResolveContainerImageAsync(
+        Dictionary<string, JsonElement> container, ActionExecutionContext ctx,
+        Dictionary<int, ExternalFeed> feedCache, CancellationToken ct)
+    {
+        if (!container.TryGetValue(KubernetesContainerPayloadProperties.PackageId, out var packageIdProp))
+            return null;
+
+        var packageId = packageIdProp.GetString();
+
+        if (string.IsNullOrEmpty(packageId))
+            return null;
+
+        if (!container.TryGetValue(KubernetesContainerPayloadProperties.FeedId, out var feedIdProp)
+            || !TryGetFeedId(feedIdProp, out var feedId))
+            return null;
+
+        var containerName = container.TryGetValue(KubernetesContainerPayloadProperties.Name, out var nameProp)
+            ? nameProp.GetString() ?? string.Empty
+            : string.Empty;
+
+        var version = ResolvePackageVersion(ctx, containerName);
+
+        if (string.IsNullOrEmpty(version))
+            return null;
+
+        if (!feedCache.TryGetValue(feedId, out var feed))
+        {
+            feed = await _externalFeedDataProvider.GetFeedByIdAsync(feedId, ct).ConfigureAwait(false);
+            feedCache[feedId] = feed;
+        }
+
+        if (feed == null) return null;
+
+        var feedUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
+        return $"{feedUri}/{packageId}:{version}";
+    }
+
+    public static string ResolvePackageVersion(ActionExecutionContext ctx, string containerName)
+    {
+        if (ctx.SelectedPackages != null && ctx.SelectedPackages.Count > 0)
+        {
+            var match = ctx.SelectedPackages.FirstOrDefault(sp =>
+                string.Equals(sp.ActionName, ctx.Action.Name, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(sp.PackageReferenceName, containerName, StringComparison.OrdinalIgnoreCase));
+
+            if (match != null) return match.Version;
+        }
+
+        return ctx.Variables?.FirstOrDefault(v => v.Name == SpecialVariables.Action.PackageVersion)?.Value;
+    }
+
+    private static bool TryGetFeedId(JsonElement element, out int feedId)
+    {
+        feedId = 0;
+
+        if (element.ValueKind == JsonValueKind.Number)
+            return element.TryGetInt32(out feedId);
+
+        if (element.ValueKind == JsonValueKind.String)
+            return int.TryParse(element.GetString(), out feedId);
+
+        return false;
     }
 }

@@ -359,11 +359,13 @@ public class FeedSecretGenerationTests
             {
                 ["Name"] = "web",
                 ["Image"] = "myapp",
+                ["PackageId"] = "myapp",
+                ["FeedId"] = 10,
                 ["CreateFeedSecrets"] = "True"
             }
         });
 
-        var action = CreateActionWithContainers(containerJson, feedId: 10, packageId: "myapp");
+        var action = CreateActionWithContainers(containerJson);
         action.Properties.Add(new DeploymentActionPropertyDto
         {
             PropertyName = "Squid.Action.KubernetesContainers.Namespace",
@@ -410,11 +412,13 @@ public class FeedSecretGenerationTests
             {
                 ["Name"] = "web",
                 ["Image"] = "myapp",
+                ["PackageId"] = "myapp",
+                ["FeedId"] = 10,
                 ["CreateFeedSecrets"] = "False"
             }
         });
 
-        var action = CreateActionWithContainers(containerJson, feedId: 10, packageId: "myapp");
+        var action = CreateActionWithContainers(containerJson);
         var ctx = CreateContext(action, packageVersion: "1.0.0");
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
@@ -435,11 +439,13 @@ public class FeedSecretGenerationTests
             {
                 ["Name"] = "web",
                 ["Image"] = "myapp",
+                ["PackageId"] = "myapp",
+                ["FeedId"] = 10,
                 ["CreateFeedSecrets"] = "True"
             }
         });
 
-        var action = CreateActionWithContainers(containerJson, feedId: 10, packageId: "myapp");
+        var action = CreateActionWithContainers(containerJson);
         var ctx = CreateContext(action, packageVersion: "1.0.0");
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
@@ -469,11 +475,13 @@ public class FeedSecretGenerationTests
             {
                 ["Name"] = "web",
                 ["Image"] = "myapp",
+                ["PackageId"] = "myapp",
+                ["FeedId"] = 10,
                 ["CreateFeedSecrets"] = "True"
             }
         });
 
-        var action = CreateActionWithContainers(containerJson, feedId: 10, packageId: "myapp");
+        var action = CreateActionWithContainers(containerJson);
         var ctx = CreateContext(action, packageVersion: "1.0.0");
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
@@ -501,7 +509,7 @@ public class FeedSecretGenerationTests
             }
         });
 
-        var action = CreateActionWithContainers(containerJson, feedId: null, packageId: "myapp");
+        var action = CreateActionWithContainers(containerJson);
         var ctx = CreateContext(action, packageVersion: "1.0.0");
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
@@ -515,15 +523,12 @@ public class FeedSecretGenerationTests
 
     // === Helpers ===
 
-    private static DeploymentActionDto CreateActionWithContainers(
-        string containerJson, int? feedId = null, string packageId = null)
+    private static DeploymentActionDto CreateActionWithContainers(string containerJson)
     {
         return new DeploymentActionDto
         {
             Name = "Deploy",
             ActionType = "Squid.KubernetesDeployContainers",
-            FeedId = feedId,
-            PackageId = packageId,
             Properties = new List<DeploymentActionPropertyDto>
             {
                 new()

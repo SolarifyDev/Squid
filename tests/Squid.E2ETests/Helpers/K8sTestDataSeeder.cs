@@ -87,12 +87,6 @@ public class K8sTestDataSeeder
             ("Squid.Action.KubernetesContainers.DnsConfigOptions", "[]"),
             ("Squid.Action.KubernetesContainers.PodSecuritySysctls", "[]")).ConfigureAwait(false);
 
-        // Update action with FeedId and PackageId
-        action.FeedId = 1;
-        action.PackageId = "library/nginx";
-        await _repository.UpdateAsync(action, ct).ConfigureAwait(false);
-        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
-
         var channel = await _builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
         var environment = await _builder.CreateEnvironmentAsync("E2E Test Environment").ConfigureAwait(false);
@@ -278,6 +272,8 @@ public class K8sTestDataSeeder
             new Dictionary<string, object>
             {
                 ["Name"] = "demo-nginx",
+                ["PackageId"] = "library/nginx",
+                ["FeedId"] = 1,
                 ["Ports"] = new[] { new { key = "http", value = "80", option = "TCP" } },
                 ["EnvironmentVariables"] = Array.Empty<object>(),
                 ["SecretEnvironmentVariables"] = Array.Empty<object>(),

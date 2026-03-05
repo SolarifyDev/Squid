@@ -31,4 +31,14 @@ public class DeploymentProcessController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("{projectId:int}/package-references")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetPackageReferencesResponse))]
+    public async Task<IActionResult> GetPackageReferencesAsync(int projectId)
+    {
+        var request = new GetPackageReferencesRequest { ProjectId = projectId };
+        var response = await _mediator.RequestAsync<GetPackageReferencesRequest, GetPackageReferencesResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

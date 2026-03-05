@@ -139,6 +139,7 @@ public class ReleaseService : IReleaseService
             {
                 ReleaseId = releaseId,
                 ActionName = sp.ActionName,
+                PackageReferenceName = sp.PackageReferenceName ?? string.Empty,
                 Version = sp.Version ?? string.Empty
             });
 
