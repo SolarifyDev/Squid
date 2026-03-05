@@ -176,6 +176,23 @@ public class KubernetesPodManagerPodSpecTests
         initMount.MountPath.ShouldBe("/squid-bin");
     }
 
+    [Fact]
+    public void CreatePod_SetsRunAsUserZero()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.SecurityContext.ShouldNotBeNull();
+        pod.Spec.SecurityContext.RunAsUser.ShouldBe(0);
+    }
+
+    [Fact]
+    public void CreatePod_SetsImagePullPolicyIfNotPresent()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].ImagePullPolicy.ShouldBe("IfNotPresent");
+    }
+
     // ========================================================================
     // Backward Compatibility — TentacleImage empty
     // ========================================================================

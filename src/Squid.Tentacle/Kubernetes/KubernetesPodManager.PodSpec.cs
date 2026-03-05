@@ -48,12 +48,14 @@ public partial class KubernetesPodManager
                 ServiceAccountName = _settings.ScriptPodServiceAccount,
                 RestartPolicy = "Never",
                 ActiveDeadlineSeconds = _settings.ScriptPodTimeoutSeconds,
+                SecurityContext = new V1PodSecurityContext { RunAsUser = 0 },
                 Containers = new List<V1Container>
                 {
                     new()
                     {
                         Name = "script",
                         Image = _settings.ScriptPodImage,
+                        ImagePullPolicy = "IfNotPresent",
                         Command = new[] { "/squid/bin/squid-calamari" },
                         Args = new[] { "run-script", $"--script=/squid/work/{ticketId}/script.sh", $"--variables=/squid/work/{ticketId}/variables.json" },
                         WorkingDir = $"/squid/work/{ticketId}",

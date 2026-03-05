@@ -17,7 +17,7 @@ public static class VariableBootstrapper
 
         foreach (var (name, value) in variables)
         {
-            if (string.IsNullOrEmpty(name))
+            if (!IsValidBashVariableName(name))
                 continue;
 
             var envName = SanitizeName(name);
@@ -29,6 +29,17 @@ public static class VariableBootstrapper
         sb.AppendLine();
 
         return sb.ToString();
+    }
+
+    private static bool IsValidBashVariableName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+
+        var sanitized = SanitizeName(name);
+        if (sanitized.Length == 0) return false;
+        if (char.IsDigit(sanitized[0])) return false;
+
+        return sanitized.All(c => char.IsLetterOrDigit(c) || c == '_');
     }
 
     private static string SanitizeName(string name)
