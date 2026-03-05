@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Newtonsoft.Json;
+using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -37,7 +37,7 @@ public class IntegrationSnapshotBlob : SnapshotFixtureBase
 
                 // Verify hash matches decompressed content
                 var decompressed = UtilService.DecompressFromGzip<DeploymentProcessSnapshotDataDto>(entity.SnapshotData);
-                var json = JsonConvert.SerializeObject(decompressed);
+                var json = JsonSerializer.Serialize(decompressed);
                 var expectedHash = UtilService.ComputeSha256Hash(json);
                 var expectedSize = Encoding.UTF8.GetByteCount(json);
 
@@ -69,7 +69,7 @@ public class IntegrationSnapshotBlob : SnapshotFixtureBase
                 entity.SnapshotData.Length.ShouldBeGreaterThan(0);
 
                 var decompressed = UtilService.DecompressFromGzip<VariableSetSnapshotDataDto>(entity.SnapshotData);
-                var json = JsonConvert.SerializeObject(decompressed);
+                var json = JsonSerializer.Serialize(decompressed);
 
                 entity.ContentHash.ShouldBe(UtilService.ComputeSha256Hash(json));
                 entity.UncompressedSize.ShouldBe(Encoding.UTF8.GetByteCount(json));
