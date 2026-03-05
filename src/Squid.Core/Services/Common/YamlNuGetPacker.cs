@@ -148,7 +148,7 @@ public class YamlNuGetPacker : IYamlNuGetPacker
         using var archive = new ZipArchive(outputStream, ZipArchiveMode.Create, true);
         
         // 添加.nuspec文件到包根目录
-        var nuspecEntry = archive.CreateEntry("Squid.nuspec", CompressionLevel.Optimal);
+        var nuspecEntry = archive.CreateEntry("Squid.nuspec", CompressionLevel.Fastest);
         using (var nuspecStream = new StreamWriter(nuspecEntry.Open()))
         {
             nuspecStream.Write(nuspecContent);
@@ -158,7 +158,7 @@ public class YamlNuGetPacker : IYamlNuGetPacker
         foreach (var yamlFile in yamlFiles)
         {
             string entryName = $"content/{yamlFile.Key}";
-            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+            var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
             
             using var entryStream = entry.Open();
             entryStream.Write(yamlFile.Value, 0, yamlFile.Value.Length);
@@ -170,7 +170,7 @@ public class YamlNuGetPacker : IYamlNuGetPacker
         using var archive = new ZipArchive(outputStream, ZipArchiveMode.Create, true);
         
         // 添加.nuspec文件到包根目录
-        var nuspecEntry = archive.CreateEntry("Squid.nuspec", CompressionLevel.Optimal);
+        var nuspecEntry = archive.CreateEntry("Squid.nuspec", CompressionLevel.Fastest);
         using (var nuspecStream = new StreamWriter(nuspecEntry.Open()))
         {
             nuspecStream.Write(nuspecContent);
@@ -180,7 +180,7 @@ public class YamlNuGetPacker : IYamlNuGetPacker
         foreach (var yamlFile in yamlFiles)
         {
             string entryName = $"content/{yamlFile.Key}";
-            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+            var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
             
             using var entryStream = entry.Open();
             yamlFile.Value.Position = 0; // 确保流位置在开始

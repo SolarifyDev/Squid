@@ -54,6 +54,16 @@ public class SquidTentacleHelmChartContractTests
     }
 
     [Fact]
+    public void DeploymentTemplate_Injects_TentacleImage_EnvVar()
+    {
+        var yaml = File.ReadAllText(DeploymentTemplatePath);
+
+        yaml.ShouldContain("- name: Kubernetes__TentacleImage");
+        yaml.ShouldContain(".Values.tentacle.image.repository");
+        yaml.ShouldContain(".Values.tentacle.image.tag");
+    }
+
+    [Fact]
     public void DeploymentTemplate_Injects_Flavor_And_Registration_EnvVars()
     {
         var yaml = File.ReadAllText(DeploymentTemplatePath);

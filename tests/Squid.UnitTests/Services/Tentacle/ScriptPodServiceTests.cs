@@ -98,7 +98,7 @@ public class ScriptPodServiceTests : IDisposable
     [InlineData("Failed", ProcessState.Complete)]
     [InlineData("Running", ProcessState.Running)]
     [InlineData("Pending", ProcessState.Running)]
-    [InlineData(null, ProcessState.Complete)]
+    [InlineData(null, ProcessState.Running)]
     public void GetStatus_MapsPodPhaseToProcessState(string phase, ProcessState expectedState)
     {
         var service = CreateService();
