@@ -6,4 +6,7 @@ public class KubernetesAgentEndpointDto
     public string SubscriptionId { get; set; }
     public string Thumbprint { get; set; }
     public string Namespace { get; set; }
+    public string ReleaseName { get; set; }
+    public string HelmNamespace { get; set; }
+    public string ChartRef { get; set; }
 }

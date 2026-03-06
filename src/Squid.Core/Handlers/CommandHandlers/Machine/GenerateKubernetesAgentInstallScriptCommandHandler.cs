@@ -6,19 +6,18 @@ namespace Squid.Core.Handlers.CommandHandlers.Machine;
 public class GenerateKubernetesAgentInstallScriptCommandHandler
     : ICommandHandler<GenerateKubernetesAgentInstallScriptCommand, GenerateKubernetesAgentInstallScriptResponse>
 {
-    private readonly IMachineInstallScriptService _installScriptService;
+    private readonly IMachineScriptService _machineScriptService;
 
-    public GenerateKubernetesAgentInstallScriptCommandHandler(IMachineInstallScriptService installScriptService)
+    public GenerateKubernetesAgentInstallScriptCommandHandler(IMachineScriptService machineScriptService)
     {
-        _installScriptService = installScriptService;
+        _machineScriptService = machineScriptService;
     }
 
     public async Task<GenerateKubernetesAgentInstallScriptResponse> Handle(
         IReceiveContext<GenerateKubernetesAgentInstallScriptCommand> context, CancellationToken cancellationToken)
     {
-        var data = await _installScriptService.GenerateKubernetesAgentScriptAsync(
-            context.Message, cancellationToken).ConfigureAwait(false);
-
-        return new GenerateKubernetesAgentInstallScriptResponse { Data = data };
+        return await _machineScriptService.GenerateKubernetesAgentInstallScriptAsync(
+            context.Message,
+            cancellationToken).ConfigureAwait(false);
     }
 }

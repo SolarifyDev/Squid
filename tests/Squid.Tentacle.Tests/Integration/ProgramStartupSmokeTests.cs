@@ -108,6 +108,9 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
             ["Tentacle__MachineName"] = machineName,
             ["Tentacle__Roles"] = "web,api",
             ["Tentacle__Environments"] = "Test,Production",
+            ["Tentacle__ReleaseName"] = "squid-agent-test",
+            ["Tentacle__HelmNamespace"] = "squid-agent",
+            ["Tentacle__ChartRef"] = "oci://registry-1.docker.io/squidcd/kubernetes-agent",
             ["Tentacle__HealthCheckPort"] = healthPort.ToString(),
             ["Tentacle__CertsPath"] = sandbox.CertsPath,
             ["Tentacle__WorkspacePath"] = sandbox.WorkspacePath,
@@ -132,6 +135,9 @@ public class ProgramStartupSmokeTests : TentacleIntegrationTestBase
             root.GetProperty("roles").GetString().ShouldBe("web,api");
             root.GetProperty("environments").GetString().ShouldBe("Test,Production");
             root.GetProperty("namespace").GetString().ShouldBe("test-namespace");
+            root.GetProperty("releaseName").GetString().ShouldBe("squid-agent-test");
+            root.GetProperty("helmNamespace").GetString().ShouldBe("squid-agent");
+            root.GetProperty("chartRef").GetString().ShouldBe("oci://registry-1.docker.io/squidcd/kubernetes-agent");
 
             var subscriptionId = root.GetProperty("subscriptionId").GetString();
             subscriptionId.ShouldNotBeNullOrWhiteSpace();

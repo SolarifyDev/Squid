@@ -10,6 +10,7 @@ tentacle:
   roles:
     - "k8s"
   machineName: ""
+  chartRef: "oci://registry-1.docker.io/squidcd/kubernetes-agent"
   environments: []
   spaceId: 1
   flavor: "KubernetesAgent"

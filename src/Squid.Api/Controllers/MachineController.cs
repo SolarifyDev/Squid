@@ -42,6 +42,15 @@ public class MachineController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("generate-kubernetes-agent-upgrade-script")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentUpgradeScriptResponse))]
+    public async Task<IActionResult> GenerateKubernetesAgentUpgradeScriptAsync([FromBody] GenerateKubernetesAgentUpgradeScriptCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<GenerateKubernetesAgentUpgradeScriptCommand, GenerateKubernetesAgentUpgradeScriptResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
     
     [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]

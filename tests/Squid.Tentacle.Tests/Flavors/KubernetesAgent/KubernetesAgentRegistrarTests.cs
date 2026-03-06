@@ -22,7 +22,10 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
                 Roles = "web",
                 Environments = "Test,Production",
                 SpaceId = 9,
-                AgentVersion = "1.0.3"
+                AgentVersion = "1.0.3",
+                ReleaseName = "squid-agent-abc123",
+                HelmNamespace = "squid-agent",
+                ChartRef = "oci://registry-1.docker.io/squidcd/kubernetes-agent"
             },
             new KubernetesSettings
             {
@@ -41,5 +44,8 @@ public class KubernetesAgentRegistrarTests : TimedTestBase
         server.LastRequestBody.ShouldContain("\"namespace\":\"apps\"");
         server.LastRequestBody.ShouldContain("\"subscriptionId\":\"sub-123\"");
         server.LastRequestBody.ShouldContain("\"agentVersion\":\"1.0.3\"");
+        server.LastRequestBody.ShouldContain("\"releaseName\":\"squid-agent-abc123\"");
+        server.LastRequestBody.ShouldContain("\"helmNamespace\":\"squid-agent\"");
+        server.LastRequestBody.ShouldContain("\"chartRef\":\"oci://registry-1.docker.io/squidcd/kubernetes-agent\"");
     }
 }

@@ -75,6 +75,12 @@ spec:
           value: "{{ .Values.tentacle.flavor }}"
         - name: Tentacle__MachineName
           value: "{{ .Values.tentacle.machineName }}"
+        - name: Tentacle__ReleaseName
+          value: "{{ .Release.Name }}"
+        - name: Tentacle__HelmNamespace
+          value: "{{ .Release.Namespace }}"
+        - name: Tentacle__ChartRef
+          value: "{{ .Values.tentacle.chartRef }}"
         - name: Tentacle__Environments
           value: {{ join "," .Values.tentacle.environments | quote }}
         - name: Tentacle__SpaceId

@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Machines;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Models.Deployments.Machine;
 using DeploymentEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.UnitTests.Services.Machines;
@@ -221,6 +223,79 @@ public class MachineRegistrationServiceTests : IDisposable
         captured.AgentVersion.ShouldBe("1.0.3");
     }
 
+    [Fact]
+    public async Task RegisterAgent_NewRegistration_StoresEndpointMetadata()
+    {
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(
+            releaseName: "squid-agent-12345678",
+            helmNamespace: "squid-agent",
+            chartRef: "oci://registry-1.docker.io/squidcd/kubernetes-agent"), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var endpoint = JsonSerializer.Deserialize<KubernetesAgentEndpointDto>(captured.Endpoint);
+        endpoint.ShouldNotBeNull();
+        endpoint.ReleaseName.ShouldBe("squid-agent-12345678");
+        endpoint.HelmNamespace.ShouldBe("squid-agent");
+        endpoint.ChartRef.ShouldBe("oci://registry-1.docker.io/squidcd/kubernetes-agent");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ReRegistration_UpdatesEndpointMetadata()
+    {
+        var existing = new Machine
+        {
+            Id = 42,
+            Name = "existing-agent",
+            EnvironmentIds = "[1]",
+            Roles = "[\"k8s\"]",
+            Thumbprint = "old-thumb",
+            Endpoint = "{}",
+            PollingSubscriptionId = "sub-123",
+            AgentVersion = "1.0.0"
+        };
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync("sub-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(
+            subscriptionId: "sub-123",
+            releaseName: "squid-agent-updated",
+            helmNamespace: "squid-agent",
+            chartRef: "oci://registry-1.docker.io/squidcd/kubernetes-agent"), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var endpoint = JsonSerializer.Deserialize<KubernetesAgentEndpointDto>(captured.Endpoint);
+        endpoint.ShouldNotBeNull();
+        endpoint.ReleaseName.ShouldBe("squid-agent-updated");
+        endpoint.HelmNamespace.ShouldBe("squid-agent");
+        endpoint.ChartRef.ShouldBe("oci://registry-1.docker.io/squidcd/kubernetes-agent");
+    }
+
     private static RegisterKubernetesAgentCommand CreateCommand(
         string machineName = "test-agent",
         string thumbprint = "AABBCCDD",
@@ -228,7 +303,10 @@ public class MachineRegistrationServiceTests : IDisposable
         string roles = "k8s",
         string environments = "Test,Production",
         int spaceId = 1,
-        string agentVersion = null)
+        string agentVersion = null,
+        string releaseName = null,
+        string helmNamespace = null,
+        string chartRef = null)
     {
         return new RegisterKubernetesAgentCommand
         {
@@ -239,7 +317,10 @@ public class MachineRegistrationServiceTests : IDisposable
             Environments = environments,
             SpaceId = spaceId,
             Namespace = "default",
-            AgentVersion = agentVersion
+            AgentVersion = agentVersion,
+            ReleaseName = releaseName,
+            HelmNamespace = helmNamespace,
+            ChartRef = chartRef
         };
     }
 
