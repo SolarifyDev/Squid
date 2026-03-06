@@ -58,6 +58,9 @@ public partial class MachineRegistrationService
             Namespace = command.Namespace,
             Thumbprint = command.Thumbprint,
             SubscriptionId = command.SubscriptionId,
+            ReleaseName = command.ReleaseName,
+            HelmNamespace = command.HelmNamespace,
+            ChartRef = command.ChartRef,
             CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesAgent)
         });
     }

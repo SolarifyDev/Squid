@@ -91,7 +91,10 @@ public class TentacleRegistrationClient
             ["spaceId"] = _settings.SpaceId,
             ["roles"] = _settings.Roles ?? string.Empty,
             ["environments"] = _settings.Environments ?? string.Empty,
-            ["agentVersion"] = _settings.AgentVersion
+            ["agentVersion"] = _settings.AgentVersion,
+            ["releaseName"] = _settings.ReleaseName,
+            ["helmNamespace"] = _settings.HelmNamespace,
+            ["chartRef"] = _settings.ChartRef
         };
 
         foreach (var kv in _extraProperties)

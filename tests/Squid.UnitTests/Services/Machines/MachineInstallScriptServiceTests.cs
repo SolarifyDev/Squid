@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using Squid.Core.Services.Account;
 using Squid.Core.Services.Authentication;
 using Squid.Core.Services.Identity;
@@ -13,7 +14,9 @@ public class MachineInstallScriptServiceTests
     private readonly Mock<ICurrentUser> _currentUser = new();
     private readonly Mock<IUserTokenService> _userTokenService = new();
     private readonly Mock<IAccountService> _accountService = new();
-    private readonly MachineInstallScriptService _service;
+    private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
+    private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
+    private readonly MachineScriptService _service;
 
     public MachineInstallScriptServiceTests()
     {
@@ -27,10 +30,12 @@ public class MachineInstallScriptServiceTests
             .Setup(x => x.GenerateToken(It.IsAny<Squid.Core.Persistence.Entities.Account.UserAccount>()))
             .Returns(("test-bearer-token", DateTime.UtcNow.AddHours(1)));
 
-        _service = new MachineInstallScriptService(
+        _service = new MachineScriptService(
             _currentUser.Object,
             _userTokenService.Object,
-            _accountService.Object);
+            _accountService.Object,
+            _machineDataProvider.Object,
+            _agentVersionProvider.Object);
     }
 
     private static GenerateKubernetesAgentInstallScriptCommand CreateCommand(
@@ -49,10 +54,22 @@ public class MachineInstallScriptServiceTests
         };
     }
 
+    private async Task<GenerateKubernetesAgentInstallScriptData> GenerateSuccessDataAsync(
+        GenerateKubernetesAgentInstallScriptCommand command = null)
+    {
+        var response = await _service.GenerateKubernetesAgentInstallScriptAsync(
+            command ?? CreateCommand(),
+            CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.ShouldNotBeNull();
+        return response.Data;
+    }
+
     [Fact]
     public async Task GenerateScript_ReturnsSubscriptionId_As32CharGuid()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.SubscriptionId.ShouldNotBeNullOrWhiteSpace();
         result.SubscriptionId.Length.ShouldBe(32);
@@ -61,7 +78,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsHelmUpgradeInstall()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldStartWith("helm upgrade --install --rollback-on-failure");
     }
@@ -69,7 +86,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ReleaseNameIsSafe()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain($"squid-agent-{result.SubscriptionId[..8]}");
     }
@@ -77,7 +94,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsMachineName()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("tentacle.machineName=\"my-agent\"");
     }
@@ -85,7 +102,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsNamespace()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("--create-namespace --namespace squid-agent");
         result.AgentInstallScript.ShouldContain("--version \"1.*.*\"");
@@ -100,7 +117,7 @@ public class MachineInstallScriptServiceTests
         var command = CreateCommand();
         command.DefaultNamespace = defaultNamespace;
 
-        var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
+        var result = await GenerateSuccessDataAsync(command);
 
         if (shouldContain)
             result.AgentInstallScript.ShouldContain("kubernetes.namespace=\"production\"");
@@ -111,15 +128,29 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsOciRegistry()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
+        result.AgentInstallScript.ShouldContain("tentacle.chartRef=\"oci://registry-1.docker.io/squidcd/kubernetes-agent\"");
         result.AgentInstallScript.ShouldContain("oci://registry-1.docker.io/squidcd/kubernetes-agent");
+    }
+
+    [Fact]
+    public async Task GenerateScript_AgentInstallScript_UsesCustomChartRef_WhenProvided()
+    {
+        const string customChartRef = "oci://registry.example.com/squid/kubernetes-agent";
+        var command = CreateCommand();
+        command.ChartRef = customChartRef;
+
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.AgentInstallScript.ShouldContain($"tentacle.chartRef=\"{customChartRef}\"");
+        result.AgentInstallScript.ShouldContain(customChartRef);
     }
 
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsServerUrls()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("tentacle.serverUrl=\"https://squid.example.com\"");
         result.AgentInstallScript.ShouldContain("tentacle.serverCommsUrl=\"https://squid.example.com:10943\"");
@@ -128,7 +159,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsBearerToken()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("tentacle.bearerToken=\"test-bearer-token\"");
     }
@@ -136,7 +167,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsRolesAndEnvironmentsAsHelmArrays()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("tentacle.roles=\"{k8s,web}\"");
         result.AgentInstallScript.ShouldContain("tentacle.environments=\"{Test,Production}\"");
@@ -149,7 +180,7 @@ public class MachineInstallScriptServiceTests
         command.Tags = ["web"];
         command.Environments = ["Test"];
 
-        var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
+        var result = await GenerateSuccessDataAsync(command);
 
         result.AgentInstallScript.ShouldContain("tentacle.roles=\"{web}\"");
         result.AgentInstallScript.ShouldContain("tentacle.environments=\"{Test}\"");
@@ -162,7 +193,7 @@ public class MachineInstallScriptServiceTests
         command.Tags = [];
         command.Environments = [];
 
-        var result = await _service.GenerateKubernetesAgentScriptAsync(command, CancellationToken.None);
+        var result = await GenerateSuccessDataAsync(command);
 
         result.AgentInstallScript.ShouldContain("tentacle.roles=\"{}\"");
         result.AgentInstallScript.ShouldContain("tentacle.environments=\"{}\"");
@@ -171,7 +202,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsSubscriptionId()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain($"tentacle.subscriptionId=\"{result.SubscriptionId}\"");
     }
@@ -179,7 +210,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_AgentInstallScript_ContainsFlavorAndSpaceId()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain("tentacle.flavor=\"KubernetesAgent\"");
         result.AgentInstallScript.ShouldContain("tentacle.spaceId=\"1\"");
@@ -188,8 +219,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_EmptyAgentName_FallsBackToReleaseName()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(
-            CreateCommand(agentName: ""), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync(CreateCommand(agentName: ""));
 
         var releaseName = $"squid-agent-{result.SubscriptionId[..8]}";
         result.AgentInstallScript.ShouldContain($"tentacle.machineName=\"{releaseName}\"");
@@ -198,7 +228,7 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_NfsCsiDriverScript_ContainsHelmCommands()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --rollback-on-failure");
         result.NfsCsiDriverScript.ShouldContain("csi-driver-nfs");
@@ -207,29 +237,35 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_UsesBackslashLineContinuation()
     {
-        var result = await _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None);
+        var result = await GenerateSuccessDataAsync();
 
         result.AgentInstallScript.ShouldContain(" \\\n");
         result.NfsCsiDriverScript.ShouldContain(" \\\n");
     }
 
     [Fact]
-    public async Task GenerateScript_NullUserId_ThrowsInvalidOperation()
+    public async Task GenerateScript_NullUserId_ReturnsUnauthorizedResponse()
     {
         _currentUser.Setup(x => x.Id).Returns((int?)null);
 
-        await Should.ThrowAsync<InvalidOperationException>(
-            () => _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None));
+        var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.Unauthorized);
+        response.Msg.ShouldContain("Cannot resolve current user");
+        response.Data.ShouldBeNull();
     }
 
     [Fact]
-    public async Task GenerateScript_UserNotFound_ThrowsInvalidOperation()
+    public async Task GenerateScript_UserNotFound_ReturnsUnauthorizedResponse()
     {
         _accountService
             .Setup(x => x.GetByIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync((UserAccountDto)null);
 
-        await Should.ThrowAsync<InvalidOperationException>(
-            () => _service.GenerateKubernetesAgentScriptAsync(CreateCommand(), CancellationToken.None));
+        var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.Unauthorized);
+        response.Msg.ShouldContain("User account 1 not found");
+        response.Data.ShouldBeNull();
     }
 }

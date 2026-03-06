@@ -74,6 +74,7 @@ public class TentacleRegistrationClientTests
         settings.HealthCheckPort.ShouldBe(8080);
         settings.ListeningPort.ShouldBe(10933);
         settings.SubscriptionId.ShouldBe(string.Empty);
+        settings.ChartRef.ShouldBe(TentacleSettings.DefaultKubernetesAgentChartRef);
     }
 
     [Fact]

@@ -12,6 +12,9 @@ public class RegisterKubernetesAgentCommand : ICommand
     public string Environments { get; set; }
     public string Namespace { get; set; } = "default";
     public string AgentVersion { get; set; }
+    public string ReleaseName { get; set; }
+    public string HelmNamespace { get; set; }
+    public string ChartRef { get; set; }
 }
 
 public class RegisterMachineResponse : SquidResponse<RegisterMachineResponseData>

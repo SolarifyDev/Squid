@@ -11,6 +11,7 @@ public class GenerateKubernetesAgentInstallScriptCommand : ICommand
     public List<string> Tags { get; set; } = [];
     public int SpaceId { get; set; } = 1;
     public string DefaultNamespace { get; set; }
+    public string ChartRef { get; set; }
 }
 
 public class GenerateKubernetesAgentInstallScriptResponse : SquidResponse<GenerateKubernetesAgentInstallScriptData>

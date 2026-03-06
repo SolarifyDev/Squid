@@ -70,6 +70,9 @@ public class SquidTentacleHelmChartContractTests
 
         yaml.ShouldContain("Tentacle__Flavor");
         yaml.ShouldContain("Tentacle__MachineName");
+        yaml.ShouldContain("Tentacle__ReleaseName");
+        yaml.ShouldContain("Tentacle__HelmNamespace");
+        yaml.ShouldContain("Tentacle__ChartRef");
         yaml.ShouldContain("Tentacle__Environments");
         yaml.ShouldContain("Tentacle__SpaceId");
     }
