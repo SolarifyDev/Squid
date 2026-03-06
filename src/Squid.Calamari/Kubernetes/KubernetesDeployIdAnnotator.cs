@@ -1,3 +1,4 @@
+using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
 namespace Squid.Calamari.Kubernetes;
@@ -71,7 +72,7 @@ internal static class KubernetesDeployIdAnnotator
         var metadata = GetOrCreateMapping(template, "metadata");
         var annotations = GetOrCreateMapping(metadata, "annotations");
 
-        annotations.Children[new YamlScalarNode(DeployIdAnnotationKey)] = new YamlScalarNode(deployId);
+        annotations.Children[new YamlScalarNode(DeployIdAnnotationKey)] = new YamlScalarNode(deployId) { Style = ScalarStyle.DoubleQuoted };
     }
 
     private static YamlMappingNode GetOrCreateMapping(YamlMappingNode parent, string key)

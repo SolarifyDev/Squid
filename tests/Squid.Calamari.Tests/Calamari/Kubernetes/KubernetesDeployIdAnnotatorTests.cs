@@ -28,8 +28,7 @@ public class KubernetesDeployIdAnnotatorTests
 
         var result = KubernetesDeployIdAnnotator.InjectDeployId(yaml, "42");
 
-        result.ShouldContain("squid.io/deploy-id");
-        result.ShouldContain("42");
+        result.ShouldContain("squid.io/deploy-id: \"42\"");
     }
 
     [Theory]

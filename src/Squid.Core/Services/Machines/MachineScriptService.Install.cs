@@ -77,9 +77,7 @@ public partial class MachineScriptService
     }
 
     private static string BuildAgentInstallScript(
-        GenerateKubernetesAgentInstallScriptCommand command,
-        string subscriptionId,
-        string bearerToken)
+        GenerateKubernetesAgentInstallScriptCommand command, string subscriptionId, string bearerToken)
     {
         var releaseName = $"squid-agent-{subscriptionId[..8]}";
         var agentName = string.IsNullOrWhiteSpace(command.AgentName) ? releaseName : command.AgentName;
