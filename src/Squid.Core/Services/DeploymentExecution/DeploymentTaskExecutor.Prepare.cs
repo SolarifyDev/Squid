@@ -21,6 +21,7 @@ public partial class DeploymentTaskExecutor
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
+        await LogMachineSelectionConstraintsAsync(serverTaskId, ct).ConfigureAwait(false);
 
         var targetNames = string.Join(", ", _ctx.AllTargets.Select(t => t.Name));
         await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {targetNames}", "System", ct);
@@ -114,6 +115,28 @@ public partial class DeploymentTaskExecutor
         _ctx.Variables = await _variableResolver.ResolveVariablesAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
 
         _ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = _ctx.Deployment.Id.ToString() });
+    }
+
+    private async Task LogMachineSelectionConstraintsAsync(int serverTaskId, CancellationToken ct)
+    {
+        var selection = DeploymentTargetFinder.ParseTargetSelection(_ctx.Deployment?.Json);
+        if (!selection.HasConstraints)
+            return;
+
+        var includeText = selection.SpecificMachineIds.Count == 0
+            ? "*"
+            : string.Join(", ", selection.SpecificMachineIds.OrderBy(x => x));
+        var excludeText = selection.ExcludedMachineIds.Count == 0
+            ? "-"
+            : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
+
+        await PersistTaskLogAsync(
+                serverTaskId,
+                ServerTaskLogCategory.Info,
+                $"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}",
+                "System",
+                ct)
+            .ConfigureAwait(false);
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

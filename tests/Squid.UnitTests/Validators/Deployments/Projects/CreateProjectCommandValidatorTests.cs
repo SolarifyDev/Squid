@@ -3,7 +3,7 @@ using Squid.Core.Validators.Deployments.Projects;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Models.Deployments.Project;
 
-namespace Squid.UnitTests.Services.Deployments.Projects;
+namespace Squid.UnitTests.Validators.Deployments.Projects;
 
 public class CreateProjectCommandValidatorTests
 {

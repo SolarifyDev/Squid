@@ -15,6 +15,7 @@ public class ReleaseMapping : Profile
             .ForMember(dest => dest.Assembled, opt => opt.Ignore())
             .ForMember(dest => dest.ProjectVariableSetSnapshotId, opt => opt.Ignore())
             .ForMember(dest => dest.ProjectDeploymentProcessSnapshotId, opt => opt.Ignore())
+            // SpaceId is resolved in ReleaseService from project/channel to avoid trusting client input.
             .ForMember(dest => dest.SpaceId, opt => opt.Ignore())
             .ForMember(dest => dest.LastModified, opt => opt.Ignore());
 

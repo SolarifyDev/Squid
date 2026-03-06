@@ -1,12 +1,9 @@
 using System.Text.Json;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
-using Squid.Core.Services.Deployments.Environments;
-using Squid.Core.Services.Deployments.LifeCycle;
-using Squid.Core.Services.Machines;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
-using Squid.Core.Services.Jobs;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Events.Deployments.Deployment;
 using Squid.Message.Models.Deployments.Deployment;
@@ -18,47 +15,51 @@ public class DeploymentService : IDeploymentService
     private readonly IMapper _mapper;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
-    private readonly IEnvironmentDataProvider _environmentDataProvider;
-    private readonly IMachineDataProvider _machineDataProvider;
+    private readonly IDeploymentValidationService _deploymentValidationService;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
-    private readonly ILifecycleResolver _lifecycleResolver;
-    private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
 
     public DeploymentService(
         IMapper mapper,
         IDeploymentDataProvider deploymentDataProvider,
         IReleaseDataProvider releaseDataProvider,
-        IEnvironmentDataProvider environmentDataProvider,
-        IMachineDataProvider machineDataProvider,
+        IDeploymentValidationService deploymentValidationService,
         IServerTaskDataProvider serverTaskDataProvider,
-        ISquidBackgroundJobClient backgroundJobClient,
-        ILifecycleResolver lifecycleResolver,
-        ILifecycleProgressionEvaluator progressionEvaluator)
+        ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
         _deploymentDataProvider = deploymentDataProvider;
         _releaseDataProvider = releaseDataProvider;
-        _environmentDataProvider = environmentDataProvider;
-        _machineDataProvider = machineDataProvider;
+        _deploymentValidationService = deploymentValidationService;
         _serverTaskDataProvider = serverTaskDataProvider;
         _backgroundJobClient = backgroundJobClient;
-        _lifecycleResolver = lifecycleResolver;
-        _progressionEvaluator = progressionEvaluator;
     }
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
     {
         Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}", command.ReleaseId, command.EnvironmentId);
 
-        var isValid = await ValidateDeploymentEnvironmentAsync(command.ReleaseId, command.EnvironmentId, cancellationToken).ConfigureAwait(false);
-        if (!isValid)
-        {
-            throw new DeploymentValidationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}");
-        }
+        var specificMachineIds = NormalizeMachineIds(command.SpecificMachineIds);
+        var excludedMachineIds = NormalizeMachineIds(command.ExcludedMachineIds);
+
+        if (specificMachineIds.Overlaps(excludedMachineIds))
+            throw new DeploymentValidationException("SpecificMachineIds and ExcludedMachineIds cannot overlap.");
+
+        var validation = await _deploymentValidationService
+            .ValidateDeploymentEnvironmentDetailedAsync(
+                command.ReleaseId,
+                command.EnvironmentId,
+                specificMachineIds,
+                excludedMachineIds,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!validation.IsValid)
+            throw new DeploymentValidationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}: {validation.Message}");
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
-        if (release == null)
+        
+        if (release == null) 
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
 
         var serverTask = new Persistence.Entities.Deployments.ServerTask
@@ -66,11 +67,11 @@ public class DeploymentService : IDeploymentService
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
             Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
             QueueTime = DateTimeOffset.UtcNow,
-            State = ServerTask.TaskState.Pending,
+            State = TaskState.Pending,
             ServerTaskType = "Deploy",
+            SpaceId = release.SpaceId,
             ProjectId = release.ProjectId,
             EnvironmentId = command.EnvironmentId,
-            SpaceId = release.SpaceId,
             LastModified = DateTimeOffset.UtcNow,
             BusinessProcessState = "Queued",
             StateOrder = 1,
@@ -93,14 +94,14 @@ public class DeploymentService : IDeploymentService
             Created = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
-            Json = JsonSerializer.Serialize(new
+            Json = JsonSerializer.Serialize(new DeploymentRequestPayload
             {
-                command.Comments,
-                command.ForcePackageDownload,
-                command.UseGuidedFailure,
-                command.FormValues,
-                command.SpecificMachineIds,
-                command.ExcludedMachineIds
+                Comments = command.Comments,
+                ForcePackageDownload = command.ForcePackageDownload,
+                UseGuidedFailure = command.UseGuidedFailure,
+                FormValues = command.FormValues ?? new Dictionary<string, string>(),
+                SpecificMachineIds = specificMachineIds.ToList(),
+                ExcludedMachineIds = excludedMachineIds.ToList()
             })
         };
 
@@ -111,6 +112,7 @@ public class DeploymentService : IDeploymentService
         if (!string.IsNullOrEmpty(jobId))
         {
             serverTask.JobId = jobId;
+            
             await _serverTaskDataProvider.UpdateServerTaskStateAsync(serverTask.Id, serverTask.State, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
@@ -123,46 +125,23 @@ public class DeploymentService : IDeploymentService
         };
     }
 
-    public async Task<bool> ValidateDeploymentEnvironmentAsync(int releaseId, int environmentId, CancellationToken cancellationToken = default)
+    private static HashSet<int> NormalizeMachineIds(IEnumerable<string> machineIds)
     {
-        Log.Information("Validating deployment environment for release {ReleaseId} and environment {EnvironmentId}",
-            releaseId, environmentId);
+        if (machineIds == null)
+            return new HashSet<int>();
 
-        var release = await _releaseDataProvider.GetReleaseByIdAsync(releaseId, cancellationToken).ConfigureAwait(false);
-        if (release == null)
+        var ids = new HashSet<int>();
+
+        foreach (var raw in machineIds)
         {
-            Log.Warning("Release {ReleaseId} not found", releaseId);
-            return false;
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            if (int.TryParse(raw.Trim(), out var parsed) && parsed > 0)
+                ids.Add(parsed);
         }
 
-        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(environmentId, cancellationToken).ConfigureAwait(false);
-        if (environment == null)
-        {
-            Log.Warning("Environment {EnvironmentId} not found", environmentId);
-            return false;
-        }
-
-        var environmentIds = new HashSet<int> { environmentId };
-        var machines = await _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), cancellationToken).ConfigureAwait(false);
-
-        if (!machines.Any())
-        {
-            Log.Warning("No available machines found in environment {EnvironmentId}", environmentId);
-            return false;
-        }
-
-        // Lifecycle progression validation
-        var lifecycle = await _lifecycleResolver.ResolveLifecycleAsync(release.ProjectId, release.ChannelId, cancellationToken).ConfigureAwait(false);
-        var progression = await _progressionEvaluator.EvaluateProgressionAsync(lifecycle.Id, release.ProjectId, cancellationToken).ConfigureAwait(false);
-
-        if (!progression.AllowedEnvironmentIds.Contains(environmentId))
-        {
-            Log.Warning("Environment {EnvironmentId} is not allowed by lifecycle {LifecycleId} progression",
-                environmentId, lifecycle.Id);
-            return false;
-        }
-
-        Log.Information("Environment validation passed: found {MachineCount} available machines", machines.Count);
-        return true;
+        return ids;
     }
+
 }

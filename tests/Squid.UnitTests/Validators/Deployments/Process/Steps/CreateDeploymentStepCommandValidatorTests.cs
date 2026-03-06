@@ -2,11 +2,11 @@ using Squid.Core.Validators.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Models.Deployments.Process;
 
-namespace Squid.UnitTests.Services.Deployments.Process.Step;
+namespace Squid.UnitTests.Validators.Deployments.Process.Steps;
 
-public class UpdateDeploymentStepCommandValidatorTests
+public class CreateDeploymentStepCommandValidatorTests
 {
-    private readonly UpdateDeploymentStepCommandValidator _validator = new();
+    private readonly CreateDeploymentStepCommandValidator _validator = new();
 
     [Fact]
     public void Valid_Command_Passes()
@@ -21,15 +21,15 @@ public class UpdateDeploymentStepCommandValidatorTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Invalid_Id_Fails(int id)
+    public void Invalid_ProcessId_Fails(int processId)
     {
         var command = ValidCommand();
-        command.Id = id;
+        command.ProcessId = processId;
 
         var result = _validator.Validate(command);
 
         result.IsValid.ShouldBeFalse();
-        result.Errors.ShouldContain(e => e.PropertyName == "Id");
+        result.Errors.ShouldContain(e => e.PropertyName == "ProcessId");
     }
 
     [Fact]
@@ -97,9 +97,9 @@ public class UpdateDeploymentStepCommandValidatorTests
         result.IsValid.ShouldBeTrue();
     }
 
-    private static UpdateDeploymentStepCommand ValidCommand() => new()
+    private static CreateDeploymentStepCommand ValidCommand() => new()
     {
-        Id = 1,
+        ProcessId = 1,
         Step = new CreateOrUpdateDeploymentStepModel
         {
             Name = "Deploy Step",
