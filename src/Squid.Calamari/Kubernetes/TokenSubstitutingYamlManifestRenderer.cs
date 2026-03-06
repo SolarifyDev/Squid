@@ -1,3 +1,4 @@
+using Squid.Calamari.Constants;
 using Squid.Calamari.Variables;
 
 namespace Squid.Calamari.Kubernetes;
@@ -33,6 +34,7 @@ public sealed class TokenSubstitutingYamlManifestRenderer : IKubernetesManifestR
     {
         var yaml = File.ReadAllText(inputFilePath);
         yaml = ReplaceTokens(yaml, request.Variables);
+        yaml = InjectDeployIdAnnotation(yaml, request.Variables);
 
         var outputPath = Path.Combine(
             request.WorkingDirectory,
@@ -66,6 +68,7 @@ public sealed class TokenSubstitutingYamlManifestRenderer : IKubernetesManifestR
 
             var yaml = File.ReadAllText(inputFilePath);
             yaml = ReplaceTokens(yaml, request.Variables);
+            yaml = InjectDeployIdAnnotation(yaml, request.Variables);
 
             var outputFilePath = Path.Combine(outputDir, relativePath);
             var outputSubDir = Path.GetDirectoryName(outputFilePath);
@@ -82,5 +85,15 @@ public sealed class TokenSubstitutingYamlManifestRenderer : IKubernetesManifestR
             ApplyPath = outputDir,
             Recursive = true
         };
+    }
+
+    private static string InjectDeployIdAnnotation(string yaml, VariableSet variables)
+    {
+        var deployId = variables.Get(DeploymentVariableNames.DeploymentId);
+
+        if (string.IsNullOrWhiteSpace(deployId))
+            return yaml;
+
+        return KubernetesDeployIdAnnotator.InjectDeployId(yaml, deployId);
     }
 }

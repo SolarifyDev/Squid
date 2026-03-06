@@ -7,6 +7,7 @@ using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -111,6 +112,8 @@ public partial class DeploymentTaskExecutor
         Log.Information("Resolving variables for deployment {DeploymentId}", _ctx.Deployment.Id);
 
         _ctx.Variables = await _variableResolver.ResolveVariablesAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
+
+        _ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = _ctx.Deployment.Id.ToString() });
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)
