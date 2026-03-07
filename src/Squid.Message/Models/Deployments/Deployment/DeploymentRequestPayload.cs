@@ -4,6 +4,14 @@ namespace Squid.Message.Models.Deployments.Deployment;
 
 public class DeploymentRequestPayload
 {
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public int ReleaseId { get; set; }
+
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public int EnvironmentId { get; set; }
+
+    public string Name { get; set; }
+
     public string Comments { get; set; }
 
     public bool ForcePackageDownload { get; set; }

@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Core.Services.Deployments.Validation;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.Machines;
@@ -26,6 +27,7 @@ public partial class DeploymentService : IDeploymentService
     private readonly ILifecycleResolver _lifecycleResolver;
     private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
     private readonly IDeploymentValidationOrchestrator _deploymentValidationOrchestrator;
+    private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
@@ -39,6 +41,7 @@ public partial class DeploymentService : IDeploymentService
         ILifecycleResolver lifecycleResolver,
         ILifecycleProgressionEvaluator progressionEvaluator,
         IDeploymentValidationOrchestrator deploymentValidationOrchestrator,
+        IDeploymentSnapshotService deploymentSnapshotService,
         IServerTaskDataProvider serverTaskDataProvider,
         ISquidBackgroundJobClient backgroundJobClient)
     {
@@ -50,6 +53,7 @@ public partial class DeploymentService : IDeploymentService
         _lifecycleResolver = lifecycleResolver;
         _progressionEvaluator = progressionEvaluator;
         _deploymentValidationOrchestrator = deploymentValidationOrchestrator;
+        _deploymentSnapshotService = deploymentSnapshotService;
         _serverTaskDataProvider = serverTaskDataProvider;
         _backgroundJobClient = backgroundJobClient;
         _currentUser = currentUser;
@@ -64,33 +68,15 @@ public partial class DeploymentService : IDeploymentService
         var skipActionIds = NormalizePositiveIds(command.SkipActionIds);
         var queueTime = NormalizeUtc(command.QueueTime);
         var queueTimeExpiry = NormalizeUtc(command.QueueTimeExpiry);
+        var deploymentRequestPayload = BuildDeploymentRequestPayload(command, queueTime, queueTimeExpiry, specificMachineIds, excludedMachineIds, skipActionIds);
 
-        var validationContext = new DeploymentValidationContext
+        var preview = await PreviewInternalAsync(deploymentRequestPayload, DeploymentValidationStage.Create, cancellationToken).ConfigureAwait(false);
+
+        if (!preview.CanDeploy)
         {
-            ReleaseId = command.ReleaseId,
-            EnvironmentId = command.EnvironmentId,
-            QueueTime = queueTime,
-            QueueTimeExpiry = queueTimeExpiry,
-            SpecificMachineIds = specificMachineIds,
-            ExcludedMachineIds = excludedMachineIds,
-            SkipActionIds = skipActionIds
-        };
+            var reasons = preview.BlockingReasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        var environmentValidation = await ValidateDeploymentEnvironmentAsync(validationContext, cancellationToken).ConfigureAwait(false);
-
-        var validation = await _deploymentValidationOrchestrator
-            .ValidateAsync(DeploymentValidationStage.Create, validationContext, cancellationToken).ConfigureAwait(false);
-
-        if (!environmentValidation.IsValid || !validation.IsValid)
-        {
-            var reasons = environmentValidation.Reasons
-                .Concat(validation.Issues.Where(i => i.IsBlocking).Select(i => i.Message))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var message = reasons.Count == 0
-                ? validation.Message
-                : string.Join("; ", reasons);
+            var message = reasons.Count == 0 ? "Deployment preview failed." : string.Join("; ", reasons);
 
             throw new DeploymentValidationException($"Deployment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}: {message}");
         }
@@ -101,8 +87,7 @@ public partial class DeploymentService : IDeploymentService
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
 
         var effectiveQueueTime = queueTime ?? DateTimeOffset.UtcNow;
-        var deployedBy = _currentUser.Id
-            ?? throw new InvalidOperationException("Current user id is required when creating deployment.");
+        var deployedBy = _currentUser.Id ?? throw new InvalidOperationException("Current user id is required when creating deployment.");
         
         var serverTask = new Persistence.Entities.Deployments.ServerTask
         {
@@ -136,19 +121,7 @@ public partial class DeploymentService : IDeploymentService
             Created = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
-            Json = JsonSerializer.Serialize(new DeploymentRequestPayload
-            {
-                Comments = command.Comments,
-                ForcePackageDownload = command.ForcePackageDownload,
-                ForcePackageRedeployment = command.ForcePackageRedeployment,
-                UseGuidedFailure = command.UseGuidedFailure,
-                QueueTime = queueTime,
-                QueueTimeExpiry = queueTimeExpiry,
-                FormValues = command.FormValues ?? new Dictionary<string, string>(),
-                SpecificMachineIds = specificMachineIds.ToList(),
-                ExcludedMachineIds = excludedMachineIds.ToList(),
-                SkipActionIds = skipActionIds.ToList()
-            })
+            Json = JsonSerializer.Serialize(deploymentRequestPayload)
         };
 
         await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -212,4 +185,23 @@ public partial class DeploymentService : IDeploymentService
             : dateTime.ToUniversalTime();
     }
 
+    private static DeploymentRequestPayload BuildDeploymentRequestPayload(CreateDeploymentCommand command, DateTimeOffset? queueTime, DateTimeOffset? queueTimeExpiry, HashSet<int> specificMachineIds, HashSet<int> excludedMachineIds, HashSet<int> skipActionIds)
+    {
+        return new DeploymentRequestPayload
+        {
+            ReleaseId = command.ReleaseId,
+            EnvironmentId = command.EnvironmentId,
+            Name = command.Name,
+            Comments = command.Comments,
+            ForcePackageDownload = command.ForcePackageDownload,
+            ForcePackageRedeployment = command.ForcePackageRedeployment,
+            UseGuidedFailure = command.UseGuidedFailure,
+            QueueTime = queueTime,
+            QueueTimeExpiry = queueTimeExpiry,
+            FormValues = command.FormValues ?? new Dictionary<string, string>(),
+            SpecificMachineIds = specificMachineIds.OrderBy(id => id).ToList(),
+            ExcludedMachineIds = excludedMachineIds.OrderBy(id => id).ToList(),
+            SkipActionIds = skipActionIds.OrderBy(id => id).ToList()
+        };
+    }
 }

@@ -23,12 +23,12 @@ public class DeploymentController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost("validate-environment")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ValidateDeploymentEnvironmentResponse))]
-    public async Task<IActionResult> ValidateDeploymentEnvironmentAsync([FromBody] ValidateDeploymentEnvironmentRequest request)
+    [HttpPost("preview")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(PreviewDeploymentResponse))]
+    public async Task<IActionResult> PreviewDeploymentAsync([FromBody] PreviewDeploymentRequest request)
     {
         var response = await _mediator
-            .RequestAsync<ValidateDeploymentEnvironmentRequest, ValidateDeploymentEnvironmentResponse>(request).ConfigureAwait(false);
+            .RequestAsync<PreviewDeploymentRequest, PreviewDeploymentResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
     }
