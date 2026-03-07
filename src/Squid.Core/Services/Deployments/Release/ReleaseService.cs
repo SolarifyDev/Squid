@@ -22,6 +22,8 @@ public interface IReleaseService : IScopedDependency
     Task<GetReleasesResponse> GetReleasesAsync(GetReleasesRequest request, CancellationToken cancellationToken = default);
     
     Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default);
+
+    Task<GetReleaseVariableSnapshotResponse> GetReleaseVariableSnapshotAsync(GetReleaseVariableSnapshotRequest request, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseService : IReleaseService
@@ -151,6 +153,24 @@ public class ReleaseService : IReleaseService
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<GetReleaseVariableSnapshotResponse> GetReleaseVariableSnapshotAsync(GetReleaseVariableSnapshotRequest request, CancellationToken cancellationToken = default)
+    {
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(request.ReleaseId, cancellationToken).ConfigureAwait(false);
+
+        if (release == null)
+            throw new Exception($"Release {request.ReleaseId} not found");
+
+        var snapshot = await _deploymentSnapshotService.LoadVariableSetSnapshotAsync(release.ProjectVariableSetSnapshotId, cancellationToken).ConfigureAwait(false);
+
+        return new GetReleaseVariableSnapshotResponse
+        {
+            Data = new GetReleaseVariableSnapshotResponseData
+            {
+                VariableSnapshot = snapshot
+            }
+        };
     }
 
     private async Task PersistSelectedPackagesAsync(
