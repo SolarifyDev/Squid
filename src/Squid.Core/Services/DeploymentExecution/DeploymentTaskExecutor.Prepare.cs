@@ -38,8 +38,12 @@ public partial class DeploymentTaskExecutor
 
             LoadTransportForTarget(tc);
 
+            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", ct).ConfigureAwait(false);
+
             if (tc.Transport == null)
-                Log.Warning("No transport resolved for target {TargetName} with style {CommunicationStyle}", target.Name, tc.CommunicationStyle);
+            {
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", ct).ConfigureAwait(false);
+            }
 
             if (tc.Transport != null)
                 await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);

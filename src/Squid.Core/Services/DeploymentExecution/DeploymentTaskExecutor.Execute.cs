@@ -122,6 +122,9 @@ public partial class DeploymentTaskExecutor
             if (handler == null)
             {
                 Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
+
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No handler found for action type \"{action.ActionType}\", skipping", "System", ct).ConfigureAwait(false);
+
                 continue;
             }
 
