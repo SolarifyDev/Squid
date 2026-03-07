@@ -15,7 +15,6 @@ public class CreateDeploymentCommandValidatorTests
         {
             ReleaseId = 1,
             EnvironmentId = 1,
-            DeployedBy = 1,
             Name = "Deploy 1.0.0"
         };
 
@@ -50,20 +49,6 @@ public class CreateDeploymentCommandValidatorTests
 
         result.IsValid.ShouldBeFalse();
         result.Errors.ShouldContain(e => e.PropertyName == "EnvironmentId");
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void Invalid_DeployedBy_Fails(int deployedBy)
-    {
-        var command = ValidCommand();
-        command.DeployedBy = deployedBy;
-
-        var result = _validator.Validate(command);
-
-        result.IsValid.ShouldBeFalse();
-        result.Errors.ShouldContain(e => e.PropertyName == "DeployedBy");
     }
 
     [Fact]
@@ -168,7 +153,6 @@ public class CreateDeploymentCommandValidatorTests
     {
         ReleaseId = 1,
         EnvironmentId = 1,
-        DeployedBy = 1,
         Name = "Deploy 1.0.0"
     };
 }

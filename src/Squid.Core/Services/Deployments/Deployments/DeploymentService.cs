@@ -7,6 +7,7 @@ using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Validation;
+using Squid.Core.Services.Identity;
 using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Events.Deployments.Deployment;
@@ -17,6 +18,7 @@ namespace Squid.Core.Services.Deployments.Deployments;
 public partial class DeploymentService : IDeploymentService
 {
     private readonly IMapper _mapper;
+    private readonly ICurrentUser _currentUser;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IEnvironmentDataProvider _environmentDataProvider;
@@ -29,6 +31,7 @@ public partial class DeploymentService : IDeploymentService
 
     public DeploymentService(
         IMapper mapper,
+        ICurrentUser currentUser,
         IDeploymentDataProvider deploymentDataProvider,
         IReleaseDataProvider releaseDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
@@ -49,6 +52,7 @@ public partial class DeploymentService : IDeploymentService
         _deploymentValidationOrchestrator = deploymentValidationOrchestrator;
         _serverTaskDataProvider = serverTaskDataProvider;
         _backgroundJobClient = backgroundJobClient;
+        _currentUser = currentUser;
     }
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
@@ -75,8 +79,7 @@ public partial class DeploymentService : IDeploymentService
         var environmentValidation = await ValidateDeploymentEnvironmentAsync(validationContext, cancellationToken).ConfigureAwait(false);
 
         var validation = await _deploymentValidationOrchestrator
-            .ValidateAsync(DeploymentValidationStage.Create, validationContext, cancellationToken)
-            .ConfigureAwait(false);
+            .ValidateAsync(DeploymentValidationStage.Create, validationContext, cancellationToken).ConfigureAwait(false);
 
         if (!environmentValidation.IsValid || !validation.IsValid)
         {
@@ -98,6 +101,8 @@ public partial class DeploymentService : IDeploymentService
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
 
         var effectiveQueueTime = queueTime ?? DateTimeOffset.UtcNow;
+        var deployedBy = _currentUser.Id
+            ?? throw new InvalidOperationException("Current user id is required when creating deployment.");
         
         var serverTask = new Persistence.Entities.Deployments.ServerTask
         {
@@ -127,7 +132,7 @@ public partial class DeploymentService : IDeploymentService
             ProjectId = release.ProjectId,
             ReleaseId = command.ReleaseId,
             EnvironmentId = command.EnvironmentId,
-            DeployedBy = command.DeployedBy,
+            DeployedBy = deployedBy,
             Created = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,

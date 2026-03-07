@@ -10,7 +10,6 @@ public class CreateDeploymentCommandValidator : FluentMessageValidator<CreateDep
     {
         RuleFor(c => c.ReleaseId).GreaterThan(0);
         RuleFor(c => c.EnvironmentId).GreaterThan(0);
-        RuleFor(c => c.DeployedBy).GreaterThan(0);
 
         RuleFor(c => c.Name)
             .MaximumLength(200)

@@ -61,8 +61,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                     new CreateDeploymentCommand
                     {
                         ReleaseId = release.Id,
-                        EnvironmentId = environment.Id,
-                        DeployedBy = 1
+                        EnvironmentId = environment.Id
                     });
 
                 var deployment = await repository
@@ -120,8 +119,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                     new CreateDeploymentCommand
                     {
                         ReleaseId = release.Id,
-                        EnvironmentId = environment.Id,
-                        DeployedBy = 1
+                        EnvironmentId = environment.Id
                     });
 
                 var deployment = await repository

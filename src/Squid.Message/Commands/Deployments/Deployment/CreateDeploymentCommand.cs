@@ -12,8 +12,6 @@ public class CreateDeploymentCommand : ICommand
 
     public string Name { get; set; }
 
-    public int DeployedBy { get; set; }
-
     public string Comments { get; set; }
 
     public bool ForcePackageDownload { get; set; }

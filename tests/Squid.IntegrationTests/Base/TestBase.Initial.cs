@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Serilog;
+using Microsoft.AspNetCore.Http;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Settings.SelfCert;
@@ -40,6 +41,9 @@ public partial class TestBase
 
         containerBuilder.RegisterInstance(configuration).As<IConfiguration>().SingleInstance();
         containerBuilder.RegisterModule(new SquidModule(logger, configuration));
+        containerBuilder.RegisterType<HttpContextAccessor>()
+            .As<IHttpContextAccessor>()
+            .SingleInstance();
 
         containerBuilder.Register(_ =>
             {
