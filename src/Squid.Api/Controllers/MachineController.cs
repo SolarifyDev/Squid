@@ -87,4 +87,14 @@ public class MachineController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("{machineId:int}/health-check")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RunMachineHealthCheckResponse))]
+    public async Task<IActionResult> RunHealthCheckAsync(int machineId, CancellationToken ct)
+    {
+        var command = new RunMachineHealthCheckCommand { MachineId = machineId };
+        var response = await _mediator.SendAsync<RunMachineHealthCheckCommand, RunMachineHealthCheckResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

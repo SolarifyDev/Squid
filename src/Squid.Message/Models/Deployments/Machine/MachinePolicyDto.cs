@@ -12,84 +12,45 @@ public class MachinePolicyDto
 
     public bool IsDefault { get; set; }
 
-    public MachineHealthCheckPolicyDto MachineHealthCheckPolicy { get; set; }
+    public MachineHealthCheckPolicyDto MachineHealthCheckPolicy { get; set; } = new();
 
-    public MachineConnectivityPolicyDto MachineConnectivityPolicy { get; set; }
+    public MachineConnectivityPolicyDto MachineConnectivityPolicy { get; set; } = new();
 
-    public MachineCleanupPolicyDto MachineCleanupPolicy { get; set; }
+    public MachineCleanupPolicyDto MachineCleanupPolicy { get; set; } = new();
 
-    public MachineUpdatePolicyDto MachineUpdatePolicy { get; set; }
-
-    public MachineRpcCallRetryPolicyDto MachineRpcCallRetryPolicy { get; set; }
-
-    public string PollingRequestQueueTimeout { get; set; }
-
-    public string ConnectionRetrySleepInterval { get; set; }
-
-    public int ConnectionRetryCountLimit { get; set; }
-
-    public string ConnectionRetryTimeLimit { get; set; }
-
-    public string ConnectionConnectTimeout { get; set; }
+    public MachineUpdatePolicyDto MachineUpdatePolicy { get; set; } = new();
 }
 
 public class MachineHealthCheckPolicyDto
 {
-    public PowerShellHealthCheckPolicyDto PowerShellHealthCheckPolicy { get; set; }
+    public int HealthCheckIntervalSeconds { get; set; } = 3600;
 
-    public BashHealthCheckPolicyDto BashHealthCheckPolicy { get; set; }
-
-    public string HealthCheckInterval { get; set; }
-
-    public string HealthCheckCron { get; set; }
-
-    public string HealthCheckCronTimezone { get; set; }
-
-    public string HealthCheckType { get; set; }
+    // key = CommunicationStyle ("KubernetesAgent", "KubernetesApi", "Ssh", ...)
+    public Dictionary<string, MachineScriptPolicyDto> ScriptPolicies { get; set; } = new();
 }
 
-public class PowerShellHealthCheckPolicyDto
+public class MachineScriptPolicyDto
 {
-    public string RunType { get; set; }
-
-    public string ScriptBody { get; set; }
-}
-
-public class BashHealthCheckPolicyDto
-{
-    public string RunType { get; set; }
+    public string RunType { get; set; } = "InheritFromDefault";
 
     public string ScriptBody { get; set; }
 }
 
 public class MachineConnectivityPolicyDto
 {
-    public string MachineConnectivityBehavior { get; set; }
+    public string MachineConnectivityBehavior { get; set; } = "ExpectedToBeOnline";
 }
 
 public class MachineCleanupPolicyDto
 {
-    public string DeleteMachinesBehavior { get; set; }
+    public string DeleteMachinesBehavior { get; set; } = "DoNotDelete";
 
-    public string DeleteMachinesElapsedTimeSpan { get; set; }
+    public int DeleteMachinesAfterSeconds { get; set; } = 86400;
 }
 
 public class MachineUpdatePolicyDto
 {
-    public string CalamariUpdateBehavior { get; set; }
+    public string CalamariUpdateBehavior { get; set; } = "UpdateOnDeployment";
 
-    public string TentacleUpdateBehavior { get; set; }
-
-    public string KubernetesAgentUpdateBehavior { get; set; }
-
-    public string TentacleUpdateAccountId { get; set; }
-}
-
-public class MachineRpcCallRetryPolicyDto
-{
-    public bool Enabled { get; set; }
-
-    public string RetryDuration { get; set; }
-
-    public string HealthCheckRetryDuration { get; set; }
+    public string TentacleUpdateBehavior { get; set; } = "NeverUpdate";
 }
