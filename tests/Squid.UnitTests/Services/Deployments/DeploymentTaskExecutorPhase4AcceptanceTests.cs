@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
@@ -153,19 +153,52 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
     private static DeploymentTaskExecutor CreateExecutor(IActionHandlerRegistry registry)
     {
-        var activityLogMock = new Mock<IActivityLogDataProvider>();
-        activityLogMock
-            .Setup(x => x.AddNodeAsync(
-                It.IsAny<Squid.Core.Persistence.Entities.Deployments.ActivityLog>(),
-                It.IsAny<bool>(),
+        var nextNodeId = 0L;
+        var serverTaskServiceMock = new Mock<IServerTaskService>();
+        serverTaskServiceMock
+            .Setup(x => x.AddActivityNodeAsync(
+                It.IsAny<int>(),
+                It.IsAny<long?>(),
+                It.IsAny<string>(),
+                It.IsAny<DeploymentActivityLogNodeType>(),
+                It.IsAny<DeploymentActivityLogNodeStatus>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Squid.Core.Persistence.Entities.Deployments.ActivityLog)null);
-        activityLogMock
-            .Setup(x => x.UpdateNodeStatusAsync(
+            .ReturnsAsync((int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken _) =>
+                new Squid.Core.Persistence.Entities.Deployments.ActivityLog
+                {
+                    Id = Interlocked.Increment(ref nextNodeId),
+                    ServerTaskId = taskId,
+                    ParentId = parentId,
+                    Name = name,
+                    NodeType = nodeType,
+                    Status = status,
+                    SortOrder = sortOrder,
+                    StartedAt = DateTimeOffset.UtcNow
+                });
+        serverTaskServiceMock
+            .Setup(x => x.UpdateActivityNodeStatusAsync(
                 It.IsAny<long>(),
                 It.IsAny<DeploymentActivityLogNodeStatus>(),
                 It.IsAny<DateTimeOffset?>(),
-                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        serverTaskServiceMock
+            .Setup(x => x.AddLogAsync(
+                It.IsAny<int>(),
+                It.IsAny<long>(),
+                It.IsAny<ServerTaskLogCategory>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<long?>(),
+                It.IsAny<DateTimeOffset?>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        serverTaskServiceMock
+            .Setup(x => x.AddLogsAsync(
+                It.IsAny<int>(),
+                It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -173,13 +206,11 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IGenericDataProvider>(),
             Mock.Of<IReleaseDataProvider>(),
             Mock.Of<IReleaseSelectedPackageDataProvider>(),
-            Mock.Of<IServerTaskDataProvider>(),
+            serverTaskServiceMock.Object,
             Mock.Of<IDeploymentDataProvider>(),
             Mock.Of<IDeploymentAccountDataProvider>(),
             Mock.Of<ICertificateDataProvider>(),
             Mock.Of<IDeploymentCompletionDataProvider>(),
-            activityLogMock.Object,
-            Mock.Of<IServerTaskLogDataProvider>(),
             Mock.Of<IYamlNuGetPacker>(),
             Mock.Of<IDeploymentTargetFinder>(),
             Mock.Of<IDeploymentSnapshotService>(),

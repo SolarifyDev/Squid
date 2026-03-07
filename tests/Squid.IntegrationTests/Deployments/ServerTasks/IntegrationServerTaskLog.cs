@@ -262,4 +262,73 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
             logs[0].MessageText.Length.ShouldBe(50000);
         }).ConfigureAwait(false);
     }
+
+    [Fact]
+    public async Task GetLogsByTaskIdAfterSequence_ReturnsIncrementalPage()
+    {
+        await Run<IServerTaskLogDataProvider>(async provider =>
+        {
+            var taskId = await CreateServerTaskAsync().ConfigureAwait(false);
+
+            await provider.AddLogsAsync(new List<ServerTaskLog>
+            {
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Info, MessageText = "L1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Info, MessageText = "L2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 },
+                new() { ServerTaskId = taskId, Category = ServerTaskLogCategory.Info, MessageText = "L3", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 3 }
+            }).ConfigureAwait(false);
+
+            var page = await provider.GetLogsByTaskIdAfterSequenceAsync(taskId, 1, 10).ConfigureAwait(false);
+
+            page.Count.ShouldBe(2);
+            page[0].SequenceNumber.ShouldBe(2);
+            page[1].SequenceNumber.ShouldBe(3);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task GetLogsByTaskAndNodeAfterSequence_FiltersByNode()
+    {
+        await Run<IServerTaskLogDataProvider>(async provider =>
+        {
+            var taskId = await CreateServerTaskAsync().ConfigureAwait(false);
+
+            await provider.AddLogsAsync(new List<ServerTaskLog>
+            {
+                new() { ServerTaskId = taskId, ActivityNodeId = 10, Category = ServerTaskLogCategory.Info, MessageText = "A1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
+                new() { ServerTaskId = taskId, ActivityNodeId = 20, Category = ServerTaskLogCategory.Info, MessageText = "B1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 },
+                new() { ServerTaskId = taskId, ActivityNodeId = 10, Category = ServerTaskLogCategory.Info, MessageText = "A2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 3 }
+            }).ConfigureAwait(false);
+
+            var page = await provider.GetLogsByTaskAndNodeAfterSequenceAsync(taskId, 10, 1, 10).ConfigureAwait(false);
+
+            page.Count.ShouldBe(1);
+            page[0].MessageText.ShouldBe("A2");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task GetLatestScopedAndUnscopedLogs_ReturnsExpectedRows()
+    {
+        await Run<IServerTaskLogDataProvider>(async provider =>
+        {
+            var taskId = await CreateServerTaskAsync().ConfigureAwait(false);
+
+            await provider.AddLogsAsync(new List<ServerTaskLog>
+            {
+                new() { ServerTaskId = taskId, ActivityNodeId = 99, Category = ServerTaskLogCategory.Info, MessageText = "N1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 1 },
+                new() { ServerTaskId = taskId, ActivityNodeId = null, Category = ServerTaskLogCategory.Warning, MessageText = "U1", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 2 },
+                new() { ServerTaskId = taskId, ActivityNodeId = 99, Category = ServerTaskLogCategory.Info, MessageText = "N2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 3 },
+                new() { ServerTaskId = taskId, ActivityNodeId = null, Category = ServerTaskLogCategory.Error, MessageText = "U2", Source = "M", OccurredAt = DateTimeOffset.UtcNow, SequenceNumber = 4 }
+            }).ConfigureAwait(false);
+
+            var latestNode = await provider.GetLatestLogsByTaskAndNodeAsync(taskId, 99, 1).ConfigureAwait(false);
+            latestNode.Count.ShouldBe(1);
+            latestNode[0].MessageText.ShouldBe("N2");
+
+            var latestUnscoped = await provider.GetLatestUnscopedLogsByTaskAsync(taskId, 2).ConfigureAwait(false);
+            latestUnscoped.Count.ShouldBe(2);
+            latestUnscoped[0].MessageText.ShouldBe("U1");
+            latestUnscoped[1].MessageText.ShouldBe("U2");
+        }).ConfigureAwait(false);
+    }
 }

@@ -50,14 +50,12 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Information("Skipping step {StepName} on target {TargetName}", step.Name, tc.Machine.Name);
 
-                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Skipping step \"{step.Name}\" on {tc.Machine.Name} (condition not met)", tc.Machine.Name, ct)
-                    .ConfigureAwait(false);
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Skipping step \"{step.Name}\" on {tc.Machine.Name} (condition not met)", tc.Machine.Name, _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
 
                 continue;
             }
 
-            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, ct)
-                .ConfigureAwait(false);
+            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
 
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
 
@@ -66,7 +64,7 @@ public partial class DeploymentTaskExecutor
                 stepSortOrder, ct).ConfigureAwait(false);
 
             var actionResults = await PrepareStepActionsAsync(
-                step, variableDictionary, effectiveVariables, tc, ct).ConfigureAwait(false);
+                step, variableDictionary, effectiveVariables, tc, stepActivityNode?.Id, ct).ConfigureAwait(false);
 
             var result = new StepExecutionResult();
             await ExecuteActionResultsAsync(
@@ -99,6 +97,7 @@ public partial class DeploymentTaskExecutor
         VariableDictionary variableDictionary,
         List<VariableDto> effectiveVariables,
         DeploymentTargetContext tc,
+        long? stepActivityNodeId,
         CancellationToken ct)
     {
         var stepResults = new List<ActionExecutionResult>();
@@ -123,7 +122,7 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
 
-                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No handler found for action type \"{action.ActionType}\", skipping", "System", ct).ConfigureAwait(false);
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No handler found for action type \"{action.ActionType}\", skipping", "System", stepActivityNodeId, ct).ConfigureAwait(false);
 
                 continue;
             }
@@ -219,27 +218,24 @@ public partial class DeploymentTaskExecutor
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
 
-                await PersistScriptOutputAsync(_ctx.Task.Id, execResult, tc.Machine.Name, ct)
-                    .ConfigureAwait(false);
+                await PersistScriptOutputAsync(_ctx.Task.Id, execResult, tc.Machine.Name, actionActivityNode?.Id, ct).ConfigureAwait(false);
 
                 if (!execResult.Success)
                     throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
-                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct)
-                    .ConfigureAwait(false);
+                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
 
                 CollectOutputVariables(result, step.Name, actionResult);
             }
             catch (Exception ex)
             {
                 result.Failed = true;
+                
                 Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
 
-                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Error, ex.Message, tc.Machine.Name, ct)
-                    .ConfigureAwait(false);
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Error, ex.Message, tc.Machine.Name, actionActivityNode?.Id, ct).ConfigureAwait(false);
 
-                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Failed, ct)
-                    .ConfigureAwait(false);
+                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
 
                 if (step.IsRequired)
                     throw;

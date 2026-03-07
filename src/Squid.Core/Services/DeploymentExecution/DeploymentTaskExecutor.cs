@@ -1,6 +1,5 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
@@ -24,13 +23,11 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     private readonly IGenericDataProvider _genericDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
-    private readonly IServerTaskDataProvider _serverTaskDataProvider;
+    private readonly IServerTaskService _serverTaskService;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
     private readonly ICertificateDataProvider _certificateDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
-    private readonly IActivityLogDataProvider _activityLogDataProvider;
-    private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
     private readonly IReleaseSelectedPackageDataProvider _releaseSelectedPackageDataProvider;
 
     #endregion
@@ -51,13 +48,11 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IGenericDataProvider genericDataProvider,
         IReleaseDataProvider releaseDataProvider,
         IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
-        IServerTaskDataProvider serverTaskDataProvider,
+        IServerTaskService serverTaskService,
         IDeploymentDataProvider deploymentDataProvider,
         IDeploymentAccountDataProvider deploymentAccountDataProvider,
         ICertificateDataProvider certificateDataProvider,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
-        IActivityLogDataProvider activityLogDataProvider,
-        IServerTaskLogDataProvider serverTaskLogDataProvider,
         IYamlNuGetPacker yamlNuGetPacker,
         IDeploymentTargetFinder targetFinder,
         IDeploymentSnapshotService snapshotService,
@@ -69,13 +64,11 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
         _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
-        _serverTaskDataProvider = serverTaskDataProvider;
+        _serverTaskService = serverTaskService;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentAccountDataProvider = deploymentAccountDataProvider;
         _certificateDataProvider = certificateDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
-        _activityLogDataProvider = activityLogDataProvider;
-        _serverTaskLogDataProvider = serverTaskLogDataProvider;
         _yamlNuGetPacker = yamlNuGetPacker;
         _targetFinder = targetFinder;
         _snapshotService = snapshotService;
@@ -91,8 +84,9 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
         try
         {
-            await LoadDeploymentDataAsync(serverTaskId, ct);
+            await LoadTaskAsync(serverTaskId, ct);
             await CreateTaskActivityNodeAsync(ct);
+            await LoadDeploymentDataAsync(serverTaskId, ct);
             await PrepareAllTargetsAsync(ct);
             await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);

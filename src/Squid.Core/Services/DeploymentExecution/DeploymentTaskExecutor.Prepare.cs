@@ -15,7 +15,6 @@ public partial class DeploymentTaskExecutor
 {
     private async Task LoadDeploymentDataAsync(int serverTaskId, CancellationToken ct)
     {
-        await LoadTaskAsync(serverTaskId, ct).ConfigureAwait(false);
         await LoadDeploymentAsync(ct).ConfigureAwait(false);
         await LoadSelectedPackagesAsync(ct).ConfigureAwait(false);
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
@@ -23,8 +22,7 @@ public partial class DeploymentTaskExecutor
         await FindTargetsAsync(ct).ConfigureAwait(false);
         await LogMachineSelectionConstraintsAsync(serverTaskId, ct).ConfigureAwait(false);
 
-        var targetNames = string.Join(", ", _ctx.AllTargets.Select(t => t.Name));
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {targetNames}", "System", ct);
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", _ctx.TaskActivityNode?.Id, ct);
 
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
@@ -38,11 +36,11 @@ public partial class DeploymentTaskExecutor
 
             LoadTransportForTarget(tc);
 
-            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", ct).ConfigureAwait(false);
+            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
 
             if (tc.Transport == null)
             {
-                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", ct).ConfigureAwait(false);
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
             }
 
             if (tc.Transport != null)
@@ -59,14 +57,7 @@ public partial class DeploymentTaskExecutor
 
     private async Task LoadTaskAsync(int serverTaskId, CancellationToken ct)
     {
-        var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
-
-        if (task == null) throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
-
-        await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
-
-        task.State = TaskState.Executing;
-        task.StartTime = DateTimeOffset.UtcNow;
+        var task = await _serverTaskService.StartExecutingAsync(serverTaskId, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
 
@@ -135,13 +126,7 @@ public partial class DeploymentTaskExecutor
             ? "-"
             : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
 
-        await PersistTaskLogAsync(
-                serverTaskId,
-                ServerTaskLogCategory.Info,
-                $"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}",
-                "System",
-                ct)
-            .ConfigureAwait(false);
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

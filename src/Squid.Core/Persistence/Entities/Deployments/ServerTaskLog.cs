@@ -8,9 +8,13 @@ public class ServerTaskLog : IEntity<long>
 
     public int ServerTaskId { get; set; }
 
+    public long? ActivityNodeId { get; set; }
+
     public ServerTaskLogCategory Category { get; set; }
 
     public string MessageText { get; set; }
+
+    public string Detail { get; set; }
 
     public string Source { get; set; }
 

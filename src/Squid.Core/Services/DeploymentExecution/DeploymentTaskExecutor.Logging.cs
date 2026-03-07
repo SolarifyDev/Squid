@@ -7,16 +7,14 @@ public partial class DeploymentTaskExecutor
 {
     private async Task CreateTaskActivityNodeAsync(CancellationToken ct)
     {
-        _ctx.TaskActivityNode = await _activityLogDataProvider.AddNodeAsync(
-            new Persistence.Entities.Deployments.ActivityLog
-            {
-                ServerTaskId = _ctx.Task.Id,
-                Name = $"Deploy {_ctx.Deployment?.Name ?? "Unknown"}",
-                NodeType = DeploymentActivityLogNodeType.Task,
-                Status = DeploymentActivityLogNodeStatus.Running,
-                StartedAt = DateTimeOffset.UtcNow,
-                SortOrder = 0
-            }, ct: ct).ConfigureAwait(false);
+        _ctx.TaskActivityNode = await _serverTaskService.AddActivityNodeAsync(
+            _ctx.Task.Id,
+            null,
+            $"Deploy {_ctx.Deployment?.Name ?? _ctx.Task?.Name ?? "Unknown"}",
+            DeploymentActivityLogNodeType.Task,
+            DeploymentActivityLogNodeStatus.Running,
+            0,
+            ct).ConfigureAwait(false);
     }
 
     private async Task RecordSuccessAsync(CancellationToken ct)
@@ -28,7 +26,7 @@ public partial class DeploymentTaskExecutor
         await _genericDataProvider.ExecuteInTransactionAsync(
             async cancellationToken =>
             {
-                await _serverTaskDataProvider.TransitionStateAsync(
+                await _serverTaskService.TransitionStateAsync(
                     _ctx.Task.Id, TaskState.Executing, TaskState.Success,
                     cancellationToken).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
@@ -59,7 +57,7 @@ public partial class DeploymentTaskExecutor
         await UpdateActivityNodeStatusAsync(_ctx.TaskActivityNode, DeploymentActivityLogNodeStatus.Failed, ct)
             .ConfigureAwait(false);
 
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Error, ex.Message, "System", ct);
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Error, ex.Message, "System", _ctx.TaskActivityNode?.Id, ct);
 
         if (_ctx.Deployment != null)
             await RecordCompletionAsync(false, ex.Message);
@@ -67,7 +65,7 @@ public partial class DeploymentTaskExecutor
         await _genericDataProvider.ExecuteInTransactionAsync(
             async cancellationToken =>
             {
-                await _serverTaskDataProvider.TransitionStateAsync(
+                await _serverTaskService.TransitionStateAsync(
                     serverTaskId, TaskState.Executing, TaskState.Failed,
                     cancellationToken).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
@@ -99,17 +97,14 @@ public partial class DeploymentTaskExecutor
     {
         try
         {
-            return await _activityLogDataProvider.AddNodeAsync(
-                new Persistence.Entities.Deployments.ActivityLog
-                {
-                    ServerTaskId = serverTaskId,
-                    ParentId = parentId,
-                    Name = name,
-                    NodeType = nodeType,
-                    Status = status,
-                    StartedAt = DateTimeOffset.UtcNow,
-                    SortOrder = sortOrder
-                }, ct: ct).ConfigureAwait(false);
+            return await _serverTaskService.AddActivityNodeAsync(
+                serverTaskId,
+                parentId,
+                name,
+                nodeType,
+                status,
+                sortOrder,
+                ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -118,21 +113,12 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task PersistTaskLogAsync(int serverTaskId, ServerTaskLogCategory category, string message,
-        string source, CancellationToken ct)
+    private async Task PersistTaskLogAsync(int serverTaskId, ServerTaskLogCategory category, string message, string source, long? activityNodeId, CancellationToken ct, string detail = null)
     {
         try
         {
             var seq = _ctx.NextLogSequence();
-            await _serverTaskLogDataProvider.AddLogAsync(new Persistence.Entities.Deployments.ServerTaskLog
-            {
-                ServerTaskId = serverTaskId,
-                Category = category,
-                MessageText = message,
-                Source = source,
-                OccurredAt = DateTimeOffset.UtcNow,
-                SequenceNumber = seq
-            }, ct: ct).ConfigureAwait(false);
+            await _serverTaskService.AddLogAsync(serverTaskId, seq, category, message, source, activityNodeId, DateTimeOffset.UtcNow, detail, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -140,32 +126,7 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task PersistTaskLogsAsync(int serverTaskId, List<ProcessOutput> logs,
-        string source, CancellationToken ct)
-    {
-        try
-        {
-            var entries = logs.Select(log => new Persistence.Entities.Deployments.ServerTaskLog
-            {
-                ServerTaskId = serverTaskId,
-                Category = log.Source == ProcessOutputSource.StdErr
-                    ? ServerTaskLogCategory.Error
-                    : ServerTaskLogCategory.Info,
-                MessageText = log.Text,
-                Source = source,
-                OccurredAt = log.Occurred,
-                SequenceNumber = _ctx.NextLogSequence()
-            }).ToList();
-
-            await _serverTaskLogDataProvider.AddLogsAsync(entries, ct: ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to persist task log batch");
-        }
-    }
-
-    private async Task PersistScriptOutputAsync(int serverTaskId, ScriptExecutionResult execResult, string source, CancellationToken ct)
+    private async Task PersistScriptOutputAsync(int serverTaskId, ScriptExecutionResult execResult, string source, long? activityNodeId, CancellationToken ct)
     {
         if (execResult.LogLines == null || execResult.LogLines.Count == 0) return;
 
@@ -175,19 +136,19 @@ public partial class DeploymentTaskExecutor
 
         try
         {
-            var entries = execResult.LogLines.Select(line => new Persistence.Entities.Deployments.ServerTaskLog
+            var entries = execResult.LogLines.Select(line => new ServerTaskLogWriteEntry
             {
-                ServerTaskId = serverTaskId,
                 Category = stderrSet != null && stderrSet.Contains(line)
                     ? ServerTaskLogCategory.Error
                     : ServerTaskLogCategory.Info,
                 MessageText = line,
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,
-                SequenceNumber = _ctx.NextLogSequence()
+                SequenceNumber = _ctx.NextLogSequence(),
+                ActivityNodeId = activityNodeId
             }).ToList();
 
-            await _serverTaskLogDataProvider.AddLogsAsync(entries, ct: ct).ConfigureAwait(false);
+            await _serverTaskService.AddLogsAsync(serverTaskId, entries, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -203,7 +164,7 @@ public partial class DeploymentTaskExecutor
         if (node == null)
             return Task.CompletedTask;
 
-        return _activityLogDataProvider.UpdateNodeStatusAsync(
-            node.Id, status, DateTimeOffset.UtcNow, ct: ct);
+        return _serverTaskService.UpdateActivityNodeStatusAsync(
+            node.Id, status, DateTimeOffset.UtcNow, ct);
     }
 }

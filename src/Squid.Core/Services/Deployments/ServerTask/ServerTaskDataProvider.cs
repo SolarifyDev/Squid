@@ -116,6 +116,9 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         task.DataVersion = Guid.NewGuid().ToByteArray();
         task.LastModified = DateTimeOffset.UtcNow;
 
+        if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase) && !task.StartTime.HasValue)
+            task.StartTime = DateTimeOffset.UtcNow;
+
         if (TaskState.IsTerminal(newState))
             task.CompletedTime = DateTimeOffset.UtcNow;
 
