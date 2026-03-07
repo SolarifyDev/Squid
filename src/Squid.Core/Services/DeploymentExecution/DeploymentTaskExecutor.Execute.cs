@@ -98,6 +98,12 @@ public partial class DeploymentTaskExecutor
 
         foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
         {
+            if (_ctx.DeploymentRequestPayload.SkipActionIds.Contains(action.Id))
+            {
+                Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
+                continue;
+            }
+
             if (!ShouldExecuteAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId))
             {
                 Log.Information("Skipping action {ActionName} (disabled, environment, or channel mismatch)", action.Name);

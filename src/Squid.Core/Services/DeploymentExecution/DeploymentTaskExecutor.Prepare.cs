@@ -76,6 +76,7 @@ public partial class DeploymentTaskExecutor
         if (deployment == null) throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
 
         _ctx.Deployment = deployment;
+        _ctx.DeploymentRequestPayload = DeploymentTargetFinder.ParseRequestPayload(deployment.Json);
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
 

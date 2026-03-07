@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Response;
 
@@ -17,13 +18,22 @@ public class CreateDeploymentCommand : ICommand
 
     public bool ForcePackageDownload { get; set; }
 
+    public bool ForcePackageRedeployment { get; set; }
+
     public bool UseGuidedFailure { get; set; }
+
+    public DateTimeOffset? QueueTime { get; set; }
+
+    public DateTimeOffset? QueueTimeExpiry { get; set; }
 
     public Dictionary<string, string> FormValues { get; set; } = new();
 
     public List<string> SpecificMachineIds { get; set; } = new();
 
     public List<string> ExcludedMachineIds { get; set; } = new();
+
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public List<int> SkipActionIds { get; set; } = new();
 }
 
 public class CreateDeploymentResponse : SquidResponse<CreateDeploymentResponseData>

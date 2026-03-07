@@ -1,3 +1,4 @@
+using System;
 using Squid.Core.Validators.Deployments.Deployment;
 using Squid.Message.Requests.Deployments.Deployment;
 
@@ -53,5 +54,54 @@ public class ValidateDeploymentEnvironmentRequestValidatorTests
 
         result.IsValid.ShouldBeFalse();
         result.Errors.ShouldContain(x => x.PropertyName == "EnvironmentId");
+    }
+
+    [Fact]
+    public void SkipActionIds_WithInvalidValue_Fails()
+    {
+        var request = new ValidateDeploymentEnvironmentRequest
+        {
+            ReleaseId = 1,
+            EnvironmentId = 1,
+            SkipActionIds = [0, -1]
+        };
+
+        var result = _validator.Validate(request);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(x => x.PropertyName.Contains("SkipActionIds"));
+    }
+
+    [Fact]
+    public void SpecificMachineIds_WithInvalidValue_Fails()
+    {
+        var request = new ValidateDeploymentEnvironmentRequest
+        {
+            ReleaseId = 1,
+            EnvironmentId = 1,
+            SpecificMachineIds = ["1", "abc"]
+        };
+
+        var result = _validator.Validate(request);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(x => x.PropertyName.Contains("SpecificMachineIds"));
+    }
+
+    [Fact]
+    public void QueueTimeExpiry_WithoutQueueTime_Fails()
+    {
+        var request = new ValidateDeploymentEnvironmentRequest
+        {
+            ReleaseId = 1,
+            EnvironmentId = 1,
+            QueueTime = null,
+            QueueTimeExpiry = DateTimeOffset.UtcNow.AddMinutes(30)
+        };
+
+        var result = _validator.Validate(request);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(x => x.ErrorMessage.Contains("QueueTimeExpiry"));
     }
 }

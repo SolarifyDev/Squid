@@ -2,20 +2,28 @@ using System.Text.Json;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.Validation;
+using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Events.Deployments.Deployment;
 using Squid.Message.Models.Deployments.Deployment;
 
 namespace Squid.Core.Services.Deployments.Deployments;
 
-public class DeploymentService : IDeploymentService
+public partial class DeploymentService : IDeploymentService
 {
     private readonly IMapper _mapper;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
-    private readonly IDeploymentValidationService _deploymentValidationService;
+    private readonly IEnvironmentDataProvider _environmentDataProvider;
+    private readonly IMachineDataProvider _machineDataProvider;
+    private readonly ILifecycleResolver _lifecycleResolver;
+    private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
+    private readonly IDeploymentValidationOrchestrator _deploymentValidationOrchestrator;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
@@ -23,14 +31,22 @@ public class DeploymentService : IDeploymentService
         IMapper mapper,
         IDeploymentDataProvider deploymentDataProvider,
         IReleaseDataProvider releaseDataProvider,
-        IDeploymentValidationService deploymentValidationService,
+        IEnvironmentDataProvider environmentDataProvider,
+        IMachineDataProvider machineDataProvider,
+        ILifecycleResolver lifecycleResolver,
+        ILifecycleProgressionEvaluator progressionEvaluator,
+        IDeploymentValidationOrchestrator deploymentValidationOrchestrator,
         IServerTaskDataProvider serverTaskDataProvider,
         ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
         _deploymentDataProvider = deploymentDataProvider;
         _releaseDataProvider = releaseDataProvider;
-        _deploymentValidationService = deploymentValidationService;
+        _environmentDataProvider = environmentDataProvider;
+        _machineDataProvider = machineDataProvider;
+        _lifecycleResolver = lifecycleResolver;
+        _progressionEvaluator = progressionEvaluator;
+        _deploymentValidationOrchestrator = deploymentValidationOrchestrator;
         _serverTaskDataProvider = serverTaskDataProvider;
         _backgroundJobClient = backgroundJobClient;
     }
@@ -41,32 +57,53 @@ public class DeploymentService : IDeploymentService
 
         var specificMachineIds = NormalizeMachineIds(command.SpecificMachineIds);
         var excludedMachineIds = NormalizeMachineIds(command.ExcludedMachineIds);
+        var skipActionIds = NormalizePositiveIds(command.SkipActionIds);
+        var queueTime = NormalizeUtc(command.QueueTime);
+        var queueTimeExpiry = NormalizeUtc(command.QueueTimeExpiry);
 
-        if (specificMachineIds.Overlaps(excludedMachineIds))
-            throw new DeploymentValidationException("SpecificMachineIds and ExcludedMachineIds cannot overlap.");
+        var validationContext = new DeploymentValidationContext
+        {
+            ReleaseId = command.ReleaseId,
+            EnvironmentId = command.EnvironmentId,
+            QueueTime = queueTime,
+            QueueTimeExpiry = queueTimeExpiry,
+            SpecificMachineIds = specificMachineIds,
+            ExcludedMachineIds = excludedMachineIds,
+            SkipActionIds = skipActionIds
+        };
 
-        var validation = await _deploymentValidationService
-            .ValidateDeploymentEnvironmentDetailedAsync(
-                command.ReleaseId,
-                command.EnvironmentId,
-                specificMachineIds,
-                excludedMachineIds,
-                cancellationToken)
+        var environmentValidation = await ValidateDeploymentEnvironmentAsync(validationContext, cancellationToken).ConfigureAwait(false);
+
+        var validation = await _deploymentValidationOrchestrator
+            .ValidateAsync(DeploymentValidationStage.Create, validationContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (!validation.IsValid)
-            throw new DeploymentValidationException($"Environment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}: {validation.Message}");
+        if (!environmentValidation.IsValid || !validation.IsValid)
+        {
+            var reasons = environmentValidation.Reasons
+                .Concat(validation.Issues.Where(i => i.IsBlocking).Select(i => i.Message))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var message = reasons.Count == 0
+                ? validation.Message
+                : string.Join("; ", reasons);
+
+            throw new DeploymentValidationException($"Deployment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}: {message}");
+        }
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
         
         if (release == null) 
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
 
+        var effectiveQueueTime = queueTime ?? DateTimeOffset.UtcNow;
+        
         var serverTask = new Persistence.Entities.Deployments.ServerTask
         {
             Name = command.Name ?? $"Deploy {release.Version} to Environment",
             Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
-            QueueTime = DateTimeOffset.UtcNow,
+            QueueTime = effectiveQueueTime,
             State = TaskState.Pending,
             ServerTaskType = "Deploy",
             SpaceId = release.SpaceId,
@@ -98,16 +135,22 @@ public class DeploymentService : IDeploymentService
             {
                 Comments = command.Comments,
                 ForcePackageDownload = command.ForcePackageDownload,
+                ForcePackageRedeployment = command.ForcePackageRedeployment,
                 UseGuidedFailure = command.UseGuidedFailure,
+                QueueTime = queueTime,
+                QueueTimeExpiry = queueTimeExpiry,
                 FormValues = command.FormValues ?? new Dictionary<string, string>(),
                 SpecificMachineIds = specificMachineIds.ToList(),
-                ExcludedMachineIds = excludedMachineIds.ToList()
+                ExcludedMachineIds = excludedMachineIds.ToList(),
+                SkipActionIds = skipActionIds.ToList()
             })
         };
 
         await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var jobId = _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None));
+        var jobId = effectiveQueueTime > DateTimeOffset.UtcNow
+            ? _backgroundJobClient.Schedule<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None), effectiveQueueTime)
+            : _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None));
 
         if (!string.IsNullOrEmpty(jobId))
         {
@@ -142,6 +185,26 @@ public class DeploymentService : IDeploymentService
         }
 
         return ids;
+    }
+
+    private static HashSet<int> NormalizePositiveIds(IEnumerable<int> ids)
+    {
+        if (ids == null)
+            return new HashSet<int>();
+
+        return ids.Where(id => id > 0).ToHashSet();
+    }
+
+    private static DateTimeOffset? NormalizeUtc(DateTimeOffset? value)
+    {
+        if (!value.HasValue)
+            return null;
+
+        var dateTime = value.Value;
+
+        return dateTime.Offset == TimeSpan.Zero
+            ? dateTime
+            : dateTime.ToUniversalTime();
     }
 
 }

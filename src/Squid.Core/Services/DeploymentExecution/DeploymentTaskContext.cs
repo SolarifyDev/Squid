@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -13,6 +14,7 @@ public class DeploymentTaskContext
     public Deployment Deployment { get; set; }
     public Persistence.Entities.Deployments.Release Release { get; set; }
     public DeploymentProcessSnapshotDto ProcessSnapshot { get; set; }
+    public DeploymentRequestPayload DeploymentRequestPayload { get; set; } = new();
 
     // Variables — deployment-level only, not polluted by endpoint variables
     public List<VariableDto> Variables { get; set; }

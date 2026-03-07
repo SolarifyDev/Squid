@@ -406,12 +406,59 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
+    public void ParseRequestPayload_SkipActionIds_StringAndNumberIds_ParsesSuccessfully()
+    {
+        var json = """
+                   {
+                     "SkipActionIds": ["10", 20, "30"]
+                   }
+                   """;
+
+        var payload = DeploymentTargetFinder.ParseRequestPayload(json);
+
+        payload.SkipActionIds.OrderBy(x => x).ShouldBe([10, 20, 30]);
+    }
+
+    [Fact]
+    public void ParseRequestPayload_InvalidJson_ReturnsDefaultPayload()
+    {
+        var payload = DeploymentTargetFinder.ParseRequestPayload("{ bad json");
+
+        payload.ShouldNotBeNull();
+        payload.SkipActionIds.ShouldBeEmpty();
+        payload.SpecificMachineIds.ShouldBeEmpty();
+        payload.ExcludedMachineIds.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ParseIds_CorrectValues()
     {
         var result = DeploymentTargetFinder.ParseIds("[1,5,3]");
 
         result.ShouldContain(1);
         result.ShouldContain(5);
+        result.ShouldContain(3);
+    }
+
+    [Theory]
+    [InlineData("5", 1, 5)]
+    [InlineData("1,2,3", 3, 1)]
+    [InlineData("42", 1, 42)]
+    public void ParseIds_NonJsonFallback_ParsesBareIntegers(string input, int expectedCount, int expectedContains)
+    {
+        var result = DeploymentTargetFinder.ParseIds(input);
+
+        result.Count.ShouldBe(expectedCount);
+        result.ShouldContain(expectedContains);
+    }
+
+    [Fact]
+    public void ParseIds_NonJsonFallback_IgnoresNonNumericSegments()
+    {
+        var result = DeploymentTargetFinder.ParseIds("1,abc,3");
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain(1);
         result.ShouldContain(3);
     }
 
@@ -441,6 +488,26 @@ public class DeploymentTargetFinderTests
         result.Contains("web").ShouldBeTrue();
         result.Contains("api").ShouldBeTrue();
         result.Contains("WEB").ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("k8s", 1)]
+    [InlineData("web,api", 2)]
+    [InlineData("web, api , worker", 3)]
+    public void ParseRoles_NonJsonFallback_ParsesBareStrings(string input, int expectedCount)
+    {
+        var result = DeploymentTargetFinder.ParseRoles(input);
+
+        result.Count.ShouldBe(expectedCount);
+    }
+
+    [Fact]
+    public void ParseRoles_NonJsonFallback_CaseInsensitive()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("K8S");
+
+        result.Contains("k8s").ShouldBeTrue();
+        result.Contains("K8S").ShouldBeTrue();
     }
 
     // ============================

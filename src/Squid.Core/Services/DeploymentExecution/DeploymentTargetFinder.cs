@@ -80,28 +80,31 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
     public static DeploymentMachineSelection ParseTargetSelection(string deploymentJson)
     {
+        var payload = ParseRequestPayload(deploymentJson);
+
+        return new DeploymentMachineSelection
+        {
+            SpecificMachineIds = NormalizePositiveIds(payload.SpecificMachineIds),
+            ExcludedMachineIds = NormalizePositiveIds(payload.ExcludedMachineIds)
+        };
+    }
+
+    public static DeploymentRequestPayload ParseRequestPayload(string deploymentJson)
+    {
         if (string.IsNullOrWhiteSpace(deploymentJson))
-            return DeploymentMachineSelection.Empty;
+            return new DeploymentRequestPayload();
 
         try
         {
-            var payload = JsonSerializer.Deserialize<DeploymentRequestPayload>(deploymentJson);
-            
-            if (payload == null) return DeploymentMachineSelection.Empty;
-
-            return new DeploymentMachineSelection
-            {
-                SpecificMachineIds = NormalizeMachineIds(payload.SpecificMachineIds),
-                ExcludedMachineIds = NormalizeMachineIds(payload.ExcludedMachineIds)
-            };
+            return JsonSerializer.Deserialize<DeploymentRequestPayload>(deploymentJson) ?? new DeploymentRequestPayload();
         }
         catch
         {
-            return DeploymentMachineSelection.Empty;
+            return new DeploymentRequestPayload();
         }
     }
 
-    private static HashSet<int> NormalizeMachineIds(IEnumerable<int> machineIds)
+    private static HashSet<int> NormalizePositiveIds(IEnumerable<int> machineIds)
     {
         if (machineIds == null)
             return new HashSet<int>();
@@ -115,14 +118,37 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     {
         if (string.IsNullOrEmpty(json)) return new HashSet<int>();
 
-        return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
+        }
+        catch (JsonException)
+        {
+            var result = new HashSet<int>();
+
+            foreach (var segment in json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (int.TryParse(segment, out var id))
+                    result.Add(id);
+            }
+
+            return result;
+        }
     }
 
     public static HashSet<string> ParseRoles(string json)
     {
         if (string.IsNullOrEmpty(json)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     public static HashSet<string> ParseCsvRoles(string csv)

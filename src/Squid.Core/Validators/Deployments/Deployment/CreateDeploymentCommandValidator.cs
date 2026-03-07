@@ -24,9 +24,17 @@ public class CreateDeploymentCommandValidator : FluentMessageValidator<CreateDep
             .Must(BePositiveIntString)
             .WithMessage("ExcludedMachineIds must contain positive integer machine IDs.");
 
+        RuleForEach(c => c.SkipActionIds)
+            .GreaterThan(0)
+            .WithMessage("SkipActionIds must contain positive integer action IDs.");
+
         RuleFor(c => c)
             .Must(HasNoOverlap)
             .WithMessage("SpecificMachineIds and ExcludedMachineIds cannot overlap.");
+
+        RuleFor(c => c)
+            .Must(HasValidQueueWindow)
+            .WithMessage("QueueTimeExpiry must be later than QueueTime.");
     }
 
     private static bool BePositiveIntString(string value)
@@ -49,5 +57,16 @@ public class CreateDeploymentCommandValidator : FluentMessageValidator<CreateDep
             .ToHashSet();
 
         return !specific.Overlaps(excluded);
+    }
+
+    private static bool HasValidQueueWindow(CreateDeploymentCommand command)
+    {
+        if (!command.QueueTime.HasValue && command.QueueTimeExpiry.HasValue)
+            return false;
+
+        if (!command.QueueTime.HasValue || !command.QueueTimeExpiry.HasValue)
+            return true;
+
+        return command.QueueTimeExpiry.Value > command.QueueTime.Value;
     }
 }

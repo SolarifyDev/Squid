@@ -388,8 +388,8 @@ data:
         {
             Name = "Namespace Wrap Test Target",
             IsDisabled = false,
-            Roles = "k8s",
-            EnvironmentIds = environment.Id.ToString(),
+            Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
+            EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Json = string.Empty,
             Thumbprint = "TEST-THUMBPRINT",
             Uri = communicationStyle == "KubernetesAgent" ? string.Empty : "https://localhost:10933",

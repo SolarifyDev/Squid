@@ -1,3 +1,4 @@
+using System;
 using Squid.Core.Validators.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Deployment;
 
@@ -112,6 +113,55 @@ public class CreateDeploymentCommandValidatorTests
 
         result.IsValid.ShouldBeFalse();
         result.Errors.ShouldContain(e => e.ErrorMessage.Contains("cannot overlap"));
+    }
+
+    [Fact]
+    public void SkipActionIds_WithInvalidValue_Fails()
+    {
+        var command = ValidCommand();
+        command.SkipActionIds = [0, -1];
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.PropertyName.Contains("SkipActionIds"));
+    }
+
+    [Fact]
+    public void QueueTimeExpiry_EarlierThanQueueTime_Fails()
+    {
+        var command = ValidCommand();
+        command.QueueTime = DateTimeOffset.UtcNow.AddHours(1);
+        command.QueueTimeExpiry = DateTimeOffset.UtcNow.AddMinutes(30);
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.ErrorMessage.Contains("QueueTimeExpiry"));
+    }
+
+    [Fact]
+    public void QueueTimeExpiry_LaterThanQueueTime_Passes()
+    {
+        var command = ValidCommand();
+        command.QueueTime = DateTimeOffset.UtcNow.AddMinutes(10);
+        command.QueueTimeExpiry = DateTimeOffset.UtcNow.AddMinutes(20);
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void QueueTimeExpiry_WithoutQueueTime_Fails()
+    {
+        var command = ValidCommand();
+        command.QueueTime = null;
+        command.QueueTimeExpiry = DateTimeOffset.UtcNow.AddMinutes(20);
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeFalse();
     }
 
     private static CreateDeploymentCommand ValidCommand() => new()
