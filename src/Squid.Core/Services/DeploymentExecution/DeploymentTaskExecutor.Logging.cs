@@ -165,16 +165,22 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task PersistScriptOutputAsync(int serverTaskId, List<string> logLines, string source, CancellationToken ct)
+    private async Task PersistScriptOutputAsync(int serverTaskId, ScriptExecutionResult execResult, string source, CancellationToken ct)
     {
-        if (logLines == null || logLines.Count == 0) return;
+        if (execResult.LogLines == null || execResult.LogLines.Count == 0) return;
+
+        var stderrSet = execResult.StderrLines?.Count > 0
+            ? new HashSet<string>(execResult.StderrLines, StringComparer.Ordinal)
+            : null;
 
         try
         {
-            var entries = logLines.Select(line => new Persistence.Entities.Deployments.ServerTaskLog
+            var entries = execResult.LogLines.Select(line => new Persistence.Entities.Deployments.ServerTaskLog
             {
                 ServerTaskId = serverTaskId,
-                Category = ServerTaskLogCategory.Info,
+                Category = stderrSet != null && stderrSet.Contains(line)
+                    ? ServerTaskLogCategory.Error
+                    : ServerTaskLogCategory.Info,
                 MessageText = line,
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,

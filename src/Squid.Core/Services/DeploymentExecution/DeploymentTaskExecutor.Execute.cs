@@ -49,8 +49,15 @@ public partial class DeploymentTaskExecutor
             if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVariables))
             {
                 Log.Information("Skipping step {StepName} on target {TargetName}", step.Name, tc.Machine.Name);
+
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Skipping step \"{step.Name}\" on {tc.Machine.Name} (condition not met)", tc.Machine.Name, ct)
+                    .ConfigureAwait(false);
+
                 continue;
             }
+
+            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, ct)
+                .ConfigureAwait(false);
 
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
 
@@ -209,11 +216,11 @@ public partial class DeploymentTaskExecutor
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
 
-                await PersistScriptOutputAsync(_ctx.Task.Id, execResult.LogLines, tc.Machine.Name, ct)
+                await PersistScriptOutputAsync(_ctx.Task.Id, execResult, tc.Machine.Name, ct)
                     .ConfigureAwait(false);
 
                 if (!execResult.Success)
-                    throw new DeploymentScriptException("Script execution failed", _ctx.Deployment.Id);
+                    throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
                 await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct)
                     .ConfigureAwait(false);
@@ -224,6 +231,9 @@ public partial class DeploymentTaskExecutor
             {
                 result.Failed = true;
                 Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+
+                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Error, ex.Message, tc.Machine.Name, ct)
+                    .ConfigureAwait(false);
 
                 await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Failed, ct)
                     .ConfigureAwait(false);

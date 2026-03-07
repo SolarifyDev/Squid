@@ -57,9 +57,15 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
 
         allLogs.AddRange(completeResponse.Logs);
 
-        var logLines = allLogs
+        var orderedLogs = allLogs
             .OrderBy(l => l.Occurred)
             .Where(l => !string.IsNullOrEmpty(l.Text))
+            .ToList();
+
+        var logLines = orderedLogs.Select(l => l.Text).ToList();
+
+        var stderrLines = orderedLogs
+            .Where(l => l.Source == ProcessOutputSource.StdErr)
             .Select(l => l.Text)
             .ToList();
 
@@ -75,6 +81,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         {
             Success = success,
             LogLines = logLines,
+            StderrLines = stderrLines,
             ExitCode = completeResponse.ExitCode
         };
     }

@@ -6,6 +6,8 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public class LocalProcessExecutionStrategy : IExecutionStrategy
 {
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
+
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly ILocalProcessRunner _processRunner;
     private readonly IScriptContextWrapper? _scriptContextWrapper;
@@ -45,8 +47,9 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         WriteFilesToDirectory(plan.Files, workDir);
 
         var request = plan.Request;
+        var syntax = request.Syntax;
 
-        var payload = _payloadBuilder.Build(request);
+        var payload = _payloadBuilder.Build(request, syntax);
 
         var packagePath = Path.Combine(workDir, payload.PackageFileName);
         var variablePath = Path.Combine(workDir, "variables.json");
@@ -59,14 +62,13 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
         scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
 
-        var scriptPath = Path.Combine(workDir, "calamari-deploy.ps1");
-        await File.WriteAllTextAsync(scriptPath, scriptBody, Encoding.UTF8, ct).ConfigureAwait(false);
+        var (executable, args, scriptFileName) = BuildCalamariInvocation(syntax);
+        var scriptPath = Path.Combine(workDir, scriptFileName);
+        await File.WriteAllTextAsync(scriptPath, scriptBody, Utf8NoBom, ct).ConfigureAwait(false);
 
         Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync(
-            "pwsh", $"-NoProfile -NonInteractive -File \"{scriptPath}\"",
-            workDir, ct).ConfigureAwait(false);
+        return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
@@ -76,7 +78,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
         var (executable, arguments, scriptFileName) = BuildDirectScriptInvocation(plan);
         var scriptPath = Path.Combine(workDir, scriptFileName);
-        await File.WriteAllTextAsync(scriptPath, plan.ScriptBody, Encoding.UTF8, ct).ConfigureAwait(false);
+        await File.WriteAllTextAsync(scriptPath, plan.ScriptBody, Utf8NoBom, ct).ConfigureAwait(false);
 
         Log.Information("Executing script locally in {WorkDir}", workDir);
 
@@ -124,6 +126,16 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         {
             Log.Warning(ex, "Failed to clean up work directory {WorkDir}", workDir);
         }
+    }
+
+    private static (string Executable, string Arguments, string ScriptFileName) BuildCalamariInvocation(ScriptSyntax syntax)
+    {
+        return syntax switch
+        {
+            ScriptSyntax.Bash => ("bash", "\"{{ScriptPath}}\"", "calamari-deploy.sh"),
+            ScriptSyntax.PowerShell => ("pwsh", "-NoProfile -NonInteractive -File \"{{ScriptPath}}\"", "calamari-deploy.ps1"),
+            _ => throw new InvalidOperationException($"Unsupported script syntax '{syntax}' for Calamari deployment.")
+        };
     }
 
     private static (string Executable, string Arguments, string ScriptFileName) BuildDirectScriptInvocation(
