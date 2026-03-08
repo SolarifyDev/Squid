@@ -1,6 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Account;
@@ -25,10 +24,10 @@ public partial class DeploymentTaskExecutor
         PreFilterTargetsByRoles();
     }
 
-    private async Task LogDeploymentDataSummaryAsync(int serverTaskId, CancellationToken ct)
+    private async Task LogDeploymentDataSummaryAsync(CancellationToken ct)
     {
-        await LogMachineSelectionConstraintsAsync(serverTaskId, ct).ConfigureAwait(false);
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
+        await LogMachineSelectionConstraintsAsync(ct).ConfigureAwait(false);
+        await LogInfoAsync($"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", ct).ConfigureAwait(false);
     }
 
     private async Task PrepareAllTargetsAsync(CancellationToken ct)
@@ -39,11 +38,11 @@ public partial class DeploymentTaskExecutor
 
             LoadTransportForTarget(tc);
 
-            await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
+            await LogInfoAsync($"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", ct).ConfigureAwait(false);
 
             if (tc.Transport == null)
             {
-                await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Warning, $"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
+                await LogWarningAsync($"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", ct).ConfigureAwait(false);
             }
 
             if (tc.Transport != null)
@@ -58,13 +57,13 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task LoadTaskAsync(int serverTaskId, CancellationToken ct)
+    private async Task LoadTaskAsync(CancellationToken ct)
     {
-        var task = await _serverTaskService.StartExecutingAsync(serverTaskId, ct).ConfigureAwait(false);
+        var task = await _serverTaskService.StartExecutingAsync(_ctx.ServerTaskId, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
 
-        Log.Information("Start processing task {TaskId}", serverTaskId);
+        Log.Information("Start processing task {TaskId}", _ctx.ServerTaskId);
     }
 
     private async Task LoadDeploymentAsync(CancellationToken ct)
@@ -120,20 +119,16 @@ public partial class DeploymentTaskExecutor
         _ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = _ctx.Deployment.Id.ToString() });
     }
 
-    private async Task LogMachineSelectionConstraintsAsync(int serverTaskId, CancellationToken ct)
+    private async Task LogMachineSelectionConstraintsAsync(CancellationToken ct)
     {
         var selection = DeploymentTargetFinder.ParseTargetSelection(_ctx.Deployment?.Json);
-        if (!selection.HasConstraints)
-            return;
 
-        var includeText = selection.SpecificMachineIds.Count == 0
-            ? "*"
-            : string.Join(", ", selection.SpecificMachineIds.OrderBy(x => x));
-        var excludeText = selection.ExcludedMachineIds.Count == 0
-            ? "-"
-            : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
+        if (!selection.HasConstraints) return;
 
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
+        var includeText = selection.SpecificMachineIds.Count == 0 ? "*" : string.Join(", ", selection.SpecificMachineIds.OrderBy(x => x));
+        var excludeText = selection.ExcludedMachineIds.Count == 0 ? "-" : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
+
+        await LogInfoAsync($"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}", "System", ct).ConfigureAwait(false);
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

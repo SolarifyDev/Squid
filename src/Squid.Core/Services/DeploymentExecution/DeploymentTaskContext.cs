@@ -8,6 +8,9 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public class DeploymentTaskContext
 {
+    // Task Identity (available before LoadTaskAsync — set at pipeline entry)
+    public int ServerTaskId { get; init; }
+
     // Task & Deployment
     public ServerTask Task { get; set; }
     public Deployment Deployment { get; set; }

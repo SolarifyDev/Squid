@@ -88,21 +88,21 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
-        _ctx = new DeploymentTaskContext();
+        _ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
 
         try
         {
-            await LoadTaskAsync(serverTaskId, ct);
+            await LoadTaskAsync(ct);
             await LoadDeploymentDataAsync(ct);
             await CreateTaskActivityNodeAsync(ct);
-            await LogDeploymentDataSummaryAsync(serverTaskId, ct);
+            await LogDeploymentDataSummaryAsync(ct);
             await PrepareAllTargetsAsync(ct);
             await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);
         }
         catch (Exception ex)
         {
-            await RecordFailureAsync(serverTaskId, ex, ct);
+            await RecordFailureAsync(ex, ct);
             throw;
         }
     }
