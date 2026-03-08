@@ -1,3 +1,5 @@
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+
 namespace Squid.Core.Services.Deployments.ServerTask;
 
 public static class TaskState
@@ -57,19 +59,6 @@ public static class TaskState
     public static void EnsureValidTransition(string from, string to)
     {
         if (!IsValidTransition(from, to))
-            throw new InvalidStateTransitionException(from, to);
-    }
-}
-
-public class InvalidStateTransitionException : InvalidOperationException
-{
-    public string FromState { get; }
-    public string ToState { get; }
-
-    public InvalidStateTransitionException(string from, string to)
-        : base($"Invalid state transition from '{from}' to '{to}'")
-    {
-        FromState = from;
-        ToState = to;
+            throw new ServerTaskStateTransitionException(from, to);
     }
 }

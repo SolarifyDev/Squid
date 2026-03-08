@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations.Schema;
+using Squid.Message.Models.Deployments.Deployment;
+
 namespace Squid.Core.Persistence.Entities.Deployments;
 
 public class Deployment : IEntity<int>
@@ -31,4 +34,7 @@ public class Deployment : IEntity<int>
     public int? VariableSetSnapshotId { get; set; }
 
     public DateTimeOffset Created { get; set; }
+
+    [NotMapped]
+    public DeploymentRequestPayload DeploymentRequestPayload { get; set; } = new();
 }

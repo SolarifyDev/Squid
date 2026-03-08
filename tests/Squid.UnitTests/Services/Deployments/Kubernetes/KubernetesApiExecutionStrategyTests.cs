@@ -29,6 +29,10 @@ public class KubernetesApiExecutionStrategyTests
             .Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
             .Returns<ScriptExecutionRequest>(CreatePayloadForRequest);
 
+        _payloadBuilder
+            .Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>(), It.IsAny<ScriptSyntax>()))
+            .Returns<ScriptExecutionRequest, ScriptSyntax>((req, _) => CreatePayloadForRequest(req));
+
         _processRunner
             .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
@@ -85,7 +89,7 @@ public class KubernetesApiExecutionStrategyTests
     }
 
     [Fact]
-    public async Task ExecuteScriptAsync_CalamariCommand_RunsPwsh()
+    public async Task ExecuteScriptAsync_CalamariCommand_RespectsSyntax()
     {
         string capturedExecutable = null;
 
@@ -96,11 +100,11 @@ public class KubernetesApiExecutionStrategyTests
 
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
 
-        capturedExecutable.ShouldBe("pwsh");
+        capturedExecutable.ShouldBe("bash");
     }
 
     [Fact]
-    public async Task ExecuteScriptAsync_ExplicitPackagedPayloadMode_RunsPwsh_EvenWithoutCalamariCommand()
+    public async Task ExecuteScriptAsync_ExplicitPackagedPayloadMode_RespectsSyntax()
     {
         string capturedExecutable = null;
 
@@ -114,7 +118,7 @@ public class KubernetesApiExecutionStrategyTests
 
         await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
 
-        capturedExecutable.ShouldBe("pwsh");
+        capturedExecutable.ShouldBe("bash");
     }
 
     [Fact]
@@ -239,11 +243,11 @@ public class KubernetesApiExecutionStrategyTests
     {
         var packerCalled = false;
         var realBuilder = new CalamariPayloadBuilder(_yamlNuGetPacker.Object);
-        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
-            .Returns<ScriptExecutionRequest>(req =>
+        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>(), It.IsAny<ScriptSyntax>()))
+            .Returns<ScriptExecutionRequest, ScriptSyntax>((req, syntax) =>
             {
                 packerCalled = true;
-                return realBuilder.Build(req);
+                return realBuilder.Build(req, syntax);
             });
 
         var files = new Dictionary<string, byte[]>
@@ -289,7 +293,7 @@ public class KubernetesApiExecutionStrategyTests
         string capturedArguments = null;
         string capturedWorkDir = null;
 
-        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>()))
+        _payloadBuilder.Setup(x => x.Build(It.IsAny<ScriptExecutionRequest>(), It.IsAny<ScriptSyntax>()))
             .Returns(new CalamariPayload
             {
                 PackageFileName = "squid.1.0.0.nupkg",
@@ -312,9 +316,8 @@ public class KubernetesApiExecutionStrategyTests
 
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
 
-        capturedExecutable.ShouldBe("pwsh");
-        capturedArguments.ShouldContain("-File");
-        capturedArguments.ShouldContain("calamari-deploy.ps1");
+        capturedExecutable.ShouldBe("bash");
+        capturedArguments.ShouldContain("calamari-deploy.sh");
     }
 
     // === Path Traversal Prevention ===
@@ -356,7 +359,7 @@ public class KubernetesApiExecutionStrategyTests
     // === PowerShell -File for Calamari ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_CalamariCommand_UsesPwshFile()
+    public async Task ExecuteScriptAsync_CalamariCommand_Bash_UsesScriptPath()
     {
         string capturedArguments = null;
 
@@ -367,8 +370,7 @@ public class KubernetesApiExecutionStrategyTests
 
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
 
-        capturedArguments.ShouldContain("-File");
-        capturedArguments.ShouldNotContain("-Command");
+        capturedArguments.ShouldContain("calamari-deploy.sh");
     }
 
     // === Helpers ===

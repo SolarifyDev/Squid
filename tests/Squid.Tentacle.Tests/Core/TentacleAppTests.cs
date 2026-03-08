@@ -47,7 +47,7 @@ public class TentacleAppTests : TimedTestBase
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
-        var settings = new TentacleSettings { Flavor = "KubernetesAgent" };
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", ServerCommsUrl = "https://localhost:10943" };
         var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
 
         await backgroundTask.Started.Task.WaitAsync(TestCancellationToken);
@@ -166,7 +166,7 @@ public class TentacleAppTests : TimedTestBase
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
-        var settings = new TentacleSettings { Flavor = "KubernetesAgent" };
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", ServerCommsUrl = "https://localhost:10943" };
         var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
 
         await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
@@ -209,7 +209,7 @@ public class TentacleAppTests : TimedTestBase
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
-        var settings = new TentacleSettings { Flavor = "KubernetesAgent", SubscriptionId = "external-sub-id" };
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", SubscriptionId = "external-sub-id", ServerCommsUrl = "https://localhost:10943" };
         var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
 
         await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);

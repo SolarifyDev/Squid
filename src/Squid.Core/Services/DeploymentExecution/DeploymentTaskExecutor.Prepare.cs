@@ -1,6 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Account;
@@ -13,20 +12,22 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task LoadDeploymentDataAsync(int serverTaskId, CancellationToken ct)
+    private async Task LoadDeploymentDataAsync(CancellationToken ct)
     {
-        await LoadTaskAsync(serverTaskId, ct).ConfigureAwait(false);
         await LoadDeploymentAsync(ct).ConfigureAwait(false);
         await LoadSelectedPackagesAsync(ct).ConfigureAwait(false);
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
 
-        var targetNames = string.Join(", ", _ctx.AllTargets.Select(t => t.Name));
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {targetNames}", "System", ct);
-
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
+    }
+
+    private async Task LogDeploymentDataSummaryAsync(CancellationToken ct)
+    {
+        await LogMachineSelectionConstraintsAsync(ct).ConfigureAwait(false);
+        await LogInfoAsync($"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", ct).ConfigureAwait(false);
     }
 
     private async Task PrepareAllTargetsAsync(CancellationToken ct)
@@ -37,8 +38,12 @@ public partial class DeploymentTaskExecutor
 
             LoadTransportForTarget(tc);
 
+            await LogInfoAsync($"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", ct).ConfigureAwait(false);
+
             if (tc.Transport == null)
-                Log.Warning("No transport resolved for target {TargetName} with style {CommunicationStyle}", target.Name, tc.CommunicationStyle);
+            {
+                await LogWarningAsync($"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", ct).ConfigureAwait(false);
+            }
 
             if (tc.Transport != null)
                 await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);
@@ -52,20 +57,13 @@ public partial class DeploymentTaskExecutor
         }
     }
 
-    private async Task LoadTaskAsync(int serverTaskId, CancellationToken ct)
+    private async Task LoadTaskAsync(CancellationToken ct)
     {
-        var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
-
-        if (task == null) throw new DeploymentEntityNotFoundException("ServerTask", serverTaskId);
-
-        await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
-
-        task.State = TaskState.Executing;
-        task.StartTime = DateTimeOffset.UtcNow;
+        var task = await _serverTaskService.StartExecutingAsync(_ctx.ServerTaskId, ct).ConfigureAwait(false);
 
         _ctx.Task = task;
 
-        Log.Information("Start processing task {TaskId}", serverTaskId);
+        Log.Information("Start processing task {TaskId}", _ctx.ServerTaskId);
     }
 
     private async Task LoadDeploymentAsync(CancellationToken ct)
@@ -75,10 +73,15 @@ public partial class DeploymentTaskExecutor
         if (deployment == null) throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
 
         _ctx.Deployment = deployment;
+        _ctx.Deployment.DeploymentRequestPayload = DeploymentTargetFinder.ParseRequestPayload(deployment.Json);
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
-
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
+        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(deployment.EnvironmentId, ct).ConfigureAwait(false);
+        
         _ctx.Release = release;
+        _ctx.Project = project;
+        _ctx.Environment = environment;
     }
 
     private async Task LoadSelectedPackagesAsync(CancellationToken ct)
@@ -114,6 +117,18 @@ public partial class DeploymentTaskExecutor
         _ctx.Variables = await _variableResolver.ResolveVariablesAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
 
         _ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = _ctx.Deployment.Id.ToString() });
+    }
+
+    private async Task LogMachineSelectionConstraintsAsync(CancellationToken ct)
+    {
+        var selection = DeploymentTargetFinder.ParseTargetSelection(_ctx.Deployment?.Json);
+
+        if (!selection.HasConstraints) return;
+
+        var includeText = selection.SpecificMachineIds.Count == 0 ? "*" : string.Join(", ", selection.SpecificMachineIds.OrderBy(x => x));
+        var excludeText = selection.ExcludedMachineIds.Count == 0 ? "-" : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
+
+        await LogInfoAsync($"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}", "System", ct).ConfigureAwait(false);
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

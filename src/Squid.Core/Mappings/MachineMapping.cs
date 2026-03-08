@@ -17,7 +17,35 @@ public class MachineMapping : Profile
                 : DeserializeRoles(y.Roles)));
     }
 
-    private static List<int> DeserializeIds(string json) => JsonSerializer.Deserialize<List<int>>(json);
+    private static List<int> DeserializeIds(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(json) ?? new List<int>();
+        }
+        catch (JsonException)
+        {
+            var result = new List<int>();
 
-    private static List<string> DeserializeRoles(string json) => JsonSerializer.Deserialize<List<string>>(json);
+            foreach (var segment in json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (int.TryParse(segment, out var id))
+                    result.Add(id);
+            }
+
+            return result;
+        }
+    }
+
+    private static List<string> DeserializeRoles(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch (JsonException)
+        {
+            return json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        }
+    }
 }

@@ -43,4 +43,10 @@ public class Machine : IEntity<int>
     public string Slug { get; set; }
 
     public string AgentVersion { get; set; }
+
+    public MachineHealthStatus HealthStatus { get; set; } = MachineHealthStatus.Unknown;
+
+    public DateTime? HealthLastChecked { get; set; }
+
+    public string HealthDetailJson { get; set; }
 }

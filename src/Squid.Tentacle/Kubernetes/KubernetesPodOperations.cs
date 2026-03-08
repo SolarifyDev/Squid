@@ -26,4 +26,37 @@ public class KubernetesPodOperations : IKubernetesPodOperations
 
     public V1PodList ListPods(string namespaceParameter, string labelSelector)
         => _client.CoreV1.ListNamespacedPod(namespaceParameter, labelSelector: labelSelector);
+
+    public Corev1EventList ListEvents(string namespaceParameter, string fieldSelector = null, string labelSelector = null)
+        => _client.CoreV1.ListNamespacedEvent(namespaceParameter, fieldSelector: fieldSelector, labelSelector: labelSelector);
+
+    public V1ConfigMap CreateOrReplaceConfigMap(V1ConfigMap configMap, string namespaceParameter)
+    {
+        try
+        {
+            return _client.CoreV1.ReplaceNamespacedConfigMap(configMap, configMap.Metadata.Name, namespaceParameter);
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return _client.CoreV1.CreateNamespacedConfigMap(configMap, namespaceParameter);
+        }
+    }
+
+    public V1Secret CreateOrReplaceSecret(V1Secret secret, string namespaceParameter)
+    {
+        try
+        {
+            return _client.CoreV1.ReplaceNamespacedSecret(secret, secret.Metadata.Name, namespaceParameter);
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return _client.CoreV1.CreateNamespacedSecret(secret, namespaceParameter);
+        }
+    }
+
+    public void DeleteConfigMap(string name, string namespaceParameter)
+        => _client.CoreV1.DeleteNamespacedConfigMap(name, namespaceParameter);
+
+    public void DeleteSecret(string name, string namespaceParameter)
+        => _client.CoreV1.DeleteNamespacedSecret(name, namespaceParameter);
 }

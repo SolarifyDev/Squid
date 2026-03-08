@@ -8,26 +8,31 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public class DeploymentTaskContext
 {
+    // Task Identity (available before LoadTaskAsync — set at pipeline entry)
+    public int ServerTaskId { get; init; }
+
     // Task & Deployment
-    public Persistence.Entities.Deployments.ServerTask Task { get; set; }
+    public ServerTask Task { get; set; }
     public Deployment Deployment { get; set; }
-    public Persistence.Entities.Deployments.Release Release { get; set; }
+    public Release Release { get; set; }
+    public Project Project { get; set; }
+    public Squid.Core.Persistence.Entities.Deployments.Environment Environment { get; set; }
     public DeploymentProcessSnapshotDto ProcessSnapshot { get; set; }
 
     // Variables — deployment-level only, not polluted by endpoint variables
     public List<VariableDto> Variables { get; set; }
 
     // Targets
-    public List<Persistence.Entities.Deployments.Machine> AllTargets { get; set; } = new();
+    public List<Machine> AllTargets { get; set; } = new();
     public List<DeploymentTargetContext> AllTargetsContext { get; set; } = new();
 
     // Execution
     public List<DeploymentStepDto> Steps { get; set; }
-    public List<Persistence.Entities.Deployments.ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
+    public List<ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
 
     // Activity Tracking
-    public Persistence.Entities.Deployments.ActivityLog TaskActivityNode { get; set; }
+    public ActivityLog TaskActivityNode { get; set; }
 
     // Logging
     private long _logSequence;
@@ -36,7 +41,7 @@ public class DeploymentTaskContext
 
 public class DeploymentTargetContext
 {
-    public Persistence.Entities.Deployments.Machine Machine { get; set; }
+    public Machine Machine { get; set; }
     public EndpointContext EndpointContext { get; set; } = new();
     public CommunicationStyle CommunicationStyle { get; set; }
     public IDeploymentTransport Transport { get; set; }

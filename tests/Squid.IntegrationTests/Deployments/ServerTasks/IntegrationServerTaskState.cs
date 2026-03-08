@@ -1,7 +1,7 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;
 
@@ -161,7 +161,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
         {
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Success)
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -183,7 +183,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Success)
                 .ConfigureAwait(false);
 
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Success, TaskState.Executing)
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -204,7 +204,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Failed)
                 .ConfigureAwait(false);
 
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Failed, TaskState.Pending)
                     .ConfigureAwait(false)).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -220,7 +220,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
             // Task is Pending, but we claim it's Executing
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Success)
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -236,7 +236,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
     {
         await Run<IServerTaskDataProvider>(async provider =>
         {
-            await Should.ThrowAsync<DeploymentEntityNotFoundException>(async () =>
+            await Should.ThrowAsync<ServerTaskNotFoundException>(async () =>
                 await provider.TransitionStateAsync(999999, TaskState.Pending, TaskState.Executing)
                     .ConfigureAwait(false)).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -400,7 +400,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             task.CompletedTime.ShouldNotBeNull();
 
             // Success → anything should fail
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Success, TaskState.Executing)
                     .ConfigureAwait(false)).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -423,7 +423,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             task.CompletedTime.ShouldNotBeNull();
 
             // Failed is terminal
-            await Should.ThrowAsync<InvalidStateTransitionException>(async () =>
+            await Should.ThrowAsync<ServerTaskStateTransitionException>(async () =>
                 await provider.TransitionStateAsync(taskId, TaskState.Failed, TaskState.Pending)
                     .ConfigureAwait(false)).ConfigureAwait(false);
         }).ConfigureAwait(false);

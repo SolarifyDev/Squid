@@ -11,4 +11,4 @@ public sealed class KubernetesAgentTransport(
     : DeploymentTransport(
         CommunicationStyle.KubernetesAgent, variables, scriptWrapper, strategy,
         ExecutionLocation.RemoteTentacle, ExecutionBackend.HalibutScriptService,
-        requiresContextPreparationForPackagedPayload: false);
+        requiresContextPreparationForPackagedPayload: true);

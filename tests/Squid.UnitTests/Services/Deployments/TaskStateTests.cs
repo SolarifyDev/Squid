@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 
 namespace Squid.UnitTests.Services.Deployments;
 
@@ -178,7 +179,7 @@ public class TaskStateTests
     [Fact]
     public void EnsureValidTransition_InvalidTransition_ThrowsException()
     {
-        var ex = Should.Throw<InvalidStateTransitionException>(
+        var ex = Should.Throw<ServerTaskStateTransitionException>(
             () => TaskState.EnsureValidTransition("Success", "Executing"));
 
         ex.FromState.ShouldBe("Success");
@@ -190,7 +191,7 @@ public class TaskStateTests
     [Fact]
     public void EnsureValidTransition_SameState_ThrowsException()
     {
-        Should.Throw<InvalidStateTransitionException>(
+        Should.Throw<ServerTaskStateTransitionException>(
             () => TaskState.EnsureValidTransition("Pending", "Pending"));
     }
 

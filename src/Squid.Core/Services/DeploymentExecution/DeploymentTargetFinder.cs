@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Services.Machines;
+using Squid.Message.Models.Deployments.Deployment;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -21,53 +22,94 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         _machineDataProvider = machineDataProvider;
     }
 
-    public async Task<List<Persistence.Entities.Deployments.Machine>> FindTargetsAsync(
-        Persistence.Entities.Deployments.Deployment deployment,
-        CancellationToken cancellationToken)
+    public async Task<List<Persistence.Entities.Deployments.Machine>> FindTargetsAsync(Persistence.Entities.Deployments.Deployment deployment, CancellationToken cancellationToken)
     {
         if (deployment == null) throw new ArgumentNullException(nameof(deployment));
 
+        var selection = ParseTargetSelection(deployment.Json);
         var candidates = await GetCandidatePoolAsync(deployment, cancellationToken).ConfigureAwait(false);
+        
         candidates = FilterByEnvironment(candidates, deployment.EnvironmentId);
         candidates = FilterDisabled(candidates);
+        candidates = ApplyMachineSelection(candidates, selection);
 
-        Log.Information("Found {Count} target machines for deployment {DeploymentId}",
-            candidates.Count, deployment.Id);
+        Log.Information("Found {Count} target machines for deployment {DeploymentId}", candidates.Count, deployment.Id);
 
         return candidates;
     }
 
-    private async Task<List<Persistence.Entities.Deployments.Machine>> GetCandidatePoolAsync(
-        Persistence.Entities.Deployments.Deployment deployment,
-        CancellationToken ct)
+    private async Task<List<Persistence.Entities.Deployments.Machine>> GetCandidatePoolAsync(Persistence.Entities.Deployments.Deployment deployment, CancellationToken ct)
     {
         if (deployment.MachineId > 0)
         {
             var machine = await _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, ct).ConfigureAwait(false);
-            return machine != null
-                ? new List<Persistence.Entities.Deployments.Machine> { machine }
-                : new List<Persistence.Entities.Deployments.Machine>();
+            
+            return machine != null ? [machine] : [];
         }
 
         var environmentIds = new HashSet<int> { deployment.EnvironmentId };
+        
         return await _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), ct).ConfigureAwait(false);
     }
 
-    private static List<Persistence.Entities.Deployments.Machine> FilterByEnvironment(
-        List<Persistence.Entities.Deployments.Machine> candidates,
-        int environmentId)
+    private static List<Persistence.Entities.Deployments.Machine> FilterByEnvironment(List<Persistence.Entities.Deployments.Machine> candidates, int environmentId)
     {
-        return candidates
-            .Where(m => ParseIds(m.EnvironmentIds).Contains(environmentId))
-            .ToList();
+        return candidates.Where(m => ParseIds(m.EnvironmentIds).Contains(environmentId)).ToList();
     }
 
-    private static List<Persistence.Entities.Deployments.Machine> FilterDisabled(
-        List<Persistence.Entities.Deployments.Machine> candidates)
+    private static List<Persistence.Entities.Deployments.Machine> FilterDisabled(List<Persistence.Entities.Deployments.Machine> candidates)
     {
-        return candidates
-            .Where(m => !m.IsDisabled)
-            .ToList();
+        return candidates.Where(m => !m.IsDisabled).ToList();
+    }
+
+    public static List<Persistence.Entities.Deployments.Machine> ApplyMachineSelection(List<Persistence.Entities.Deployments.Machine> candidates, DeploymentMachineSelection selection)
+    {
+        if (selection == null || !selection.HasConstraints)
+            return candidates;
+
+        var filtered = candidates;
+
+        if (selection.SpecificMachineIds.Count > 0)
+            filtered = filtered.Where(m => selection.SpecificMachineIds.Contains(m.Id)).ToList();
+
+        if (selection.ExcludedMachineIds.Count > 0)
+            filtered = filtered.Where(m => !selection.ExcludedMachineIds.Contains(m.Id)).ToList();
+
+        return filtered;
+    }
+
+    public static DeploymentMachineSelection ParseTargetSelection(string deploymentJson)
+    {
+        var payload = ParseRequestPayload(deploymentJson);
+
+        return new DeploymentMachineSelection
+        {
+            SpecificMachineIds = NormalizePositiveIds(payload.SpecificMachineIds),
+            ExcludedMachineIds = NormalizePositiveIds(payload.ExcludedMachineIds)
+        };
+    }
+
+    public static DeploymentRequestPayload ParseRequestPayload(string deploymentJson)
+    {
+        if (string.IsNullOrWhiteSpace(deploymentJson))
+            return new DeploymentRequestPayload();
+
+        try
+        {
+            return JsonSerializer.Deserialize<DeploymentRequestPayload>(deploymentJson) ?? new DeploymentRequestPayload();
+        }
+        catch
+        {
+            return new DeploymentRequestPayload();
+        }
+    }
+
+    private static HashSet<int> NormalizePositiveIds(IEnumerable<int> machineIds)
+    {
+        if (machineIds == null)
+            return new HashSet<int>();
+
+        return machineIds.Where(id => id > 0).ToHashSet();
     }
 
     // === Static utilities for per-step filtering (used by executor) ===
@@ -76,14 +118,37 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     {
         if (string.IsNullOrEmpty(json)) return new HashSet<int>();
 
-        return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
+        }
+        catch (JsonException)
+        {
+            var result = new HashSet<int>();
+
+            foreach (var segment in json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (int.TryParse(segment, out var id))
+                    result.Add(id);
+            }
+
+            return result;
+        }
     }
 
     public static HashSet<string> ParseRoles(string json)
     {
         if (string.IsNullOrEmpty(json)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return json.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     public static HashSet<string> ParseCsvRoles(string csv)
@@ -109,9 +174,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     /// a machine matches if it has ANY of the target roles).
     /// Empty or null targetRoles returns all machines (no filtering).
     /// </summary>
-    public static List<Persistence.Entities.Deployments.Machine> FilterByRoles(
-        List<Persistence.Entities.Deployments.Machine> candidates,
-        HashSet<string> targetRoles)
+    public static List<Persistence.Entities.Deployments.Machine> FilterByRoles(List<Persistence.Entities.Deployments.Machine> candidates, HashSet<string> targetRoles)
     {
         if (targetRoles == null || targetRoles.Count == 0)
             return candidates;
@@ -128,22 +191,19 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     /// on machines that won't execute any step.
     /// Returns empty set if no steps define target roles (meaning all machines needed).
     /// </summary>
-    public static HashSet<string> CollectAllTargetRoles(
-        List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps)
+    public static HashSet<string> CollectAllTargetRoles(List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps)
     {
         if (steps == null || steps.Count == 0)
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var allRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var hasStepWithoutRoles = false;
+        var allRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var step in steps)
         {
-            if (step.IsDisabled)
-                continue;
+            if (step.IsDisabled) continue;
 
-            var rolesProp = step.Properties?
-                .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+            var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
 
             if (rolesProp == null || string.IsNullOrEmpty(rolesProp.PropertyValue))
             {
@@ -152,6 +212,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             else
             {
                 var stepRoles = ParseCsvRoles(rolesProp.PropertyValue);
+                
                 allRoles.UnionWith(stepRoles);
             }
         }
@@ -161,5 +222,16 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return allRoles;
+    }
+    
+    public sealed class DeploymentMachineSelection
+    {
+        public static readonly DeploymentMachineSelection Empty = new();
+
+        public HashSet<int> SpecificMachineIds { get; init; } = new();
+
+        public HashSet<int> ExcludedMachineIds { get; init; } = new();
+
+        public bool HasConstraints => SpecificMachineIds.Count > 0 || ExcludedMachineIds.Count > 0;
     }
 }

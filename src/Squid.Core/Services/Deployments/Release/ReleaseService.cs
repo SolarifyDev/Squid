@@ -1,5 +1,8 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Deployments.Releases.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Events.Deployments.Release;
@@ -19,6 +22,8 @@ public interface IReleaseService : IScopedDependency
     Task<GetReleasesResponse> GetReleasesAsync(GetReleasesRequest request, CancellationToken cancellationToken = default);
     
     Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default);
+
+    Task<GetReleaseVariableSnapshotResponse> GetReleaseVariableSnapshotAsync(GetReleaseVariableSnapshotRequest request, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseService : IReleaseService
@@ -28,24 +33,46 @@ public class ReleaseService : IReleaseService
     private readonly IReleaseSelectedPackageDataProvider _releaseSelectedPackageDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
+    private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IChannelDataProvider _channelDataProvider;
 
     public ReleaseService(
         IMapper mapper,
         IReleaseDataProvider releaseDataProvider,
         IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
-        IDeploymentSnapshotService deploymentSnapshotService)
+        IDeploymentSnapshotService deploymentSnapshotService,
+        IProjectDataProvider projectDataProvider,
+        IChannelDataProvider channelDataProvider)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
         _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
+        _projectDataProvider = projectDataProvider;
+        _channelDataProvider = channelDataProvider;
     }
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)
     {
         var release = _mapper.Map<Persistence.Entities.Deployments.Release>(command);
+
+        var project = await _projectDataProvider.GetProjectByIdAsync(command.ProjectId, cancellationToken).ConfigureAwait(false);
+        if (project == null)
+            throw new ReleaseProjectNotFoundException(command.ProjectId);
+
+        var channel = await _channelDataProvider.GetChannelByIdAsync(command.ChannelId, cancellationToken).ConfigureAwait(false);
+        if (channel == null)
+            throw new ReleaseChannelNotFoundException(command.ChannelId);
+
+        if (channel.ProjectId != project.Id)
+            throw new ReleaseChannelProjectMismatchException(command.ChannelId, project.Id, channel.ProjectId);
+
+        if (channel.SpaceId != project.SpaceId)
+            throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
+
+        release.SpaceId = project.SpaceId;
         
         var variableSetSnapshot = await _deploymentSnapshotService
             .SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
@@ -126,6 +153,24 @@ public class ReleaseService : IReleaseService
         release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
         
         await _releaseDataProvider.UpdateReleaseAsync(release, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<GetReleaseVariableSnapshotResponse> GetReleaseVariableSnapshotAsync(GetReleaseVariableSnapshotRequest request, CancellationToken cancellationToken = default)
+    {
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(request.ReleaseId, cancellationToken).ConfigureAwait(false);
+
+        if (release == null)
+            throw new Exception($"Release {request.ReleaseId} not found");
+
+        var snapshot = await _deploymentSnapshotService.LoadVariableSetSnapshotAsync(release.ProjectVariableSetSnapshotId, cancellationToken).ConfigureAwait(false);
+
+        return new GetReleaseVariableSnapshotResponse
+        {
+            Data = new GetReleaseVariableSnapshotResponseData
+            {
+                VariableSnapshot = snapshot
+            }
+        };
     }
 
     private async Task PersistSelectedPackagesAsync(

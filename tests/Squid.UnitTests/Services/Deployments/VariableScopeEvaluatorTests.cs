@@ -1304,6 +1304,142 @@ public class VariableScopeEvaluatorTests
         result[0].Value.ShouldBe("role-val");
     }
 
+    // ========== Name-Based Scope Matching ==========
+
+    [Theory]
+    [InlineData("TEST", "TEST", true)]
+    [InlineData("test", "TEST", true)]
+    [InlineData("TEST", "PRD", false)]
+    public void IsApplicable_EnvironmentScopedByName_MatchesCaseInsensitively(string scopeValue, string envName, bool expected)
+    {
+        var variable = MakeVariable("Namespace", "my-ns", envScope: scopeValue);
+
+        var result = VariableScopeEvaluator.IsApplicable(variable, new VariableScopeContext
+        {
+            EnvironmentId = 1,
+            EnvironmentName = envName
+        });
+
+        result.ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("MyMachine", "MyMachine", true)]
+    [InlineData("mymachine", "MyMachine", true)]
+    [InlineData("OtherMachine", "MyMachine", false)]
+    public void IsApplicable_MachineScopedByName_MatchesCaseInsensitively(string scopeValue, string machineName, bool expected)
+    {
+        var variable = MakeVariable("Key", "val", machineScope: scopeValue);
+
+        var result = VariableScopeEvaluator.IsApplicable(variable, new VariableScopeContext
+        {
+            MachineId = 10,
+            MachineName = machineName
+        });
+
+        result.ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("Stable", "Stable", true)]
+    [InlineData("stable", "Stable", true)]
+    [InlineData("Beta", "Stable", false)]
+    public void IsApplicable_ChannelScopedByName_MatchesCaseInsensitively(string scopeValue, string channelName, bool expected)
+    {
+        var variable = MakeVariable("Key", "val", channelScope: scopeValue);
+
+        var result = VariableScopeEvaluator.IsApplicable(variable, new VariableScopeContext
+        {
+            ChannelId = 5,
+            ChannelName = channelName
+        });
+
+        result.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void IsApplicable_ScopeMatchesByName_WhenIdDoesNotMatch()
+    {
+        // Scope value is a name "TEST", EnvironmentId is 99 (no match), but EnvironmentName is "TEST" (match)
+        var variable = MakeVariable("Namespace", "test-ns", envScope: "TEST");
+
+        var result = VariableScopeEvaluator.IsApplicable(variable, new VariableScopeContext
+        {
+            EnvironmentId = 99,
+            EnvironmentName = "TEST"
+        });
+
+        result.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsApplicable_ScopeMatchesById_WhenNameDoesNotMatch()
+    {
+        // Scope value is "1" (ID match), EnvironmentName is "PRD" (no match against "1")
+        var variable = MakeVariable("Namespace", "prod-ns", envScope: "1");
+
+        var result = VariableScopeEvaluator.IsApplicable(variable, new VariableScopeContext
+        {
+            EnvironmentId = 1,
+            EnvironmentName = "PRD"
+        });
+
+        result.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_NameBasedScoping_HigherRankWins()
+    {
+        // Unscoped fallback vs environment-scoped by name — scoped should win
+        var unscoped = MakeVariable("Namespace", "default");
+        var envScoped = MakeVariable("Namespace", "test-ns", envScope: "TEST");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { unscoped, envScoped },
+            new VariableScopeContext { EnvironmentId = 1, EnvironmentName = "TEST" });
+
+        result.Single().Value.ShouldBe("test-ns");
+    }
+
+    [Fact]
+    public void Evaluate_MixedIdAndNameScopes_BothMatch()
+    {
+        // Environment scoped by name + Machine scoped by ID — both must match (AND across types)
+        var variable = MakeVariable("Config", "special-val", envScope: "TEST", machineScope: "10");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { variable },
+            new VariableScopeContext { EnvironmentId = 99, EnvironmentName = "TEST", MachineId = 10, MachineName = "Worker1" });
+
+        result.Single().Value.ShouldBe("special-val");
+    }
+
+    [Fact]
+    public void Evaluate_MixedIdAndNameScopes_OneMismatches_Excluded()
+    {
+        // Environment matches by name, but Machine matches neither ID nor name
+        var variable = MakeVariable("Config", "val", envScope: "TEST", machineScope: "Worker2");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { variable },
+            new VariableScopeContext { EnvironmentId = 99, EnvironmentName = "TEST", MachineId = 10, MachineName = "Worker1" });
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_NameBasedPrecedence_MachineNameBeatsEnvironmentName()
+    {
+        var envScoped = MakeVariable("Key", "env-val", envScope: "TEST");
+        var machineScoped = MakeVariable("Key", "machine-val", machineScope: "Worker1");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { envScoped, machineScoped },
+            new VariableScopeContext { EnvironmentId = 1, EnvironmentName = "TEST", MachineId = 10, MachineName = "Worker1" });
+
+        result.Single().Value.ShouldBe("machine-val");
+    }
+
     // ========== Helpers ==========
 
     private static VariableDto MakeVariable(string name, string value,

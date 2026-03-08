@@ -43,4 +43,10 @@ public class MachineDto : IBaseModel
     public string Slug { get; set; }
 
     public string AgentVersion { get; set; }
+
+    public MachineHealthStatus HealthStatus { get; set; }
+
+    public DateTime? HealthLastChecked { get; set; }
+
+    public string HealthDetailJson { get; set; }
 }

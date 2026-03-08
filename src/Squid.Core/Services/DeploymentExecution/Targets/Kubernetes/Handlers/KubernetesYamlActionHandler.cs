@@ -54,7 +54,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             ExecutionMode = ExecutionMode.PackagedPayload,
             PayloadKind = PayloadKind.YamlBundle,
             Files = yamlFiles,
-            Syntax = ScriptSyntax.PowerShell
+            Syntax = ScriptSyntax.Bash
         };
     }
 

@@ -194,7 +194,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data != null)
-                running.OutputQueue.Enqueue(new ProcessOutput(ProcessOutputSource.StdOut, e.Data));
+            {
+                var parsed = PodLogLineParser.Parse(e.Data);
+                running.OutputQueue.Enqueue(new ProcessOutput(parsed.Source, parsed.Text));
+            }
         };
 
         process.ErrorDataReceived += (_, e) =>

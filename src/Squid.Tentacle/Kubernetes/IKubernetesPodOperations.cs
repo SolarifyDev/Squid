@@ -9,4 +9,9 @@ public interface IKubernetesPodOperations
     Stream ReadPodLog(string name, string namespaceParameter, string container);
     void DeletePod(string name, string namespaceParameter);
     V1PodList ListPods(string namespaceParameter, string labelSelector);
+    Corev1EventList ListEvents(string namespaceParameter, string fieldSelector = null, string labelSelector = null);
+    V1ConfigMap CreateOrReplaceConfigMap(V1ConfigMap configMap, string namespaceParameter);
+    V1Secret CreateOrReplaceSecret(V1Secret secret, string namespaceParameter);
+    void DeleteConfigMap(string name, string namespaceParameter);
+    void DeleteSecret(string name, string namespaceParameter);
 }

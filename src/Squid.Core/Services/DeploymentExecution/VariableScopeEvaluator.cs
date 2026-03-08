@@ -80,30 +80,43 @@ public static class VariableScopeEvaluator
     {
         return scopeType switch
         {
-            VariableScopeType.Environment => context.EnvironmentId.HasValue
-                && string.Equals(scopeValue, context.EnvironmentId.Value.ToString(), StringComparison.OrdinalIgnoreCase),
+            VariableScopeType.Environment => MatchesIdOrName(scopeValue, context.EnvironmentId, context.EnvironmentName),
 
-            VariableScopeType.Machine => context.MachineId.HasValue
-                && string.Equals(scopeValue, context.MachineId.Value.ToString(), StringComparison.OrdinalIgnoreCase),
+            VariableScopeType.Machine => MatchesIdOrName(scopeValue, context.MachineId, context.MachineName),
+
+            VariableScopeType.Channel => MatchesIdOrName(scopeValue, context.ChannelId, context.ChannelName),
 
             VariableScopeType.Role => context.Roles is { Count: > 0 }
                 && context.Roles.Contains(scopeValue),
 
-            VariableScopeType.Channel => context.ChannelId.HasValue
-                && string.Equals(scopeValue, context.ChannelId.Value.ToString(), StringComparison.OrdinalIgnoreCase),
-
             _ => true
         };
+    }
+
+    private static bool MatchesIdOrName(string scopeValue, int? id, string name)
+    {
+        if (string.IsNullOrEmpty(scopeValue)) return false;
+
+        if (id.HasValue && string.Equals(scopeValue, id.Value.ToString(), StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!string.IsNullOrEmpty(name) && string.Equals(scopeValue, name, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 }
 
 public class VariableScopeContext
 {
     public int? EnvironmentId { get; init; }
+    public string EnvironmentName { get; init; }
 
     public int? MachineId { get; init; }
+    public string MachineName { get; init; }
 
     public HashSet<string> Roles { get; init; }
 
     public int? ChannelId { get; init; }
+    public string ChannelName { get; init; }
 }

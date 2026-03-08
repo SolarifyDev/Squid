@@ -1,24 +1,33 @@
-FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/sdk:9.0 AS build-env
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+ARG TARGETARCH
+
+WORKDIR /src
+COPY NuGet.Config .
+COPY src/Squid.Message/ Squid.Message/
+COPY src/Squid.Core/ Squid.Core/
+COPY src/Squid.Api/ Squid.Api/
+COPY src/Squid.Calamari/ Squid.Calamari/
+
+RUN dotnet publish Squid.Api/Squid.Api.csproj -c Release -o /app
+RUN if [ "$TARGETARCH" = "amd64" ]; then RID="linux-x64"; else RID="linux-$TARGETARCH"; fi && \
+    dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r $RID --self-contained -o /calamari && \
+    chmod +x /calamari/squid-calamari
+
+# Download kubectl matching target architecture
+RUN KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt) && \
+    if [ "$TARGETARCH" = "amd64" ]; then KARCH="amd64"; else KARCH="$TARGETARCH"; fi && \
+    curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl" && \
+    chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+
+# Runtime
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
 
 WORKDIR /app
-
-COPY ./src/Squid.Api ./build/Squid.Api
-COPY ./src/Squid.Core ./build/Squid.Core
-COPY ./src/Squid.Message ./build/Squid.Message
-COPY ./NuGet.Config ./build
-
-RUN dotnet publish build/Squid.Api -c Release -o out
-
-# 运行时阶段
-FROM registry-vpc.cn-hongkong.aliyuncs.com/wiltechs/aspnet:9.0
-
-WORKDIR /app
-
-COPY --from=build-env /app/out .
+COPY --from=build /app .
+COPY --from=build /calamari/squid-calamari /squid/bin/squid-calamari
+COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
 
 EXPOSE 8080
 EXPOSE 443
-
-USER root
 
 ENTRYPOINT ["dotnet", "Squid.Api.dll"]

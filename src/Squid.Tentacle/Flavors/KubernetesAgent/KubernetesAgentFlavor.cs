@@ -22,6 +22,8 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
         var registrar = new KubernetesAgentRegistrar(tentacleSettings, kubernetesSettings);
 
         var backgroundTasks = new List<ITentacleBackgroundTask>();
+        var startupHooks = new List<ITentacleStartupHook> { new InitializationFlagStartupHook() };
+        var readinessChecks = new List<Func<bool>>();
         ITentacleScriptBackend backend;
 
         if (!kubernetesSettings.UseScriptPods)
@@ -45,6 +47,19 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
 
             backend = scriptPodService;
             backgroundTasks.Add(new KubernetesPodMonitorBackgroundTask(podMonitor));
+            backgroundTasks.Add(new KubernetesEventMonitor(podOps, kubernetesSettings));
+            startupHooks.Add(new ClusterVersionDetector(k8sClient));
+
+            var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath);
+            backgroundTasks.Add(nfsWatchdog);
+            readinessChecks.Add(() => nfsWatchdog.IsHealthy);
+        }
+
+        Func<bool> CombinedReadiness()
+        {
+            if (readinessChecks.Count == 0) return null;
+
+            return () => readinessChecks.All(check => check());
         }
 
         return new TentacleFlavorRuntime
@@ -52,7 +67,8 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             Registrar = registrar,
             ScriptBackend = backend,
             BackgroundTasks = backgroundTasks,
-            StartupHooks = [new InitializationFlagStartupHook()]
+            StartupHooks = startupHooks,
+            ReadinessCheck = CombinedReadiness()
         };
     }
 }

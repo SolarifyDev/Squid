@@ -10,11 +10,13 @@ public partial class KubernetesPodManager
 
     private readonly IKubernetesPodOperations _ops;
     private readonly KubernetesSettings _settings;
+    private readonly ScriptPodTemplateProvider _templateProvider;
 
-    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings)
+    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null)
     {
         _ops = ops;
         _settings = settings;
+        _templateProvider = templateProvider;
     }
 
     public string CreatePod(string ticketId)

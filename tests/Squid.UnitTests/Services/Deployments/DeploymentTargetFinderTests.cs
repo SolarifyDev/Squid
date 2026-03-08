@@ -25,6 +25,17 @@ public class DeploymentTargetFinderTests
 
     private static string R(params string[] roles) => JsonSerializer.Serialize(roles);
 
+    private static string SelectionJson(
+        IEnumerable<string> specificMachineIds = null,
+        IEnumerable<string> excludedMachineIds = null)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            SpecificMachineIds = specificMachineIds?.ToList() ?? new List<string>(),
+            ExcludedMachineIds = excludedMachineIds?.ToList() ?? new List<string>()
+        });
+    }
+
     private static Machine CreateMachine(
         int id,
         string name = null,
@@ -48,13 +59,15 @@ public class DeploymentTargetFinderTests
 
     private static Deployment CreateDeployment(
         int environmentId = 1,
-        int machineId = 0) => new()
+        int machineId = 0,
+        string json = "") => new()
     {
         Id = 1,
         Name = "Test Deployment",
         EnvironmentId = environmentId,
         MachineId = machineId,
         SpaceId = 1,
+        Json = json,
         Created = DateTimeOffset.UtcNow
     };
 
@@ -287,6 +300,66 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
+    public async Task AutoSelect_SpecificMachineIds_ReturnsOnlySpecifiedMachines()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, envIds: "[1]"),
+            CreateMachine(3, envIds: "[1]")
+        };
+        SetupGetByFilter(machines);
+
+        var deployment = CreateDeployment(
+            environmentId: 1,
+            json: SelectionJson(specificMachineIds: ["1", "3"]));
+
+        var result = await _finder.FindTargetsAsync(deployment, CancellationToken.None);
+
+        result.Select(x => x.Id).OrderBy(x => x).ShouldBe([1, 3]);
+    }
+
+    [Fact]
+    public async Task AutoSelect_ExcludedMachineIds_RemovesExcludedMachines()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, envIds: "[1]"),
+            CreateMachine(3, envIds: "[1]")
+        };
+        SetupGetByFilter(machines);
+
+        var deployment = CreateDeployment(
+            environmentId: 1,
+            json: SelectionJson(excludedMachineIds: ["2"]));
+
+        var result = await _finder.FindTargetsAsync(deployment, CancellationToken.None);
+
+        result.Select(x => x.Id).OrderBy(x => x).ShouldBe([1, 3]);
+    }
+
+    [Fact]
+    public async Task AutoSelect_SpecificAndExcludedMachineIds_AppliesBoth()
+    {
+        var machines = new List<Machine>
+        {
+            CreateMachine(1, envIds: "[1]"),
+            CreateMachine(2, envIds: "[1]"),
+            CreateMachine(3, envIds: "[1]")
+        };
+        SetupGetByFilter(machines);
+
+        var deployment = CreateDeployment(
+            environmentId: 1,
+            json: SelectionJson(specificMachineIds: ["1", "2", "3"], excludedMachineIds: ["2"]));
+
+        var result = await _finder.FindTargetsAsync(deployment, CancellationToken.None);
+
+        result.Select(x => x.Id).OrderBy(x => x).ShouldBe([1, 3]);
+    }
+
+    [Fact]
     public async Task SpecificMachine_DoesNotCallGetByFilter()
     {
         SetupGetById(10, CreateMachine(10, envIds: "[1]"));
@@ -317,12 +390,75 @@ public class DeploymentTargetFinderTests
     }
 
     [Fact]
+    public void ParseTargetSelection_StringAndNumberMachineIds_ParsesSuccessfully()
+    {
+        var json = """
+                   {
+                     "SpecificMachineIds": ["1", 3, "5"],
+                     "ExcludedMachineIds": ["2", 4]
+                   }
+                   """;
+
+        var selection = DeploymentTargetFinder.ParseTargetSelection(json);
+
+        selection.SpecificMachineIds.OrderBy(x => x).ShouldBe([1, 3, 5]);
+        selection.ExcludedMachineIds.OrderBy(x => x).ShouldBe([2, 4]);
+    }
+
+    [Fact]
+    public void ParseRequestPayload_SkipActionIds_StringAndNumberIds_ParsesSuccessfully()
+    {
+        var json = """
+                   {
+                     "SkipActionIds": ["10", 20, "30"]
+                   }
+                   """;
+
+        var payload = DeploymentTargetFinder.ParseRequestPayload(json);
+
+        payload.SkipActionIds.OrderBy(x => x).ShouldBe([10, 20, 30]);
+    }
+
+    [Fact]
+    public void ParseRequestPayload_InvalidJson_ReturnsDefaultPayload()
+    {
+        var payload = DeploymentTargetFinder.ParseRequestPayload("{ bad json");
+
+        payload.ShouldNotBeNull();
+        payload.SkipActionIds.ShouldBeEmpty();
+        payload.SpecificMachineIds.ShouldBeEmpty();
+        payload.ExcludedMachineIds.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ParseIds_CorrectValues()
     {
         var result = DeploymentTargetFinder.ParseIds("[1,5,3]");
 
         result.ShouldContain(1);
         result.ShouldContain(5);
+        result.ShouldContain(3);
+    }
+
+    [Theory]
+    [InlineData("5", 1, 5)]
+    [InlineData("1,2,3", 3, 1)]
+    [InlineData("42", 1, 42)]
+    public void ParseIds_NonJsonFallback_ParsesBareIntegers(string input, int expectedCount, int expectedContains)
+    {
+        var result = DeploymentTargetFinder.ParseIds(input);
+
+        result.Count.ShouldBe(expectedCount);
+        result.ShouldContain(expectedContains);
+    }
+
+    [Fact]
+    public void ParseIds_NonJsonFallback_IgnoresNonNumericSegments()
+    {
+        var result = DeploymentTargetFinder.ParseIds("1,abc,3");
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain(1);
         result.ShouldContain(3);
     }
 
@@ -352,6 +488,26 @@ public class DeploymentTargetFinderTests
         result.Contains("web").ShouldBeTrue();
         result.Contains("api").ShouldBeTrue();
         result.Contains("WEB").ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("k8s", 1)]
+    [InlineData("web,api", 2)]
+    [InlineData("web, api , worker", 3)]
+    public void ParseRoles_NonJsonFallback_ParsesBareStrings(string input, int expectedCount)
+    {
+        var result = DeploymentTargetFinder.ParseRoles(input);
+
+        result.Count.ShouldBe(expectedCount);
+    }
+
+    [Fact]
+    public void ParseRoles_NonJsonFallback_CaseInsensitive()
+    {
+        var result = DeploymentTargetFinder.ParseRoles("K8S");
+
+        result.Contains("k8s").ShouldBeTrue();
+        result.Contains("K8S").ShouldBeTrue();
     }
 
     // ============================

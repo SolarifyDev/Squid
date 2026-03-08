@@ -54,7 +54,7 @@ public class TransportCompositionTests
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
         transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeFalse();
+        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]

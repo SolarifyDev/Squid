@@ -9,6 +9,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         string executable, string arguments, string workDir, CancellationToken ct)
     {
         var logLines = new List<string>();
+        var stderrLines = new List<string>();
         var logLock = new object();
 
         var psi = new ProcessStartInfo
@@ -36,7 +37,12 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         {
             if (e.Data == null) return;
 
-            lock (logLock) { logLines.Add(e.Data); }
+            lock (logLock)
+            {
+                logLines.Add(e.Data);
+                stderrLines.Add(e.Data);
+            }
+
             Log.Warning("[LocalExec:stderr] {Line}", e.Data);
         };
 
@@ -62,6 +68,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         {
             Success = exitCode == 0,
             LogLines = logLines,
+            StderrLines = stderrLines,
             ExitCode = exitCode
         };
     }

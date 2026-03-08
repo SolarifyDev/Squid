@@ -18,5 +18,6 @@ public class ServerTaskLogConfiguration : IEntityTypeConfiguration<ServerTaskLog
 
         builder.HasIndex(p => p.ServerTaskId);
         builder.HasIndex(p => new { p.ServerTaskId, p.SequenceNumber });
+        builder.HasIndex(p => new { p.ServerTaskId, p.ActivityNodeId, p.SequenceNumber });
     }
 }

@@ -94,7 +94,7 @@ public class KubernetesYamlActionHandlerTests
         result.ResolveContextPreparationPolicy().ShouldBe(ContextPreparationPolicy.Skip);
         result.PayloadKind.ShouldBe(PayloadKind.YamlBundle);
         result.Files.ShouldContainKey("deployment.yaml");
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+        result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 
     [Fact]

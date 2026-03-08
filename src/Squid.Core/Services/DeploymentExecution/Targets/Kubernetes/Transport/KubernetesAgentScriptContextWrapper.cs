@@ -35,17 +35,37 @@ public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 
     private static string WrapBash(string script, string ns)
     {
-        return $"""
-            kubectl config set-context --current --namespace="{ns}" > /dev/null 2>&1
-            {script}
-            """;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"""kubectl config set-context --current --namespace="{ns}" > /dev/null 2>&1 || true""");
+
+        if (!string.IsNullOrEmpty(ns) && ns != KubernetesDefaultValues.Namespace)
+        {
+            sb.AppendLine($"""kubectl get namespace -o name 2>/dev/null | grep -qx "namespace/{ns}" || kubectl create namespace "{ns}" || echo "Warning: Failed to create namespace {ns}, it may already exist" """);
+        }
+
+        if (!string.IsNullOrWhiteSpace(script))
+            sb.Append(script);
+
+        return sb.ToString();
     }
 
     private static string WrapPowerShell(string script, string ns)
     {
-        return $"""
-            kubectl config set-context --current --namespace="{ns}" | Out-Null
-            {script}
-            """;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"kubectl config set-context --current --namespace=\"{ns}\" | Out-Null");
+
+        if (!string.IsNullOrEmpty(ns) && ns != KubernetesDefaultValues.Namespace)
+        {
+            sb.AppendLine($"$existingNs = kubectl get namespace \"{ns}\" --ignore-not-found 2>&1");
+            sb.AppendLine("if (-not $existingNs) {");
+            sb.AppendLine($"    kubectl create namespace \"{ns}\"");
+            sb.AppendLine($"    if ($LASTEXITCODE -ne 0) {{ Write-Warning \"Failed to create namespace {ns}, it may already exist\" }}");
+            sb.AppendLine("}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(script))
+            sb.Append(script);
+
+        return sb.ToString();
     }
 }

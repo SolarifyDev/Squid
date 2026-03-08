@@ -8,6 +8,7 @@ public partial class KubernetesPodManager
 {
     private V1Pod BuildPodSpec(string podName, string ticketId)
     {
+        var template = _templateProvider?.TryLoadTemplate();
         var useInitContainer = !string.IsNullOrEmpty(_settings.TentacleImage);
 
         var volumes = new List<V1Volume>
@@ -113,7 +114,49 @@ public partial class KubernetesPodManager
             };
         }
 
+        ApplyTemplateOverrides(pod, template);
+
         return pod;
+    }
+
+    private static void ApplyTemplateOverrides(V1Pod pod, ScriptPodTemplate template)
+    {
+        if (template == null) return;
+
+        var mainContainer = pod.Spec.Containers[0];
+
+        if (!string.IsNullOrEmpty(template.Image))
+            mainContainer.Image = template.Image;
+
+        if (template.Resources != null)
+            mainContainer.Resources = template.Resources;
+
+        if (template.Tolerations is { Count: > 0 })
+            pod.Spec.Tolerations = template.Tolerations;
+
+        if (template.NodeSelector is { Count: > 0 })
+            pod.Spec.NodeSelector = template.NodeSelector;
+
+        if (template.Affinity != null)
+            pod.Spec.Affinity = template.Affinity;
+
+        if (template.AdditionalVolumes is { Count: > 0 })
+        {
+            pod.Spec.Volumes ??= new List<V1Volume>();
+            pod.Spec.Volumes = pod.Spec.Volumes.Concat(template.AdditionalVolumes).ToList();
+        }
+
+        if (template.AdditionalVolumeMounts is { Count: > 0 })
+        {
+            mainContainer.VolumeMounts ??= new List<V1VolumeMount>();
+            mainContainer.VolumeMounts = mainContainer.VolumeMounts.Concat(template.AdditionalVolumeMounts).ToList();
+        }
+
+        if (template.AdditionalEnvVars is { Count: > 0 })
+        {
+            mainContainer.Env ??= new List<V1EnvVar>();
+            mainContainer.Env = mainContainer.Env.Concat(template.AdditionalEnvVars).ToList();
+        }
     }
 
     private V1PodSecurityContext BuildPodSecurityContext()

@@ -61,8 +61,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                     new CreateDeploymentCommand
                     {
                         ReleaseId = release.Id,
-                        EnvironmentId = environment.Id,
-                        DeployedBy = 1
+                        EnvironmentId = environment.Id
                     });
 
                 var deployment = await repository
@@ -120,8 +119,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                     new CreateDeploymentCommand
                     {
                         ReleaseId = release.Id,
-                        EnvironmentId = environment.Id,
-                        DeployedBy = 1
+                        EnvironmentId = environment.Id
                     });
 
                 var deployment = await repository
@@ -131,6 +129,51 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                 // Verify deployment snapshot IDs point to release-time snapshots
                 deployment.ProcessSnapshotId.ShouldBe(release.ProjectDeploymentProcessSnapshotId);
                 deployment.VariableSetSnapshotId.ShouldBe(release.ProjectVariableSetSnapshotId);
+            }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_AssignsSpaceIdFromProjectAndChannel()
+    {
+        await Run<IRepository, IUnitOfWork, IReleaseService>(
+            async (repository, unitOfWork, releaseService) =>
+            {
+                var builder = new TestDataBuilder(repository, unitOfWork);
+
+                var environment = await builder.CreateEnvironmentAsync();
+                var lifecycle = await builder.CreateLifecycleAsync();
+                await builder.CreateLifecyclePhaseAsync(lifecycle.Id, environment.Id);
+
+                var variableSet = await builder.CreateVariableSetAsync();
+                var project = await builder.CreateProjectAsync(variableSet.Id);
+                var process = await builder.CreateDeploymentProcessAsync();
+                await builder.UpdateProjectProcessIdAsync(project, process.Id);
+
+                var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id);
+
+                project.SpaceId = 42;
+                channel.SpaceId = 42;
+                await repository.UpdateAsync(project).ConfigureAwait(false);
+                await repository.UpdateAsync(channel).ConfigureAwait(false);
+                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+                var releaseEvent = await releaseService.CreateReleaseAsync(
+                    new CreateReleaseCommand
+                    {
+                        ProjectId = project.Id,
+                        ChannelId = channel.Id,
+                        Version = "2.0.0"
+                    }).ConfigureAwait(false);
+
+                var release = await repository
+                    .Query<Release>(r => r.Id == releaseEvent.Release.Id)
+                    .FirstOrDefaultAsync()
+                    .ConfigureAwait(false);
+
+                release.ShouldNotBeNull();
+                release.SpaceId.ShouldBe(42);
+                release.ProjectId.ShouldBe(project.Id);
+                release.ChannelId.ShouldBe(channel.Id);
             }).ConfigureAwait(false);
     }
 }
