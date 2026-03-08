@@ -37,7 +37,8 @@ public partial class ScriptPodService
 
         foreach (var line in lines)
         {
-            logs.Add(new ProcessOutput(ProcessOutputSource.StdOut, line));
+            var parsed = PodLogLineParser.Parse(line);
+            logs.Add(new ProcessOutput(parsed.Source, parsed.Text));
             ctx.LogSequence++;
         }
 

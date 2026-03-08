@@ -5,6 +5,8 @@ namespace Squid.Core.Services.DeploymentExecution;
 public interface IHalibutClientFactory : IScopedDependency
 {
     IAsyncScriptService CreateClient(ServiceEndPoint endpoint);
+
+    IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint);
 }
 
 public class HalibutClientFactory : IHalibutClientFactory
@@ -16,4 +18,7 @@ public class HalibutClientFactory : IHalibutClientFactory
 
     public IAsyncScriptService CreateClient(ServiceEndPoint endpoint)
         => _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+    public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint)
+        => _halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
 }

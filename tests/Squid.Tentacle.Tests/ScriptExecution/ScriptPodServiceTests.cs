@@ -8,7 +8,7 @@ using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Message.Contracts.Tentacle;
 
-namespace Squid.UnitTests.Services.Tentacle;
+namespace Squid.Tentacle.Tests.ScriptExecution;
 
 public class ScriptPodServiceTests : IDisposable
 {

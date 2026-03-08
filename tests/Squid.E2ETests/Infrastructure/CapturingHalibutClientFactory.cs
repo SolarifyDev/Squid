@@ -11,6 +11,14 @@ public class CapturingHalibutClientFactory : IHalibutClientFactory
 
     public IAsyncScriptService CreateClient(ServiceEndPoint endpoint) => new CapturingScriptService(this);
 
+    public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint) => new NoOpCapabilitiesService();
+
+    private sealed class NoOpCapabilitiesService : IAsyncCapabilitiesService
+    {
+        public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request)
+            => Task.FromResult(new CapabilitiesResponse());
+    }
+
     private sealed class CapturingScriptService : IAsyncScriptService
     {
         private readonly CapturingHalibutClientFactory _factory;

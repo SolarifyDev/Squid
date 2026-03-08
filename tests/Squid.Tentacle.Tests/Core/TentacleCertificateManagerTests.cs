@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Squid.Tentacle.Certificate;
 
-namespace Squid.UnitTests.Services.Tentacle;
+namespace Squid.Tentacle.Tests.Core;
 
 public class TentacleCertificateManagerTests : IDisposable
 {

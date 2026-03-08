@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Autofac;
+using Halibut;
+using Halibut.Diagnostics;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -6,6 +9,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
+using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Enums;
 using Shouldly;
 using Xunit;
@@ -204,6 +208,26 @@ public class KubernetesAgentE2ETests
         {
             await _cluster.KubectlAsync($"delete namespace {testNs} --ignore-not-found");
         }
+    }
+
+    [Fact]
+    public async Task Agent_GetCapabilities_ReturnsExpectedServices()
+    {
+        var halibutRuntime = _fixture.LifetimeScope.Resolve<HalibutRuntime>();
+
+        var endpoint = new ServiceEndPoint(
+            $"poll://{_fixture.Stub.SubscriptionId}/",
+            _fixture.Stub.Thumbprint,
+            HalibutTimeoutsAndLimits.RecommendedValues());
+
+        var client = halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+
+        var response = await client.GetCapabilitiesAsync(new CapabilitiesRequest());
+
+        response.ShouldNotBeNull();
+        response.SupportedServices.ShouldContain("IScriptService/v1");
+        response.SupportedServices.ShouldContain("ICapabilitiesService/v1");
+        response.AgentVersion.ShouldNotBeNullOrWhiteSpace();
     }
 
     // ========================================================================

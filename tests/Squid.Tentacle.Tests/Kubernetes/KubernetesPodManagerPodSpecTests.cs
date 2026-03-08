@@ -5,7 +5,7 @@ using k8s.Models;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 
-namespace Squid.UnitTests.Services.Tentacle;
+namespace Squid.Tentacle.Tests.Kubernetes;
 
 public class KubernetesPodManagerPodSpecTests
 {

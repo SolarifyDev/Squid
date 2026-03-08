@@ -74,7 +74,11 @@ public sealed class TentacleApp
             halibutHost.StartListening(runtime.ListeningPort ?? tentacleSettings.ListeningPort);
 
         var isReady = true;
-        await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, () => isReady);
+        Func<bool> readinessCheck = runtime.ReadinessCheck != null
+            ? () => isReady && runtime.ReadinessCheck()
+            : () => isReady;
+
+        await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, readinessCheck);
 
         try
         {

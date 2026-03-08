@@ -16,14 +16,17 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     public TentacleHalibutHost(
         X509Certificate2 tentacleCert,
         IScriptService scriptService,
-        TentacleSettings settings)
+        TentacleSettings settings,
+        ICapabilitiesService capabilitiesService = null)
     {
         _settings = settings;
 
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
+        var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService());
 
         var serviceFactory = new DelegateServiceFactory();
         serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
+        serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => capsAdapter);
 
         _runtime = new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
@@ -113,5 +116,15 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
         public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.CancelScript(command));
+    }
+
+    private sealed class AsyncCapabilitiesServiceAdapter : ICapabilitiesServiceAsync
+    {
+        private readonly ICapabilitiesService _inner;
+
+        public AsyncCapabilitiesServiceAdapter(ICapabilitiesService inner) => _inner = inner;
+
+        public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request, CancellationToken ct)
+            => Task.FromResult(_inner.GetCapabilities(request));
     }
 }

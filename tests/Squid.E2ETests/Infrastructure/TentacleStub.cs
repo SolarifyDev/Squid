@@ -4,6 +4,7 @@ using Halibut;
 using Halibut.Diagnostics;
 using Halibut.ServiceModel;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.Core;
 
 namespace Squid.E2ETests.Infrastructure;
 
@@ -24,8 +25,12 @@ public partial class TentacleStub : IAsyncDisposable
         var scriptRunner = new ScriptRunner(kubeconfigPath);
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptRunner);
 
+        var capsService = new CapabilitiesService();
+        var asyncCapsAdapter = new AsyncCapabilitiesServiceAdapter(capsService);
+
         var serviceFactory = new DelegateServiceFactory();
         serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
+        serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => asyncCapsAdapter);
 
         _agentRuntime = new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
@@ -69,6 +74,16 @@ public partial class TentacleStub : IAsyncDisposable
             cert.Export(X509ContentType.Pfx, string.Empty),
             string.Empty,
             X509KeyStorageFlags.Exportable);
+    }
+
+    private sealed class AsyncCapabilitiesServiceAdapter : ICapabilitiesServiceAsync
+    {
+        private readonly ICapabilitiesService _inner;
+
+        public AsyncCapabilitiesServiceAdapter(ICapabilitiesService inner) => _inner = inner;
+
+        public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request, CancellationToken ct)
+            => Task.FromResult(_inner.GetCapabilities(request));
     }
 
     private sealed class AsyncScriptServiceAdapter : IScriptServiceAsync

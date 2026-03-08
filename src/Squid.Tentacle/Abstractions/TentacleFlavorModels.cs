@@ -53,4 +53,6 @@ public sealed class TentacleFlavorRuntime
 
     public IReadOnlyList<ITentacleStartupHook> StartupHooks { get; init; } =
         Array.Empty<ITentacleStartupHook>();
+
+    public Func<bool> ReadinessCheck { get; init; }
 }

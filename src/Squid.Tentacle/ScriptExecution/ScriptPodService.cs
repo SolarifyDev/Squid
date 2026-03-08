@@ -78,6 +78,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), ctx.LogSequence);
     }
 
+    public string WorkspaceBasePath => _tentacleSettings.WorkspacePath;
+
     public ConcurrentDictionary<string, ScriptPodContext> ActiveScripts => _scripts;
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)

@@ -2,7 +2,7 @@ using System;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Registration;
 
-namespace Squid.UnitTests.Services.Tentacle;
+namespace Squid.Tentacle.Tests.Registration;
 
 public class TentacleRegistrationClientTests
 {

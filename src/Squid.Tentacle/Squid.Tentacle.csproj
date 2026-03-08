@@ -8,6 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Squid.UnitTests" />
+    <InternalsVisibleTo Include="Squid.Tentacle.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Squid.Message/Squid.Message.csproj" />
   </ItemGroup>
 
