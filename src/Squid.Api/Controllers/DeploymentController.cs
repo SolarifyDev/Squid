@@ -27,8 +27,18 @@ public class DeploymentController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(PreviewDeploymentResponse))]
     public async Task<IActionResult> PreviewDeploymentAsync([FromBody] PreviewDeploymentRequest request)
     {
-        var response = await _mediator
-            .RequestAsync<PreviewDeploymentRequest, PreviewDeploymentResponse>(request).ConfigureAwait(false);
+        var response = await _mediator.RequestAsync<PreviewDeploymentRequest, PreviewDeploymentResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("{id:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentResponse))]
+    public async Task<IActionResult> GetDeploymentAsync(int id, [FromQuery] bool? verbose = null, [FromQuery] int? tail = null)
+    {
+        var request = new GetDeploymentRequest { Id = id, Verbose = verbose, Tail = tail };
+
+        var response = await _mediator.RequestAsync<GetDeploymentRequest, GetDeploymentResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
     }

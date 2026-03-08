@@ -29,6 +29,7 @@ public partial class DeploymentService : IDeploymentService
     private readonly IDeploymentValidationOrchestrator _deploymentValidationOrchestrator;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
+    private readonly IServerTaskService _serverTaskService;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
     public DeploymentService(
@@ -43,9 +44,11 @@ public partial class DeploymentService : IDeploymentService
         IDeploymentValidationOrchestrator deploymentValidationOrchestrator,
         IDeploymentSnapshotService deploymentSnapshotService,
         IServerTaskDataProvider serverTaskDataProvider,
+        IServerTaskService serverTaskService,
         ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
+        _currentUser = currentUser;
         _deploymentDataProvider = deploymentDataProvider;
         _releaseDataProvider = releaseDataProvider;
         _environmentDataProvider = environmentDataProvider;
@@ -55,8 +58,8 @@ public partial class DeploymentService : IDeploymentService
         _deploymentValidationOrchestrator = deploymentValidationOrchestrator;
         _deploymentSnapshotService = deploymentSnapshotService;
         _serverTaskDataProvider = serverTaskDataProvider;
+        _serverTaskService = serverTaskService;
         _backgroundJobClient = backgroundJobClient;
-        _currentUser = currentUser;
     }
 
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)

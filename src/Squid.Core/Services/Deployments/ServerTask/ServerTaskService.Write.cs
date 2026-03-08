@@ -1,4 +1,4 @@
-using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
@@ -10,7 +10,7 @@ public partial class ServerTaskService
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
 
         if (task == null)
-            throw new DeploymentEntityNotFoundException("ServerTask", taskId);
+            throw new ServerTaskNotFoundException(taskId);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
         {
@@ -20,7 +20,7 @@ public partial class ServerTaskService
         }
         else if (!string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidStateTransitionException(task.State, TaskState.Executing);
+            throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
         }
 
         if (!task.StartTime.HasValue)
