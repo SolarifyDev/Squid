@@ -3,7 +3,9 @@ using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -25,6 +27,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IServerTaskService _serverTaskService;
     private readonly IDeploymentDataProvider _deploymentDataProvider;
+    private readonly IProjectDataProvider _projectDataProvider;
+    private readonly IEnvironmentDataProvider _environmentDataProvider;
     private readonly IDeploymentAccountDataProvider _deploymentAccountDataProvider;
     private readonly ICertificateDataProvider _certificateDataProvider;
     private readonly IDeploymentCompletionDataProvider _deploymentCompletionDataProvider;
@@ -50,6 +54,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider,
         IServerTaskService serverTaskService,
         IDeploymentDataProvider deploymentDataProvider,
+        IProjectDataProvider projectDataProvider,
+        IEnvironmentDataProvider environmentDataProvider,
         IDeploymentAccountDataProvider deploymentAccountDataProvider,
         ICertificateDataProvider certificateDataProvider,
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
@@ -66,6 +72,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _releaseSelectedPackageDataProvider = releaseSelectedPackageDataProvider;
         _serverTaskService = serverTaskService;
         _deploymentDataProvider = deploymentDataProvider;
+        _projectDataProvider = projectDataProvider;
+        _environmentDataProvider = environmentDataProvider;
         _deploymentAccountDataProvider = deploymentAccountDataProvider;
         _certificateDataProvider = certificateDataProvider;
         _deploymentCompletionDataProvider = deploymentCompletionDataProvider;
@@ -85,8 +93,9 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         try
         {
             await LoadTaskAsync(serverTaskId, ct);
+            await LoadDeploymentDataAsync(ct);
             await CreateTaskActivityNodeAsync(ct);
-            await LoadDeploymentDataAsync(serverTaskId, ct);
+            await LogDeploymentDataSummaryAsync(serverTaskId, ct);
             await PrepareAllTargetsAsync(ct);
             await ExecuteDeploymentStepsAsync(ct);
             await RecordSuccessAsync(ct);

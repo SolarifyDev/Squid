@@ -13,19 +13,22 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public partial class DeploymentTaskExecutor
 {
-    private async Task LoadDeploymentDataAsync(int serverTaskId, CancellationToken ct)
+    private async Task LoadDeploymentDataAsync(CancellationToken ct)
     {
         await LoadDeploymentAsync(ct).ConfigureAwait(false);
         await LoadSelectedPackagesAsync(ct).ConfigureAwait(false);
         await LoadOrSnapshotAsync(ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ct).ConfigureAwait(false);
         await FindTargetsAsync(ct).ConfigureAwait(false);
-        await LogMachineSelectionConstraintsAsync(serverTaskId, ct).ConfigureAwait(false);
-
-        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", _ctx.TaskActivityNode?.Id, ct);
 
         ConvertSnapshotToSteps();
         PreFilterTargetsByRoles();
+    }
+
+    private async Task LogDeploymentDataSummaryAsync(int serverTaskId, CancellationToken ct)
+    {
+        await LogMachineSelectionConstraintsAsync(serverTaskId, ct).ConfigureAwait(false);
+        await PersistTaskLogAsync(serverTaskId, ServerTaskLogCategory.Info, $"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
     }
 
     private async Task PrepareAllTargetsAsync(CancellationToken ct)
@@ -71,11 +74,15 @@ public partial class DeploymentTaskExecutor
         if (deployment == null) throw new DeploymentEntityNotFoundException("Deployment", $"task:{_ctx.Task.Id}");
 
         _ctx.Deployment = deployment;
-        _ctx.DeploymentRequestPayload = DeploymentTargetFinder.ParseRequestPayload(deployment.Json);
+        _ctx.Deployment.DeploymentRequestPayload = DeploymentTargetFinder.ParseRequestPayload(deployment.Json);
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
-
+        var project = await _projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
+        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(deployment.EnvironmentId, ct).ConfigureAwait(false);
+        
         _ctx.Release = release;
+        _ctx.Project = project;
+        _ctx.Environment = environment;
     }
 
     private async Task LoadSelectedPackagesAsync(CancellationToken ct)

@@ -11,9 +11,11 @@ using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
@@ -25,6 +27,24 @@ namespace Squid.UnitTests.Services.Deployments;
 
 public class DeploymentTaskExecutorPhase4AcceptanceTests
 {
+    [Fact]
+    public async Task CreateTaskActivityNode_UsesOctopusStyleTitle()
+    {
+        var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
+        var executor = CreateExecutor(Mock.Of<IActionHandlerRegistry>(), (nodeType, name) => createdNodes.Add((nodeType, name)));
+        var ctx = CreateBaseContext();
+
+        ctx.Project = new Project { Name = "Smarties.Api" };
+        ctx.Environment = new Squid.Core.Persistence.Entities.Deployments.Environment { Name = "TEST" };
+        ctx.Release.Version = "6.2.5-mixture-v6.1-4016";
+
+        await InvokeCreateTaskActivityNodeAsync(executor, ctx);
+
+        createdNodes.ShouldContain(x =>
+            x.NodeType == DeploymentActivityLogNodeType.Task &&
+            x.Name == "Deploy Smarties.Api release 6.2.5-mixture-v6.1-4016 to TEST");
+    }
+
     [Fact]
     public async Task ExecuteDeploymentSteps_SameBatch_DoesNotSeeOutputVariables_UntilNextBatch()
     {
@@ -136,6 +156,26 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         ctx.FailureEncountered.ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task ExecuteDeploymentSteps_UsesStepOrderAndWorkerNamingForActivityNodes()
+    {
+        var strategy = new RecordingStrategy();
+        var handler = new CoordinatedRunScriptHandler(new AsyncBarrier(1));
+        var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var executor = CreateExecutor(registry, (nodeType, name) => createdNodes.Add((nodeType, name)));
+        var ctx = CreateBaseContext();
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("SJ-US-AKS", "web", transport, endpointJson: "endpoint-a") };
+        ctx.Steps = new List<DeploymentStepDto> { MakeStep("Deploy web", 4, null, "web", MakeAction("ActionA")) };
+
+        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 4: Deploy web");
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Worker on behalf of SJ-US-AKS");
+    }
+
     private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
     {
         var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -151,7 +191,20 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         await task.ConfigureAwait(false);
     }
 
-    private static DeploymentTaskExecutor CreateExecutor(IActionHandlerRegistry registry)
+    private static async Task InvokeCreateTaskActivityNodeAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
+    {
+        var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
+        ctxField.ShouldNotBeNull();
+        ctxField.SetValue(executor, ctx);
+
+        var method = typeof(DeploymentTaskExecutor).GetMethod("CreateTaskActivityNodeAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+
+        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
+        await task.ConfigureAwait(false);
+    }
+
+    private static DeploymentTaskExecutor CreateExecutor(IActionHandlerRegistry registry, Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
     {
         var nextNodeId = 0L;
         var serverTaskServiceMock = new Mock<IServerTaskService>();
@@ -165,7 +218,10 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken _) =>
-                new Squid.Core.Persistence.Entities.Deployments.ActivityLog
+            {
+                onAddActivityNode?.Invoke(nodeType, name);
+
+                return new Squid.Core.Persistence.Entities.Deployments.ActivityLog
                 {
                     Id = Interlocked.Increment(ref nextNodeId),
                     ServerTaskId = taskId,
@@ -175,7 +231,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                     Status = status,
                     SortOrder = sortOrder,
                     StartedAt = DateTimeOffset.UtcNow
-                });
+                };
+            });
         serverTaskServiceMock
             .Setup(x => x.UpdateActivityNodeStatusAsync(
                 It.IsAny<long>(),
@@ -208,6 +265,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IReleaseSelectedPackageDataProvider>(),
             serverTaskServiceMock.Object,
             Mock.Of<IDeploymentDataProvider>(),
+            Mock.Of<IProjectDataProvider>(),
+            Mock.Of<IEnvironmentDataProvider>(),
             Mock.Of<IDeploymentAccountDataProvider>(),
             Mock.Of<ICertificateDataProvider>(),
             Mock.Of<IDeploymentCompletionDataProvider>(),

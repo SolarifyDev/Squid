@@ -7,10 +7,20 @@ public partial class DeploymentTaskExecutor
 {
     private async Task CreateTaskActivityNodeAsync(CancellationToken ct)
     {
+        var projectName = string.IsNullOrWhiteSpace(_ctx.Project?.Name)
+            ? $"Project {_ctx.Deployment?.ProjectId}"
+            : _ctx.Project.Name;
+        var releaseVersion = string.IsNullOrWhiteSpace(_ctx.Release?.Version)
+            ? "Unknown"
+            : _ctx.Release.Version;
+        var environmentName = string.IsNullOrWhiteSpace(_ctx.Environment?.Name)
+            ? $"Environment {_ctx.Deployment?.EnvironmentId}"
+            : _ctx.Environment.Name;
+
         _ctx.TaskActivityNode = await _serverTaskService.AddActivityNodeAsync(
             _ctx.Task.Id,
             null,
-            $"Deploy {_ctx.Deployment?.Name ?? _ctx.Task?.Name ?? "Unknown"}",
+            $"Deploy {projectName} release {releaseVersion} to {environmentName}",
             DeploymentActivityLogNodeType.Task,
             DeploymentActivityLogNodeStatus.Running,
             0,

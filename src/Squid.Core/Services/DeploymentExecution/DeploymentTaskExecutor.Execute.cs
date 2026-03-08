@@ -15,14 +15,22 @@ public partial class DeploymentTaskExecutor
     {
         var orderedSteps = _ctx.Steps.OrderBy(p => p.StepOrder).ToList();
         var batches = StepBatcher.BatchSteps(orderedSteps);
-        var stepSortOrder = 0;
+        var stepSortOrderByStep = new Dictionary<DeploymentStepDto, int>();
+        var fallbackStepSortOrder = 0;
+
+        foreach (var step in orderedSteps)
+        {
+            var resolvedSortOrder = step.StepOrder > 0 ? step.StepOrder : ++fallbackStepSortOrder;
+            stepSortOrderByStep[step] = resolvedSortOrder;
+        }
 
         foreach (var batch in batches)
         {
+            var batchEntries = batch.Select(step => (Step: step, SortOrder: stepSortOrderByStep[step])).ToList();
             var batchResults = batch.Count == 1
-                ? [await ExecuteStepAcrossTargetsAsync(batch[0], ++stepSortOrder, ct).ConfigureAwait(false)]
-                : await Task.WhenAll(batch.Select(step =>
-                    ExecuteStepAcrossTargetsAsync(step, ++stepSortOrder, ct))).ConfigureAwait(false);
+                ? [await ExecuteStepAcrossTargetsAsync(batchEntries[0].Step, batchEntries[0].SortOrder, ct).ConfigureAwait(false)]
+                : await Task.WhenAll(batchEntries.Select(entry =>
+                    ExecuteStepAcrossTargetsAsync(entry.Step, entry.SortOrder, ct))).ConfigureAwait(false);
 
             ApplyBatchResults(batchResults);
         }
@@ -40,7 +48,9 @@ public partial class DeploymentTaskExecutor
             var scopeContext = new VariableScopeContext
             {
                 EnvironmentId = _ctx.Deployment.EnvironmentId,
+                EnvironmentName = _ctx.Environment?.Name,
                 MachineId = tc.Machine.Id,
+                MachineName = tc.Machine.Name,
                 Roles = targetRoles,
                 ChannelId = _ctx.Deployment.ChannelId
             };
@@ -58,9 +68,10 @@ public partial class DeploymentTaskExecutor
             await PersistTaskLogAsync(_ctx.Task.Id, ServerTaskLogCategory.Info, $"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, _ctx.TaskActivityNode?.Id, ct).ConfigureAwait(false);
 
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
+            var stepActivityName = BuildStepActivityName(step, stepSortOrder);
 
             var stepActivityNode = await CreateActivityNodeAsync(
-                _ctx.Task.Id, _ctx.TaskActivityNode?.Id, step.Name, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running,
+                _ctx.Task.Id, _ctx.TaskActivityNode?.Id, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running,
                 stepSortOrder, ct).ConfigureAwait(false);
 
             var actionResults = await PrepareStepActionsAsync(
@@ -104,7 +115,7 @@ public partial class DeploymentTaskExecutor
 
         foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
         {
-            if (_ctx.DeploymentRequestPayload.SkipActionIds.Contains(action.Id))
+            if (_ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.Contains(action.Id) == true)
             {
                 Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
                 continue;
@@ -201,8 +212,10 @@ public partial class DeploymentTaskExecutor
 
         foreach (var actionResult in stepResults)
         {
+            var actionActivityName = BuildActionActivityName(tc, actionResult);
+
             var actionActivityNode = await CreateActivityNodeAsync(
-                _ctx.Task.Id, stepActivityNode?.Id, actionResult.CalamariCommand ?? "Direct Script",
+                _ctx.Task.Id, stepActivityNode?.Id, actionActivityName,
                 DeploymentActivityLogNodeType.Action, DeploymentActivityLogNodeStatus.Running, ++actionSortOrder, ct).ConfigureAwait(false);
 
             try
@@ -280,6 +293,31 @@ public partial class DeploymentTaskExecutor
             dict[prop.PropertyName] = prop.PropertyValue;
 
         return dict;
+    }
+
+    private static string BuildStepActivityName(DeploymentStepDto step, int stepSortOrder)
+    {
+        var stepName = step?.Name?.Trim();
+
+        if (string.IsNullOrWhiteSpace(stepName))
+            return $"Step {stepSortOrder}";
+
+        if (stepName.StartsWith("Step ", StringComparison.OrdinalIgnoreCase))
+            return stepName;
+
+        return $"Step {stepSortOrder}: {stepName}";
+    }
+
+    private static string BuildActionActivityName(DeploymentTargetContext tc, ActionExecutionResult actionResult)
+    {
+        var machineName = tc?.Machine?.Name;
+
+        if (!string.IsNullOrWhiteSpace(machineName))
+            return $"Worker on behalf of {machineName}";
+
+        return string.IsNullOrWhiteSpace(actionResult?.CalamariCommand)
+            ? "Worker"
+            : actionResult.CalamariCommand;
     }
 
     private static ContextPreparationPolicy ResolveContextPreparationPolicy(
