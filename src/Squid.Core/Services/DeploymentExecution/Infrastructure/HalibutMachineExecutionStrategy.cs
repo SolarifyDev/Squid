@@ -49,6 +49,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             "./variables.json",
             "./sensitiveVariables.json");
 
+        scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
+
         var scriptFiles = new[]
         {
             new ScriptFile(payload.PackageFileName, DataStream.FromBytes(payload.PackageBytes), null),
@@ -118,6 +120,22 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             files.Add(new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(sensitiveBytes), password));
 
         return files.ToArray();
+    }
+
+    private static string ApplyContextPreparationIfRequired(ScriptExecutionRequest request, string scriptBody)
+    {
+        if (request.ContextWrapper == null)
+            return scriptBody;
+
+        var scriptContext = new ScriptContext
+        {
+            Endpoint = request.EndpointContext,
+            Syntax = request.Syntax,
+            Variables = request.Variables,
+            ActionProperties = request.ActionProperties
+        };
+
+        return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
     private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)

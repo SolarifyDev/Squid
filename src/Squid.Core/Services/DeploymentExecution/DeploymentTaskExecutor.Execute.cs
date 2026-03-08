@@ -278,7 +278,8 @@ public partial class DeploymentTaskExecutor
             EndpointContext = tc.EndpointContext,
             Variables = effectiveVariables,
             Machine = tc.Machine,
-            ReleaseVersion = _ctx.Release?.Version
+            ReleaseVersion = _ctx.Release?.Version,
+            ContextWrapper = resolvedContextPreparationPolicy == ContextPreparationPolicy.Apply ? tc.Transport?.ScriptWrapper : null
         };
     }
 
