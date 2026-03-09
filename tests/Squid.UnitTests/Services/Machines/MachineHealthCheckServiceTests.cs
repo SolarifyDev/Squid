@@ -20,11 +20,15 @@ public class MachineHealthCheckServiceTests
     private readonly Mock<ITransportRegistry> _transportRegistry = new();
     private readonly Mock<IExecutionStrategy> _strategy = new();
     private readonly Mock<IDeploymentTransport> _transport = new();
+    private readonly Mock<IHealthCheckStrategy> _healthChecker = new();
     private readonly MachineHealthCheckService _service;
 
     public MachineHealthCheckServiceTests()
     {
         _transport.Setup(t => t.Strategy).Returns(_strategy.Object);
+        _transport.Setup(t => t.HealthChecker).Returns(_healthChecker.Object);
+        _transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
+        _healthChecker.Setup(h => h.DefaultHealthCheckScript).Returns("#!/bin/bash\nkubectl cluster-info 2>&1");
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
@@ -102,12 +106,10 @@ public class MachineHealthCheckServiceTests
     // ========================================================================
 
     [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_ExecutesMinimalScript()
+    public async Task RunHealthCheck_OnlyConnectivity_DelegatesToHealthChecker()
     {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "Connected"));
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
         SetupMachineById(machine);
@@ -115,29 +117,31 @@ public class MachineHealthCheckServiceTests
 
         await _service.RunHealthCheckAsync(machine.Id);
 
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("exit 0");
-        capturedRequest.ScriptBody.ShouldNotContain("kubectl");
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_Success_RecordsHealthy()
-    {
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<CancellationToken>()), Times.Once);
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
-        machine.HealthDetailJson.ShouldBe("Connectivity OK");
     }
 
     [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_Failure_RecordsUnavailable()
+    public async Task RunHealthCheck_OnlyConnectivity_Unhealthy_RecordsUnavailable()
     {
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1 });
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
+        SetupMachineById(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+
+        await _service.RunHealthCheckAsync(machine.Id);
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+        machine.HealthDetailJson.ShouldContain("ClusterUrl is empty");
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_OnlyConnectivity_NullHealthChecker_RecordsUnavailable()
+    {
+        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
         SetupMachineById(machine);
@@ -151,10 +155,8 @@ public class MachineHealthCheckServiceTests
     [Fact]
     public async Task RunHealthCheck_OnlyConnectivity_CaseInsensitive()
     {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "ok"));
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
         SetupMachineById(machine);
@@ -162,36 +164,15 @@ public class MachineHealthCheckServiceTests
 
         await _service.RunHealthCheckAsync(machine.Id);
 
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("exit 0");
-        capturedRequest.ScriptBody.ShouldNotContain("kubectl");
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ========================================================================
-    // Phase 1.3: Per-CommunicationStyle Default Health Scripts
+    // Phase 1.3: Default Health Scripts via Transport
     // ========================================================================
 
-    [Theory]
-    [InlineData(CommunicationStyle.KubernetesApi, "kubectl cluster-info")]
-    [InlineData(CommunicationStyle.KubernetesAgent, "kubectl get pods")]
-    public void GetDefaultHealthCheckScript_ReturnsStyleSpecificScript(CommunicationStyle style, string expectedContent)
-    {
-        var script = MachineHealthCheckService.GetDefaultHealthCheckScript(style);
-
-        script.ShouldContain(expectedContent);
-    }
-
     [Fact]
-    public void GetDefaultHealthCheckScript_UnknownStyle_ReturnsFallback()
-    {
-        var script = MachineHealthCheckService.GetDefaultHealthCheckScript(CommunicationStyle.Unknown);
-
-        script.ShouldContain("Uptime");
-        script.ShouldNotContain("kubectl");
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_InheritFromDefault_UsesStyleSpecificScript()
+    public async Task RunHealthCheck_InheritFromDefault_UsesTransportDefaultScript()
     {
         ScriptExecutionRequest capturedRequest = null;
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
@@ -227,7 +208,7 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
-    public async Task RunHealthCheck_NoPolicy_UsesDefaultScript()
+    public async Task RunHealthCheck_NoPolicy_UsesTransportDefaultScript()
     {
         ScriptExecutionRequest capturedRequest = null;
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
@@ -241,6 +222,26 @@ public class MachineHealthCheckServiceTests
 
         capturedRequest.ShouldNotBeNull();
         capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_NullHealthChecker_UsesFallbackScript()
+    {
+        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.RunHealthCheckAsync(machine.Id);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldContain("Uptime");
+        capturedRequest.ScriptBody.ShouldNotContain("kubectl");
     }
 
     // ========================================================================

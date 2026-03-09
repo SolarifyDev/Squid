@@ -26,36 +26,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
                                                      exit 0
                                                      """;
 
-    private static readonly Dictionary<CommunicationStyle, string> DefaultHealthCheckScripts = new()
-    {
-        [CommunicationStyle.KubernetesApi] = """
-                                              #!/bin/bash
-                                              echo "Health check started (KubernetesApi)"
-                                              echo "Hostname: $(hostname)"
-                                              echo "Date: $(date -u)"
-                                              kubectl cluster-info 2>&1
-                                              kubectl get nodes -o wide 2>&1
-                                              echo "Health check completed"
-                                              exit 0
-                                              """,
-        [CommunicationStyle.KubernetesAgent] = """
-                                                #!/bin/bash
-                                                echo "Health check started (KubernetesAgent)"
-                                                echo "Hostname: $(hostname)"
-                                                echo "Date: $(date -u)"
-                                                kubectl get pods --namespace=${NAMESPACE:-default} -o name 2>&1 | head -5
-                                                echo "Health check completed"
-                                                exit 0
-                                                """
-    };
-
     internal const int DefaultIntervalSeconds = 3600;
-
-    private const string OnlyConnectivityScript = """
-                                                   #!/bin/bash
-                                                   echo "Connectivity check"
-                                                   exit 0
-                                                   """;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -157,30 +128,25 @@ public class MachineHealthCheckService : IMachineHealthCheckService
             return;
         }
 
-        var scriptBody = ResolveScriptBody(scriptPolicy, style);
+        var scriptBody = ResolveScriptBody(scriptPolicy, transport);
 
         await ExecuteScriptHealthCheckAsync(machine, transport, scriptBody, style, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, CancellationToken cancellationToken)
     {
-        Log.Information("Running connectivity check for machine {MachineName}", machine.Name);
+        Log.Information("Running connectivity check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
-        var request = new ScriptExecutionRequest
+        if (transport.HealthChecker == null)
         {
-            Machine = machine,
-            ScriptBody = OnlyConnectivityScript,
-            ExecutionMode = ExecutionMode.DirectScript,
-            Syntax = ScriptSyntax.Bash,
-            Files = new Dictionary<string, byte[]>(),
-            Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
-        };
+            await RecordHealthStatusAsync(machine, MachineHealthStatus.Unavailable, $"Connectivity check not supported for {transport.CommunicationStyle}", cancellationToken).ConfigureAwait(false);
+            return;
+        }
 
-        var result = await transport.Strategy.ExecuteScriptAsync(request, cancellationToken).ConfigureAwait(false);
+        var result = await transport.HealthChecker.CheckConnectivityAsync(machine, cancellationToken).ConfigureAwait(false);
+        var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
-        var status = result.Success ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
-
-        await RecordHealthStatusAsync(machine, status, result.Success ? "Connectivity OK" : "Connectivity failed", cancellationToken).ConfigureAwait(false);
+        await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
 
         Log.Information("Connectivity check for {MachineName}: {Status}", machine.Name, status);
     }
@@ -218,17 +184,12 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         return healthCheckPolicy.ScriptPolicies.GetValueOrDefault(styleKey);
     }
 
-    private static string ResolveScriptBody(MachineScriptPolicyDto scriptPolicy, CommunicationStyle style)
+    private static string ResolveScriptBody(MachineScriptPolicyDto scriptPolicy, IDeploymentTransport transport)
     {
         if (scriptPolicy != null && scriptPolicy.RunType != "InheritFromDefault" && !string.IsNullOrWhiteSpace(scriptPolicy.ScriptBody))
             return scriptPolicy.ScriptBody;
 
-        return GetDefaultHealthCheckScript(style);
-    }
-
-    internal static string GetDefaultHealthCheckScript(CommunicationStyle style)
-    {
-        return DefaultHealthCheckScripts.GetValueOrDefault(style, FallbackHealthCheckScript);
+        return transport.HealthChecker?.DefaultHealthCheckScript ?? FallbackHealthCheckScript;
     }
 
     private async Task<MachineHealthCheckPolicyDto> LoadHealthCheckPolicyAsync(Machine machine, CancellationToken cancellationToken)

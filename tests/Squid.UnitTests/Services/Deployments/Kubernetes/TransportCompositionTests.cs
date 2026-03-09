@@ -2,7 +2,9 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.Http;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 
@@ -20,13 +22,15 @@ public class TransportCompositionTests
         var variables = new KubernetesApiEndpointVariableContributor(Mock.Of<IExternalFeedDataProvider>());
         var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
         var strategy = new LocalProcessExecutionStrategy(payloadBuilder.Object, processRunner.Object);
+        var healthChecker = new KubernetesApiHealthCheckStrategy(Mock.Of<IDeploymentAccountDataProvider>(), Mock.Of<ISquidHttpClientFactory>());
 
-        var transport = new KubernetesApiTransport(variables, wrapper, strategy);
+        var transport = new KubernetesApiTransport(variables, wrapper, strategy, healthChecker);
 
         transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesApi);
         transport.Variables.ShouldBeSameAs(variables);
         transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
+        transport.HealthChecker.ShouldBeSameAs(healthChecker);
         transport.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
         transport.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
         transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
@@ -45,13 +49,15 @@ public class TransportCompositionTests
             halibutFactory.Object,
             payloadBuilder.Object,
             observer.Object);
+        var healthChecker = new KubernetesAgentHealthCheckStrategy(halibutFactory.Object);
 
-        var transport = new KubernetesAgentTransport(variables, wrapper, strategy);
+        var transport = new KubernetesAgentTransport(variables, wrapper, strategy, healthChecker);
 
         transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesAgent);
         transport.Variables.ShouldBeSameAs(variables);
         transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
+        transport.HealthChecker.ShouldBeSameAs(healthChecker);
         transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
         transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
         transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();

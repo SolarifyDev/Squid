@@ -6,7 +6,7 @@ public class MachineHealthCheckRecurringJob(IMachineHealthCheckService healthChe
 {
     public string JobId => "machine-health-check";
 
-    public string CronExpression => "0 */1 * * *"; // every hour
+    public string CronExpression => "*/1 * * * *"; // every minute
 
     public async Task Execute()
     {

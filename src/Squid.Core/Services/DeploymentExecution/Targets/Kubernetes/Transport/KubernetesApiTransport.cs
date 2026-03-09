@@ -7,8 +7,9 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 public sealed class KubernetesApiTransport(
     KubernetesApiEndpointVariableContributor variables,
     KubernetesApiScriptContextWrapper scriptWrapper,
-    LocalProcessExecutionStrategy strategy)
+    LocalProcessExecutionStrategy strategy,
+    KubernetesApiHealthCheckStrategy healthChecker)
     : DeploymentTransport(
-        CommunicationStyle.KubernetesApi, variables, scriptWrapper, strategy,
+        CommunicationStyle.KubernetesApi, variables, scriptWrapper, strategy, healthChecker,
         ExecutionLocation.ApiWorkerLocal, ExecutionBackend.LocalProcess,
         requiresContextPreparationForPackagedPayload: true);

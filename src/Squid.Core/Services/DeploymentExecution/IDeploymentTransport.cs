@@ -9,6 +9,7 @@ public interface IDeploymentTransport : IScopedDependency
     IEndpointVariableContributor Variables { get; }
     IScriptContextWrapper ScriptWrapper { get; }
     IExecutionStrategy Strategy { get; }
+    IHealthCheckStrategy HealthChecker { get; }
     ExecutionLocation ExecutionLocation { get; }
     ExecutionBackend ExecutionBackend { get; }
     bool RequiresContextPreparationForPackagedPayload { get; }
