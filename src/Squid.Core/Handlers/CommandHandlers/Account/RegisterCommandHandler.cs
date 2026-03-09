@@ -1,5 +1,3 @@
-using Mediator.Net.Context;
-using Mediator.Net.Contracts;
 using Squid.Core.Services.Account;
 using Squid.Message.Commands.Account;
 

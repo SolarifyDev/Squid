@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace Squid.Core.VariableSubstitution.Templates
 {
     class TextToken : TemplateToken

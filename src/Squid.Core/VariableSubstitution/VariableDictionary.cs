@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using Squid.Core.VariableSubstitution.Templates;
 
 namespace Squid.Core.VariableSubstitution

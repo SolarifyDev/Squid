@@ -1,7 +1,5 @@
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.Deployments.Execution;
-using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Message.Enums;
 
 namespace Squid.Core.Services.DeploymentExecution;
 

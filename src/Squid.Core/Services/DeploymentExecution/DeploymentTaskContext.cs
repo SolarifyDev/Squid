@@ -31,9 +31,6 @@ public class DeploymentTaskContext
     public List<ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
 
-    // Activity Tracking
-    public ActivityLog TaskActivityNode { get; set; }
-
     // Logging
     private long _logSequence;
     public long NextLogSequence() => Interlocked.Increment(ref _logSequence);

@@ -1,7 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.LifeCycle;

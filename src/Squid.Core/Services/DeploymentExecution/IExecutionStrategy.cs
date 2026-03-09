@@ -1,5 +1,3 @@
-using Squid.Core.DependencyInjection;
-
 namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IExecutionStrategy : IScopedDependency

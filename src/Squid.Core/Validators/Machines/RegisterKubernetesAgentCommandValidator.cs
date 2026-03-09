@@ -1,5 +1,4 @@
 using FluentValidation;
-using Squid.Core.Middlewares.FluentMessageValidator;
 using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Validators.Machines;

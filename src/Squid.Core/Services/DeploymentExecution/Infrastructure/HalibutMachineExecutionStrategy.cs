@@ -1,7 +1,5 @@
 using Halibut;
 using Halibut.Diagnostics;
-using Squid.Core.Extensions;
-using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
 

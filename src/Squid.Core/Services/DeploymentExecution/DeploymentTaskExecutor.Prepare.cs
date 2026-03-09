@@ -1,7 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Message.Enums;
-using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
@@ -26,8 +26,8 @@ public partial class DeploymentTaskExecutor
 
     private async Task LogDeploymentDataSummaryAsync(CancellationToken ct)
     {
-        await LogMachineSelectionConstraintsAsync(ct).ConfigureAwait(false);
-        await LogInfoAsync($"Found {_ctx.AllTargets.Count} targets: {string.Join(", ", _ctx.AllTargets.Select(t => t.Name))}", "System", ct).ConfigureAwait(false);
+        await _lifecycle.EmitAsync(new MachineConstraintsResolvedEvent(new DeploymentEventContext { Targets = _ctx.AllTargets }), ct).ConfigureAwait(false);
+        await _lifecycle.EmitAsync(new TargetsResolvedEvent(new DeploymentEventContext { Targets = _ctx.AllTargets }), ct).ConfigureAwait(false);
     }
 
     private async Task PrepareAllTargetsAsync(CancellationToken ct)
@@ -38,11 +38,11 @@ public partial class DeploymentTaskExecutor
 
             LoadTransportForTarget(tc);
 
-            await LogInfoAsync($"Preparing target: {target.Name} ({tc.CommunicationStyle})", "System", ct).ConfigureAwait(false);
+            await _lifecycle.EmitAsync(new TargetPreparingEvent(new DeploymentEventContext { MachineName = target.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
 
             if (tc.Transport == null)
             {
-                await LogWarningAsync($"No transport resolved for target {target.Name} with style {tc.CommunicationStyle}", "System", ct).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new TargetTransportMissingEvent(new DeploymentEventContext { MachineName = target.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
             }
 
             if (tc.Transport != null)
@@ -117,35 +117,6 @@ public partial class DeploymentTaskExecutor
         _ctx.Variables = await _variableResolver.ResolveVariablesAsync(_ctx.Deployment.Id, ct).ConfigureAwait(false);
 
         _ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = _ctx.Deployment.Id.ToString() });
-    }
-
-    private async Task LogMachineSelectionConstraintsAsync(CancellationToken ct)
-    {
-        var selection = DeploymentTargetFinder.ParseTargetSelection(_ctx.Deployment?.Json);
-
-        if (!selection.HasConstraints) return;
-
-        var machineNameById = _ctx.AllTargets.ToDictionary(m => m.Id, m => m.Name);
-
-        if (selection.SpecificMachineIds.Count > 0)
-        {
-            var names = string.Join(", ", selection.SpecificMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
-            await LogInfoAsync($"Deploying only to these specifically included machines: {names}", "System", ct).ConfigureAwait(false);
-
-            var disabledMachines = _ctx.AllTargets.Where(m => selection.SpecificMachineIds.Contains(m.Id) && m.IsDisabled).ToList();
-
-            if (disabledMachines.Count > 0)
-            {
-                var disabledNames = string.Join(", ", disabledMachines.Select(m => m.Name));
-                await LogWarningAsync($"The following specifically included machine{(disabledMachines.Count > 1 ? "s are" : " is")} disabled and will not receive the deployment: {disabledNames}", "System", ct).ConfigureAwait(false);
-            }
-        }
-
-        if (selection.ExcludedMachineIds.Count > 0)
-        {
-            var names = string.Join(", ", selection.ExcludedMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
-            await LogInfoAsync($"These machines were specifically excluded from the deployment: {names}", "System", ct).ConfigureAwait(false);
-        }
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

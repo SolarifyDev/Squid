@@ -7,6 +7,8 @@ using System.Threading;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
@@ -176,11 +178,19 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
     }
 
-    private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
+    private static void SetContext(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
     {
         var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
         ctxField.ShouldNotBeNull();
         ctxField.SetValue(executor, ctx);
+
+        var lifecycleField = typeof(DeploymentTaskExecutor).GetField("_lifecycle", BindingFlags.Instance | BindingFlags.NonPublic);
+        (lifecycleField?.GetValue(executor) as IDeploymentLifecycle)?.Initialize(ctx);
+    }
+
+    private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
+    {
+        SetContext(executor, ctx);
 
         var method = typeof(DeploymentTaskExecutor).GetMethod(
             "ExecuteDeploymentStepsAsync",
@@ -193,9 +203,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
     private static async Task InvokeCreateTaskActivityNodeAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
     {
-        var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
-        ctxField.ShouldNotBeNull();
-        ctxField.SetValue(executor, ctx);
+        SetContext(executor, ctx);
 
         var method = typeof(DeploymentTaskExecutor).GetMethod("CreateTaskActivityNodeAsync", BindingFlags.Instance | BindingFlags.NonPublic);
         method.ShouldNotBeNull();
@@ -259,6 +267,9 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object);
+        var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
+
         return new DeploymentTaskExecutor(
             Mock.Of<IGenericDataProvider>(),
             Mock.Of<IReleaseDataProvider>(),
@@ -276,7 +287,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Mock.Of<IDeploymentVariableResolver>(),
             registry,
             Mock.Of<ITransportRegistry>(),
-            Mock.Of<IAutoDeployService>());
+            Mock.Of<IAutoDeployService>(),
+            lifecycle);
     }
 
     private static DeploymentTaskContext CreateBaseContext()

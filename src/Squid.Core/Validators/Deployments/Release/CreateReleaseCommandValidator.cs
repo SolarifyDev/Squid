@@ -1,5 +1,4 @@
 using FluentValidation;
-using Squid.Core.Middlewares.FluentMessageValidator;
 using Squid.Message.Commands.Deployments.Release;
 
 namespace Squid.Core.Validators.Deployments.Release;

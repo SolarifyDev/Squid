@@ -1,4 +1,5 @@
 using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
@@ -45,6 +46,7 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly ITransportRegistry _transportRegistry;
     private readonly IAutoDeployService _autoDeployService;
+    private readonly IDeploymentLifecycle _lifecycle;
 
     #endregion
 
@@ -65,7 +67,8 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         IDeploymentVariableResolver variableResolver,
         IActionHandlerRegistry actionHandlerRegistry,
         ITransportRegistry transportRegistry,
-        IAutoDeployService autoDeployService)
+        IAutoDeployService autoDeployService,
+        IDeploymentLifecycle lifecycle)
     {
         _genericDataProvider = genericDataProvider;
         _releaseDataProvider = releaseDataProvider;
@@ -84,11 +87,13 @@ public partial class DeploymentTaskExecutor : IDeploymentTaskExecutor
         _actionHandlerRegistry = actionHandlerRegistry;
         _transportRegistry = transportRegistry;
         _autoDeployService = autoDeployService;
+        _lifecycle = lifecycle;
     }
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         _ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
+        _lifecycle.Initialize(_ctx);
 
         try
         {

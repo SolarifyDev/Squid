@@ -6,6 +6,8 @@ using System.Reflection;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
@@ -370,12 +372,14 @@ public class DeploymentExecutionLoggingTests
     {
         var (executor, ctx, logs, nodes) = CreateTestHarnessForFullPipeline();
 
+        await InvokeCreateTaskActivityNodeAsync(executor, ctx);
         await InvokeRecordSuccessAsync(executor, ctx);
 
+        var taskNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Task);
         var successLog = logs.FirstOrDefault(l => l.Message.Contains("Deployment completed successfully", StringComparison.OrdinalIgnoreCase));
         successLog.ShouldNotBeNull("Should persist deployment success message to task log");
         successLog.Category.ShouldBe(ServerTaskLogCategory.Info);
-        successLog.ActivityNodeId.ShouldBe(ctx.TaskActivityNode?.Id);
+        successLog.ActivityNodeId.ShouldBe(taskNode?.Id);
     }
 
     // ========== Test Infrastructure ==========
@@ -443,7 +447,6 @@ public class DeploymentExecutionLoggingTests
         var executor = CreateExecutor(registry, logs, nodes, deploymentCompletionMock.Object, deploymentDataMock.Object);
 
         var ctx = CreateBaseContext();
-        ctx.TaskActivityNode = new ActivityLog { Id = 100, Name = "Task Root" };
 
         SetContext(executor, ctx);
 
@@ -455,6 +458,9 @@ public class DeploymentExecutionLoggingTests
         var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
         ctxField.ShouldNotBeNull();
         ctxField.SetValue(executor, ctx);
+
+        var lifecycleField = typeof(DeploymentTaskExecutor).GetField("_lifecycle", BindingFlags.Instance | BindingFlags.NonPublic);
+        (lifecycleField?.GetValue(executor) as IDeploymentLifecycle)?.Initialize(ctx);
     }
 
     private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
@@ -550,6 +556,9 @@ public class DeploymentExecutionLoggingTests
             .Setup(x => x.ExecuteInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
             .Returns((Func<CancellationToken, Task> action, CancellationToken ct) => action(ct));
 
+        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object);
+        var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
+
         return new DeploymentTaskExecutor(
             genericDataMock.Object,
             Mock.Of<IReleaseDataProvider>(),
@@ -567,7 +576,8 @@ public class DeploymentExecutionLoggingTests
             Mock.Of<IDeploymentVariableResolver>(),
             registry,
             Mock.Of<ITransportRegistry>(),
-            Mock.Of<IAutoDeployService>());
+            Mock.Of<IAutoDeployService>(),
+            lifecycle);
     }
 
     private static DeploymentTaskContext CreateBaseContext()

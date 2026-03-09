@@ -1,5 +1,4 @@
 using Newtonsoft.Json;
-using StackExchange.Redis;
 
 namespace Squid.Core.Services.Caching.Redis;
 

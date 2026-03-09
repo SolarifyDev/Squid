@@ -1,8 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.VariableSubstitution;
-using Squid.Message.Constants;
-using Squid.Message.Enums;
-using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -37,19 +35,14 @@ public partial class DeploymentTaskExecutor
         DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
     {
         var stepResult = new StepExecutionResult();
-        var stepActivityName = BuildStepActivityName(step, stepSortOrder);
-        var stepActivityNode = await CreateActivityNodeAsync(_ctx.TaskActivityNode?.Id, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, stepSortOrder, ct).ConfigureAwait(false);
-        var stepNodeId = stepActivityNode?.Id;
+
+        await _lifecycle.EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = step.Name, StepDisplayOrder = stepSortOrder }), ct).ConfigureAwait(false);
 
         var matchingTargets = FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
 
         if (matchingTargets.Count == 0)
         {
-            var stepRoles = ExtractStepRoles(step);
-            var rolesText = stepRoles.Count > 0 ? string.Join(", ", stepRoles) : "unknown";
-
-            await LogWarningAsync($"Skipping this step as no machines were found in the role{(stepRoles.Count > 1 ? "s" : "")}: {rolesText}", "System", ct, stepNodeId).ConfigureAwait(false);
-            await UpdateActivityNodeStatusAsync(stepActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+            await _lifecycle.EmitAsync(new StepNoMatchingTargetsEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Roles = ExtractStepRoles(step) }), ct).ConfigureAwait(false);
             return stepResult;
         }
 
@@ -73,35 +66,27 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
 
-                await LogInfoAsync(eligibility.Message, tc.Machine.Name, ct, stepNodeId).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
                 continue;
             }
 
             if (eligibility.Message != null)
-                await LogInfoAsync(eligibility.Message, "System", ct, stepNodeId).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
 
-            await LogInfoAsync($"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, ct, stepNodeId).ConfigureAwait(false);
+            await _lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
 
-            var actionResults = await PrepareStepActionsAsync(
-                step, variableDictionary, effectiveVariables, tc, stepNodeId, ct).ConfigureAwait(false);
+            var actionResults = await PrepareStepActionsAsync(step, variableDictionary, effectiveVariables, tc, stepSortOrder, ct).ConfigureAwait(false);
 
             var result = new StepExecutionResult();
-            await ExecuteActionResultsAsync(
-                actionResults, step, stepActivityNode, result, tc, effectiveVariables, ct).ConfigureAwait(false);
+            await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, effectiveVariables, ct).ConfigureAwait(false);
 
             stepResult.Absorb(result);
         }
 
-        if (!stepResult.Failed)
-            await LogInfoAsync($"Step \"{step.Name}\" completed successfully", "System", ct, stepNodeId).ConfigureAwait(false);
-
-        await UpdateActivityNodeStatusAsync(
-            stepActivityNode,
-            stepResult.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success,
-            ct).ConfigureAwait(false);
+        await _lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed }), ct).ConfigureAwait(false);
 
         return stepResult;
     }
@@ -122,7 +107,7 @@ public partial class DeploymentTaskExecutor
         VariableDictionary variableDictionary,
         List<VariableDto> effectiveVariables,
         DeploymentTargetContext tc,
-        long? stepActivityNodeId,
+        int stepDisplayOrder,
         CancellationToken ct)
     {
         var stepResults = new List<ActionExecutionResult>();
@@ -133,7 +118,7 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
 
-                await LogInfoAsync($"Action \"{action.Name}\" was manually excluded from this deployment", "System", ct, stepActivityNodeId).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
 
                 continue;
             }
@@ -144,7 +129,7 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Information("Skipping action {ActionName}: {Reason}", action.Name, actionEligibility.SkipReason);
 
-                await LogWarningAsync(actionEligibility.Message, "System", ct, stepActivityNodeId).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ActionSkippedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, ActionEligibility = actionEligibility }), ct).ConfigureAwait(false);
 
                 continue;
             }
@@ -155,12 +140,12 @@ public partial class DeploymentTaskExecutor
             {
                 Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
 
-                await LogWarningAsync($"No handler found for action type \"{action.ActionType}\", skipping", "System", ct, stepActivityNodeId).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ActionNoHandlerEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionType = action.ActionType }), ct).ConfigureAwait(false);
 
                 continue;
             }
 
-            await LogInfoAsync($"Running action \"{action.Name}\"", "System", ct, stepActivityNodeId).ConfigureAwait(false);
+            await _lifecycle.EmitAsync(new ActionRunningEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
 
             var actionVariables = BuildActionVariables(effectiveVariables, action);
             var variableDictionaryForAction = VariableDictionaryFactory.Create(actionVariables);
@@ -227,7 +212,7 @@ public partial class DeploymentTaskExecutor
     private async Task ExecuteActionResultsAsync(
         List<ActionExecutionResult> stepResults,
         DeploymentStepDto step,
-        Persistence.Entities.Deployments.ActivityLog stepActivityNode,
+        int stepDisplayOrder,
         StepExecutionResult result,
         DeploymentTargetContext tc,
         List<VariableDto> effectiveVariables,
@@ -237,9 +222,9 @@ public partial class DeploymentTaskExecutor
 
         foreach (var actionResult in stepResults)
         {
-            var actionActivityName = BuildActionActivityName(tc, actionResult);
+            ++actionSortOrder;
 
-            var actionActivityNode = await CreateActivityNodeAsync(stepActivityNode?.Id, actionActivityName, DeploymentActivityLogNodeType.Action, DeploymentActivityLogNodeStatus.Running, ++actionSortOrder, ct).ConfigureAwait(false);
+            await _lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
 
             try
             {
@@ -254,26 +239,22 @@ public partial class DeploymentTaskExecutor
 
                 CaptureOutputVariables(actionResult, execResult.LogLines);
 
-                await PersistScriptOutputAsync(execResult, tc.Machine.Name, actionActivityNode?.Id, ct).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
 
                 if (!execResult.Success)
                     throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
-                await LogInfoAsync($"Successfully finished \"{actionResult.ActionName}\" on {tc.Machine.Name} (exit code {execResult.ExitCode})", tc.Machine.Name, ct, actionActivityNode?.Id).ConfigureAwait(false);
-
-                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
 
                 CollectOutputVariables(result, step.Name, actionResult);
             }
             catch (Exception ex)
             {
                 result.Failed = true;
-                
+
                 Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
 
-                await LogErrorAsync(ex.Message, tc.Machine.Name, ct, actionActivityNode?.Id).ConfigureAwait(false);
-
-                await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
+                await _lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
 
                 if (step.IsRequired)
                     throw;
@@ -329,31 +310,6 @@ public partial class DeploymentTaskExecutor
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return DeploymentTargetFinder.ParseCsvRoles(rolesProp.PropertyValue);
-    }
-
-    private static string BuildStepActivityName(DeploymentStepDto step, int stepSortOrder)
-    {
-        var stepName = step?.Name?.Trim();
-
-        if (string.IsNullOrWhiteSpace(stepName))
-            return $"Step {stepSortOrder}";
-
-        if (stepName.StartsWith("Step ", StringComparison.OrdinalIgnoreCase))
-            return stepName;
-
-        return $"Step {stepSortOrder}: {stepName}";
-    }
-
-    private static string BuildActionActivityName(DeploymentTargetContext tc, ActionExecutionResult actionResult)
-    {
-        var machineName = tc?.Machine?.Name;
-
-        if (!string.IsNullOrWhiteSpace(machineName))
-            return $"Executing on {machineName}";
-
-        return string.IsNullOrWhiteSpace(actionResult?.CalamariCommand)
-            ? "Executing"
-            : actionResult.CalamariCommand;
     }
 
     private static ContextPreparationPolicy ResolveContextPreparationPolicy(
