@@ -9,9 +9,9 @@ namespace Squid.Core.Services.Machines;
 
 public interface IMachineHealthCheckService : IScopedDependency
 {
-    Task RunHealthCheckAsync(int machineId, CancellationToken cancellationToken = default);
+    Task ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default);
 
-    Task RunHealthCheckForAllAsync(CancellationToken cancellationToken = default);
+    Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default);
 }
 
 public class MachineHealthCheckService : IMachineHealthCheckService
@@ -41,12 +41,9 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         _transportRegistry = transportRegistry;
     }
 
-    public async Task RunHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
+    public async Task ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
     {
-        var machine = await _machineDataProvider.GetMachinesByIdAsync(machineId, cancellationToken).ConfigureAwait(false);
-
-        if (machine == null)
-            throw new InvalidOperationException($"Machine {machineId} not found");
+        var machine = await LoadMachineAsync(machineId, cancellationToken).ConfigureAwait(false);
 
         if (machine.IsDisabled)
         {
@@ -54,18 +51,26 @@ public class MachineHealthCheckService : IMachineHealthCheckService
             return;
         }
 
-        var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+        var transport = ResolveTransport(machine);
 
-        await ExecuteHealthCheckAsync(machine, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
+        if (transport == null)
+        {
+            await RecordUnavailableAsync(machine, $"No transport for {CommunicationStyleParser.Parse(machine.Endpoint)}", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var scriptBody = transport.HealthChecker?.DefaultHealthCheckScript ?? FallbackHealthCheckScript;
+
+        await ExecuteScriptHealthCheckAsync(machine, transport, scriptBody, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task RunHealthCheckForAllAsync(CancellationToken cancellationToken = default)
+    public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
     {
         var (_, machines) = await _machineDataProvider.GetMachinePagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var activeMachines = machines.Where(m => !m.IsDisabled).ToList();
 
-        Log.Information("Running health check sweep for {Count} active machines", activeMachines.Count);
+        Log.Information("Running auto health check sweep for {Count} active machines", activeMachines.Count);
 
         var checkedCount = 0;
 
@@ -75,24 +80,131 @@ public class MachineHealthCheckService : IMachineHealthCheckService
             {
                 var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
 
-                if (!await ShouldRunHealthCheckAsync(machine, healthCheckPolicy).ConfigureAwait(false))
+                if (!ShouldRunHealthCheck(machine, healthCheckPolicy))
                     continue;
 
-                await ExecuteHealthCheckAsync(machine, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
+                await ExecutePolicyHealthCheckAsync(machine, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
                 checkedCount++;
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "Health check failed for machine {MachineName}", machine.Name);
-                await RecordHealthStatusAsync(machine, MachineHealthStatus.Unavailable, $"Health check error: {ex.Message}", cancellationToken).ConfigureAwait(false);
+                await RecordUnavailableAsync(machine, $"Health check error: {ex.Message}", cancellationToken).ConfigureAwait(false);
                 checkedCount++;
             }
         }
 
-        Log.Information("Health check sweep completed. Checked {CheckedCount} of {TotalCount} machines", checkedCount, activeMachines.Count);
+        Log.Information("Auto health check sweep completed. Checked {CheckedCount} of {TotalCount} machines", checkedCount, activeMachines.Count);
     }
 
-    private async Task<bool> ShouldRunHealthCheckAsync(Machine machine, MachineHealthCheckPolicyDto healthCheckPolicy)
+    // ========================================================================
+    // Shared pipeline methods
+    // ========================================================================
+
+    private async Task<Machine> LoadMachineAsync(int machineId, CancellationToken cancellationToken)
+    {
+        var machine = await _machineDataProvider.GetMachinesByIdAsync(machineId, cancellationToken).ConfigureAwait(false);
+
+        if (machine == null)
+            throw new InvalidOperationException($"Machine {machineId} not found");
+
+        return machine;
+    }
+
+    private IDeploymentTransport ResolveTransport(Machine machine)
+    {
+        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+        var transport = _transportRegistry.Resolve(style);
+
+        if (transport == null)
+            Log.Warning("No transport found for machine {MachineName} with style {Style}", machine.Name, style);
+
+        return transport;
+    }
+
+    private async Task ExecuteScriptHealthCheckAsync(Machine machine, IDeploymentTransport transport, string scriptBody, CancellationToken cancellationToken)
+    {
+        var request = new ScriptExecutionRequest
+        {
+            Machine = machine,
+            ScriptBody = scriptBody,
+            ExecutionMode = ExecutionMode.DirectScript,
+            Syntax = ScriptSyntax.Bash,
+            Files = new Dictionary<string, byte[]>(),
+            Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
+        };
+
+        Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
+
+        var result = await transport.Strategy.ExecuteScriptAsync(request, cancellationToken).ConfigureAwait(false);
+
+        var status = result.Success ? MachineHealthStatus.Healthy : MachineHealthStatus.Unhealthy;
+        var detail = string.Join("\n", result.LogLines ?? new List<string>());
+
+        await RecordHealthStatusAsync(machine, status, detail, cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
+    }
+
+    private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, CancellationToken cancellationToken)
+    {
+        Log.Information("Running connectivity check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
+
+        if (transport.HealthChecker == null)
+        {
+            await RecordUnavailableAsync(machine, $"Connectivity check not supported for {transport.CommunicationStyle}", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await transport.HealthChecker.CheckConnectivityAsync(machine, cancellationToken).ConfigureAwait(false);
+        var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
+
+        await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Connectivity check for {MachineName}: {Status}", machine.Name, status);
+    }
+
+    private async Task RecordHealthStatusAsync(Machine machine, MachineHealthStatus status, string detail, CancellationToken cancellationToken)
+    {
+        machine.HealthStatus = status;
+        machine.HealthLastChecked = DateTime.UtcNow;
+        machine.HealthDetail = detail;
+
+        await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task RecordUnavailableAsync(Machine machine, string detail, CancellationToken cancellationToken)
+        => RecordHealthStatusAsync(machine, MachineHealthStatus.Unavailable, detail, cancellationToken);
+
+    // ========================================================================
+    // Auto (policy-driven) helpers
+    // ========================================================================
+
+    private async Task ExecutePolicyHealthCheckAsync(Machine machine, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken cancellationToken)
+    {
+        var transport = ResolveTransport(machine);
+
+        if (transport == null)
+        {
+            await RecordUnavailableAsync(machine, $"No transport for {CommunicationStyleParser.Parse(machine.Endpoint)}", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var style = transport.CommunicationStyle;
+        var scriptPolicy = ResolveScriptPolicy(healthCheckPolicy, style);
+
+        if (string.Equals(scriptPolicy?.RunType, "OnlyConnectivity", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExecuteConnectivityCheckAsync(machine, transport, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var scriptBody = ResolveScriptBody(scriptPolicy, transport);
+
+        await ExecuteScriptHealthCheckAsync(machine, transport, scriptBody, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static bool ShouldRunHealthCheck(Machine machine, MachineHealthCheckPolicyDto healthCheckPolicy)
     {
         if (machine.HealthLastChecked == null) return true;
 
@@ -106,73 +218,6 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         var nextCheckDue = lastCheckedUtc.AddSeconds(intervalSeconds);
 
         return DateTime.UtcNow >= nextCheckDue;
-    }
-
-    private async Task ExecuteHealthCheckAsync(Machine machine, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken cancellationToken)
-    {
-        var style = CommunicationStyleParser.Parse(machine.Endpoint);
-        var transport = _transportRegistry.Resolve(style);
-
-        if (transport == null)
-        {
-            Log.Warning("No transport found for machine {MachineName} with style {Style}", machine.Name, style);
-            await RecordHealthStatusAsync(machine, MachineHealthStatus.Unavailable, $"No transport for {style}", cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        var scriptPolicy = ResolveScriptPolicy(healthCheckPolicy, style);
-
-        if (string.Equals(scriptPolicy?.RunType, "OnlyConnectivity", StringComparison.OrdinalIgnoreCase))
-        {
-            await ExecuteConnectivityCheckAsync(machine, transport, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        var scriptBody = ResolveScriptBody(scriptPolicy, transport);
-
-        await ExecuteScriptHealthCheckAsync(machine, transport, scriptBody, style, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, CancellationToken cancellationToken)
-    {
-        Log.Information("Running connectivity check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
-
-        if (transport.HealthChecker == null)
-        {
-            await RecordHealthStatusAsync(machine, MachineHealthStatus.Unavailable, $"Connectivity check not supported for {transport.CommunicationStyle}", cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        var result = await transport.HealthChecker.CheckConnectivityAsync(machine, cancellationToken).ConfigureAwait(false);
-        var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
-
-        await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
-
-        Log.Information("Connectivity check for {MachineName}: {Status}", machine.Name, status);
-    }
-
-    private async Task ExecuteScriptHealthCheckAsync(Machine machine, IDeploymentTransport transport, string scriptBody, CommunicationStyle style, CancellationToken cancellationToken)
-    {
-        var request = new ScriptExecutionRequest
-        {
-            Machine = machine,
-            ScriptBody = scriptBody,
-            ExecutionMode = ExecutionMode.DirectScript,
-            Syntax = ScriptSyntax.Bash,
-            Files = new Dictionary<string, byte[]>(),
-            Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
-        };
-
-        Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, style);
-
-        var result = await transport.Strategy.ExecuteScriptAsync(request, cancellationToken).ConfigureAwait(false);
-
-        var status = result.Success ? MachineHealthStatus.Healthy : MachineHealthStatus.Unhealthy;
-        var detail = string.Join("\n", result.LogLines ?? new List<string>());
-
-        await RecordHealthStatusAsync(machine, status, detail, cancellationToken).ConfigureAwait(false);
-
-        Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
     }
 
     internal static MachineScriptPolicyDto ResolveScriptPolicy(MachineHealthCheckPolicyDto healthCheckPolicy, CommunicationStyle style)
@@ -201,15 +246,6 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         if (policy == null) return null;
 
         return DeserializePolicy(policy.MachineHealthCheckPolicy);
-    }
-
-    private async Task RecordHealthStatusAsync(Machine machine, MachineHealthStatus status, string detail, CancellationToken cancellationToken)
-    {
-        machine.HealthStatus = status;
-        machine.HealthLastChecked = DateTime.UtcNow;
-        machine.HealthDetailJson = detail;
-
-        await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static MachineHealthCheckPolicyDto DeserializePolicy(string json)

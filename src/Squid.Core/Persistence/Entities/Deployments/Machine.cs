@@ -48,5 +48,5 @@ public class Machine : IEntity<int>
 
     public DateTime? HealthLastChecked { get; set; }
 
-    public string HealthDetailJson { get; set; }
+    public string HealthDetail { get; set; }
 }

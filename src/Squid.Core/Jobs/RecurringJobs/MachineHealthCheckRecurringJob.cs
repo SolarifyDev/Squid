@@ -1,8 +1,8 @@
-using Squid.Core.Services.Machines;
+using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Jobs.RecurringJobs;
 
-public class MachineHealthCheckRecurringJob(IMachineHealthCheckService healthCheckService) : IRecurringJob
+public class MachineHealthCheckRecurringJob(IMediator mediator) : IRecurringJob
 {
     public string JobId => "machine-health-check";
 
@@ -10,6 +10,6 @@ public class MachineHealthCheckRecurringJob(IMachineHealthCheckService healthChe
 
     public async Task Execute()
     {
-        await healthCheckService.RunHealthCheckForAllAsync(CancellationToken.None).ConfigureAwait(false);
+        await mediator.SendAsync<AutoMachineHealthCheckCommand, AutoMachineHealthCheckResponse>(new AutoMachineHealthCheckCommand()).ConfigureAwait(false);
     }
 }

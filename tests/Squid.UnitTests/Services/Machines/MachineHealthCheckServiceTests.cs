@@ -36,179 +36,11 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
-    // Phase 1.1: Per-Policy Health Check Interval
+    // Manual trigger — ManualHealthCheckAsync (no policy, always runs)
     // ========================================================================
 
     [Fact]
-    public async Task RunHealthCheckForAll_NeverChecked_ExecutesHealthCheck()
-    {
-        var machine = CreateActiveMachine(healthLastChecked: null);
-        SetupMachineList(machine);
-
-        await _service.RunHealthCheckForAllAsync();
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task RunHealthCheckForAll_CheckedRecentlyWithDefaultInterval_Skips()
-    {
-        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-30));
-        SetupMachineList(machine);
-
-        await _service.RunHealthCheckForAllAsync();
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunHealthCheckForAll_CheckedOverAnHourAgoWithDefaultInterval_Executes()
-    {
-        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-61));
-        SetupMachineList(machine);
-
-        await _service.RunHealthCheckForAllAsync();
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Theory]
-    [InlineData(300, -4, false)]   // 5min interval, checked 4min ago → skip
-    [InlineData(300, -6, true)]    // 5min interval, checked 6min ago → execute
-    [InlineData(7200, -100, false)] // 2hr interval, checked 100min ago → skip
-    [InlineData(7200, -121, true)]  // 2hr interval, checked 121min ago → execute
-    public async Task RunHealthCheckForAll_CustomPolicyInterval_RespectsInterval(int intervalSeconds, int minutesAgo, bool shouldExecute)
-    {
-        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(minutesAgo), machinePolicyId: 1);
-        SetupMachineList(machine);
-        SetupPolicy(1, intervalSeconds);
-
-        await _service.RunHealthCheckForAllAsync();
-
-        var expected = shouldExecute ? Times.Once() : Times.Never();
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), expected);
-    }
-
-    [Fact]
-    public void IsHealthCheckDue_Expired_ReturnsTrue()
-    {
-        MachineHealthCheckService.IsHealthCheckDue(DateTime.UtcNow.AddHours(-2), 3600).ShouldBeTrue();
-    }
-
-    [Fact]
-    public void IsHealthCheckDue_NotExpired_ReturnsFalse()
-    {
-        MachineHealthCheckService.IsHealthCheckDue(DateTime.UtcNow.AddMinutes(-30), 3600).ShouldBeFalse();
-    }
-
-    // ========================================================================
-    // Phase 1.2: OnlyConnectivity Health Check Mode
-    // ========================================================================
-
-    [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_DelegatesToHealthChecker()
-    {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HealthCheckResult(true, "Connected"));
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<CancellationToken>()), Times.Once);
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_Unhealthy_RecordsUnavailable()
-    {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
-        machine.HealthDetailJson.ShouldContain("ClusterUrl is empty");
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_NullHealthChecker_RecordsUnavailable()
-    {
-        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_OnlyConnectivity_CaseInsensitive()
-    {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HealthCheckResult(true, "ok"));
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "onlyconnectivity"); // lowercase
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ========================================================================
-    // Phase 1.3: Default Health Scripts via Transport
-    // ========================================================================
-
-    [Fact]
-    public async Task RunHealthCheck_InheritFromDefault_UsesTransportDefaultScript()
-    {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "InheritFromDefault");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_CustomInlineScript_UsesCustomScript()
-    {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
-        SetupMachineById(machine);
-        SetupPolicyWithCustomScript(1, "KubernetesApi", "Inline", "echo custom-check");
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldBe("echo custom-check");
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_NoPolicy_UsesTransportDefaultScript()
+    public async Task RunHealthCheck_UsesTransportDefaultScript()
     {
         ScriptExecutionRequest capturedRequest = null;
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
@@ -218,7 +50,7 @@ public class MachineHealthCheckServiceTests
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         SetupMachineById(machine);
 
-        await _service.RunHealthCheckAsync(machine.Id);
+        await _service.ManualHealthCheckAsync(machine.Id);
 
         capturedRequest.ShouldNotBeNull();
         capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
@@ -237,11 +69,254 @@ public class MachineHealthCheckServiceTests
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         SetupMachineById(machine);
 
-        await _service.RunHealthCheckAsync(machine.Id);
+        await _service.ManualHealthCheckAsync(machine.Id);
 
         capturedRequest.ShouldNotBeNull();
         capturedRequest.ScriptBody.ShouldContain("Uptime");
         capturedRequest.ScriptBody.ShouldNotContain("kubectl");
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_IgnoresPolicy_AlwaysExecutes()
+    {
+        // Machine has policy, but manual trigger should not load it
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        _policyDataProvider.Verify(p => p.GetByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_ScriptSucceeds_RecordsHealthy()
+    {
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+        machine.HealthLastChecked.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_ScriptFails_RecordsUnhealthy()
+    {
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "error" } });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unhealthy);
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_DisabledMachine_Skips()
+    {
+        var machine = new Machine { Id = 1, Name = "disabled", IsDisabled = true };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await _service.ManualHealthCheckAsync(1);
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_MachineNotFound_Throws()
+    {
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(999, It.IsAny<CancellationToken>())).ReturnsAsync((Machine)null);
+
+        await Should.ThrowAsync<InvalidOperationException>(() => _service.ManualHealthCheckAsync(999));
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_NoTransport_RecordsUnavailable()
+    {
+        _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns((IDeploymentTransport)null);
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+    }
+
+    // ========================================================================
+    // Recurring job — AutoHealthCheckForAllAsync (policy-driven)
+    // ========================================================================
+
+    [Fact]
+    public async Task RunHealthCheckForAll_NeverChecked_ExecutesHealthCheck()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: null);
+        SetupMachineList(machine);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_CheckedRecentlyWithDefaultInterval_Skips()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-30));
+        SetupMachineList(machine);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_CheckedOverAnHourAgoWithDefaultInterval_Executes()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-61));
+        SetupMachineList(machine);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(300, -4, false)]   // 5min interval, checked 4min ago → skip
+    [InlineData(300, -6, true)]    // 5min interval, checked 6min ago → execute
+    [InlineData(7200, -100, false)] // 2hr interval, checked 100min ago → skip
+    [InlineData(7200, -121, true)]  // 2hr interval, checked 121min ago → execute
+    public async Task RunHealthCheckForAll_CustomPolicyInterval_RespectsInterval(int intervalSeconds, int minutesAgo, bool shouldExecute)
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(minutesAgo), machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicy(1, intervalSeconds);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        var expected = shouldExecute ? Times.Once() : Times.Never();
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), expected);
+    }
+
+    [Fact]
+    public void IsHealthCheckDue_Expired_ReturnsTrue()
+    {
+        MachineHealthCheckService.IsHealthCheckDue(DateTime.UtcNow.AddHours(-2), 3600).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsHealthCheckDue_NotExpired_ReturnsFalse()
+    {
+        MachineHealthCheckService.IsHealthCheckDue(DateTime.UtcNow.AddMinutes(-30), 3600).ShouldBeFalse();
+    }
+
+    // ========================================================================
+    // Recurring job — OnlyConnectivity mode (policy-driven)
+    // ========================================================================
+
+    [Fact]
+    public async Task RunHealthCheckForAll_OnlyConnectivity_DelegatesToHealthChecker()
+    {
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "Connected"));
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<CancellationToken>()), Times.Once);
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_OnlyConnectivity_Unhealthy_RecordsUnavailable()
+    {
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+        machine.HealthDetail.ShouldContain("ClusterUrl is empty");
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_OnlyConnectivity_NullHealthChecker_RecordsUnavailable()
+    {
+        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_OnlyConnectivity_CaseInsensitive()
+    {
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "ok"));
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "onlyconnectivity");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ========================================================================
+    // Recurring job — Script resolution (policy-driven)
+    // ========================================================================
+
+    [Fact]
+    public async Task RunHealthCheckForAll_InheritFromDefault_UsesTransportDefaultScript()
+    {
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithRunType(1, "KubernetesApi", "InheritFromDefault");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
+    }
+
+    [Fact]
+    public async Task RunHealthCheckForAll_CustomInlineScript_UsesCustomScript()
+    {
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachine(machinePolicyId: 1);
+        SetupMachineList(machine);
+        SetupPolicyWithCustomScript(1, "KubernetesApi", "Inline", "echo custom-check");
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldBe("echo custom-check");
     }
 
     // ========================================================================
@@ -286,66 +361,8 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
-    // Edge cases & robustness
+    // Recurring job — error handling
     // ========================================================================
-
-    [Fact]
-    public async Task RunHealthCheck_DisabledMachine_Skips()
-    {
-        var machine = new Machine { Id = 1, Name = "disabled", IsDisabled = true };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        await _service.RunHealthCheckAsync(1);
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_MachineNotFound_Throws()
-    {
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(999, It.IsAny<CancellationToken>())).ReturnsAsync((Machine)null);
-
-        await Should.ThrowAsync<InvalidOperationException>(() => _service.RunHealthCheckAsync(999));
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_NoTransport_RecordsUnavailable()
-    {
-        _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns((IDeploymentTransport)null);
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_ScriptFails_RecordsUnhealthy()
-    {
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "error" } });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unhealthy);
-    }
-
-    [Fact]
-    public async Task RunHealthCheck_ScriptSucceeds_RecordsHealthy()
-    {
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.RunHealthCheckAsync(machine.Id);
-
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
-        machine.HealthLastChecked.ShouldNotBeNull();
-    }
 
     [Fact]
     public async Task RunHealthCheckForAll_ExceptionOnOneMachine_ContinuesOthers()
@@ -368,7 +385,7 @@ public class MachineHealthCheckServiceTests
                 return new ScriptExecutionResult { Success = true, ExitCode = 0 };
             });
 
-        await _service.RunHealthCheckForAllAsync();
+        await _service.AutoHealthCheckForAllAsync();
 
         machine1.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
         machine2.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
