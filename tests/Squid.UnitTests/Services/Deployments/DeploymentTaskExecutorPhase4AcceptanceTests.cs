@@ -172,8 +172,8 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         await InvokeExecuteDeploymentStepsAsync(executor, ctx);
 
-        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 4: Deploy web");
-        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Worker on behalf of SJ-US-AKS");
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 1: Deploy web");
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
     }
 
     private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)

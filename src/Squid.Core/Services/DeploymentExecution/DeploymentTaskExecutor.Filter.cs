@@ -17,4 +17,17 @@ public partial class DeploymentTaskExecutor
         int deploymentEnvironmentId,
         int deploymentChannelId)
         => StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId, deploymentChannelId);
+
+    public static StepEligibilityResult EvaluateStep(
+        DeploymentStepDto step,
+        HashSet<string> targetRoles,
+        bool previousStepSucceeded,
+        List<VariableDto> effectiveVariables = null)
+        => StepEligibilityEvaluator.EvaluateStep(step, targetRoles, previousStepSucceeded, effectiveVariables);
+
+    public static ActionEligibilityResult EvaluateAction(
+        DeploymentActionDto action,
+        int deploymentEnvironmentId,
+        int deploymentChannelId)
+        => StepEligibilityEvaluator.EvaluateAction(action, deploymentEnvironmentId, deploymentChannelId);
 }

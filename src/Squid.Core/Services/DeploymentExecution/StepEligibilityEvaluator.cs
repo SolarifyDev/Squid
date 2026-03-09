@@ -7,33 +7,77 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public static class StepEligibilityEvaluator
 {
+    private static readonly ActionEligibilityResult ExecuteAction = new(true, ActionSkipReason.None, null);
+
     public static bool ShouldExecuteStep(DeploymentStepDto step, HashSet<string> targetRoles, bool previousStepSucceeded, List<VariableDto> effectiveVariables = null)
-    {
-        if (step.IsDisabled)
-            return false;
-
-        if (!EvaluateCondition(step, previousStepSucceeded, effectiveVariables))
-            return false;
-
-        if (!MatchesTargetRoles(step, targetRoles))
-            return false;
-
-        return true;
-    }
+        => EvaluateStep(step, targetRoles, previousStepSucceeded, effectiveVariables).ShouldExecute;
 
     public static bool ShouldExecuteAction(DeploymentActionDto action, int deploymentEnvironmentId, int deploymentChannelId)
+        => EvaluateAction(action, deploymentEnvironmentId, deploymentChannelId).ShouldExecute;
+
+    public static StepEligibilityResult EvaluateStep(DeploymentStepDto step, HashSet<string> targetRoles, bool previousStepSucceeded, List<VariableDto> effectiveVariables = null)
+    {
+        if (step.IsDisabled)
+            return new StepEligibilityResult(false, StepSkipReason.Disabled, $"Step \"{step.Name}\" is disabled");
+
+        var conditionResult = ResolveConditionSkipReason(step, previousStepSucceeded, effectiveVariables);
+
+        if (conditionResult.HasValue)
+            return new StepEligibilityResult(false, conditionResult.Value, BuildConditionSkipMessage(step.Name, conditionResult.Value));
+
+        if (!MatchesTargetRoles(step, targetRoles))
+            return new StepEligibilityResult(false, StepSkipReason.RoleMismatch, $"Step \"{step.Name}\" target roles do not match machine roles");
+
+        var conditionMetMessage = BuildConditionMetMessage(step.Name, step.Condition);
+
+        return new StepEligibilityResult(true, StepSkipReason.None, conditionMetMessage);
+    }
+
+    public static ActionEligibilityResult EvaluateAction(DeploymentActionDto action, int deploymentEnvironmentId, int deploymentChannelId)
     {
         if (action.IsDisabled)
-            return false;
+            return new ActionEligibilityResult(false, ActionSkipReason.Disabled, $"Action \"{action.Name}\" is disabled");
 
         if (!AppliesToEnvironment(action, deploymentEnvironmentId))
-            return false;
+            return new ActionEligibilityResult(false, ActionSkipReason.EnvironmentMismatch, $"Action \"{action.Name}\" does not apply to current environment");
 
-        if (action.Channels != null && action.Channels.Count > 0
-            && !action.Channels.Contains(deploymentChannelId))
-            return false;
+        if (action.Channels != null && action.Channels.Count > 0 && !action.Channels.Contains(deploymentChannelId))
+            return new ActionEligibilityResult(false, ActionSkipReason.ChannelMismatch, $"Action \"{action.Name}\" does not apply to current channel");
 
-        return true;
+        return ExecuteAction;
+    }
+
+    private static StepSkipReason? ResolveConditionSkipReason(DeploymentStepDto step, bool previousStepSucceeded, List<VariableDto> effectiveVariables)
+    {
+        return step.Condition switch
+        {
+            "Always" => null,
+            "Failure" => previousStepSucceeded ? StepSkipReason.FailureConditionNotMet : null,
+            "Variable" => EvaluateVariableCondition(step, effectiveVariables) ? null : StepSkipReason.VariableConditionFalse,
+            null or "" => previousStepSucceeded ? null : StepSkipReason.SuccessConditionNotMet,
+            _ => previousStepSucceeded ? null : StepSkipReason.SuccessConditionNotMet
+        };
+    }
+
+    private static string BuildConditionMetMessage(string stepName, string condition)
+    {
+        return condition switch
+        {
+            "Failure" => $"A failure has been detected so \"{stepName}\" will be run.",
+            "Variable" => $"Variable run condition was evaluated as true, so \"{stepName}\" will be run.",
+            _ => null
+        };
+    }
+
+    private static string BuildConditionSkipMessage(string stepName, StepSkipReason reason)
+    {
+        return reason switch
+        {
+            StepSkipReason.SuccessConditionNotMet => $"Skipping step \"{stepName}\": a previous step failed",
+            StepSkipReason.FailureConditionNotMet => $"Skipping step \"{stepName}\": no previous step has failed",
+            StepSkipReason.VariableConditionFalse => $"Skipping step \"{stepName}\": variable run condition evaluated to false",
+            _ => $"Skipping step \"{stepName}\": condition not met"
+        };
     }
 
     private static bool AppliesToEnvironment(DeploymentActionDto action, int environmentId)
@@ -51,18 +95,6 @@ public static class StepEligibilityEvaluator
             return false;
 
         return true;
-    }
-
-    private static bool EvaluateCondition(DeploymentStepDto step, bool previousStepSucceeded, List<VariableDto> effectiveVariables)
-    {
-        return step.Condition switch
-        {
-            "Always" => true,
-            "Failure" => !previousStepSucceeded,
-            "Variable" => EvaluateVariableCondition(step, effectiveVariables),
-            null or "" => previousStepSucceeded,
-            _ => previousStepSucceeded
-        };
     }
 
     private static bool EvaluateVariableCondition(DeploymentStepDto step, List<VariableDto> effectiveVariables)
@@ -93,7 +125,7 @@ public static class StepEligibilityEvaluator
             return true;
 
         var stepRoles = DeploymentTargetFinder.ParseCsvRoles(stepRolesProperty.PropertyValue);
-        
+
         return stepRoles.Overlaps(targetRoles);
     }
 }

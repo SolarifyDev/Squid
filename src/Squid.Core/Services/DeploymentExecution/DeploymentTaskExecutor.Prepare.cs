@@ -125,10 +125,27 @@ public partial class DeploymentTaskExecutor
 
         if (!selection.HasConstraints) return;
 
-        var includeText = selection.SpecificMachineIds.Count == 0 ? "*" : string.Join(", ", selection.SpecificMachineIds.OrderBy(x => x));
-        var excludeText = selection.ExcludedMachineIds.Count == 0 ? "-" : string.Join(", ", selection.ExcludedMachineIds.OrderBy(x => x));
+        var machineNameById = _ctx.AllTargets.ToDictionary(m => m.Id, m => m.Name);
 
-        await LogInfoAsync($"Machine selection constraints applied. Include: {includeText}; Exclude: {excludeText}", "System", ct).ConfigureAwait(false);
+        if (selection.SpecificMachineIds.Count > 0)
+        {
+            var names = string.Join(", ", selection.SpecificMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
+            await LogInfoAsync($"Deploying only to these specifically included machines: {names}", "System", ct).ConfigureAwait(false);
+
+            var disabledMachines = _ctx.AllTargets.Where(m => selection.SpecificMachineIds.Contains(m.Id) && m.IsDisabled).ToList();
+
+            if (disabledMachines.Count > 0)
+            {
+                var disabledNames = string.Join(", ", disabledMachines.Select(m => m.Name));
+                await LogWarningAsync($"The following specifically included machine{(disabledMachines.Count > 1 ? "s are" : " is")} disabled and will not receive the deployment: {disabledNames}", "System", ct).ConfigureAwait(false);
+            }
+        }
+
+        if (selection.ExcludedMachineIds.Count > 0)
+        {
+            var names = string.Join(", ", selection.ExcludedMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
+            await LogInfoAsync($"These machines were specifically excluded from the deployment: {names}", "System", ct).ConfigureAwait(false);
+        }
     }
 
     private async Task FindTargetsAsync(CancellationToken ct)

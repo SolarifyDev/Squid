@@ -16,13 +16,10 @@ public partial class DeploymentTaskExecutor
         var orderedSteps = _ctx.Steps.OrderBy(p => p.StepOrder).ToList();
         var batches = StepBatcher.BatchSteps(orderedSteps);
         var stepSortOrderByStep = new Dictionary<DeploymentStepDto, int>();
-        var fallbackStepSortOrder = 0;
+        var displayOrder = 0;
 
         foreach (var step in orderedSteps)
-        {
-            var resolvedSortOrder = step.StepOrder > 0 ? step.StepOrder : ++fallbackStepSortOrder;
-            stepSortOrderByStep[step] = resolvedSortOrder;
-        }
+            stepSortOrderByStep[step] = ++displayOrder;
 
         foreach (var batch in batches)
         {
@@ -40,7 +37,21 @@ public partial class DeploymentTaskExecutor
         DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
     {
         var stepResult = new StepExecutionResult();
+        var stepActivityName = BuildStepActivityName(step, stepSortOrder);
+        var stepActivityNode = await CreateActivityNodeAsync(_ctx.TaskActivityNode?.Id, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, stepSortOrder, ct).ConfigureAwait(false);
+        var stepNodeId = stepActivityNode?.Id;
+
         var matchingTargets = FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
+
+        if (matchingTargets.Count == 0)
+        {
+            var stepRoles = ExtractStepRoles(step);
+            var rolesText = stepRoles.Count > 0 ? string.Join(", ", stepRoles) : "unknown";
+
+            await LogWarningAsync($"Skipping this step as no machines were found in the role{(stepRoles.Count > 1 ? "s" : "")}: {rolesText}", "System", ct, stepNodeId).ConfigureAwait(false);
+            await UpdateActivityNodeStatusAsync(stepActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+            return stepResult;
+        }
 
         foreach (var tc in matchingTargets)
         {
@@ -56,36 +67,41 @@ public partial class DeploymentTaskExecutor
             };
             var effectiveVariables = BuildEffectiveVariables(_ctx.Variables, tc, scopeContext);
 
-            if (!ShouldExecuteStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVariables))
-            {
-                Log.Information("Skipping step {StepName} on target {TargetName}", step.Name, tc.Machine.Name);
+            var eligibility = EvaluateStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVariables);
 
-                await LogInfoAsync($"Skipping step \"{step.Name}\" on {tc.Machine.Name} (condition not met)", tc.Machine.Name, ct).ConfigureAwait(false);
+            if (!eligibility.ShouldExecute)
+            {
+                Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
+
+                await LogInfoAsync(eligibility.Message, tc.Machine.Name, ct, stepNodeId).ConfigureAwait(false);
 
                 continue;
             }
 
-            await LogInfoAsync($"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, ct).ConfigureAwait(false);
+            if (eligibility.Message != null)
+                await LogInfoAsync(eligibility.Message, "System", ct, stepNodeId).ConfigureAwait(false);
+
+            await LogInfoAsync($"Executing step \"{step.Name}\" on {tc.Machine.Name}", tc.Machine.Name, ct, stepNodeId).ConfigureAwait(false);
 
             var variableDictionary = VariableDictionaryFactory.Create(effectiveVariables);
-            var stepActivityName = BuildStepActivityName(step, stepSortOrder);
-
-            var stepActivityNode = await CreateActivityNodeAsync(_ctx.TaskActivityNode?.Id, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, stepSortOrder, ct).ConfigureAwait(false);
 
             var actionResults = await PrepareStepActionsAsync(
-                step, variableDictionary, effectiveVariables, tc, stepActivityNode?.Id, ct).ConfigureAwait(false);
+                step, variableDictionary, effectiveVariables, tc, stepNodeId, ct).ConfigureAwait(false);
 
             var result = new StepExecutionResult();
             await ExecuteActionResultsAsync(
                 actionResults, step, stepActivityNode, result, tc, effectiveVariables, ct).ConfigureAwait(false);
 
-            await UpdateActivityNodeStatusAsync(
-                stepActivityNode,
-                result.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success,
-                ct).ConfigureAwait(false);
-
             stepResult.Absorb(result);
         }
+
+        if (!stepResult.Failed)
+            await LogInfoAsync($"Step \"{step.Name}\" completed successfully", "System", ct, stepNodeId).ConfigureAwait(false);
+
+        await UpdateActivityNodeStatusAsync(
+            stepActivityNode,
+            stepResult.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success,
+            ct).ConfigureAwait(false);
 
         return stepResult;
     }
@@ -116,12 +132,20 @@ public partial class DeploymentTaskExecutor
             if (_ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.Contains(action.Id) == true)
             {
                 Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
+
+                await LogInfoAsync($"Action \"{action.Name}\" was manually excluded from this deployment", "System", ct, stepActivityNodeId).ConfigureAwait(false);
+
                 continue;
             }
 
-            if (!ShouldExecuteAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId))
+            var actionEligibility = EvaluateAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId);
+
+            if (!actionEligibility.ShouldExecute)
             {
-                Log.Information("Skipping action {ActionName} (disabled, environment, or channel mismatch)", action.Name);
+                Log.Information("Skipping action {ActionName}: {Reason}", action.Name, actionEligibility.SkipReason);
+
+                await LogWarningAsync(actionEligibility.Message, "System", ct, stepActivityNodeId).ConfigureAwait(false);
+
                 continue;
             }
 
@@ -135,6 +159,8 @@ public partial class DeploymentTaskExecutor
 
                 continue;
             }
+
+            await LogInfoAsync($"Running action \"{action.Name}\"", "System", ct, stepActivityNodeId).ConfigureAwait(false);
 
             var actionVariables = BuildActionVariables(effectiveVariables, action);
             var variableDictionaryForAction = VariableDictionaryFactory.Create(actionVariables);
@@ -159,6 +185,7 @@ public partial class DeploymentTaskExecutor
 
             if (prepared != null)
             {
+                prepared.ActionName = action.Name;
                 prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
 
                 var executionMode = prepared.ResolveExecutionMode();
@@ -232,6 +259,8 @@ public partial class DeploymentTaskExecutor
                 if (!execResult.Success)
                     throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
+                await LogInfoAsync($"Successfully finished \"{actionResult.ActionName}\" on {tc.Machine.Name} (exit code {execResult.ExitCode})", tc.Machine.Name, ct, actionActivityNode?.Id).ConfigureAwait(false);
+
                 await UpdateActivityNodeStatusAsync(actionActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
 
                 CollectOutputVariables(result, step.Name, actionResult);
@@ -292,6 +321,16 @@ public partial class DeploymentTaskExecutor
         return dict;
     }
 
+    private static HashSet<string> ExtractStepRoles(DeploymentStepDto step)
+    {
+        var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+
+        if (rolesProp == null || string.IsNullOrEmpty(rolesProp.PropertyValue))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return DeploymentTargetFinder.ParseCsvRoles(rolesProp.PropertyValue);
+    }
+
     private static string BuildStepActivityName(DeploymentStepDto step, int stepSortOrder)
     {
         var stepName = step?.Name?.Trim();
@@ -310,10 +349,10 @@ public partial class DeploymentTaskExecutor
         var machineName = tc?.Machine?.Name;
 
         if (!string.IsNullOrWhiteSpace(machineName))
-            return $"Worker on behalf of {machineName}";
+            return $"Executing on {machineName}";
 
         return string.IsNullOrWhiteSpace(actionResult?.CalamariCommand)
-            ? "Worker"
+            ? "Executing"
             : actionResult.CalamariCommand;
     }
 

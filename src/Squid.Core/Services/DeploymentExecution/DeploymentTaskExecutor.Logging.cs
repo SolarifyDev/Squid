@@ -12,10 +12,13 @@ public partial class DeploymentTaskExecutor
         var environmentName = string.IsNullOrWhiteSpace(_ctx.Environment?.Name) ? $"Environment {_ctx.Deployment?.EnvironmentId}" : _ctx.Environment.Name;
 
         _ctx.TaskActivityNode = await CreateActivityNodeAsync(null, $"Deploy {projectName} release {releaseVersion} to {environmentName}", DeploymentActivityLogNodeType.Task, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
+
+        await LogInfoAsync($"Deploying {projectName} release {releaseVersion} to {environmentName}", "System", ct).ConfigureAwait(false);
     }
 
     private async Task RecordSuccessAsync(CancellationToken ct)
     {
+        await LogInfoAsync("Deployment completed successfully", "System", ct).ConfigureAwait(false);
         await RecordCompletionAsync(true, "Deployment completed successfully");
         await UpdateActivityNodeStatusAsync(_ctx.TaskActivityNode, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
 

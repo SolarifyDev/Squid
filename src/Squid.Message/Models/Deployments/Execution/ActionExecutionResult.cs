@@ -2,6 +2,8 @@ namespace Squid.Message.Models.Deployments.Execution;
 
 public class ActionExecutionResult
 {
+    public string ActionName { get; set; }
+
     public string ScriptBody { get; set; }
 
     public Dictionary<string, byte[]> Files { get; set; } = new();
