@@ -1,7 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Deployments.Release;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.UnitTests.Services.Deployments;
@@ -124,6 +130,44 @@ public class RetentionPolicyEnforcerTests
 
         result.Count.ShouldBe(1);
         result[0].Id.ShouldBe(2);
+    }
+
+    // ─── GetDeploymentsExceedingRetention: multiple currently deployed ───
+
+    [Fact]
+    public void MultipleCurrentlyDeployedReleases_AllPreserved()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var deployments = new List<Deployment>
+        {
+            MakeDeployment(1, releaseId: 100, created: now.AddDays(-100)),
+            MakeDeployment(2, releaseId: 101, created: now.AddDays(-100)),
+            MakeDeployment(3, releaseId: 102, created: now.AddDays(-100))
+        };
+        var currentlyDeployed = new HashSet<int> { 100, 101 };
+
+        var result = RetentionPolicyEnforcer.GetDeploymentsExceedingRetention(
+            deployments, RetentionPolicyUnit.Days, 10, currentlyDeployed);
+
+        result.Count.ShouldBe(1);
+        result[0].Id.ShouldBe(3);
+    }
+
+    [Fact]
+    public void AllCurrentlyDeployed_ReturnsEmpty()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var deployments = new List<Deployment>
+        {
+            MakeDeployment(1, releaseId: 100, created: now.AddDays(-100)),
+            MakeDeployment(2, releaseId: 101, created: now.AddDays(-100))
+        };
+        var currentlyDeployed = new HashSet<int> { 100, 101 };
+
+        var result = RetentionPolicyEnforcer.GetDeploymentsExceedingRetention(
+            deployments, RetentionPolicyUnit.Days, 10, currentlyDeployed);
+
+        result.ShouldBeEmpty();
     }
 
     // ─── Helpers ───

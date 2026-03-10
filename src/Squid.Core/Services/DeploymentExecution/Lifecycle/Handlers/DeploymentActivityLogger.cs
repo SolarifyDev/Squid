@@ -50,6 +50,13 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogInfoAsync($"Found {ctx.Targets.Count} targets: {names}", "System", ct);
     }
 
+    protected override Task OnUnhealthyTargetsExcludedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var names = string.Join(", ", ctx.Targets.Select(t => $"{t.Name} ({t.HealthStatus})"));
+
+        return LogWarningAsync($"Excluded {ctx.Targets.Count} unhealthy target(s) from deployment: {names}", "System", ct);
+    }
+
     protected override Task OnTargetPreparingAsync(DeploymentEventContext ctx, CancellationToken ct)
         => LogInfoAsync($"Preparing target: {ctx.MachineName} ({ctx.CommunicationStyle})", "System", ct);
 
@@ -198,6 +205,22 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var actionNodeId = LookupActionNode(ctx.StepDisplayOrder, ctx.MachineName, ctx.ActionSortOrder);
 
         return PersistScriptOutputAsync(ctx.ScriptResult, ctx.MachineName, actionNodeId, ct);
+    }
+
+    // === Guided Failure ===
+
+    protected override Task OnGuidedFailurePromptAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogWarningAsync($"Guided failure: action \"{ctx.ActionName}\" failed on {ctx.MachineName}. Waiting for manual intervention — {ctx.Error}", "System", ct, stepNodeId);
+    }
+
+    protected override Task OnGuidedFailureResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync($"Guided failure resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
     }
 
     // === Node Lookup ===

@@ -14,6 +14,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         DeploymentSucceededEvent e => OnDeploymentSucceededAsync(e.Context, ct),
         DeploymentFailedEvent e => OnDeploymentFailedAsync(e.Context, ct),
         TargetsResolvedEvent e => OnTargetsResolvedAsync(e.Context, ct),
+        UnhealthyTargetsExcludedEvent e => OnUnhealthyTargetsExcludedAsync(e.Context, ct),
         TargetPreparingEvent e => OnTargetPreparingAsync(e.Context, ct),
         TargetTransportMissingEvent e => OnTargetTransportMissingAsync(e.Context, ct),
         MachineConstraintsResolvedEvent e => OnMachineConstraintsResolvedAsync(e.Context, ct),
@@ -31,6 +32,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         ActionSucceededEvent e => OnActionSucceededAsync(e.Context, ct),
         ActionFailedEvent e => OnActionFailedAsync(e.Context, ct),
         ScriptOutputReceivedEvent e => OnScriptOutputReceivedAsync(e.Context, ct),
+        GuidedFailurePromptEvent e => OnGuidedFailurePromptAsync(e.Context, ct),
+        GuidedFailureResolvedEvent e => OnGuidedFailureResolvedAsync(e.Context, ct),
         _ => Task.CompletedTask
     };
 
@@ -41,6 +44,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
 
     // === Target Preparation ===
     protected virtual Task OnTargetsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnUnhealthyTargetsExcludedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnTargetPreparingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnTargetTransportMissingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnMachineConstraintsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
@@ -66,4 +70,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
 
     // === Script Output ===
     protected virtual Task OnScriptOutputReceivedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
+    // === Guided Failure ===
+    protected virtual Task OnGuidedFailurePromptAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnGuidedFailureResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 }

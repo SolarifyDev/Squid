@@ -2,22 +2,17 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
-using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.Certificates;
+using Squid.Core.Services.DeploymentExecution.Pipeline;
+using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
-using Squid.Core.Services.Deployments.Project;
-using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
-using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Deployment;
@@ -40,12 +35,12 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepSkip_Disabled_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var step = MakeStep("Deploy disabled", 1, "web", isDisabled: true);
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull("Step node should be created even when skipping");
@@ -58,13 +53,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepSkip_SuccessCondition_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
         ctx.FailureEncountered = true;
 
         var step = MakeStep("Deploy on success", 1, "web", condition: "Success");
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -77,13 +72,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepSkip_FailureCondition_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
         ctx.FailureEncountered = false;
 
         var step = MakeStep("Rollback on failure", 1, "web", condition: "Failure");
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -96,12 +91,12 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepSkip_RoleMismatch_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
+        var (phase, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
 
         var step = MakeStep("Deploy database", 1, "database");
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -117,13 +112,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepExecutes_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var step = MakeStep("Deploy web", 1, "web");
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -138,7 +133,7 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionSkip_Disabled_LogsPersistedWarning()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var action = MakeAction("RunScript");
         action.IsDisabled = true;
@@ -146,7 +141,7 @@ public class DeploymentExecutionLoggingTests
         step.Actions = new List<DeploymentActionDto> { action };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var skipLog = logs.FirstOrDefault(l => l.Message.Contains("disabled", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
         skipLog.ShouldNotBeNull("Should persist action disabled skip to task log");
@@ -156,7 +151,7 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionSkip_EnvironmentMismatch_LogsPersisted()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var action = MakeAction("RunScript");
         action.Environments = new List<int> { 99 };
@@ -164,7 +159,7 @@ public class DeploymentExecutionLoggingTests
         step.Actions = new List<DeploymentActionDto> { action };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var skipLog = logs.FirstOrDefault(l => l.Message.Contains("environment", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
         skipLog.ShouldNotBeNull("Should persist environment mismatch skip to task log");
@@ -174,7 +169,7 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionSkip_ChannelMismatch_LogsPersisted()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var action = MakeAction("RunScript");
         action.Channels = new List<int> { 99 };
@@ -182,7 +177,7 @@ public class DeploymentExecutionLoggingTests
         step.Actions = new List<DeploymentActionDto> { action };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var skipLog = logs.FirstOrDefault(l => l.Message.Contains("channel", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
         skipLog.ShouldNotBeNull("Should persist channel mismatch skip to task log");
@@ -192,7 +187,7 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionSkip_ManuallySkipped_LogsPersisted()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var action = MakeAction("RunScript");
         var step = MakeStep("Deploy web", 1, "web");
@@ -203,7 +198,7 @@ public class DeploymentExecutionLoggingTests
             SkipActionIds = new List<int> { action.Id }
         };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var skipLog = logs.FirstOrDefault(l => l.Message.Contains("manually excluded", StringComparison.OrdinalIgnoreCase) || l.Message.Contains("skip", StringComparison.OrdinalIgnoreCase));
         skipLog.ShouldNotBeNull("Should persist manually skipped action to task log");
@@ -214,13 +209,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionStart_LogsUnderActionNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var step = MakeStep("Deploy web", 1, "web");
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var actionNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Action);
         actionNode.ShouldNotBeNull();
@@ -232,13 +227,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ActionSuccess_LogsExitCode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var step = MakeStep("Deploy web", 1, "web");
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var successLog = logs.FirstOrDefault(l => l.Message.Contains("succeeded", StringComparison.OrdinalIgnoreCase) || l.Message.Contains("exit code", StringComparison.OrdinalIgnoreCase));
         successLog.ShouldNotBeNull("Should log action success with exit code");
@@ -249,14 +244,14 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task ConditionMet_Failure_LogsConfirmationBeforeExecution()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
         ctx.FailureEncountered = true;
 
         var step = MakeStep("Rollback step", 1, "web", condition: "Failure");
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -275,14 +270,14 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepFailed_DoesNotLogCompleted()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarnessWithFailingStrategy();
+        var (phase, ctx, logs, nodes) = CreateTestHarnessWithFailingStrategy();
 
         var step = MakeStep("Deploy web", 1, "web");
         step.IsRequired = false;
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var completedLog = logs.FirstOrDefault(l => l.Message.Contains("completed successfully", StringComparison.OrdinalIgnoreCase) && l.Message.Contains(step.Name, StringComparison.OrdinalIgnoreCase));
         completedLog.ShouldBeNull("Should NOT log step completed when step failed");
@@ -293,12 +288,12 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task NoMatchingTargets_SingleRole_UsesSingularForm()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
+        var (phase, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
 
         var step = MakeStep("Deploy cache", 1, "cache");
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var noTargetsLog = logs.FirstOrDefault(l => l.Message.Contains("no machines were found", StringComparison.OrdinalIgnoreCase));
         noTargetsLog.ShouldNotBeNull();
@@ -311,12 +306,14 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task CreateTaskActivityNode_LogsDeploymentStart()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarnessForFullPipeline();
+        var (lifecycle, logs, nodes) = CreateLifecycleHarness();
+        var ctx = CreateBaseContext();
         ctx.Project = new Squid.Core.Persistence.Entities.Deployments.Project { Name = "MyApp" };
         ctx.Environment = new Squid.Core.Persistence.Entities.Deployments.Environment { Name = "Production" };
         ctx.Release.Version = "2.0.0";
+        lifecycle.Initialize(ctx);
 
-        await InvokeCreateTaskActivityNodeAsync(executor, ctx);
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
 
         var startLog = logs.FirstOrDefault(l => l.Message.Contains("Deploying", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("MyApp", StringComparison.Ordinal));
         startLog.ShouldNotBeNull("Should log deployment start message");
@@ -330,12 +327,12 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task NoMatchingTargets_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
+        var (phase, ctx, logs, nodes) = CreateTestHarness(machineRoles: "web");
 
         var step = MakeStep("Deploy cache", 1, "cache");
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull("Step node should be created even when no matching targets");
@@ -351,13 +348,13 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task StepCompleted_LogsUnderStepNode()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarness();
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var step = MakeStep("Deploy web", 1, "web");
         step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
         ctx.Steps = new List<DeploymentStepDto> { step };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
         stepNode.ShouldNotBeNull();
@@ -370,10 +367,12 @@ public class DeploymentExecutionLoggingTests
     [Fact]
     public async Task DeploymentSuccess_LogsPersistedAtTaskRoot()
     {
-        var (executor, ctx, logs, nodes) = CreateTestHarnessForFullPipeline();
+        var (lifecycle, logs, nodes) = CreateLifecycleHarness(withCompletionMocks: true);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
 
-        await InvokeCreateTaskActivityNodeAsync(executor, ctx);
-        await InvokeRecordSuccessAsync(executor, ctx);
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
+        await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), CancellationToken.None);
 
         var taskNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Task);
         var successLog = logs.FirstOrDefault(l => l.Message.Contains("Deployment completed successfully", StringComparison.OrdinalIgnoreCase));
@@ -384,7 +383,7 @@ public class DeploymentExecutionLoggingTests
 
     // ========== Test Infrastructure ==========
 
-    private static (DeploymentTaskExecutor Executor, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarness(string machineRoles = "web")
+    private static (ExecuteStepsPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarness(string machineRoles = "web")
     {
         var logs = new ConcurrentBag<CapturedLog>();
         var nodes = new ConcurrentBag<ActivityLog>();
@@ -393,7 +392,8 @@ public class DeploymentExecutionLoggingTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
 
-        var executor = CreateExecutor(registry, logs, nodes);
+        var lifecycle = CreateLifecycle(logs, nodes);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
@@ -401,12 +401,12 @@ public class DeploymentExecutionLoggingTests
             MakeTarget("target-1", machineRoles, transport)
         };
 
-        SetContext(executor, ctx);
+        lifecycle.Initialize(ctx);
 
-        return (executor, ctx, logs, nodes);
+        return (phase, ctx, logs, nodes);
     }
 
-    private static (DeploymentTaskExecutor Executor, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarnessWithFailingStrategy()
+    private static (ExecuteStepsPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarnessWithFailingStrategy()
     {
         var logs = new ConcurrentBag<CapturedLog>();
         var nodes = new ConcurrentBag<ActivityLog>();
@@ -415,7 +415,8 @@ public class DeploymentExecutionLoggingTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
 
-        var executor = CreateExecutor(registry, logs, nodes);
+        var lifecycle = CreateLifecycle(logs, nodes);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
@@ -423,85 +424,20 @@ public class DeploymentExecutionLoggingTests
             MakeTarget("target-1", "web", transport)
         };
 
-        SetContext(executor, ctx);
+        lifecycle.Initialize(ctx);
 
-        return (executor, ctx, logs, nodes);
+        return (phase, ctx, logs, nodes);
     }
 
-    private static (DeploymentTaskExecutor Executor, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarnessForFullPipeline()
+    private static (IDeploymentLifecycle Lifecycle, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateLifecycleHarness(bool withCompletionMocks = false)
     {
         var logs = new ConcurrentBag<CapturedLog>();
         var nodes = new ConcurrentBag<ActivityLog>();
-        var registry = Mock.Of<IActionHandlerRegistry>();
-
-        var deploymentCompletionMock = new Mock<IDeploymentCompletionDataProvider>();
-        deploymentCompletionMock
-            .Setup(x => x.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var deploymentDataMock = new Mock<IDeploymentDataProvider>();
-        deploymentDataMock
-            .Setup(x => x.GetDeploymentByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Deployment { Id = 2001, SpaceId = 1 });
-
-        var executor = CreateExecutor(registry, logs, nodes, deploymentCompletionMock.Object, deploymentDataMock.Object);
-
-        var ctx = CreateBaseContext();
-
-        SetContext(executor, ctx);
-
-        return (executor, ctx, logs, nodes);
+        var lifecycle = CreateLifecycle(logs, nodes);
+        return (lifecycle, logs, nodes);
     }
 
-    private static void SetContext(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
-        ctxField.ShouldNotBeNull();
-        ctxField.SetValue(executor, ctx);
-
-        var lifecycleField = typeof(DeploymentTaskExecutor).GetField("_lifecycle", BindingFlags.Instance | BindingFlags.NonPublic);
-        (lifecycleField?.GetValue(executor) as IDeploymentLifecycle)?.Initialize(ctx);
-    }
-
-    private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        SetContext(executor, ctx);
-
-        var method = typeof(DeploymentTaskExecutor).GetMethod("ExecuteDeploymentStepsAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-
-        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
-        await task.ConfigureAwait(false);
-    }
-
-    private static async Task InvokeCreateTaskActivityNodeAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        SetContext(executor, ctx);
-
-        var method = typeof(DeploymentTaskExecutor).GetMethod("CreateTaskActivityNodeAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-
-        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
-        await task.ConfigureAwait(false);
-    }
-
-    private static async Task InvokeRecordSuccessAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        SetContext(executor, ctx);
-
-        var method = typeof(DeploymentTaskExecutor).GetMethod("RecordSuccessAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-
-        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
-        await task.ConfigureAwait(false);
-    }
-
-    private static DeploymentTaskExecutor CreateExecutor(
-        IActionHandlerRegistry registry,
-        ConcurrentBag<CapturedLog> logs,
-        ConcurrentBag<ActivityLog> nodes,
-        IDeploymentCompletionDataProvider completionProvider = null,
-        IDeploymentDataProvider deploymentDataProvider = null)
+    private static IDeploymentLifecycle CreateLifecycle(ConcurrentBag<CapturedLog> logs, ConcurrentBag<ActivityLog> nodes)
     {
         var nextNodeId = 0L;
         var serverTaskServiceMock = new Mock<IServerTaskService>();
@@ -551,33 +487,8 @@ public class DeploymentExecutionLoggingTests
             .Setup(x => x.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var genericDataMock = new Mock<IGenericDataProvider>();
-        genericDataMock
-            .Setup(x => x.ExecuteInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
-            .Returns((Func<CancellationToken, Task> action, CancellationToken ct) => action(ct));
-
         var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object);
-        var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
-
-        return new DeploymentTaskExecutor(
-            genericDataMock.Object,
-            Mock.Of<IReleaseDataProvider>(),
-            Mock.Of<IReleaseSelectedPackageDataProvider>(),
-            serverTaskServiceMock.Object,
-            deploymentDataProvider ?? Mock.Of<IDeploymentDataProvider>(),
-            Mock.Of<IProjectDataProvider>(),
-            Mock.Of<IEnvironmentDataProvider>(),
-            Mock.Of<IDeploymentAccountDataProvider>(),
-            Mock.Of<ICertificateDataProvider>(),
-            completionProvider ?? Mock.Of<IDeploymentCompletionDataProvider>(),
-            Mock.Of<IYamlNuGetPacker>(),
-            Mock.Of<IDeploymentTargetFinder>(),
-            Mock.Of<IDeploymentSnapshotService>(),
-            Mock.Of<IDeploymentVariableResolver>(),
-            registry,
-            Mock.Of<ITransportRegistry>(),
-            Mock.Of<IAutoDeployService>(),
-            lifecycle);
+        return new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
     }
 
     private static DeploymentTaskContext CreateBaseContext()

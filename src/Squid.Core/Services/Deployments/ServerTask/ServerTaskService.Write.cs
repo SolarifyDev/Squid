@@ -15,7 +15,13 @@ public partial class ServerTaskService
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
         {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
-            
+
+            task.State = TaskState.Executing;
+        }
+        else if (string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase))
+        {
+            await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
+
             task.State = TaskState.Executing;
         }
         else if (!string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))

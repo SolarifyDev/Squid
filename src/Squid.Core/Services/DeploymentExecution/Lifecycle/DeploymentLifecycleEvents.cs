@@ -1,5 +1,5 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Enums;
+using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 
@@ -33,6 +33,9 @@ public class DeploymentEventContext
 
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
+
+    // Guided failure
+    public string GuidedFailureResolution { get; init; }
 }
 
 public abstract record DeploymentLifecycleEvent(DeploymentEventContext Context);
@@ -44,6 +47,7 @@ public sealed record DeploymentFailedEvent(DeploymentEventContext Context) : Dep
 
 // === Target Preparation ===
 public sealed record TargetsResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record UnhealthyTargetsExcludedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record TargetPreparingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record TargetTransportMissingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record MachineConstraintsResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
@@ -69,3 +73,7 @@ public sealed record ActionFailedEvent(DeploymentEventContext Context) : Deploym
 
 // === Script Output ===
 public sealed record ScriptOutputReceivedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Guided Failure ===
+public sealed record GuidedFailurePromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

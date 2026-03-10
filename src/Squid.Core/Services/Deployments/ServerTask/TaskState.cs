@@ -11,10 +11,11 @@ public static class TaskState
     public const string Cancelling = "Cancelling";
     public const string Cancelled = "Cancelled";
     public const string TimedOut = "TimedOut";
+    public const string Paused = "Paused";
 
     private static readonly HashSet<string> AllStates = new(StringComparer.OrdinalIgnoreCase)
     {
-        Pending, Executing, Success, Failed, Cancelling, Cancelled, TimedOut
+        Pending, Executing, Success, Failed, Cancelling, Cancelled, TimedOut, Paused
     };
 
     private static readonly HashSet<string> TerminalStates = new(StringComparer.OrdinalIgnoreCase)
@@ -24,15 +25,16 @@ public static class TaskState
 
     private static readonly HashSet<string> ActiveStates = new(StringComparer.OrdinalIgnoreCase)
     {
-        Executing, Cancelling
+        Executing, Cancelling, Paused
     };
 
     private static readonly Dictionary<string, HashSet<string>> ValidTransitions =
         new(StringComparer.OrdinalIgnoreCase)
         {
             [Pending] = new(StringComparer.OrdinalIgnoreCase) { Executing, Cancelled, TimedOut },
-            [Executing] = new(StringComparer.OrdinalIgnoreCase) { Success, Failed, Cancelling },
+            [Executing] = new(StringComparer.OrdinalIgnoreCase) { Success, Failed, Cancelling, Paused },
             [Cancelling] = new(StringComparer.OrdinalIgnoreCase) { Cancelled, Failed },
+            [Paused] = new(StringComparer.OrdinalIgnoreCase) { Executing, Failed, Cancelled },
             [Success] = new(StringComparer.OrdinalIgnoreCase),
             [Failed] = new(StringComparer.OrdinalIgnoreCase),
             [Cancelled] = new(StringComparer.OrdinalIgnoreCase),

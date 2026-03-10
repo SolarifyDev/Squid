@@ -15,7 +15,7 @@ public class ConvertProcessSnapshotToStepsTests
             MakeStep(1, "Enabled Step", isDisabled: false, isRequired: true),
             MakeStep(2, "Disabled Step", isDisabled: true, isRequired: false));
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(snapshot);
+        var steps = ProcessSnapshotStepConverter.Convert(snapshot);
 
         steps.Count.ShouldBe(2);
         steps[0].IsDisabled.ShouldBeFalse();
@@ -34,7 +34,7 @@ public class ConvertProcessSnapshotToStepsTests
             new() { Id = 2, Name = "Disabled", ActionType = "T", ActionOrder = 2, IsDisabled = true, IsRequired = false }
         };
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
         steps[0].Actions[0].IsDisabled.ShouldBeFalse();
         steps[0].Actions[0].IsRequired.ShouldBeTrue();
@@ -56,7 +56,7 @@ public class ConvertProcessSnapshotToStepsTests
             }
         };
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
         steps[0].Condition.ShouldBe("Variable");
         steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
@@ -71,7 +71,7 @@ public class ConvertProcessSnapshotToStepsTests
             MakeStep(1, "First"),
             MakeStep(2, "Second"));
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(snapshot);
+        var steps = ProcessSnapshotStepConverter.Convert(snapshot);
 
         steps[0].Name.ShouldBe("First");
         steps[1].Name.ShouldBe("Second");
@@ -87,7 +87,7 @@ public class ConvertProcessSnapshotToStepsTests
             Data = new DeploymentProcessSnapshotDataDto()
         };
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(snapshot);
+        var steps = ProcessSnapshotStepConverter.Convert(snapshot);
 
         steps.ShouldBeEmpty();
     }
@@ -106,7 +106,7 @@ public class ConvertProcessSnapshotToStepsTests
         var step3 = MakeStep(3, "Run Smoke Tests");
         // No target roles — runs on all machines
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(step1, step2, step3));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(step1, step2, step3));
 
         steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
         steps[1].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "api");
@@ -128,7 +128,7 @@ public class ConvertProcessSnapshotToStepsTests
             }
         };
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
         var action = steps[0].Actions[0];
         action.Environments.ShouldBe(new List<int> { 1, 2 });
@@ -143,7 +143,7 @@ public class ConvertProcessSnapshotToStepsTests
         var stepSnap2 = MakeStep(2, "Second");
         stepSnap2.StartTrigger = "StartWithPrevious";
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap, stepSnap2));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap, stepSnap2));
 
         steps[0].StartTrigger.ShouldBe("");
         steps[1].StartTrigger.ShouldBe("StartWithPrevious");
@@ -158,7 +158,7 @@ public class ConvertProcessSnapshotToStepsTests
             { DeploymentVariables.Action.TargetRoles, "" }
         };
 
-        var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(BuildSnapshot(stepSnap));
+        var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
         steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "");
     }

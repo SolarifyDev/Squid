@@ -2,23 +2,12 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System;
 using System.Linq;
-using System.Reflection;
-using System.Threading;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
-using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Deployments.Certificates;
-using Squid.Core.Services.Deployments.DeploymentCompletions;
-using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.Environments;
-using Squid.Core.Services.Deployments.Release;
+using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.ServerTask;
-using Squid.Core.Services.Deployments.LifeCycle;
-using Squid.Core.Services.Deployments.Project;
-using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
@@ -33,14 +22,15 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
     public async Task CreateTaskActivityNode_UsesOctopusStyleTitle()
     {
         var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
-        var executor = CreateExecutor(Mock.Of<IActionHandlerRegistry>(), (nodeType, name) => createdNodes.Add((nodeType, name)));
+        var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
         var ctx = CreateBaseContext();
 
         ctx.Project = new Project { Name = "Smarties.Api" };
         ctx.Environment = new Squid.Core.Persistence.Entities.Deployments.Environment { Name = "TEST" };
         ctx.Release.Version = "6.2.5-mixture-v6.1-4016";
 
-        await InvokeCreateTaskActivityNodeAsync(executor, ctx);
+        lifecycle.Initialize(ctx);
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
 
         createdNodes.ShouldContain(x =>
             x.NodeType == DeploymentActivityLogNodeType.Task &&
@@ -57,8 +47,10 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
         var transport = new TestTransport(strategy, scriptWrapper: null);
-        var executor = CreateExecutor(registry);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
         var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
 
         var target = MakeTarget("target-1", "web", transport, endpointJson: "endpoint-a");
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { target };
@@ -69,7 +61,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             MakeStep("Step3", 3, null, "web", MakeAction("Action3"))
         };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var scripts = strategy.Requests.Select(r => r.ScriptBody).ToList();
         scripts.ShouldContain(s => s.Contains("ACTION=Action2", StringComparison.Ordinal) &&
@@ -89,8 +81,10 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
         var transport = new TestTransport(strategy, wrapper);
-        var executor = CreateExecutor(registry);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
         var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
 
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
         {
@@ -104,7 +98,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             MakeStep("StepB", 2, "StartWithPrevious", "role-b", MakeAction("ActionB"))
         };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var requestsByMachine = strategy.Requests.ToDictionary(r => r.Machine.Name, r => r.ScriptBody);
 
@@ -126,8 +120,10 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
         var transport = new TestTransport(strategy, scriptWrapper: null);
-        var executor = CreateExecutor(registry);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
         var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
 
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
         {
@@ -145,7 +141,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         ctx.Steps = new List<DeploymentStepDto> { step1, step2, step3 };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         var executedActions = strategy.Requests
             .Select(x => x.ScriptBody)
@@ -166,53 +162,21 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
-        var executor = CreateExecutor(registry, (nodeType, name) => createdNodes.Add((nodeType, name)));
+        var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IServerTaskService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
         var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
 
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("SJ-US-AKS", "web", transport, endpointJson: "endpoint-a") };
         ctx.Steps = new List<DeploymentStepDto> { MakeStep("Deploy web", 4, null, "web", MakeAction("ActionA")) };
 
-        await InvokeExecuteDeploymentStepsAsync(executor, ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 1: Deploy web");
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
     }
 
-    private static void SetContext(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        var ctxField = typeof(DeploymentTaskExecutor).GetField("_ctx", BindingFlags.Instance | BindingFlags.NonPublic);
-        ctxField.ShouldNotBeNull();
-        ctxField.SetValue(executor, ctx);
-
-        var lifecycleField = typeof(DeploymentTaskExecutor).GetField("_lifecycle", BindingFlags.Instance | BindingFlags.NonPublic);
-        (lifecycleField?.GetValue(executor) as IDeploymentLifecycle)?.Initialize(ctx);
-    }
-
-    private static async Task InvokeExecuteDeploymentStepsAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        SetContext(executor, ctx);
-
-        var method = typeof(DeploymentTaskExecutor).GetMethod(
-            "ExecuteDeploymentStepsAsync",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-
-        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
-        await task.ConfigureAwait(false);
-    }
-
-    private static async Task InvokeCreateTaskActivityNodeAsync(DeploymentTaskExecutor executor, DeploymentTaskContext ctx)
-    {
-        SetContext(executor, ctx);
-
-        var method = typeof(DeploymentTaskExecutor).GetMethod("CreateTaskActivityNodeAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-        method.ShouldNotBeNull();
-
-        var task = (Task)method.Invoke(executor, new object[] { CancellationToken.None })!;
-        await task.ConfigureAwait(false);
-    }
-
-    private static DeploymentTaskExecutor CreateExecutor(IActionHandlerRegistry registry, Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
+    private static (IDeploymentLifecycle Lifecycle, Mock<IServerTaskService> ServerTaskServiceMock) CreateLifecycle(Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
     {
         var nextNodeId = 0L;
         var serverTaskServiceMock = new Mock<IServerTaskService>();
@@ -270,25 +234,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object);
         var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
 
-        return new DeploymentTaskExecutor(
-            Mock.Of<IGenericDataProvider>(),
-            Mock.Of<IReleaseDataProvider>(),
-            Mock.Of<IReleaseSelectedPackageDataProvider>(),
-            serverTaskServiceMock.Object,
-            Mock.Of<IDeploymentDataProvider>(),
-            Mock.Of<IProjectDataProvider>(),
-            Mock.Of<IEnvironmentDataProvider>(),
-            Mock.Of<IDeploymentAccountDataProvider>(),
-            Mock.Of<ICertificateDataProvider>(),
-            Mock.Of<IDeploymentCompletionDataProvider>(),
-            Mock.Of<IYamlNuGetPacker>(),
-            Mock.Of<IDeploymentTargetFinder>(),
-            Mock.Of<IDeploymentSnapshotService>(),
-            Mock.Of<IDeploymentVariableResolver>(),
-            registry,
-            Mock.Of<ITransportRegistry>(),
-            Mock.Of<IAutoDeployService>(),
-            lifecycle);
+        return (lifecycle, serverTaskServiceMock);
     }
 
     private static DeploymentTaskContext CreateBaseContext()

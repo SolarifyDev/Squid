@@ -30,6 +30,10 @@ public class DeploymentTaskContext
     public List<DeploymentStepDto> Steps { get; set; }
     public List<ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
+    public bool UseGuidedFailure { get; set; }
+
+    // Resume
+    public int? ResumeFromBatchIndex { get; set; }
 
     // Logging
     private long _logSequence;

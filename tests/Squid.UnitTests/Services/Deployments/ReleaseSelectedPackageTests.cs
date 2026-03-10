@@ -84,7 +84,7 @@ public class ReleaseSelectedPackageTests
     }
 
     /// <summary>
-    /// Extracts the BuildActionVariables logic for testability (mirrors DeploymentTaskExecutor.BuildActionVariables).
+    /// Extracts the BuildActionVariables logic for testability (mirrors EffectiveVariableBuilder.BuildActionVariables).
     /// </summary>
     private static List<VariableDto> BuildActionVariables(
         List<VariableDto> effectiveVariables,

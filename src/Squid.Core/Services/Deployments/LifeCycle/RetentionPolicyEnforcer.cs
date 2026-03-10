@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Message.Enums.Deployments;
@@ -19,6 +20,7 @@ public class RetentionPolicyEnforcer(
     ILifeCycleDataProvider lifeCycleDataProvider,
     IReleaseDataProvider releaseDataProvider,
     IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
+    IDeploymentDataProvider deploymentDataProvider,
     IRepository repository) : IRetentionPolicyEnforcer
 {
     public async Task<int> EnforceRetentionForAllProjectsAsync(CancellationToken cancellationToken)
@@ -92,6 +94,10 @@ public class RetentionPolicyEnforcer(
             if (deploymentsToDelete.Count == 0) continue;
 
             Log.Information("Retention: deleting {Count} deployments for project {ProjectId} environment {EnvironmentId}", deploymentsToDelete.Count, projectId, environmentId);
+
+            var ids = deploymentsToDelete.Select(d => d.Id).ToList();
+            await deploymentCompletionDataProvider.DeleteByDeploymentIdsAsync(ids, cancellationToken).ConfigureAwait(false);
+            await deploymentDataProvider.DeleteDeploymentsAsync(ids, cancellationToken).ConfigureAwait(false);
         }
     }
 

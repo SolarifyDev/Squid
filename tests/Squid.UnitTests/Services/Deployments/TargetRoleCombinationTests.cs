@@ -191,7 +191,7 @@ public class TargetRoleCombinationTests
         var step = MakeStep(1, "Deploy", condition: "Success", targetRoles: "web");
         var machineRoles = ParseRoles(MakeMachine(1, "web"));
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
@@ -201,7 +201,7 @@ public class TargetRoleCombinationTests
         var step = MakeStep(1, "Deploy", condition: "Success", targetRoles: "web");
         var machineRoles = ParseRoles(MakeMachine(1, "web"));
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
             .ShouldBeFalse();
     }
 
@@ -211,7 +211,7 @@ public class TargetRoleCombinationTests
         var step = MakeStep(1, "Rollback", condition: "Failure", targetRoles: "web");
         var machineRoles = ParseRoles(MakeMachine(1, "web"));
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
             .ShouldBeTrue();
     }
 
@@ -222,9 +222,9 @@ public class TargetRoleCombinationTests
         var step = MakeStep(1, "Cleanup", condition: "Always", targetRoles: "web");
         var machineRoles = ParseRoles(MakeMachine(1, "database"));
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeFalse();
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: false)
             .ShouldBeFalse();
     }
 
@@ -235,7 +235,7 @@ public class TargetRoleCombinationTests
         var step = MakeStep(1, "Deploy", condition: "Always", targetRoles: "web", isDisabled: true);
         var machineRoles = ParseRoles(MakeMachine(1, "web"));
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeFalse();
     }
 
@@ -372,17 +372,17 @@ public class TargetRoleCombinationTests
         };
 
         // Both match
-        DeploymentTaskExecutor.ShouldExecuteAction(action, 1, 10).ShouldBeTrue();
-        DeploymentTaskExecutor.ShouldExecuteAction(action, 2, 20).ShouldBeTrue();
+        StepEligibilityEvaluator.ShouldExecuteAction(action, 1, 10).ShouldBeTrue();
+        StepEligibilityEvaluator.ShouldExecuteAction(action, 2, 20).ShouldBeTrue();
 
         // Environment match, wrong channel
-        DeploymentTaskExecutor.ShouldExecuteAction(action, 1, 99).ShouldBeFalse();
+        StepEligibilityEvaluator.ShouldExecuteAction(action, 1, 99).ShouldBeFalse();
 
         // Channel match, wrong environment
-        DeploymentTaskExecutor.ShouldExecuteAction(action, 99, 10).ShouldBeFalse();
+        StepEligibilityEvaluator.ShouldExecuteAction(action, 99, 10).ShouldBeFalse();
 
         // Excluded environment overrides inclusion
-        DeploymentTaskExecutor.ShouldExecuteAction(action, 3, 10).ShouldBeFalse();
+        StepEligibilityEvaluator.ShouldExecuteAction(action, 3, 10).ShouldBeFalse();
     }
 
     // ========== Edge Case: Role Name Overlap Prevention ==========
@@ -423,7 +423,7 @@ public class TargetRoleCombinationTests
     // ========== Helpers ==========
 
     private static bool ShouldExecute(DeploymentStepDto step, HashSet<string> machineRoles)
-        => DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true);
+        => StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true);
 
     private static HashSet<string> ParseRoles(Machine machine)
         => DeploymentTargetFinder.ParseRoles(machine.Roles);

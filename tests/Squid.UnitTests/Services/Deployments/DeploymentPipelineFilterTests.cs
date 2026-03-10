@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
+using static Squid.Core.Services.DeploymentExecution.StepEligibilityEvaluator;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -8,7 +9,7 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.UnitTests.Services.Deployments;
 
 /// <summary>
-/// Tests for static pipeline filter methods on DeploymentTaskExecutor:
+/// Tests for static pipeline filter methods on StepEligibilityEvaluator:
 ///   - ShouldExecuteStep: IsDisabled check, Condition evaluation, Role matching
 ///   - ShouldExecuteAction: IsDisabled check, Environment/Channel filtering
 /// Complex combination scenarios (condition + roles + disabled) are in TargetRoleCombinationTests.
@@ -24,7 +25,7 @@ public class DeploymentPipelineFilterTests
     {
         var step = MakeStep(isDisabled: isDisabled);
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true)
             .ShouldBe(expected);
     }
 
@@ -35,7 +36,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(isDisabled: isDisabled);
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
             .ShouldBe(expected);
     }
 
@@ -58,7 +59,7 @@ public class DeploymentPipelineFilterTests
     {
         var step = MakeStep(condition: condition);
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: previousSucceeded)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: previousSucceeded)
             .ShouldBe(expected);
     }
 
@@ -84,7 +85,7 @@ public class DeploymentPipelineFilterTests
             machineRolesStr.Split(',', StringSplitOptions.TrimEntries),
             StringComparer.OrdinalIgnoreCase);
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBe(expected);
     }
 
@@ -94,7 +95,7 @@ public class DeploymentPipelineFilterTests
         var step = MakeStep(targetRoles: null);
         var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "anything" };
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
@@ -103,7 +104,7 @@ public class DeploymentPipelineFilterTests
     {
         var step = MakeStep(targetRoles: "");
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "any" }, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "any" }, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
@@ -113,7 +114,7 @@ public class DeploymentPipelineFilterTests
         var step = MakeStep(targetRoles: "web");
         var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeFalse();
     }
 
@@ -127,7 +128,7 @@ public class DeploymentPipelineFilterTests
             Properties = null
         };
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" }, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" }, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
@@ -146,7 +147,7 @@ public class DeploymentPipelineFilterTests
 
         var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, machineRoles, previousStepSucceeded: true)
             .ShouldBeTrue();
     }
 
@@ -157,7 +158,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(environments: new List<int>());
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
             .ShouldBeTrue();
     }
 
@@ -166,7 +167,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(environments: new List<int> { 1, 2, 3 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 2, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 2, deploymentChannelId: 1)
             .ShouldBeTrue();
     }
 
@@ -175,7 +176,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(environments: new List<int> { 1, 2 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
             .ShouldBeFalse();
     }
 
@@ -186,7 +187,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(channels: new List<int>());
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 99)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 99)
             .ShouldBeTrue();
     }
 
@@ -195,7 +196,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(channels: new List<int> { 10, 20 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 10)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 10)
             .ShouldBeTrue();
     }
 
@@ -204,7 +205,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(channels: new List<int> { 10, 20 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 99)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 99)
             .ShouldBeFalse();
     }
 
@@ -215,7 +216,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(excludedEnvironments: new List<int> { 5, 10 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 5, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 5, deploymentChannelId: 1)
             .ShouldBeFalse();
     }
 
@@ -224,7 +225,7 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(excludedEnvironments: new List<int> { 5, 10 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
             .ShouldBeTrue();
     }
 
@@ -235,10 +236,10 @@ public class DeploymentPipelineFilterTests
             environments: new List<int> { 1, 5 },
             excludedEnvironments: new List<int> { 5 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 5, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 5, deploymentChannelId: 1)
             .ShouldBeFalse();
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
             .ShouldBeTrue();
     }
 
@@ -247,10 +248,10 @@ public class DeploymentPipelineFilterTests
     {
         var action = MakeAction(excludedEnvironments: new List<int> { 99 });
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 1, deploymentChannelId: 1)
             .ShouldBeTrue();
 
-        DeploymentTaskExecutor.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
+        StepEligibilityEvaluator.ShouldExecuteAction(action, deploymentEnvironmentId: 99, deploymentChannelId: 1)
             .ShouldBeFalse();
     }
 
@@ -272,7 +273,7 @@ public class DeploymentPipelineFilterTests
             new() { Name = "IsProduction", Value = variableValue }
         };
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
             .ShouldBe(expected);
     }
 
@@ -281,7 +282,7 @@ public class DeploymentPipelineFilterTests
     {
         var step = MakeStep(condition: "Variable");
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false)
             .ShouldBeTrue();
     }
 
@@ -290,7 +291,7 @@ public class DeploymentPipelineFilterTests
     {
         var step = MakeStepWithVariableCondition("#{SomeVar}");
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false, effectiveVariables: null)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: false, effectiveVariables: null)
             .ShouldBeTrue();
     }
 
@@ -304,7 +305,7 @@ public class DeploymentPipelineFilterTests
             new() { Name = "OtherVar", Value = "True" }
         };
 
-        DeploymentTaskExecutor.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
+        StepEligibilityEvaluator.ShouldExecuteStep(step, targetRoles: null, previousStepSucceeded: true, variables)
             .ShouldBeFalse();
     }
 

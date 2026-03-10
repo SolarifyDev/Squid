@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Services.Machines;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
 
 namespace Squid.Core.Services.DeploymentExecution;
@@ -9,7 +10,7 @@ namespace Squid.Core.Services.DeploymentExecution;
 ///   1. Get candidate pool (specific machine or auto-select by environment)
 ///   2. Filter by environment (validate machine belongs to target environment)
 ///   3. Filter disabled (exclude IsDisabled machines)
-///   4. (Future) Filter by health status
+///   4. Filter by health status (exclude Unhealthy/Unavailable)
 ///   5. (Future) Apply exclusion list
 /// Per-step role filtering is provided as a static utility for the executor.
 /// </summary>
@@ -60,6 +61,22 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     private static List<Persistence.Entities.Deployments.Machine> FilterDisabled(List<Persistence.Entities.Deployments.Machine> candidates)
     {
         return candidates.Where(m => !m.IsDisabled).ToList();
+    }
+
+    public static (List<Persistence.Entities.Deployments.Machine> Healthy, List<Persistence.Entities.Deployments.Machine> Excluded) FilterByHealthStatus(List<Persistence.Entities.Deployments.Machine> candidates)
+    {
+        var healthy = new List<Persistence.Entities.Deployments.Machine>();
+        var excluded = new List<Persistence.Entities.Deployments.Machine>();
+
+        foreach (var m in candidates)
+        {
+            if (m.HealthStatus is MachineHealthStatus.Unhealthy or MachineHealthStatus.Unavailable)
+                excluded.Add(m);
+            else
+                healthy.Add(m);
+        }
+
+        return (healthy, excluded);
     }
 
     public static List<Persistence.Entities.Deployments.Machine> ApplyMachineSelection(List<Persistence.Entities.Deployments.Machine> candidates, DeploymentMachineSelection selection)

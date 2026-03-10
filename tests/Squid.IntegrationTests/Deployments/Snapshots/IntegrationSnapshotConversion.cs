@@ -33,7 +33,7 @@ public class IntegrationSnapshotConversion : SnapshotFixtureBase
             // Snapshot → Load → Convert
             var created = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
             var loaded = await snapshotService.LoadProcessSnapshotAsync(created.Id);
-            var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(loaded);
+            var steps = ProcessSnapshotStepConverter.Convert(loaded);
 
             // Verify step count
             steps.Count.ShouldBe(2);

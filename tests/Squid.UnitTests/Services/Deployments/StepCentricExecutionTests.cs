@@ -22,7 +22,7 @@ public class StepCentricExecutionTests
             MakeTarget("db-server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(1);
         result[0].Machine.Roles.ShouldBe(JsonSerializer.Serialize(new[] { "web-server" }));
@@ -38,7 +38,7 @@ public class StepCentricExecutionTests
             MakeTarget("api-server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(2);
     }
@@ -55,7 +55,7 @@ public class StepCentricExecutionTests
             MakeTarget("db-server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(3);
         var dbRolesJson = JsonSerializer.Serialize(new[] { "db-server" });
@@ -72,7 +72,7 @@ public class StepCentricExecutionTests
             MakeTarget("api-server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.ShouldBeEmpty();
     }
@@ -86,7 +86,7 @@ public class StepCentricExecutionTests
             MakeTarget("web-server", "api-server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(1);
     }
@@ -100,7 +100,7 @@ public class StepCentricExecutionTests
             MakeTarget("Web-Server")
         };
 
-        var result = DeploymentTaskExecutor.FindMatchingTargetsForStep(step, targets);
+        var result = TargetStepMatcher.FindMatchingTargetsForStep(step, targets);
 
         result.Count.ShouldBe(1);
     }
@@ -125,7 +125,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var result = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         result.Count.ShouldBe(4);
         result.Select(v => v.Name).ShouldBe(new[] { "A", "B", "C", "D" });
@@ -142,7 +142,7 @@ public class StepCentricExecutionTests
 
         var target = new DeploymentTargetContext();
 
-        var result = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var result = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         result.Count.ShouldBe(2);
     }
@@ -163,7 +163,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         baseVars.Count.ShouldBe(1);
         baseVars[0].Name.ShouldBe("A");
@@ -195,8 +195,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
+        var effectiveA = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.ShouldNotContain(v => v.Value == "https://b.example.com");
         effectiveB.ShouldNotContain(v => v.Value == "https://a.example.com");
@@ -218,7 +218,7 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effective = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var effective = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         effective.Count.ShouldBe(2);
         effective.Last(v => v.Name == "Url").Value.ShouldBe("endpoint-url");
@@ -250,8 +250,8 @@ public class StepCentricExecutionTests
 
         baseVars.Add(new VariableDto { Name = "OutputVar", Value = "step1-output" });
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
+        var effectiveA = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.ShouldContain(v => v.Name == "OutputVar" && v.Value == "step1-output");
         effectiveB.ShouldContain(v => v.Name == "OutputVar" && v.Value == "step1-output");
@@ -281,8 +281,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var effectiveA = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
-        var effectiveB = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
+        var effectiveA = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetA, new VariableScopeContext());
+        var effectiveB = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, targetB, new VariableScopeContext());
 
         effectiveA.Add(new VariableDto { Name = "Temp", Value = "A-only" });
 
@@ -307,8 +307,8 @@ public class StepCentricExecutionTests
             }
         };
 
-        var first = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
-        var second = DeploymentTaskExecutor.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var first = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
+        var second = EffectiveVariableBuilder.BuildEffectiveVariables(baseVars, target, new VariableScopeContext());
 
         ReferenceEquals(first, second).ShouldBeFalse();
     }
