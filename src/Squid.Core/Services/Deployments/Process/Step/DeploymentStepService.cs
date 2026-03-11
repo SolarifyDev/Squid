@@ -16,6 +16,8 @@ public interface IDeploymentStepService : IScopedDependency
 
     Task<DeploymentStepDeletedEvent> DeleteDeploymentStepsAsync(DeleteDeploymentStepCommand command, CancellationToken cancellationToken);
 
+    Task<DeploymentStepsReorderedEvent> ReorderDeploymentStepsAsync(ReorderDeploymentStepsCommand command, CancellationToken cancellationToken);
+
     Task<GetDeploymentStepResponse> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken);
 
     Task<GetDeploymentStepsResponse> GetDeploymentStepsAsync(GetDeploymentStepsRequest request, CancellationToken cancellationToken);
@@ -118,6 +120,44 @@ public class DeploymentStepService : IDeploymentStepService
                 FailIds = command.Ids.Except(steps.Select(s => s.Id)).ToList()
             }
         };
+    }
+
+    public async Task<DeploymentStepsReorderedEvent> ReorderDeploymentStepsAsync(ReorderDeploymentStepsCommand command, CancellationToken cancellationToken)
+    {
+        var existingSteps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
+
+        var existingStepIds = existingSteps.Select(s => s.Id).ToHashSet();
+        var submittedStepIds = command.StepOrders.Select(o => o.StepId).ToHashSet();
+
+        if (!submittedStepIds.SetEquals(existingStepIds))
+            throw new InvalidOperationException($"StepOrders must include all steps for process {command.ProcessId}. Expected: [{string.Join(", ", existingStepIds)}], Got: [{string.Join(", ", submittedStepIds)}]");
+
+        var orderLookup = command.StepOrders.ToDictionary(o => o.StepId, o => o.StepOrder);
+
+        // Phase 1: Set temporary negative orders to avoid unique constraint violations on (process_id, step_order)
+        for (var i = 0; i < existingSteps.Count; i++)
+        {
+            existingSteps[i].StepOrder = -(i + 1);
+            var isLast = i == existingSteps.Count - 1;
+            await _stepDataProvider.UpdateDeploymentStepAsync(existingSteps[i], isLast, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Phase 2: Set real orders — all steps now have negative values, so no conflicts
+        foreach (var step in existingSteps)
+        {
+            step.StepOrder = orderLookup[step.Id];
+            await _stepDataProvider.UpdateDeploymentStepAsync(step, false, cancellationToken).ConfigureAwait(false);
+        }
+
+        var reorderedSteps = new List<DeploymentStepDto>();
+
+        foreach (var step in existingSteps.OrderBy(s => s.StepOrder))
+        {
+            var stepDto = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
+            reorderedSteps.Add(stepDto);
+        }
+
+        return new DeploymentStepsReorderedEvent { Data = reorderedSteps };
     }
 
     public async Task<GetDeploymentStepResponse> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken)

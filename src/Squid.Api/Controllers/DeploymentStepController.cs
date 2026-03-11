@@ -32,6 +32,15 @@ public class DeploymentStepController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("reorder")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ReorderDeploymentStepsResponse))]
+    public async Task<IActionResult> ReorderDeploymentStepsAsync([FromBody] ReorderDeploymentStepsCommand command)
+    {
+        var response = await _mediator.SendAsync<ReorderDeploymentStepsCommand, ReorderDeploymentStepsResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteDeploymentStepResponse))]
     public async Task<IActionResult> DeleteDeploymentStepsAsync([FromBody] DeleteDeploymentStepCommand command)
