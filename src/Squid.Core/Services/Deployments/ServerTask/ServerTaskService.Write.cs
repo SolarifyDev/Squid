@@ -86,6 +86,8 @@ public partial class ServerTaskService
     }
 
     public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken ct = default) => _serverTaskDataProvider.TransitionStateAsync(taskId, expectedCurrentState, newState, ct);
-    
+
     public Task UpdateActivityNodeStatusAsync(long nodeId, DeploymentActivityLogNodeStatus status, DateTimeOffset? endedAt = null, CancellationToken ct = default) => _activityLogDataProvider.UpdateNodeStatusAsync(nodeId, status, endedAt, ct: ct);
+
+    public Task SetHasPendingInterruptionsAsync(int serverTaskId, bool hasPending, CancellationToken ct = default) => _serverTaskDataProvider.SetHasPendingInterruptionsAsync(serverTaskId, hasPending, ct);
 }

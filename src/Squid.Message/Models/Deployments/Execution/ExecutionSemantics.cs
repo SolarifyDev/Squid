@@ -4,7 +4,8 @@ public enum ExecutionMode
 {
     Unspecified = 0,
     DirectScript = 1,
-    PackagedPayload = 2
+    PackagedPayload = 2,
+    ManualIntervention = 3
 }
 
 public enum ContextPreparationPolicy

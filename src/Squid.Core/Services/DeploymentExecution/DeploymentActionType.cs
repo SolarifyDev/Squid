@@ -10,4 +10,5 @@ public enum DeploymentActionType
     KubernetesDeployService = 6,
     KubernetesDeployConfigMap = 7,
     KubernetesDeploySecret = 8,
+    ManualIntervention = 9,
 }

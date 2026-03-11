@@ -30,6 +30,8 @@ public class ActionExecutionResult
 
     public HashSet<string> SensitiveOutputVariableNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public string ManualInterventionInstructions { get; set; }
+
     public ExecutionMode ResolveExecutionMode()
     {
         if (ExecutionMode == ExecutionMode.Unspecified)

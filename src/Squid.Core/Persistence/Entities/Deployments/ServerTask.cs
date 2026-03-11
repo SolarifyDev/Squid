@@ -53,4 +53,6 @@ public class ServerTask : IEntity<int>
     public int Weight { get; set; }
 
     public string JobId { get; set; }
+
+    public bool HasPendingInterruptions { get; set; }
 }

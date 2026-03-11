@@ -21,6 +21,7 @@ public partial class ServerTaskService
             LastModified = task.LastModified,
             ErrorMessage = task.ErrorMessage,
             HasWarningsOrErrors = task.HasWarningsOrErrors,
+            HasPendingInterruptions = task.HasPendingInterruptions,
             SpaceId = task.SpaceId,
             ProjectId = task.ProjectId,
             EnvironmentId = task.EnvironmentId,

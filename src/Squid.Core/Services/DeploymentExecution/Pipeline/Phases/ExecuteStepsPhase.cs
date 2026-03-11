@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Enums.Deployments;
+using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -266,18 +267,33 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
         List<VariableDto> effectiveVariables,
         CancellationToken ct)
     {
+        const int maxRetries = 10;
         var actionSortOrder = 0;
 
         foreach (var actionResult in stepResults)
         {
             ++actionSortOrder;
             var retry = true;
+            var retryCount = 0;
 
             while (retry)
             {
                 retry = false;
 
                 await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
+
+                if (actionResult.ExecutionMode == ExecutionMode.ManualIntervention)
+                {
+                    var interventionOutcome = await HandleManualInterventionAsync(step, actionResult, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+
+                    if (interventionOutcome == InterruptionOutcome.Proceed)
+                    {
+                        CollectManualInterventionOutputVariables(result, step.Name, actionResult);
+                        continue;
+                    }
+
+                    throw new DeploymentAbortedException($"Manual intervention aborted for step \"{step.Name}\"");
+                }
 
                 try
                 {
@@ -310,16 +326,17 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
 
                     if (step.IsRequired && _ctx.UseGuidedFailure)
                     {
-                        var resolution = await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                        var outcome = await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
 
-                        if (resolution == GuidedFailureAction.Retry)
+                        if (outcome == InterruptionOutcome.Retry && retryCount < maxRetries)
                         {
                             result.Failed = false;
                             retry = true;
+                            retryCount++;
                             continue;
                         }
 
-                        if (resolution == GuidedFailureAction.Skip)
+                        if (outcome == InterruptionOutcome.Skip)
                         {
                             result.Failed = false;
                             break;
@@ -333,30 +350,85 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
         }
     }
 
-    private async Task<GuidedFailureAction> HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
+    private async Task<InterruptionOutcome> HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
     {
+        var form = InterruptionFormBuilder.BuildGuidedFailureForm(step.Name, actionResult.ActionName, tc.Machine.Name, ex.Message);
+
         await lifecycle.EmitAsync(new GuidedFailurePromptEvent(new DeploymentEventContext
         {
             StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
             ActionName = actionResult.ActionName, MachineName = tc.Machine.Name,
-            ActionSortOrder = actionSortOrder, Error = ex.Message
+            ActionSortOrder = actionSortOrder, Error = ex.Message,
+            InterruptionType = InterruptionType.GuidedFailure
         }), ct).ConfigureAwait(false);
 
-        await serverTaskService.TransitionStateAsync(_ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
+        var interruption = await interruptionService.CreateInterruptionAsync(new CreateInterruptionRequest
+        {
+            ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id,
+            InterruptionType = InterruptionType.GuidedFailure, StepDisplayOrder = stepDisplayOrder,
+            StepName = step.Name, ActionName = actionResult.ActionName,
+            MachineName = tc.Machine.Name, ErrorMessage = ex.Message,
+            Form = form, SpaceId = _ctx.Deployment.SpaceId
+        }, ct).ConfigureAwait(false);
 
-        var interruption = await interruptionService.CreateInterruptionAsync(_ctx.ServerTaskId, _ctx.Deployment.Id, stepDisplayOrder, step.Name, actionResult.ActionName, tc.Machine.Name, ex.Message, _ctx.Deployment.SpaceId, ct).ConfigureAwait(false);
-
-        var resolution = await interruptionService.WaitForResolutionAsync(interruption.Id, ct).ConfigureAwait(false);
-
-        await serverTaskService.TransitionStateAsync(_ctx.ServerTaskId, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
+        var outcome = await interruptionService.WaitForInterruptionAsync(interruption.Id, ct).ConfigureAwait(false);
 
         await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
         {
             StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
-            GuidedFailureResolution = resolution.ToString()
+            GuidedFailureResolution = outcome.ToString(),
+            InterruptionType = InterruptionType.GuidedFailure
         }), ct).ConfigureAwait(false);
 
-        return resolution;
+        return outcome;
+    }
+
+    private async Task<InterruptionOutcome> HandleManualInterventionAsync(DeploymentStepDto step, ActionExecutionResult actionResult, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
+    {
+        var form = InterruptionFormBuilder.BuildManualInterventionForm(actionResult.ManualInterventionInstructions);
+
+        await lifecycle.EmitAsync(new GuidedFailurePromptEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
+            ActionName = actionResult.ActionName, InterruptionType = InterruptionType.ManualIntervention
+        }), ct).ConfigureAwait(false);
+
+        var interruption = await interruptionService.CreateInterruptionAsync(new CreateInterruptionRequest
+        {
+            ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id,
+            InterruptionType = InterruptionType.ManualIntervention, StepDisplayOrder = stepDisplayOrder,
+            StepName = step.Name, ActionName = actionResult.ActionName,
+            Form = form, SpaceId = _ctx.Deployment.SpaceId
+        }, ct).ConfigureAwait(false);
+
+        var outcome = await interruptionService.WaitForInterruptionAsync(interruption.Id, ct).ConfigureAwait(false);
+
+        await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
+            GuidedFailureResolution = outcome.ToString(),
+            InterruptionType = InterruptionType.ManualIntervention
+        }), ct).ConfigureAwait(false);
+
+        return outcome;
+    }
+
+    private static void CollectManualInterventionOutputVariables(StepExecutionResult result, string stepName, ActionExecutionResult actionResult)
+    {
+        var responsibleUser = actionResult.OutputVariables.GetValueOrDefault("ManualIntervention.ResponsibleUserId");
+        var notes = actionResult.OutputVariables.GetValueOrDefault("ManualIntervention.Notes");
+
+        if (responsibleUser != null)
+        {
+            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, "ManualIntervention.ResponsibleUserId");
+            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = responsibleUser });
+        }
+
+        if (notes != null)
+        {
+            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, "ManualIntervention.Notes");
+            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = notes });
+        }
     }
 
     private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)

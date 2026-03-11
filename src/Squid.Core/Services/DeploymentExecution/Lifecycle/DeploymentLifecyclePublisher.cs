@@ -2,8 +2,8 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 
 public sealed class DeploymentLifecyclePublisher : IDeploymentLifecycle
 {
-    private readonly IEnumerable<IDeploymentLifecycleHandler> _handlers;
     private List<IDeploymentLifecycleHandler> _ordered;
+    private readonly IEnumerable<IDeploymentLifecycleHandler> _handlers;
 
     public DeploymentLifecyclePublisher(IEnumerable<IDeploymentLifecycleHandler> handlers) => _handlers = handlers;
 

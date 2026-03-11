@@ -1,4 +1,5 @@
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 using Squid.Core.Persistence.Entities.Deployments;
 
 namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -34,8 +35,9 @@ public class DeploymentEventContext
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
 
-    // Guided failure
+    // Guided failure / Manual intervention
     public string GuidedFailureResolution { get; init; }
+    public InterruptionType? InterruptionType { get; init; }
 }
 
 public abstract record DeploymentLifecycleEvent(DeploymentEventContext Context);

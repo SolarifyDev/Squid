@@ -25,6 +25,8 @@ public interface IServerTaskService : IScopedDependency
     Task<ServerTaskLogPageDto> GetTaskLogsAsync(int taskId, long? afterSequenceNumber = null, int? take = null, CancellationToken ct = default);
 
     Task<ServerTaskLogPageDto> GetTaskNodeLogsAsync(int taskId, long nodeId, long? afterSequenceNumber = null, int? take = null, CancellationToken ct = default);
+
+    Task SetHasPendingInterruptionsAsync(int serverTaskId, bool hasPending, CancellationToken ct = default);
 }
 
 public class ServerTaskLogWriteEntry

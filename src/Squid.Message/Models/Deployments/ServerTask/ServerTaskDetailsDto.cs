@@ -24,6 +24,8 @@ public class ServerTaskSummaryDto
 
     public bool HasWarningsOrErrors { get; set; }
 
+    public bool HasPendingInterruptions { get; set; }
+
     public int? SpaceId { get; set; }
 
     public int ProjectId { get; set; }

@@ -57,6 +57,12 @@ public static class DeploymentActionTypeParser
             return true;
         }
 
+        if (string.Equals(actionType, "Squid.ManualIntervention", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.ManualIntervention;
+            return true;
+        }
+
         return false;
     }
 
