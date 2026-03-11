@@ -107,6 +107,8 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
             return stepResult;
         }
 
+        await ExecuteStepLevelActionsAsync(step, stepSortOrder, ct).ConfigureAwait(false);
+
         foreach (var tc in matchingTargets)
         {
             var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
@@ -172,6 +174,9 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
 
                 continue;
             }
+
+            if (actionHandlerRegistry.ResolveScope(action) == ExecutionScope.StepLevel)
+                continue;
 
             var actionEligibility = StepEligibilityEvaluator.EvaluateAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId);
 
@@ -282,19 +287,6 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
 
                 await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
 
-                if (actionResult.ExecutionMode == ExecutionMode.ManualIntervention)
-                {
-                    var interventionOutcome = await HandleManualInterventionAsync(step, actionResult, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
-
-                    if (interventionOutcome == InterruptionOutcome.Proceed)
-                    {
-                        CollectManualInterventionOutputVariables(result, step.Name, actionResult);
-                        continue;
-                    }
-
-                    throw new DeploymentAbortedException($"Manual intervention aborted for step \"{step.Name}\"");
-                }
-
                 try
                 {
                     var strategy = tc.Transport?.Strategy;
@@ -383,6 +375,40 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
         return outcome;
     }
 
+    private async Task ExecuteStepLevelActionsAsync(DeploymentStepDto step, int stepDisplayOrder, CancellationToken ct)
+    {
+        var actionSortOrder = 0;
+
+        foreach (var action in step.Actions.OrderBy(a => a.ActionOrder))
+        {
+            actionSortOrder++;
+
+            if (action.IsDisabled) continue;
+            if (actionHandlerRegistry.ResolveScope(action) != ExecutionScope.StepLevel) continue;
+
+            var handler = actionHandlerRegistry.Resolve(action);
+            if (handler == null) continue;
+
+            var context = new ActionExecutionContext
+            {
+                Step = step,
+                Action = action,
+                Variables = _ctx.Variables,
+                ReleaseVersion = _ctx.Release?.Version
+            };
+
+            var prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
+            if (prepared == null) continue;
+
+            prepared.ActionName = action.Name;
+
+            var outcome = await HandleManualInterventionAsync(step, prepared, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+
+            if (outcome == InterruptionOutcome.Abort)
+                throw new DeploymentAbortedException($"Manual intervention aborted for step \"{step.Name}\"");
+        }
+    }
+
     private async Task<InterruptionOutcome> HandleManualInterventionAsync(DeploymentStepDto step, ActionExecutionResult actionResult, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
     {
         var form = InterruptionFormBuilder.BuildManualInterventionForm(actionResult.ManualInterventionInstructions);
@@ -411,24 +437,6 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
         }), ct).ConfigureAwait(false);
 
         return outcome;
-    }
-
-    private static void CollectManualInterventionOutputVariables(StepExecutionResult result, string stepName, ActionExecutionResult actionResult)
-    {
-        var responsibleUser = actionResult.OutputVariables.GetValueOrDefault("ManualIntervention.ResponsibleUserId");
-        var notes = actionResult.OutputVariables.GetValueOrDefault("ManualIntervention.Notes");
-
-        if (responsibleUser != null)
-        {
-            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, "ManualIntervention.ResponsibleUserId");
-            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = responsibleUser });
-        }
-
-        if (notes != null)
-        {
-            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, "ManualIntervention.Notes");
-            result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = notes });
-        }
     }
 
     private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)

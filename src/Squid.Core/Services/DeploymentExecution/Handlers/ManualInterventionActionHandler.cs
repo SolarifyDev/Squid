@@ -7,6 +7,8 @@ public sealed class ManualInterventionActionHandler : IActionHandler
 {
     public DeploymentActionType ActionType => DeploymentActionType.ManualIntervention;
 
+    public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
+
     public bool CanHandle(DeploymentActionDto action) => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)

@@ -33,8 +33,10 @@ public class ManualInterventionE2ETests
 
     private CapturingExecutionStrategy ExecutionCapture => _fixture.ExecutionCapture;
 
-    [Fact]
-    public async Task ManualIntervention_Proceed_PipelineContinues()
+    [Theory]
+    [InlineData("Proceed", 2, TaskState.Success)]
+    [InlineData("Abort", 1, TaskState.Failed)]
+    public async Task ManualIntervention_Decision_ControlsPipelineOutcome(string decision, int expectedScriptCount, string expectedTaskState)
     {
         ExecutionCapture.Clear();
 
@@ -43,34 +45,19 @@ public class ManualInterventionE2ETests
             postStepScript: "echo 'after-manual'",
             instructions: "Please approve deployment");
 
-        await RunPipelineWithInterventionAsync(serverTaskId, "Proceed");
+        await RunPipelineWithInterventionAsync(serverTaskId, decision);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(expectedScriptCount, "Manual intervention step itself should not produce script executions");
 
         var executedScripts = ExecutionCapture.CapturedRequests.Select(r => r.ScriptBody).ToList();
-
         executedScripts.ShouldContain(s => s.Contains("before-manual"), "Pre-manual step should have executed");
-        executedScripts.ShouldContain(s => s.Contains("after-manual"), "Post-manual step should execute after Proceed");
 
-        await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-    }
+        if (decision == "Proceed")
+            executedScripts.ShouldContain(s => s.Contains("after-manual"), "Post-manual step should execute after Proceed");
+        else
+            executedScripts.ShouldNotContain(s => s.Contains("after-manual"), "Post-manual step should NOT execute after Abort");
 
-    [Fact]
-    public async Task ManualIntervention_Abort_PipelineStops()
-    {
-        ExecutionCapture.Clear();
-
-        var serverTaskId = await SeedManualInterventionPipelineAsync(
-            preStepScript: "echo 'before-manual'",
-            postStepScript: "echo 'after-manual'",
-            instructions: "Please approve deployment");
-
-        await RunPipelineWithInterventionAsync(serverTaskId, "Abort");
-
-        var executedScripts = ExecutionCapture.CapturedRequests.Select(r => r.ScriptBody).ToList();
-
-        executedScripts.ShouldContain(s => s.Contains("before-manual"), "Pre-manual step should have executed");
-        executedScripts.ShouldNotContain(s => s.Contains("after-manual"), "Post-manual step should NOT execute after Abort");
-
-        await AssertTaskStateAsync(serverTaskId, TaskState.Failed);
+        await AssertTaskStateAsync(serverTaskId, expectedTaskState);
     }
 
     [Fact]
@@ -101,11 +88,41 @@ public class ManualInterventionE2ETests
         capturedInterruption.ResolvedAt.ShouldNotBeNull();
     }
 
+    [Fact]
+    public async Task ManualIntervention_HasPendingInterruptionsFlag_SetAndCleared()
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedManualInterventionPipelineAsync(
+            preStepScript: "echo 'pre'",
+            postStepScript: "echo 'post'",
+            instructions: "Check flag lifecycle");
+
+        var flagWhilePending = false;
+
+        await RunPipelineWithInterventionAsync(serverTaskId, "Proceed", onBeforeSubmit: async () =>
+        {
+            await _fixture.Run<IServerTaskDataProvider>(async provider =>
+            {
+                var task = await provider.GetServerTaskByIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+                flagWhilePending = task.HasPendingInterruptions;
+            }).ConfigureAwait(false);
+        });
+
+        flagWhilePending.ShouldBeTrue("HasPendingInterruptions should be true while interruption is pending");
+
+        await _fixture.Run<IServerTaskDataProvider>(async provider =>
+        {
+            var task = await provider.GetServerTaskByIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            task.HasPendingInterruptions.ShouldBeFalse("HasPendingInterruptions should be cleared after submission");
+        }).ConfigureAwait(false);
+    }
+
     // ========================================================================
     // Pipeline Runner
     // ========================================================================
 
-    private async Task RunPipelineWithInterventionAsync(int serverTaskId, string decision, Action<DeploymentInterruption> onInterruptionFound = null)
+    private async Task RunPipelineWithInterventionAsync(int serverTaskId, string decision, Action<DeploymentInterruption> onInterruptionFound = null, Func<Task> onBeforeSubmit = null)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
@@ -126,13 +143,13 @@ public class ManualInterventionE2ETests
 
         var submitTask = Task.Run(async () =>
         {
-            await PollAndSubmitInterruptionAsync(serverTaskId, decision, onInterruptionFound, cts.Token).ConfigureAwait(false);
+            await PollAndSubmitInterruptionAsync(serverTaskId, decision, onInterruptionFound, onBeforeSubmit, cts.Token).ConfigureAwait(false);
         }, cts.Token);
 
         await Task.WhenAll(pipelineTask, submitTask).ConfigureAwait(false);
     }
 
-    private async Task PollAndSubmitInterruptionAsync(int serverTaskId, string decision, Action<DeploymentInterruption> onInterruptionFound, CancellationToken ct)
+    private async Task PollAndSubmitInterruptionAsync(int serverTaskId, string decision, Action<DeploymentInterruption> onInterruptionFound, Func<Task> onBeforeSubmit, CancellationToken ct)
     {
         DeploymentInterruption interruption = null;
 
@@ -150,6 +167,9 @@ public class ManualInterventionE2ETests
             if (interruption == null)
                 await Task.Delay(500, ct).ConfigureAwait(false);
         }
+
+        if (onBeforeSubmit != null)
+            await onBeforeSubmit().ConfigureAwait(false);
 
         await _fixture.Run<IDeploymentInterruptionService>(async service =>
         {

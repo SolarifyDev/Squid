@@ -5,6 +5,8 @@ namespace Squid.Core.Services.DeploymentExecution;
 public interface IActionHandlerRegistry : IScopedDependency
 {
     IActionHandler Resolve(DeploymentActionDto action);
+
+    ExecutionScope ResolveScope(DeploymentActionDto action);
 }
 
 public class ActionHandlerRegistry : IActionHandlerRegistry
@@ -27,5 +29,12 @@ public class ActionHandlerRegistry : IActionHandlerRegistry
             return null;
 
         return handler.CanHandle(action) ? handler : null;
+    }
+
+    public ExecutionScope ResolveScope(DeploymentActionDto action)
+    {
+        var handler = Resolve(action);
+
+        return handler?.ExecutionScope ?? ExecutionScope.TargetLevel;
     }
 }

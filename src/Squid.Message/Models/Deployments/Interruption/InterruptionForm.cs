@@ -18,28 +18,19 @@ public class InterruptionFormElement
 [JsonDerivedType(typeof(ParagraphControl), "Paragraph")]
 [JsonDerivedType(typeof(TextAreaControl), "TextArea")]
 [JsonDerivedType(typeof(SubmitButtonGroupControl), "SubmitButtonGroup")]
-public abstract class InterruptionFormControl
-{
-    public string Type { get; set; }
-}
+public abstract class InterruptionFormControl;
 
 public class ParagraphControl : InterruptionFormControl
 {
     public string Text { get; set; }
-
-    public ParagraphControl() { Type = "Paragraph"; }
 }
 
 public class TextAreaControl : InterruptionFormControl
 {
     public string Label { get; set; }
-
-    public TextAreaControl() { Type = "TextArea"; }
 }
 
 public class SubmitButtonGroupControl : InterruptionFormControl
 {
     public List<string> Buttons { get; set; } = new();
-
-    public SubmitButtonGroupControl() { Type = "SubmitButtonGroup"; }
 }

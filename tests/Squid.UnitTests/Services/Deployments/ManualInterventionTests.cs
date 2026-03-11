@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.Interruptions;
@@ -17,6 +18,67 @@ namespace Squid.UnitTests.Services.Deployments;
 
 public class ManualInterventionTests
 {
+    // ========== Handler Tests ==========
+
+    [Fact]
+    public void Handler_CanHandle_SquidManualActionType()
+    {
+        var handler = new ManualInterventionActionHandler();
+
+        var action = new DeploymentActionDto { ActionType = "Squid.Manual" };
+
+        handler.CanHandle(action).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("Squid.KubernetesRunScript")]
+    [InlineData("Squid.KubernetesDeployRawYaml")]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Handler_CanHandle_RejectNonManualTypes(string actionType)
+    {
+        var handler = new ManualInterventionActionHandler();
+
+        var action = new DeploymentActionDto { ActionType = actionType };
+
+        handler.CanHandle(action).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Handler_ExecutionScope_IsStepLevel()
+    {
+        var handler = new ManualInterventionActionHandler();
+
+        handler.ExecutionScope.ShouldBe(ExecutionScope.StepLevel);
+    }
+
+    [Theory]
+    [InlineData("Please approve", "Please approve")]
+    [InlineData(null, "")]
+    public async Task Handler_PrepareAsync_ReturnsManualInterventionMode(string instructions, string expectedInstructions)
+    {
+        var handler = new ManualInterventionActionHandler();
+        var properties = new List<DeploymentActionPropertyDto>();
+
+        if (instructions != null)
+            properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = instructions });
+
+        var ctx = new ActionExecutionContext
+        {
+            Step = new DeploymentStepDto { Id = 1, Name = "Step" },
+            Action = new DeploymentActionDto { Id = 1, Name = "Manual Action", ActionType = "Squid.Manual", Properties = properties }
+        };
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ExecutionMode.ShouldBe(ExecutionMode.ManualIntervention);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
+        result.ManualInterventionInstructions.ShouldBe(expectedInstructions);
+        result.ScriptBody.ShouldBeNull();
+    }
+
+    // ========== Pipeline Tests ==========
+
     [Fact]
     public async Task ManualIntervention_Proceed_ContinuesExecution()
     {
@@ -98,6 +160,7 @@ public class ManualInterventionTests
     {
         var handler = new Mock<IActionHandler>();
         handler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
+        handler.Setup(h => h.ExecutionScope).Returns(ExecutionScope.StepLevel);
         handler.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ActionExecutionResult
             {
@@ -107,7 +170,10 @@ public class ManualInterventionTests
                 ManualInterventionInstructions = instructions
             });
 
-        return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);
+        var registry = new Mock<IActionHandlerRegistry>();
+        registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(handler.Object);
+        registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
+        return registry.Object;
     }
 
     private static DeploymentTaskContext CreateBaseContext()

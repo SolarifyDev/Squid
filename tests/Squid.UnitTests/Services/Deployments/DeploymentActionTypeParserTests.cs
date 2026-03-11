@@ -13,6 +13,8 @@ public class DeploymentActionTypeParserTests
     [InlineData("Squid.KubernetesDeployService", DeploymentActionType.KubernetesDeployService)]
     [InlineData("Squid.KubernetesDeployConfigMap", DeploymentActionType.KubernetesDeployConfigMap)]
     [InlineData("Squid.KubernetesDeploySecret", DeploymentActionType.KubernetesDeploySecret)]
+    [InlineData("Squid.Manual", DeploymentActionType.ManualIntervention)]
+    [InlineData("squid.manual", DeploymentActionType.ManualIntervention)]
     [InlineData("squid.kubernetesrunscript", DeploymentActionType.KubernetesRunScript)]
     [InlineData("SQUID.KUBERNETESDEPLOYSERVICE", DeploymentActionType.KubernetesDeployService)]
     public void TryParse_KnownActionType_ReturnsEnum(string input, DeploymentActionType expected)
