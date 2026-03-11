@@ -136,7 +136,7 @@ public class ManualInterventionTests
                         new()
                         {
                             Id = 1, StepId = 1, ActionOrder = 1, Name = "Manual Action",
-                            ActionType = "Squid.ManualIntervention", IsDisabled = false,
+                            ActionType = "Squid.Manual", IsDisabled = false,
                             Properties = new List<DeploymentActionPropertyDto>
                             {
                                 new() { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = "Please verify" }

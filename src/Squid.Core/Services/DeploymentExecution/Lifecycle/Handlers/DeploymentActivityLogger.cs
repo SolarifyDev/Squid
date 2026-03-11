@@ -223,6 +223,22 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogInfoAsync($"Guided failure resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
     }
 
+    // === Manual Intervention ===
+
+    protected override Task OnManualInterventionPromptAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync($"Manual intervention required for action \"{ctx.ActionName}\". Waiting for user response", "System", ct, stepNodeId);
+    }
+
+    protected override Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
+    }
+
     // === Node Lookup ===
 
     private long? LookupStepNode(int stepDisplayOrder)

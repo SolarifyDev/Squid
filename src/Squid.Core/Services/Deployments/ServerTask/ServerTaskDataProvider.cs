@@ -140,16 +140,9 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default)
     {
-        var task = await _repository.GetByIdAsync<Persistence.Entities.Deployments.ServerTask>(taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        if (task == null)
-            throw new ServerTaskNotFoundException(taskId);
-
-        task.HasPendingInterruptions = hasPending;
-        task.DataVersion = Guid.NewGuid().ToByteArray();
-        task.LastModified = DateTimeOffset.UtcNow;
-
-        await _repository.UpdateAsync(task, cancellationToken).ConfigureAwait(false);
-        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.Id == taskId, 
+            s => s.SetProperty(t => t.HasPendingInterruptions, hasPending).SetProperty(t => t.LastModified, DateTimeOffset.UtcNow), 
+            cancellationToken).ConfigureAwait(false);
     }
 }

@@ -387,7 +387,7 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
     {
         var form = InterruptionFormBuilder.BuildManualInterventionForm(actionResult.ManualInterventionInstructions);
 
-        await lifecycle.EmitAsync(new GuidedFailurePromptEvent(new DeploymentEventContext
+        await lifecycle.EmitAsync(new ManualInterventionPromptEvent(new DeploymentEventContext
         {
             StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
             ActionName = actionResult.ActionName, InterruptionType = InterruptionType.ManualIntervention
@@ -403,7 +403,7 @@ public sealed class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegist
 
         var outcome = await interruptionService.WaitForInterruptionAsync(interruption.Id, ct).ConfigureAwait(false);
 
-        await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
+        await lifecycle.EmitAsync(new ManualInterventionResolvedEvent(new DeploymentEventContext
         {
             StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
             GuidedFailureResolution = outcome.ToString(),

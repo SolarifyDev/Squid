@@ -104,7 +104,7 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
     {
         while (!ct.IsCancellationRequested)
         {
-            var interruption = await repository.GetByIdAsync<DeploymentInterruption>(interruptionId, ct).ConfigureAwait(false);
+            var interruption = await repository.QueryNoTracking<DeploymentInterruption>(i => i.Id == interruptionId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
 
             if (interruption?.Resolution != null && Enum.TryParse<InterruptionOutcome>(interruption.Resolution, true, out var outcome))
                 return outcome;

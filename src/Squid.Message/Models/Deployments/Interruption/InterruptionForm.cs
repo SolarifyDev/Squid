@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Squid.Message.Models.Deployments.Interruption;
 
 public class InterruptionForm
@@ -12,6 +14,10 @@ public class InterruptionFormElement
     public InterruptionFormControl Control { get; set; }
 }
 
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "Type")]
+[JsonDerivedType(typeof(ParagraphControl), "Paragraph")]
+[JsonDerivedType(typeof(TextAreaControl), "TextArea")]
+[JsonDerivedType(typeof(SubmitButtonGroupControl), "SubmitButtonGroup")]
 public abstract class InterruptionFormControl
 {
     public string Type { get; set; }

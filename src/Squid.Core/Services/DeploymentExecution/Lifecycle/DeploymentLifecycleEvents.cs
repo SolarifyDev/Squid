@@ -79,3 +79,7 @@ public sealed record ScriptOutputReceivedEvent(DeploymentEventContext Context) :
 // === Guided Failure ===
 public sealed record GuidedFailurePromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Manual Intervention ===
+public sealed record ManualInterventionPromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record ManualInterventionResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
