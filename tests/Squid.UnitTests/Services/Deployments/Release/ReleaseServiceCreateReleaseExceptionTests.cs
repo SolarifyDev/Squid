@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Releases.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
 namespace Squid.UnitTests.Services.Deployments.ReleaseServices;
 
@@ -21,8 +22,8 @@ public class ReleaseServiceCreateReleaseExceptionTests
 
     private ReleaseService CreateSut()
     {
-        _mapper.Setup(x => x.Map<Release>(It.IsAny<CreateReleaseCommand>()))
-            .Returns(new Release());
+        _mapper.Setup(x => x.Map<ReleaseEntity>(It.IsAny<CreateReleaseCommand>()))
+            .Returns(new ReleaseEntity());
 
         return new ReleaseService(
             _mapper.Object,

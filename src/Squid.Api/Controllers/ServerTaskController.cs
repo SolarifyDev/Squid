@@ -1,3 +1,4 @@
+using Squid.Message.Commands.Deployments.ServerTask;
 using Squid.Message.Requests.Deployments.ServerTask;
 
 namespace Squid.Api.Controllers;
@@ -70,6 +71,16 @@ public class ServerTaskController : ControllerBase
 
         var response = await _mediator
             .RequestAsync<GetServerTaskNodeLogsRequest, GetServerTaskNodeLogsResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{taskId:int}/cancel")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CancelServerTaskResponse))]
+    public async Task<IActionResult> CancelTaskAsync(int taskId)
+    {
+        var response = await _mediator.SendAsync<CancelServerTaskCommand, CancelServerTaskResponse>(
+            new CancelServerTaskCommand { TaskId = taskId }).ConfigureAwait(false);
 
         return Ok(response);
     }

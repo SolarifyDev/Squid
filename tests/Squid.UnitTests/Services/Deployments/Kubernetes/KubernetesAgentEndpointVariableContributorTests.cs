@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -130,7 +131,7 @@ public class KubernetesAgentEndpointVariableContributorTests
             }
         };
 
-        var release = new Release { Version = "1.0.0" };
+        var release = new ReleaseEntity { Version = "1.0.0" };
 
         IEndpointVariableContributor contributor = _contributor;
 

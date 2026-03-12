@@ -36,6 +36,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         GuidedFailureResolvedEvent e => OnGuidedFailureResolvedAsync(e.Context, ct),
         ManualInterventionPromptEvent e => OnManualInterventionPromptAsync(e.Context, ct),
         ManualInterventionResolvedEvent e => OnManualInterventionResolvedAsync(e.Context, ct),
+        DeploymentCancelledEvent e => OnDeploymentCancelledAsync(e.Context, ct),
+        DeploymentPausedEvent e => OnDeploymentPausedAsync(e.Context, ct),
         _ => Task.CompletedTask
     };
 
@@ -80,4 +82,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     // === Manual Intervention ===
     protected virtual Task OnManualInterventionPromptAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
+    // === Cancellation / Pause ===
+    protected virtual Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnDeploymentPausedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 }

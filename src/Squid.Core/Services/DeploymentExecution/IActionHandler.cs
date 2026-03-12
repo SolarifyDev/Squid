@@ -18,4 +18,7 @@ public interface IActionHandler : IScopedDependency
     bool CanHandle(DeploymentActionDto action);
 
     Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct);
+
+    Task ExecuteStepLevelAsync(StepActionContext ctx, CancellationToken ct) =>
+        throw new NotSupportedException($"Handler {GetType().Name} does not support step-level execution");
 }

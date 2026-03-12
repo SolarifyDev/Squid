@@ -34,6 +34,10 @@ public interface IDeploymentInterruptionService : IScopedDependency
     Task<DeploymentInterruption> GetInterruptionByIdAsync(int interruptionId, CancellationToken ct = default);
 
     Task<List<DeploymentInterruption>> GetPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
+
+    Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default);
+
+    Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 }
 
 public class DeploymentInterruptionService(IRepository repository, IUnitOfWork unitOfWork, IServerTaskService serverTaskService) : IDeploymentInterruptionService
@@ -125,5 +129,31 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
     public async Task<List<DeploymentInterruption>> GetPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default)
     {
         return await repository.ToListAsync<DeploymentInterruption>(i => i.ServerTaskId == serverTaskId && i.Resolution == null, ct).ConfigureAwait(false);
+    }
+
+    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default)
+    {
+        return await repository.QueryNoTracking<DeploymentInterruption>(i =>
+                i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.Resolution != null)
+            .OrderByDescending(i => i.CreatedAt)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default)
+    {
+        var pending = await GetPendingInterruptionsAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        foreach (var interruption in pending)
+        {
+            interruption.Resolution = InterruptionOutcome.Abort.ToString();
+            interruption.ResolvedAt = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(interruption, ct).ConfigureAwait(false);
+        }
+
+        if (pending.Count > 0)
+        {
+            await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+            await serverTaskService.SetHasPendingInterruptionsAsync(serverTaskId, false, ct).ConfigureAwait(false);
+        }
     }
 }

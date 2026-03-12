@@ -1,41 +1,47 @@
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry) : IDeploymentTaskExecutor
 {
-    private readonly IEnumerable<IDeploymentPipelinePhase> _phases;
-    private readonly IDeploymentLifecycle _lifecycle;
-    private readonly IDeploymentCompletionHandler _completion;
-
-    public DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion)
-    {
-        _phases = phases;
-        _lifecycle = lifecycle;
-        _completion = completion;
-    }
-
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         var ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
-        
-        _lifecycle.Initialize(ctx);
+        var registryCts = registry.Register(serverTaskId);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct);
 
-        var ordered = _phases.OrderBy(p => p.Order).ToList();
+        lifecycle.Initialize(ctx);
+
+        var ordered = phases.OrderBy(p => p.Order).ToList();
 
         try
         {
             foreach (var phase in ordered)
-                await phase.ExecuteAsync(ctx, ct);
+                await phase.ExecuteAsync(ctx, linkedCts.Token);
 
-            await _lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), ct);
-            await _completion.OnSuccessAsync(ctx, ct);
+            await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), CancellationToken.None);
+            await completion.OnSuccessAsync(ctx, CancellationToken.None);
+        }
+        catch (DeploymentSuspendedException)
+        {
+            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext()), CancellationToken.None);
+            await completion.OnPausedAsync(ctx, CancellationToken.None);
+        }
+        catch (OperationCanceledException) when (registryCts.IsCancellationRequested)
+        {
+            await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), CancellationToken.None);
+            await completion.OnCancelledAsync(ctx, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            await _lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), ct);
-            await _completion.OnFailureAsync(ctx, ex, ct);
+            await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), CancellationToken.None);
+            await completion.OnFailureAsync(ctx, ex, CancellationToken.None);
             throw;
+        }
+        finally
+        {
+            registry.Unregister(serverTaskId);
         }
     }
 }

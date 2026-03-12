@@ -43,6 +43,28 @@ public sealed class DeploymentCompletionHandler(
         }, ct).ConfigureAwait(false);
     }
 
+    public async Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        Log.Information("Task {TaskId} cancelled", ctx.ServerTaskId);
+
+        if (ctx.Deployment != null)
+            await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
+
+        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, cancellationToken).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
+    }
+
+    public Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        Log.Information("Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
+
+        return Task.CompletedTask;
+    }
+
     private async Task RecordCompletionAsync(DeploymentTaskContext ctx, bool success, string message)
     {
         var deployment = await deploymentDataProvider.GetDeploymentByIdAsync(ctx.Deployment.Id).ConfigureAwait(false);

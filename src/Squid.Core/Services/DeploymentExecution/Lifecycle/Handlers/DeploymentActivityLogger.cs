@@ -239,6 +239,19 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
     }
 
+    // === Cancellation / Pause ===
+
+    protected override async Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        await LogWarningAsync("Deployment was cancelled", "System", ct).ConfigureAwait(false);
+        await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
+    }
+
+    protected override async Task OnDeploymentPausedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        await LogInfoAsync("Deployment paused — waiting for interruption to be resolved", "System", ct).ConfigureAwait(false);
+    }
+
     // === Node Lookup ===
 
     private long? LookupStepNode(int stepDisplayOrder)

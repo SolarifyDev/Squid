@@ -83,3 +83,7 @@ public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) 
 // === Manual Intervention ===
 public sealed record ManualInterventionPromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ManualInterventionResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Cancellation / Pause ===
+public sealed record DeploymentCancelledEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record DeploymentPausedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
