@@ -12,6 +12,7 @@ using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Enums;
 using ScriptContext = Squid.Core.Services.DeploymentExecution.Transport.ScriptContext;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

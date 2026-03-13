@@ -3,7 +3,7 @@ using System.Text.Json;
 using Squid.Core.Services.Common;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public static class ScriptExecutionHelper
 {

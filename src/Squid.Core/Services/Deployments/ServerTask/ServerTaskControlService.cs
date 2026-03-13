@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Jobs;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 

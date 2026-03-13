@@ -2,6 +2,7 @@ using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 

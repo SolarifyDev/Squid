@@ -21,6 +21,7 @@ using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Checkpoints;
 

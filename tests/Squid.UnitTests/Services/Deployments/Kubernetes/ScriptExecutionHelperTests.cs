@@ -5,6 +5,7 @@ using System.Text.Json;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

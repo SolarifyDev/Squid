@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public static partial class ServiceMessageParser
 {

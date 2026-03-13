@@ -4,6 +4,7 @@ using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 

@@ -1,4 +1,4 @@
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public class ScriptExecutionResult
 {

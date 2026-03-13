@@ -4,6 +4,7 @@ using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 

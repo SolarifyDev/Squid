@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 

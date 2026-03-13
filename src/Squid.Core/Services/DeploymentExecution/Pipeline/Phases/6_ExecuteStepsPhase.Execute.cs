@@ -9,6 +9,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 

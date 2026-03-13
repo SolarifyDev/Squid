@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 

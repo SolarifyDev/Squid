@@ -1,7 +1,7 @@
 using Halibut;
 using Halibut.Diagnostics;
 using Squid.Message.Models.Deployments.Execution;
-using Squid.Core.Services.DeploymentExecution.ExecutionPlans;
+using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;

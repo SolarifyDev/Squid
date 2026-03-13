@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Jobs;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Cancellation;
 

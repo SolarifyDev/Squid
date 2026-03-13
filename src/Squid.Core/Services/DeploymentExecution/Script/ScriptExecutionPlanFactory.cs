@@ -1,6 +1,6 @@
 using Squid.Message.Models.Deployments.Execution;
 
-namespace Squid.Core.Services.DeploymentExecution.ExecutionPlans;
+namespace Squid.Core.Services.DeploymentExecution.Script;
 
 internal static class ScriptExecutionPlanFactory
 {

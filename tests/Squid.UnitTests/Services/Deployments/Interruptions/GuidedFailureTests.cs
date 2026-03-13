@@ -15,6 +15,7 @@ using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Interruptions;
 

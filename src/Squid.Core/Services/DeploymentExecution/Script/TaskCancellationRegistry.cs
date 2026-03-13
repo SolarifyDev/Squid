@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public interface ITaskCancellationRegistry : ISingletonDependency
 {

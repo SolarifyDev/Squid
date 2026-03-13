@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
