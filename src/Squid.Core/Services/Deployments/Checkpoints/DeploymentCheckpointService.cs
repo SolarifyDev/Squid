@@ -32,7 +32,7 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
 
     public async Task<DeploymentExecutionCheckpoint> LoadAsync(int serverTaskId, CancellationToken ct = default)
     {
-        return await repository.FirstOrDefaultAsync<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId, ct).ConfigureAwait(false);
+        return await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(int serverTaskId, CancellationToken ct = default)
