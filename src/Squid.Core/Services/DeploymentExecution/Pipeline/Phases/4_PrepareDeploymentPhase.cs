@@ -1,5 +1,4 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
-using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
@@ -10,8 +9,7 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentSnapshotService snapshotService,
     IDeploymentVariableResolver variableResolver,
     IDeploymentTargetFinder targetFinder,
-    IDeploymentDataProvider deploymentDataProvider,
-    IDeploymentLifecycle lifecycle) : IDeploymentPipelinePhase
+    IDeploymentDataProvider deploymentDataProvider) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -23,10 +21,6 @@ public sealed class PrepareDeploymentPhase(
 
         ConvertSnapshotToSteps(ctx);
         PreFilterTargetsByRoles(ctx);
-
-        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), ct).ConfigureAwait(false);
-        await lifecycle.EmitAsync(new MachineConstraintsResolvedEvent(new DeploymentEventContext { Targets = ctx.AllTargets }), ct).ConfigureAwait(false);
-        await lifecycle.EmitAsync(new TargetsResolvedEvent(new DeploymentEventContext { Targets = ctx.AllTargets }), ct).ConfigureAwait(false);
     }
 
     private async Task LoadOrSnapshotAsync(DeploymentTaskContext ctx, CancellationToken ct)
@@ -67,7 +61,7 @@ public sealed class PrepareDeploymentPhase(
         if (excludedByHealth.Count > 0)
         {
             ctx.AllTargets = healthy;
-            await lifecycle.EmitAsync(new UnhealthyTargetsExcludedEvent(new DeploymentEventContext { Targets = excludedByHealth }), ct).ConfigureAwait(false);
+            ctx.ExcludedByHealthTargets = excludedByHealth;
         }
 
         if (ctx.AllTargets.Count == 0) throw new DeploymentTargetException($"No target machines found for deployment {ctx.Deployment.Id}", ctx.Deployment.Id);

@@ -11,6 +11,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     public Task HandleAsync(DeploymentLifecycleEvent @event, CancellationToken ct) => @event switch
     {
         DeploymentStartingEvent e => OnDeploymentStartingAsync(e.Context, ct),
+        DeploymentResumingEvent e => OnDeploymentResumingAsync(e.Context, ct),
         DeploymentSucceededEvent e => OnDeploymentSucceededAsync(e.Context, ct),
         DeploymentFailedEvent e => OnDeploymentFailedAsync(e.Context, ct),
         TargetsResolvedEvent e => OnTargetsResolvedAsync(e.Context, ct),
@@ -43,6 +44,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
 
     // === Deployment ===
     protected virtual Task OnDeploymentStartingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnDeploymentFailedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 

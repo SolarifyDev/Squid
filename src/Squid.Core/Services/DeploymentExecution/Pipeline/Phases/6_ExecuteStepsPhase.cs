@@ -12,6 +12,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
     public int Order => 500;
 
     private DeploymentTaskContext _ctx;
+    private int _currentBatchIndex;
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
@@ -29,14 +30,14 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
         foreach (var step in orderedSteps)
             stepSortOrderByStep[step] = ++displayOrder;
 
-        var batchIndex = 0;
+        _currentBatchIndex = 0;
 
         foreach (var batch in batches)
         {
-            if (_ctx.ResumeFromBatchIndex.HasValue && batchIndex <= _ctx.ResumeFromBatchIndex.Value)
+            if (_ctx.ResumeFromBatchIndex.HasValue && _currentBatchIndex <= _ctx.ResumeFromBatchIndex.Value)
             {
-                Log.Information("Skipping batch {BatchIndex} (already completed in previous run)", batchIndex);
-                batchIndex++;
+                Log.Information("Skipping batch {BatchIndex} (already completed in previous run)", _currentBatchIndex);
+                _currentBatchIndex++;
                 continue;
             }
 
@@ -48,9 +49,9 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
 
             ApplyBatchResults(batchResults);
 
-            await PersistCheckpointAsync(batchIndex, ct).ConfigureAwait(false);
+            await PersistCheckpointAsync(_currentBatchIndex, ct).ConfigureAwait(false);
 
-            batchIndex++;
+            _currentBatchIndex++;
         }
     }
 

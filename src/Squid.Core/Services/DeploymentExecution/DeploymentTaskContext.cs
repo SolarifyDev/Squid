@@ -17,6 +17,7 @@ public class DeploymentTaskContext
     public Release Release { get; set; }
     public Project Project { get; set; }
     public Squid.Core.Persistence.Entities.Deployments.Environment Environment { get; set; }
+    public Channel Channel { get; set; }
     public DeploymentProcessSnapshotDto ProcessSnapshot { get; set; }
 
     // Variables — deployment-level only, not polluted by endpoint variables
@@ -24,6 +25,7 @@ public class DeploymentTaskContext
 
     // Targets
     public List<Machine> AllTargets { get; set; } = new();
+    public List<Machine> ExcludedByHealthTargets { get; set; }
     public List<DeploymentTargetContext> AllTargetsContext { get; set; } = new();
 
     // Execution

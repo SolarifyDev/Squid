@@ -5,6 +5,8 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
 public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry) : IDeploymentTaskExecutor
 {
+    private const int CompletionTimeoutSeconds = 30;
+
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         var ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
@@ -20,23 +22,27 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             foreach (var phase in ordered)
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
 
-            await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), CancellationToken.None);
-            await completion.OnSuccessAsync(ctx, CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+            await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), timeout.Token);
+            await completion.OnSuccessAsync(ctx, timeout.Token);
         }
         catch (DeploymentSuspendedException)
         {
-            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext()), CancellationToken.None);
-            await completion.OnPausedAsync(ctx, CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext()), timeout.Token);
+            await completion.OnPausedAsync(ctx, timeout.Token);
         }
         catch (OperationCanceledException) when (registryCts.IsCancellationRequested)
         {
-            await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), CancellationToken.None);
-            await completion.OnCancelledAsync(ctx, CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+            await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
+            await completion.OnCancelledAsync(ctx, timeout.Token);
         }
         catch (Exception ex)
         {
-            await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), CancellationToken.None);
-            await completion.OnFailureAsync(ctx, ex, CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+            await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);
+            await completion.OnFailureAsync(ctx, ex, timeout.Token);
             throw;
         }
         finally

@@ -1,4 +1,3 @@
-using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Message.Enums;
@@ -10,8 +9,7 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 public sealed class PrepareTargetsPhase(
     ITransportRegistry transportRegistry,
     IDeploymentAccountDataProvider deploymentAccountDataProvider,
-    ICertificateDataProvider certificateDataProvider,
-    IDeploymentLifecycle lifecycle) : IDeploymentPipelinePhase
+    ICertificateDataProvider certificateDataProvider) : IDeploymentPipelinePhase
 {
     public int Order => 400;
 
@@ -22,13 +20,6 @@ public sealed class PrepareTargetsPhase(
             var tc = new DeploymentTargetContext { Machine = target };
 
             LoadTransportForTarget(tc);
-
-            await lifecycle.EmitAsync(new TargetPreparingEvent(new DeploymentEventContext { MachineName = target.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
-
-            if (tc.Transport == null)
-            {
-                await lifecycle.EmitAsync(new TargetTransportMissingEvent(new DeploymentEventContext { MachineName = target.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
-            }
 
             if (tc.Transport != null)
                 await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);

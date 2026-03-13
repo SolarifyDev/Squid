@@ -44,6 +44,7 @@ public abstract record DeploymentLifecycleEvent(DeploymentEventContext Context);
 
 // === Deployment ===
 public sealed record DeploymentStartingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record DeploymentResumingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record DeploymentSucceededEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record DeploymentFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 

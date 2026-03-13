@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 
@@ -9,10 +10,15 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 {
     private long? _taskNodeId;
     private readonly IServerTaskService _serverTaskService;
+    private readonly IActivityLogDataProvider _activityLogDataProvider;
     private readonly ConcurrentDictionary<int, long?> _stepNodes = new();
     private readonly ConcurrentDictionary<(int StepDisplayOrder, string MachineName, int ActionSortOrder), long?> _actionNodes = new();
 
-    public DeploymentActivityLogger(IServerTaskService serverTaskService) => _serverTaskService = serverTaskService;
+    public DeploymentActivityLogger(IServerTaskService serverTaskService, IActivityLogDataProvider activityLogDataProvider)
+    {
+        _serverTaskService = serverTaskService;
+        _activityLogDataProvider = activityLogDataProvider;
+    }
 
     // === Deployment ===
 
@@ -27,6 +33,47 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         _taskNodeId = node?.Id;
 
         await LogInfoAsync($"Deploying {projectName} release {releaseVersion} to {environmentName}", "System", ct).ConfigureAwait(false);
+    }
+
+    protected override async Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            var nodes = await _activityLogDataProvider.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+            RestoreTaskNode(nodes);
+            RestoreStepNodes(nodes);
+
+            if (_taskNodeId != null)
+                await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Running, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to locate existing task node on resume for task {TaskId}", Ctx.ServerTaskId);
+        }
+
+        if (_taskNodeId == null)
+        {
+            Log.Warning("No existing task node found on resume for task {TaskId}, creating fallback", Ctx.ServerTaskId);
+            var node = await CreateActivityNodeAsync(null, "Resumed deployment", DeploymentActivityLogNodeType.Task, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
+            _taskNodeId = node?.Id;
+        }
+
+        await LogInfoAsync("Resuming deployment after interruption", "System", ct).ConfigureAwait(false);
+    }
+
+    private void RestoreTaskNode(List<ActivityLog> nodes)
+    {
+        var taskNode = nodes?.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Task);
+        if (taskNode != null) _taskNodeId = taskNode.Id;
+    }
+
+    private void RestoreStepNodes(List<ActivityLog> nodes)
+    {
+        if (nodes == null) return;
+
+        foreach (var stepNode in nodes.Where(n => n.NodeType == DeploymentActivityLogNodeType.Step))
+            _stepNodes.TryAdd(stepNode.SortOrder, stepNode.Id);
     }
 
     protected override async Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -96,6 +143,12 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnStepStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
+        if (_stepNodes.TryGetValue(ctx.StepDisplayOrder, out var existingId) && existingId != null)
+        {
+            await UpdateActivityNodeStatusAsync(existingId, DeploymentActivityLogNodeStatus.Running, ct).ConfigureAwait(false);
+            return;
+        }
+
         var stepActivityName = BuildStepActivityName(ctx.StepName, ctx.StepDisplayOrder);
         var node = await CreateActivityNodeAsync(_taskNodeId, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, ctx.StepDisplayOrder, ct).ConfigureAwait(false);
         _stepNodes[ctx.StepDisplayOrder] = node?.Id;

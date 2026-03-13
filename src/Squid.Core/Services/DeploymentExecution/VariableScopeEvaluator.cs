@@ -13,17 +13,21 @@ namespace Squid.Core.Services.DeploymentExecution;
 /// - When multiple variables share the same name, the highest-ranked (most specific) wins.
 ///
 /// Rank weights (aligned with Octopus ScopeSpecification.Rank()):
-///   Machine     = 1,000,000
-///   Role        =    10,000
-///   Channel     =        10
-///   Environment =       100
+///   Action      = 10,000,000
+///   Machine     =  1,000,000
+///   Role        =     10,000
+///   Process     =      1,000
+///   Environment =        100
+///   Channel     =         10
 /// </summary>
 public static class VariableScopeEvaluator
 {
     private const int ChannelWeight = 10;
     private const int EnvironmentWeight = 100;
+    private const int ProcessWeight = 1_000;
     private const int RoleWeight = 10_000;
     private const int MachineWeight = 1_000_000;
+    private const int ActionWeight = 10_000_000;
 
     public static List<VariableDto> Evaluate(List<VariableDto> variables, VariableScopeContext scopeContext)
     {
@@ -67,8 +71,10 @@ public static class VariableScopeEvaluator
             {
                 VariableScopeType.Channel => ChannelWeight,
                 VariableScopeType.Environment => EnvironmentWeight,
+                VariableScopeType.Process => ProcessWeight,
                 VariableScopeType.Role => RoleWeight,
                 VariableScopeType.Machine => MachineWeight,
+                VariableScopeType.Action => ActionWeight,
                 _ => 0
             };
         }
@@ -81,14 +87,11 @@ public static class VariableScopeEvaluator
         return scopeType switch
         {
             VariableScopeType.Environment => MatchesIdOrName(scopeValue, context.EnvironmentId, context.EnvironmentName),
-
             VariableScopeType.Machine => MatchesIdOrName(scopeValue, context.MachineId, context.MachineName),
-
             VariableScopeType.Channel => MatchesIdOrName(scopeValue, context.ChannelId, context.ChannelName),
-
-            VariableScopeType.Role => context.Roles is { Count: > 0 }
-                && context.Roles.Contains(scopeValue),
-
+            VariableScopeType.Action => MatchesIdOrName(scopeValue, context.ActionId, context.ActionName),
+            VariableScopeType.Process => MatchesIdOrName(scopeValue, context.ProcessId, context.ProcessName),
+            VariableScopeType.Role => context.Roles is { Count: > 0 } && context.Roles.Contains(scopeValue),
             _ => true
         };
     }
@@ -107,7 +110,7 @@ public static class VariableScopeEvaluator
     }
 }
 
-public class VariableScopeContext
+public record VariableScopeContext
 {
     public int? EnvironmentId { get; init; }
     public string EnvironmentName { get; init; }
@@ -119,4 +122,10 @@ public class VariableScopeContext
 
     public int? ChannelId { get; init; }
     public string ChannelName { get; init; }
+
+    public int? ActionId { get; init; }
+    public string ActionName { get; init; }
+
+    public int? ProcessId { get; init; }
+    public string ProcessName { get; init; }
 }

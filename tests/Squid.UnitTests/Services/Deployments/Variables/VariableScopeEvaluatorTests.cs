@@ -1165,20 +1165,24 @@ public class VariableScopeEvaluatorTests
     // ========== Precedence ordering guarantee ==========
 
     [Theory]
-    [InlineData(0, 10, 100, 10_000, 1_000_000)]
+    [InlineData(0, 10, 100, 1_000, 10_000, 1_000_000, 10_000_000)]
     public void ComputeRank_OrderingIsCorrect(
-        int unscopedRank, int channelRank, int envRank, int roleRank, int machineRank)
+        int unscopedRank, int channelRank, int envRank, int processRank, int roleRank, int machineRank, int actionRank)
     {
         VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v")).ShouldBe(unscopedRank);
         VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", channelScope: "1")).ShouldBe(channelRank);
         VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", envScope: "1")).ShouldBe(envRank);
+        VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", processScope: "1")).ShouldBe(processRank);
         VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", roleScope: "r")).ShouldBe(roleRank);
         VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", machineScope: "1")).ShouldBe(machineRank);
+        VariableScopeEvaluator.ComputeRank(MakeVariable("X", "v", actionScope: "1")).ShouldBe(actionRank);
 
         (unscopedRank < channelRank).ShouldBeTrue();
         (channelRank < envRank).ShouldBeTrue();
-        (envRank < roleRank).ShouldBeTrue();
+        (envRank < processRank).ShouldBeTrue();
+        (processRank < roleRank).ShouldBeTrue();
         (roleRank < machineRank).ShouldBeTrue();
+        (machineRank < actionRank).ShouldBeTrue();
     }
 
     // ========== Real-World Scenarios with Role/Channel ==========
@@ -1440,11 +1444,248 @@ public class VariableScopeEvaluatorTests
         result.Single().Value.ShouldBe("machine-val");
     }
 
+    // ========== Applicability: Action Scope ==========
+
+    [Fact]
+    public void Evaluate_ActionScoped_MatchingAction_Included()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "action-val", actionScope: "5")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ActionId = 5
+        });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("action-val");
+    }
+
+    [Fact]
+    public void Evaluate_ActionScoped_NonMatchingAction_Excluded()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "action-val", actionScope: "5")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ActionId = 99
+        });
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_ActionScoped_MatchesByName()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "action-val", actionScope: "Deploy Web")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ActionId = 5, ActionName = "Deploy Web"
+        });
+
+        result.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Evaluate_ActionScoped_NoActionInContext_Excluded()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "action-val", actionScope: "5")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext());
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_ActionScoped_HigherRankThanMachine()
+    {
+        var machineScoped = MakeVariable("Config", "machine-val", machineScope: "10");
+        var actionScoped = MakeVariable("Config", "action-val", actionScope: "5");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { machineScoped, actionScoped },
+            new VariableScopeContext { MachineId = 10, ActionId = 5 });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("action-val");
+    }
+
+    [Fact]
+    public void Evaluate_ActionAndEnvironment_BothMustMatch()
+    {
+        var variable = MakeVariable("Config", "specific");
+        variable.Scopes.Add(MakeScope(VariableScopeType.Action, "5"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Environment, "1"));
+
+        var included = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { variable },
+            new VariableScopeContext { ActionId = 5, EnvironmentId = 1 });
+
+        var excluded = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { variable },
+            new VariableScopeContext { ActionId = 5, EnvironmentId = 99 });
+
+        included.Count.ShouldBe(1);
+        excluded.ShouldBeEmpty();
+    }
+
+    // ========== Applicability: Process Scope ==========
+
+    [Fact]
+    public void Evaluate_ProcessScoped_MatchingProcess_Included()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "process-val", processScope: "10")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ProcessId = 10
+        });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("process-val");
+    }
+
+    [Fact]
+    public void Evaluate_ProcessScoped_NonMatchingProcess_Excluded()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "process-val", processScope: "10")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ProcessId = 99
+        });
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_ProcessScoped_NoProcessInContext_Excluded()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Config", "process-val", processScope: "10")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext());
+
+        result.ShouldBeEmpty();
+    }
+
+    // ========== Channel Name Fix ==========
+
+    [Fact]
+    public void Evaluate_ChannelScoped_MatchesByName()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Feature", "beta-val", channelScope: "Beta")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext
+        {
+            ChannelId = 5, ChannelName = "Beta"
+        });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("beta-val");
+    }
+
+    // ========== Mixed Scope Precedence with Action/Process ==========
+
+    [Fact]
+    public void Evaluate_ActionScopedWins_OverEnvironment()
+    {
+        var envScoped = MakeVariable("Config", "env-val", envScope: "1");
+        var actionScoped = MakeVariable("Config", "action-val", actionScope: "5");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { envScoped, actionScoped },
+            new VariableScopeContext { EnvironmentId = 1, ActionId = 5 });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("action-val");
+    }
+
+    [Fact]
+    public void Evaluate_ProcessScopedWins_OverChannel()
+    {
+        var channelScoped = MakeVariable("Config", "ch-val", channelScope: "5");
+        var processScoped = MakeVariable("Config", "proc-val", processScope: "10");
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { channelScoped, processScoped },
+            new VariableScopeContext { ChannelId = 5, ProcessId = 10 });
+
+        result.Count.ShouldBe(1);
+        result[0].Value.ShouldBe("proc-val");
+    }
+
+    [Fact]
+    public void Evaluate_FullContext_AllSixScopeTypes_AllMatch()
+    {
+        var variable = MakeVariable("Config", "all-six");
+        variable.Scopes.Add(MakeScope(VariableScopeType.Environment, "1"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Machine, "10"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Role, "web-server"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Channel, "5"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Action, "20"));
+        variable.Scopes.Add(MakeScope(VariableScopeType.Process, "30"));
+
+        var result = VariableScopeEvaluator.Evaluate(
+            new List<VariableDto> { variable },
+            new VariableScopeContext
+            {
+                EnvironmentId = 1, MachineId = 10,
+                Roles = Roles("web-server"), ChannelId = 5,
+                ActionId = 20, ProcessId = 30
+            });
+
+        result.Count.ShouldBe(1);
+        VariableScopeEvaluator.ComputeRank(variable).ShouldBe(10_000_000 + 1_000_000 + 10_000 + 1_000 + 100 + 10);
+    }
+
+    // ========== Rank Computation: Action and Process ==========
+
+    [Fact]
+    public void ComputeRank_ActionOnly_Returns10000000()
+    {
+        var variable = MakeVariable("X", "v", actionScope: "5");
+
+        VariableScopeEvaluator.ComputeRank(variable).ShouldBe(10_000_000);
+    }
+
+    [Fact]
+    public void ComputeRank_ProcessOnly_Returns1000()
+    {
+        var variable = MakeVariable("X", "v", processScope: "10");
+
+        VariableScopeEvaluator.ComputeRank(variable).ShouldBe(1_000);
+    }
+
     // ========== Helpers ==========
 
     private static VariableDto MakeVariable(string name, string value,
         string envScope = null, string machineScope = null,
-        string roleScope = null, string channelScope = null)
+        string roleScope = null, string channelScope = null,
+        string actionScope = null, string processScope = null)
     {
         var variable = new VariableDto
         {
@@ -1464,6 +1705,12 @@ public class VariableScopeEvaluatorTests
 
         if (channelScope != null)
             variable.Scopes.Add(MakeScope(VariableScopeType.Channel, channelScope));
+
+        if (actionScope != null)
+            variable.Scopes.Add(MakeScope(VariableScopeType.Action, actionScope));
+
+        if (processScope != null)
+            variable.Scopes.Add(MakeScope(VariableScopeType.Process, processScope));
 
         return variable;
     }

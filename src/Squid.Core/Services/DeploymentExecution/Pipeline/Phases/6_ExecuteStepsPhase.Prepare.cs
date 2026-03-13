@@ -9,15 +9,16 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
 public sealed partial class ExecuteStepsPhase
 {
-    private async Task<List<ActionExecutionResult>> PrepareStepActionsAsync(
+    private record PreparedAction(ActionExecutionResult Result, List<VariableDto> EffectiveVariables);
+
+    private async Task<List<PreparedAction>> PrepareStepActionsAsync(
         DeploymentStepDto step,
-        VariableDictionary variableDictionary,
-        List<VariableDto> effectiveVariables,
+        VariableScopeContext baseScopeContext,
         DeploymentTargetContext tc,
         int stepDisplayOrder,
         CancellationToken ct)
     {
-        var stepResults = new List<ActionExecutionResult>();
+        var stepResults = new List<PreparedAction>();
 
         foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
         {
@@ -57,9 +58,11 @@ public sealed partial class ExecuteStepsPhase
 
             await lifecycle.EmitAsync(new ActionRunningEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
 
-            var actionVariables = EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, _ctx.SelectedPackages);
-            var variableDictionaryForAction = VariableDictionaryFactory.Create(actionVariables);
-            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionaryForAction);
+            var actionScopeContext = baseScopeContext with { ActionId = action.Id, ActionName = action.Name };
+            var actionEffective = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, actionScopeContext);
+            var actionVariables = EffectiveVariableBuilder.BuildActionVariables(actionEffective, action, _ctx.SelectedPackages);
+            var variableDictionary = VariableDictionaryFactory.Create(actionVariables);
+            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionary);
 
             var context = new ActionExecutionContext
             {
@@ -92,9 +95,9 @@ public sealed partial class ExecuteStepsPhase
                 // Direct script can be wrapped here. Packaged payloads are wrapped later after payload template paths are resolved.
                 if (executionMode == ExecutionMode.DirectScript
                     && contextPreparationPolicy == ContextPreparationPolicy.Apply)
-                    WrapScriptIfApplicable(prepared, tc, effectiveVariables);
+                    WrapScriptIfApplicable(prepared, tc, actionEffective);
 
-                stepResults.Add(prepared);
+                stepResults.Add(new PreparedAction(prepared, actionEffective));
             }
         }
 

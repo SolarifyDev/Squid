@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.Project;
@@ -12,6 +13,7 @@ public sealed class LoadDeploymentDataPhase(
     IReleaseDataProvider releaseDataProvider,
     IProjectDataProvider projectDataProvider,
     IEnvironmentDataProvider environmentDataProvider,
+    IChannelDataProvider channelDataProvider,
     IReleaseSelectedPackageDataProvider releaseSelectedPackageDataProvider) : IDeploymentPipelinePhase
 {
     public int Order => 200;
@@ -34,10 +36,12 @@ public sealed class LoadDeploymentDataPhase(
         var release = await releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
         var project = await projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
         var environment = await environmentDataProvider.GetEnvironmentByIdAsync(deployment.EnvironmentId, ct).ConfigureAwait(false);
+        var channel = await channelDataProvider.GetChannelByIdAsync(deployment.ChannelId, ct).ConfigureAwait(false);
 
         ctx.Release = release;
         ctx.Project = project;
         ctx.Environment = environment;
+        ctx.Channel = channel;
         ctx.UseGuidedFailure = (ctx.Deployment.DeploymentRequestPayload?.UseGuidedFailure ?? false) || (environment?.UseGuidedFailure ?? false);
     }
 

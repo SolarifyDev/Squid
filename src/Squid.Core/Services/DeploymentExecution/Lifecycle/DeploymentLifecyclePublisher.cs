@@ -18,6 +18,15 @@ public sealed class DeploymentLifecyclePublisher : IDeploymentLifecycle
     public async Task EmitAsync(DeploymentLifecycleEvent @event, CancellationToken ct)
     {
         foreach (var handler in _ordered)
-            await handler.HandleAsync(@event, ct).ConfigureAwait(false);
+        {
+            try
+            {
+                await handler.HandleAsync(@event, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Lifecycle handler {Handler} failed for event {Event}, continuing", handler.GetType().Name, @event.GetType().Name);
+            }
+        }
     }
 }

@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
+using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
@@ -162,6 +163,47 @@ public class GuidedFailureTests
         await Should.ThrowAsync<Exception>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
 
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ========== Guided Failure: Checkpoint Before Waiting ==========
+
+    [Fact]
+    public async Task GuidedFailure_Retry_PersistsCheckpointBeforeWaiting()
+    {
+        var callOrder = new List<string>();
+
+        var checkpointService = new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>();
+        checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("checkpoint"))
+            .Returns(Task.CompletedTask);
+
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+        interruptionService.Setup(s => s.WaitForInterruptionAsync(1, It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("wait"))
+            .ReturnsAsync(InterruptionOutcome.Retry);
+
+        var callCount = 0;
+        var retryStrategy = new TestExecutionStrategy(_ =>
+        {
+            callCount++;
+            if (callCount == 1)
+                return new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } };
+            return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } };
+        });
+
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, checkpointService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, strategy: retryStrategy);
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        callOrder.ShouldContain("checkpoint");
+        callOrder.ShouldContain("wait");
+        callOrder.IndexOf("checkpoint").ShouldBeLessThan(callOrder.IndexOf("wait"));
     }
 
     // ========== Helpers ==========

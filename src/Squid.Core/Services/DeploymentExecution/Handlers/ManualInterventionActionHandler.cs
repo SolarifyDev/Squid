@@ -50,7 +50,18 @@ public sealed class ManualInterventionActionHandler(
 
         if (existing == null) return null;
 
-        return Enum.TryParse<InterruptionOutcome>(existing.Resolution, true, out var outcome) ? outcome : null;
+        var outcome = Enum.TryParse<InterruptionOutcome>(existing.Resolution, true, out var parsed) ? parsed : (InterruptionOutcome?)null;
+
+        if (outcome.HasValue)
+        {
+            await lifecycle.EmitAsync(new ManualInterventionResolvedEvent(new DeploymentEventContext
+            {
+                StepDisplayOrder = ctx.StepDisplayOrder, StepName = ctx.Step.Name,
+                ActionName = ctx.Action.Name, GuidedFailureResolution = outcome.Value.ToString()
+            }), ct).ConfigureAwait(false);
+        }
+
+        return outcome;
     }
 
     private async Task SuspendForInterruptionAsync(StepActionContext ctx, CancellationToken ct)
