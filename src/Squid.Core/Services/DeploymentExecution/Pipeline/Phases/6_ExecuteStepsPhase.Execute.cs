@@ -17,9 +17,11 @@ public sealed partial class ExecuteStepsPhase
 
         await lifecycle.EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = step.Name, StepDisplayOrder = stepSortOrder }), ct).ConfigureAwait(false);
 
-        await ExecuteStepLevelActionsAsync(step, stepSortOrder, ct).ConfigureAwait(false);
+        var eligibleActions = await FilterEligibleActionsAsync(step, stepSortOrder, ct).ConfigureAwait(false);
 
-        if (HasTargetLevelActions(step))
+        await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+
+        if (HasTargetLevelActions(eligibleActions))
         {
             var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
 
@@ -51,7 +53,7 @@ public sealed partial class ExecuteStepsPhase
 
                 await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
-                var actionResults = await PrepareStepActionsAsync(step, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
+                var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
 
                 var result = new StepExecutionResult();
                 await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
@@ -161,15 +163,14 @@ public sealed partial class ExecuteStepsPhase
         }
     }
 
-    private async Task ExecuteStepLevelActionsAsync(DeploymentStepDto step, int stepDisplayOrder, CancellationToken ct)
+    private async Task ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
     {
         var actionSortOrder = 0;
 
-        foreach (var action in step.Actions.OrderBy(a => a.ActionOrder))
+        foreach (var action in eligibleActions)
         {
             actionSortOrder++;
 
-            if (action.IsDisabled) continue;
             if (actionHandlerRegistry.ResolveScope(action) != ExecutionScope.StepLevel) continue;
 
             var handler = actionHandlerRegistry.Resolve(action);
@@ -246,12 +247,38 @@ public sealed partial class ExecuteStepsPhase
         }
     }
 
-    private bool HasTargetLevelActions(DeploymentStepDto step)
+    private bool HasTargetLevelActions(List<DeploymentActionDto> eligibleActions)
     {
-        var enabledActions = step.Actions.Where(a => !a.IsDisabled).ToList();
+        if (eligibleActions.Count == 0) return true;
 
-        if (enabledActions.Count == 0) return true;
+        return eligibleActions.Any(a => actionHandlerRegistry.ResolveScope(a) == ExecutionScope.TargetLevel);
+    }
 
-        return enabledActions.Any(a => actionHandlerRegistry.ResolveScope(a) == ExecutionScope.TargetLevel);
+    private async Task<List<DeploymentActionDto>> FilterEligibleActionsAsync(DeploymentStepDto step, int stepDisplayOrder, CancellationToken ct)
+    {
+        var eligible = new List<DeploymentActionDto>();
+
+        foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+        {
+            if (_ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.Contains(action.Id) == true)
+            {
+                Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
+                await lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
+                continue;
+            }
+
+            var eligibility = StepEligibilityEvaluator.EvaluateAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId);
+
+            if (!eligibility.ShouldExecute)
+            {
+                Log.Information("Skipping action {ActionName}: {Reason}", action.Name, eligibility.SkipReason);
+                await lifecycle.EmitAsync(new ActionSkippedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, ActionEligibility = eligibility }), ct).ConfigureAwait(false);
+                continue;
+            }
+
+            eligible.Add(action);
+        }
+
+        return eligible;
     }
 }

@@ -210,6 +210,107 @@ public class ManualInterventionTests
         manualHandler.Verify(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ========== Step-Level Environment/Channel Filtering ==========
+
+    [Fact]
+    public async Task Pipeline_StepLevelAction_SkippedWhenEnvironmentDoesNotMatch()
+    {
+        var emittedEvents = new List<DeploymentLifecycleEvent>();
+
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        lifecycle.Setup(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<DeploymentLifecycleEvent, CancellationToken>((e, _) => emittedEvents.Add(e))
+            .Returns(Task.CompletedTask);
+
+        var manualHandler = new Mock<IActionHandler>();
+        manualHandler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
+        manualHandler.Setup(h => h.ExecutionScope).Returns(ExecutionScope.StepLevel);
+        manualHandler.Setup(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var registry = new Mock<IActionHandlerRegistry>();
+        registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
+        registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
+
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+
+        // Deployment targets environment 1 (TEST), but action is configured for environment 99 (PRD)
+        var ctx = new DeploymentTaskContext
+        {
+            Deployment = new Deployment { Id = 1, SpaceId = 1, EnvironmentId = 1, ChannelId = 1 },
+            Release = new Squid.Core.Persistence.Entities.Deployments.Release { Id = 1, Version = "1.0.0" },
+            Variables = new List<VariableDto>(),
+            SelectedPackages = new List<ReleaseSelectedPackage>(),
+            Steps = new List<DeploymentStepDto>
+            {
+                new()
+                {
+                    Id = 1, StepOrder = 1, Name = "Approval", StepType = "Action",
+                    Condition = "Success", IsDisabled = false, IsRequired = false, StartTrigger = "StartAfterPrevious",
+                    Properties = new List<DeploymentStepPropertyDto>(),
+                    Actions = new List<DeploymentActionDto>
+                    {
+                        new() { Id = 1, StepId = 1, ActionOrder = 1, Name = "Approval", ActionType = "Squid.Manual", IsDisabled = false, Properties = new List<DeploymentActionPropertyDto>(), Environments = new List<int> { 99 }, ExcludedEnvironments = new List<int>(), Channels = new List<int>() }
+                    }
+                }
+            },
+            AllTargets = new List<Machine>(),
+            AllTargetsContext = new List<DeploymentTargetContext>()
+        };
+
+        lifecycle.Object.Initialize(ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        manualHandler.Verify(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        emittedEvents.ShouldContain(e => e is ActionSkippedEvent);
+    }
+
+    [Fact]
+    public async Task Pipeline_StepLevelAction_ExecutesWhenEnvironmentMatches()
+    {
+        var manualHandler = new Mock<IActionHandler>();
+        manualHandler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
+        manualHandler.Setup(h => h.ExecutionScope).Returns(ExecutionScope.StepLevel);
+        manualHandler.Setup(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var registry = new Mock<IActionHandlerRegistry>();
+        registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
+        registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
+
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        lifecycle.Setup(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+
+        // Deployment targets environment 99 (PRD), action configured for environment 99 (PRD) — should execute
+        var ctx = new DeploymentTaskContext
+        {
+            Deployment = new Deployment { Id = 1, SpaceId = 1, EnvironmentId = 99, ChannelId = 1 },
+            Release = new Squid.Core.Persistence.Entities.Deployments.Release { Id = 1, Version = "1.0.0" },
+            Variables = new List<VariableDto>(),
+            SelectedPackages = new List<ReleaseSelectedPackage>(),
+            Steps = new List<DeploymentStepDto>
+            {
+                new()
+                {
+                    Id = 1, StepOrder = 1, Name = "Approval", StepType = "Action",
+                    Condition = "Success", IsDisabled = false, IsRequired = false, StartTrigger = "StartAfterPrevious",
+                    Properties = new List<DeploymentStepPropertyDto>(),
+                    Actions = new List<DeploymentActionDto>
+                    {
+                        new() { Id = 1, StepId = 1, ActionOrder = 1, Name = "Approval", ActionType = "Squid.Manual", IsDisabled = false, Properties = new List<DeploymentActionPropertyDto>(), Environments = new List<int> { 99 }, ExcludedEnvironments = new List<int>(), Channels = new List<int>() }
+                    }
+                }
+            },
+            AllTargets = new List<Machine>(),
+            AllTargetsContext = new List<DeploymentTargetContext>()
+        };
+
+        lifecycle.Object.Initialize(ctx);
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        manualHandler.Verify(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ========== Resolved Event Emission ==========
 
     [Fact]

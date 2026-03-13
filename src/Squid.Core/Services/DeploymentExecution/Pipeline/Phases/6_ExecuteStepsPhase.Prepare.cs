@@ -13,6 +13,7 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task<List<PreparedAction>> PrepareStepActionsAsync(
         DeploymentStepDto step,
+        List<DeploymentActionDto> eligibleActions,
         VariableScopeContext baseScopeContext,
         DeploymentTargetContext tc,
         int stepDisplayOrder,
@@ -20,30 +21,10 @@ public sealed partial class ExecuteStepsPhase
     {
         var stepResults = new List<PreparedAction>();
 
-        foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+        foreach (var action in eligibleActions)
         {
-            if (_ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.Contains(action.Id) == true)
-            {
-                Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
-
-                await lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
-
-                continue;
-            }
-
             if (actionHandlerRegistry.ResolveScope(action) == ExecutionScope.StepLevel)
                 continue;
-
-            var actionEligibility = StepEligibilityEvaluator.EvaluateAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId);
-
-            if (!actionEligibility.ShouldExecute)
-            {
-                Log.Information("Skipping action {ActionName}: {Reason}", action.Name, actionEligibility.SkipReason);
-
-                await lifecycle.EmitAsync(new ActionSkippedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, ActionEligibility = actionEligibility }), ct).ConfigureAwait(false);
-
-                continue;
-            }
 
             var handler = actionHandlerRegistry.Resolve(action);
 
