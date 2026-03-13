@@ -29,6 +29,7 @@ public class DeploymentActionDataProvider(
     IUnitOfWork unitOfWork,
     IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
     IActionEnvironmentDataProvider actionEnvironmentDataProvider,
+    IActionExcludedEnvironmentDataProvider actionExcludedEnvironmentDataProvider,
     IActionChannelDataProvider actionChannelDataProvider,
     IActionMachineRoleDataProvider actionMachineRoleDataProvider) : IDeploymentActionDataProvider
 {
@@ -66,9 +67,10 @@ public class DeploymentActionDataProvider(
     {
         await actionPropertyDataProvider.DeleteDeploymentActionPropertiesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+        await actionExcludedEnvironmentDataProvider.DeleteActionExcludedEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await actionChannelDataProvider.DeleteActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
         await actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
-        
+
         await repository.DeleteAsync(action, cancellationToken).ConfigureAwait(false);
 
         if (forceSave)
@@ -110,6 +112,8 @@ public class DeploymentActionDataProvider(
 
         await actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
+        await actionExcludedEnvironmentDataProvider.DeleteActionExcludedEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
+
         await actionChannelDataProvider.DeleteActionChannelsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
@@ -130,6 +134,8 @@ public class DeploymentActionDataProvider(
         await actionPropertyDataProvider.DeleteDeploymentActionPropertiesByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
+
+        await actionExcludedEnvironmentDataProvider.DeleteActionExcludedEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 
         await actionChannelDataProvider.DeleteActionChannelsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
 

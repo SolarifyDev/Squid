@@ -30,19 +30,28 @@ public class DeploymentStepService : IDeploymentStepService
     private readonly IDeploymentStepPropertyDataProvider _stepPropertyDataProvider;
     private readonly IDeploymentActionDataProvider _actionDataProvider;
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
+    private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
+    private readonly IActionExcludedEnvironmentDataProvider _actionExcludedEnvironmentDataProvider;
+    private readonly IActionChannelDataProvider _actionChannelDataProvider;
 
     public DeploymentStepService(
         IMapper mapper,
         IDeploymentStepDataProvider stepDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
         IDeploymentActionDataProvider actionDataProvider,
-        IDeploymentActionPropertyDataProvider actionPropertyDataProvider)
+        IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
+        IActionEnvironmentDataProvider actionEnvironmentDataProvider,
+        IActionExcludedEnvironmentDataProvider actionExcludedEnvironmentDataProvider,
+        IActionChannelDataProvider actionChannelDataProvider)
     {
         _mapper = mapper;
         _stepDataProvider = stepDataProvider;
         _stepPropertyDataProvider = stepPropertyDataProvider;
         _actionDataProvider = actionDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
+        _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
+        _actionExcludedEnvironmentDataProvider = actionExcludedEnvironmentDataProvider;
+        _actionChannelDataProvider = actionChannelDataProvider;
     }
 
     public async Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken)
@@ -218,8 +227,16 @@ public class DeploymentStepService : IDeploymentStepService
         var actionDto = _mapper.Map<DeploymentActionDto>(action);
 
         var properties = await _actionPropertyDataProvider.GetDeploymentActionPropertiesByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
-        
         actionDto.Properties = _mapper.Map<List<DeploymentActionPropertyDto>>(properties);
+
+        var environments = await _actionEnvironmentDataProvider.GetActionEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+        actionDto.Environments = environments.Select(e => e.EnvironmentId).ToList();
+
+        var excludedEnvironments = await _actionExcludedEnvironmentDataProvider.GetActionExcludedEnvironmentsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+        actionDto.ExcludedEnvironments = excludedEnvironments.Select(e => e.EnvironmentId).ToList();
+
+        var channels = await _actionChannelDataProvider.GetActionChannelsByActionIdAsync(action.Id, cancellationToken).ConfigureAwait(false);
+        actionDto.Channels = channels.Select(c => c.ChannelId).ToList();
 
         return actionDto;
     }
@@ -236,20 +253,54 @@ public class DeploymentStepService : IDeploymentStepService
         foreach (var action in actions)
         {
             var mappedAction = _mapper.Map<DeploymentAction>(action);
-            
+
             mappedAction.StepId = stepId;
             mappedAction.CreatedAt = DateTimeOffset.UtcNow;
 
             await _actionDataProvider.AddDeploymentActionAsync(mappedAction, true, cancellationToken).ConfigureAwait(false);
 
-            if (action.Properties?.Any() != true) continue;
-
-            var properties = _mapper.Map<List<DeploymentActionProperty>>(action.Properties);
-            
-            properties.ForEach(p => p.ActionId = mappedAction.Id);
-
-            await _actionPropertyDataProvider.AddDeploymentActionPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
+            await PersistActionPropertiesAsync(mappedAction.Id, action.Properties, cancellationToken).ConfigureAwait(false);
+            await PersistActionEnvironmentsAsync(mappedAction.Id, action.Environments, cancellationToken).ConfigureAwait(false);
+            await PersistActionExcludedEnvironmentsAsync(mappedAction.Id, action.ExcludedEnvironments, cancellationToken).ConfigureAwait(false);
+            await PersistActionChannelsAsync(mappedAction.Id, action.Channels, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task PersistActionPropertiesAsync(int actionId, List<ActionPropertyModel> properties, CancellationToken cancellationToken)
+    {
+        if (properties?.Any() != true) return;
+
+        var mapped = _mapper.Map<List<DeploymentActionProperty>>(properties);
+        mapped.ForEach(p => p.ActionId = actionId);
+
+        await _actionPropertyDataProvider.AddDeploymentActionPropertiesAsync(mapped, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistActionEnvironmentsAsync(int actionId, List<int> environmentIds, CancellationToken cancellationToken)
+    {
+        if (environmentIds == null || environmentIds.Count == 0) return;
+
+        var entities = environmentIds.Select(id => new ActionEnvironment { ActionId = actionId, EnvironmentId = id }).ToList();
+
+        await _actionEnvironmentDataProvider.AddActionEnvironmentsAsync(entities, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistActionExcludedEnvironmentsAsync(int actionId, List<int> environmentIds, CancellationToken cancellationToken)
+    {
+        if (environmentIds == null || environmentIds.Count == 0) return;
+
+        var entities = environmentIds.Select(id => new ActionExcludedEnvironment { ActionId = actionId, EnvironmentId = id }).ToList();
+
+        await _actionExcludedEnvironmentDataProvider.AddActionExcludedEnvironmentsAsync(entities, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistActionChannelsAsync(int actionId, List<int> channelIds, CancellationToken cancellationToken)
+    {
+        if (channelIds == null || channelIds.Count == 0) return;
+
+        var entities = channelIds.Select(id => new ActionChannel { ActionId = actionId, ChannelId = id }).ToList();
+
+        await _actionChannelDataProvider.AddActionChannelsAsync(entities, cancellationToken).ConfigureAwait(false);
     }
 }
 

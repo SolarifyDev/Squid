@@ -23,6 +23,7 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
     private readonly IDeploymentStepPropertyDataProvider _deploymentStepPropertyDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
+    private readonly IActionExcludedEnvironmentDataProvider _actionExcludedEnvironmentDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
     private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
@@ -39,6 +40,7 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
         IDeploymentStepPropertyDataProvider deploymentStepPropertyDataProvider,
         IActionChannelDataProvider actionChannelDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
+        IActionExcludedEnvironmentDataProvider actionExcludedEnvironmentDataProvider,
         IActionMachineRoleDataProvider actionMachineRoleDataProvider,
         IVariableScopeDataProvider variableScopeDataProvider,
         ILibraryVariableSetDataProvider libraryVariableSetDataProvider)
@@ -54,6 +56,7 @@ public partial class DeploymentSnapshotService : IDeploymentSnapshotService
         _deploymentStepPropertyDataProvider = deploymentStepPropertyDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
+        _actionExcludedEnvironmentDataProvider = actionExcludedEnvironmentDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
         _variableScopeDataProvider = variableScopeDataProvider;
         _libraryVariableSetDataProvider = libraryVariableSetDataProvider;
