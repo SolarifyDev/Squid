@@ -8,6 +8,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Models.Deployments.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -30,6 +31,34 @@ public class DeploymentCompletionHandlerTests
             .ReturnsAsync(new Deployment { Id = 1, SpaceId = 1 });
 
         _sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object);
+    }
+
+    // ========== OnFailureAsync ==========
+
+    [Theory]
+    [InlineData(TaskState.Executing)]
+    [InlineData(TaskState.Cancelling)]
+    public async Task OnFailure_TransitionsFromCurrentStateToFailed(string currentState)
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await _sut.OnFailureAsync(ctx, new Exception("test error"), CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, currentState, TaskState.Failed, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnFailure_RecordsCompletionAsFailed()
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnFailureAsync(ctx, new Exception("test error"), CancellationToken.None);
+
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.Is<DeploymentCompletion>(dc => dc.State == TaskState.Failed), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========== OnCancelledAsync ==========

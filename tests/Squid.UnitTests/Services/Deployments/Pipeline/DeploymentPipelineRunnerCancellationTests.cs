@@ -62,6 +62,27 @@ public class DeploymentPipelineRunnerCancellationTests
     }
 
     [Fact]
+    public async Task CancellationViaExternalToken_CallsOnCancelledAndDoesNotRethrow()
+    {
+        var externalCts = new CancellationTokenSource();
+        var phase = new Mock<IDeploymentPipelinePhase>();
+        phase.Setup(p => p.Order).Returns(1);
+        phase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Returns<DeploymentTaskContext, CancellationToken>(async (_, ct) =>
+            {
+                externalCts.Cancel();
+                ct.ThrowIfCancellationRequested();
+            });
+        var runner = CreateRunner(phase.Object);
+
+        await runner.ProcessAsync(1, externalCts.Token);
+
+        _lifecycle.Verify(l => l.EmitAsync(It.IsAny<DeploymentCancelledEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Failure_CallsOnFailureAndRethrows()
     {
         var phase = new Mock<IDeploymentPipelinePhase>();

@@ -7,7 +7,7 @@ public partial class ServerTaskService
 {
     public async Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default)
     {
-        var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
+        var task = await _serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(taskId, ct).ConfigureAwait(false);
 
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
@@ -15,24 +15,14 @@ public partial class ServerTaskService
         var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
-        {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
-
-            task.State = TaskState.Executing;
-        }
         else if (isResumed)
-        {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
-
-            task.State = TaskState.Executing;
-        }
         else if (!string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-        {
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
-        }
 
-        if (!task.StartTime.HasValue)
-            task.StartTime = DateTimeOffset.UtcNow;
+        task.State = TaskState.Executing;
+        task.StartTime ??= DateTimeOffset.UtcNow;
 
         return new StartExecutingResult(task, isResumed);
     }

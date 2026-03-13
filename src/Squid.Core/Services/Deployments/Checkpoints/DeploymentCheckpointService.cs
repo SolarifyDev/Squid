@@ -16,22 +16,17 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
 {
     public async Task SaveAsync(DeploymentExecutionCheckpoint checkpoint, CancellationToken ct = default)
     {
-        var existing = await repository.FirstOrDefaultAsync<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == checkpoint.ServerTaskId, ct).ConfigureAwait(false);
+        var rowsAffected = await repository.ExecuteUpdateAsync<DeploymentExecutionCheckpoint>(
+            c => c.ServerTaskId == checkpoint.ServerTaskId,
+            s => s.SetProperty(c => c.LastCompletedBatchIndex, checkpoint.LastCompletedBatchIndex)
+                  .SetProperty(c => c.FailureEncountered, checkpoint.FailureEncountered)
+                  .SetProperty(c => c.OutputVariablesJson, checkpoint.OutputVariablesJson)
+                  .SetProperty(c => c.CreatedAt, checkpoint.CreatedAt),
+            ct).ConfigureAwait(false);
 
-        if (existing != null)
-        {
-            existing.LastCompletedBatchIndex = checkpoint.LastCompletedBatchIndex;
-            existing.FailureEncountered = checkpoint.FailureEncountered;
-            existing.OutputVariablesJson = checkpoint.OutputVariablesJson;
-            existing.CreatedAt = checkpoint.CreatedAt;
+        if (rowsAffected > 0) return;
 
-            await repository.UpdateAsync(existing, ct).ConfigureAwait(false);
-        }
-        else
-        {
-            await repository.InsertAsync(checkpoint, ct).ConfigureAwait(false);
-        }
-
+        await repository.InsertAsync(checkpoint, ct).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
@@ -42,11 +37,6 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
 
     public async Task DeleteAsync(int serverTaskId, CancellationToken ct = default)
     {
-        var existing = await repository.FirstOrDefaultAsync<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId, ct).ConfigureAwait(false);
-
-        if (existing == null) return;
-
-        await repository.DeleteAsync(existing, ct).ConfigureAwait(false);
-        await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId, ct).ConfigureAwait(false);
     }
 }

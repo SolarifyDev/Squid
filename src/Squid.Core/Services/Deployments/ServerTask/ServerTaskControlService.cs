@@ -87,6 +87,9 @@ public class ServerTaskControlService(
 
         cancellationRegistry.TryCancel(task.Id);
 
+        if (!string.IsNullOrEmpty(task.JobId))
+            backgroundJobClient.DeleteJob(task.JobId);
+
         Log.Information("Cancelling executing task {TaskId}", task.Id);
     }
 

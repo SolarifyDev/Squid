@@ -33,22 +33,41 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext()), timeout.Token);
             await completion.OnPausedAsync(ctx, timeout.Token);
         }
-        catch (OperationCanceledException) when (registryCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
-            await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
-            await completion.OnCancelledAsync(ctx, timeout.Token);
+            await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
         }
         catch (Exception ex)
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
-            await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);
-            await completion.OnFailureAsync(ctx, ex, timeout.Token);
+            await SafeCompleteAsync(ctx, () => completion.OnFailureAsync(ctx, ex, CancellationToken.None), new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }));
             throw;
         }
         finally
         {
             registry.Unregister(serverTaskId);
+        }
+    }
+
+    private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+
+        try
+        {
+            await lifecycle.EmitAsync(lifecycleEvent, timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to emit lifecycle event for task {TaskId}", ctx.ServerTaskId);
+        }
+
+        try
+        {
+            await completionAction();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
         }
     }
 }

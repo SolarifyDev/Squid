@@ -138,6 +138,10 @@ public sealed partial class ExecuteStepsPhase
 
                     CollectOutputVariables(result, step.Name, actionResult);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     result.Failed = true;

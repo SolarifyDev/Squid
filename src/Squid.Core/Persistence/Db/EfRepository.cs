@@ -128,5 +128,11 @@ public class EfRepository : IRepository
         return _dbContext.Set<TEntity>().Where(predicate).ExecuteUpdateAsync(setPropertyCalls, cancellationToken);
     }
 
+    public Task<int> ExecuteDeleteAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity
+    {
+        return _dbContext.Set<TEntity>().Where(predicate).ExecuteDeleteAsync(cancellationToken);
+    }
+
     public DatabaseFacade Database => _dbContext.Database;
 }

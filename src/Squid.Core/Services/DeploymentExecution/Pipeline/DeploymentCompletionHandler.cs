@@ -37,9 +37,11 @@ public sealed class DeploymentCompletionHandler(
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, ex.Message).ConfigureAwait(false);
 
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
         await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
         {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Failed, cancellationToken).ConfigureAwait(false);
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Failed, cancellationToken).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
 
@@ -63,6 +65,13 @@ public sealed class DeploymentCompletionHandler(
         Log.Information("Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
         return Task.CompletedTask;
+    }
+
+    private async Task<string> ResolveCurrentActiveStateAsync(int serverTaskId, CancellationToken ct)
+    {
+        var task = await serverTaskService.GetTaskAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        return task?.State ?? TaskState.Executing;
     }
 
     private async Task RecordCompletionAsync(DeploymentTaskContext ctx, bool success, string message)

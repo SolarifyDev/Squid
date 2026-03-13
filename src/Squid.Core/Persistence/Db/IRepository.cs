@@ -51,5 +51,8 @@ public interface IRepository
         Expression<Func<SetPropertyCalls<TEntity>, SetPropertyCalls<TEntity>>> setPropertyCalls,
         CancellationToken cancellationToken = default) where TEntity : class, IEntity;
 
+    Task<int> ExecuteDeleteAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity;
+
     DatabaseFacade Database { get; }
 }
