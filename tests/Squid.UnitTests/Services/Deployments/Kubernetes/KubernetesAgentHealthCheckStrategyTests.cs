@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

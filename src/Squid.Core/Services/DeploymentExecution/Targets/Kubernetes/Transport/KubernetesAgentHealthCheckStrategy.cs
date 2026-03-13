@@ -1,6 +1,7 @@
 using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 

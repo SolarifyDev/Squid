@@ -1,5 +1,6 @@
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 

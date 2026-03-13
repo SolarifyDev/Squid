@@ -20,6 +20,7 @@ using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -129,10 +130,10 @@ public class DeploymentExecutionLoggingTests
         execLog.ActivityNodeId.ShouldBe(stepNode.Id);
     }
 
-    // ========== Action Skip Logging ==========
+    // ========== All Actions Filtered — Step Invisible ==========
 
     [Fact]
-    public async Task ActionSkip_Disabled_LogsPersistedWarning()
+    public async Task AllActionsDisabled_StepIsInvisible()
     {
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
@@ -144,13 +145,12 @@ public class DeploymentExecutionLoggingTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        var skipLog = logs.FirstOrDefault(l => l.Message.Contains("disabled", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
-        skipLog.ShouldNotBeNull("Should persist action disabled skip to task log");
-        skipLog.Category.ShouldBe(ServerTaskLogCategory.Warning);
+        nodes.ShouldNotContain(n => n.NodeType == DeploymentActivityLogNodeType.Step, "Step node should not be created when all actions filtered");
+        logs.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ActionSkip_EnvironmentMismatch_LogsPersisted()
+    public async Task AllActionsEnvironmentMismatch_StepIsInvisible()
     {
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
@@ -162,13 +162,12 @@ public class DeploymentExecutionLoggingTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        var skipLog = logs.FirstOrDefault(l => l.Message.Contains("environment", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
-        skipLog.ShouldNotBeNull("Should persist environment mismatch skip to task log");
-        skipLog.Category.ShouldBe(ServerTaskLogCategory.Warning);
+        nodes.ShouldNotContain(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        logs.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ActionSkip_ChannelMismatch_LogsPersisted()
+    public async Task AllActionsChannelMismatch_StepIsInvisible()
     {
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
@@ -180,13 +179,12 @@ public class DeploymentExecutionLoggingTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        var skipLog = logs.FirstOrDefault(l => l.Message.Contains("channel", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("RunScript", StringComparison.OrdinalIgnoreCase));
-        skipLog.ShouldNotBeNull("Should persist channel mismatch skip to task log");
-        skipLog.Category.ShouldBe(ServerTaskLogCategory.Warning);
+        nodes.ShouldNotContain(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        logs.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ActionSkip_ManuallySkipped_LogsPersisted()
+    public async Task AllActionsManuallySkipped_StepIsInvisible()
     {
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
@@ -201,8 +199,32 @@ public class DeploymentExecutionLoggingTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        var skipLog = logs.FirstOrDefault(l => l.Message.Contains("manually excluded", StringComparison.OrdinalIgnoreCase) || l.Message.Contains("skip", StringComparison.OrdinalIgnoreCase));
-        skipLog.ShouldNotBeNull("Should persist manually skipped action to task log");
+        nodes.ShouldNotContain(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        logs.ShouldBeEmpty();
+    }
+
+    // ========== Partial Action Skip — Step Still Executes ==========
+
+    [Fact]
+    public async Task PartialActionSkip_EnvironmentMismatch_LogsSkipForFilteredAction()
+    {
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
+
+        var filteredAction = MakeAction("FilteredAction");
+        filteredAction.Environments = new List<int> { 99 };
+        var eligibleAction = MakeAction("RunScript");
+        var step = MakeStep("Deploy web", 1, "web");
+        step.Actions = new List<DeploymentActionDto> { filteredAction, eligibleAction };
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        stepNode.ShouldNotBeNull("Step node should exist when some actions are eligible");
+
+        var skipLog = logs.FirstOrDefault(l => l.Message.Contains("environment", StringComparison.OrdinalIgnoreCase) && l.Message.Contains("FilteredAction", StringComparison.OrdinalIgnoreCase));
+        skipLog.ShouldNotBeNull("Should log skip for filtered action");
+        skipLog.Category.ShouldBe(ServerTaskLogCategory.Warning);
     }
 
     // ========== Action Execution Logging ==========

@@ -173,6 +173,30 @@ public class StepEligibilityResultTests
         result.SkipReason.ShouldBe(ActionSkipReason.None);
     }
 
+    [Fact]
+    public void EvaluateAction_ManuallySkipped_ReturnsManuallySkippedReason()
+    {
+        var action = MakeAction();
+        var ctx = new ActionEvaluationContext(1, 1, new HashSet<int> { action.Id });
+
+        var result = StepEligibilityEvaluator.EvaluateAction(action, ctx);
+
+        result.ShouldExecute.ShouldBeFalse();
+        result.SkipReason.ShouldBe(ActionSkipReason.ManuallySkipped);
+        result.Message.ShouldContain("manually excluded", Case.Insensitive);
+    }
+
+    [Fact]
+    public void EvaluateAction_ManuallySkipped_TakesPriorityOverDisabled()
+    {
+        var action = MakeAction(isDisabled: true);
+        var ctx = new ActionEvaluationContext(1, 1, new HashSet<int> { action.Id });
+
+        var result = StepEligibilityEvaluator.EvaluateAction(action, ctx);
+
+        result.SkipReason.ShouldBe(ActionSkipReason.ManuallySkipped);
+    }
+
     // ========== Condition-Met Messages ==========
 
     [Fact]

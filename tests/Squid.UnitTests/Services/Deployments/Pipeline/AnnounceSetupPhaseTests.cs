@@ -14,6 +14,7 @@ using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 

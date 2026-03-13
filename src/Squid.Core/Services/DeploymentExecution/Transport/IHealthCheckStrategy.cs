@@ -1,6 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Transport;
 
 public interface IHealthCheckStrategy : IScopedDependency
 {

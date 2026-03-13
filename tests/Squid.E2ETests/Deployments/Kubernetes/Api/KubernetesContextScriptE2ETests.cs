@@ -9,6 +9,7 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Shouldly;
 using Xunit;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.E2ETests.Deployments.Kubernetes.Api;
 

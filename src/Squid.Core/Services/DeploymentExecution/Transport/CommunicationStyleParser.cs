@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Squid.Message.Enums;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Transport;
 
 public static class CommunicationStyleParser
 {

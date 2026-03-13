@@ -1,6 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 

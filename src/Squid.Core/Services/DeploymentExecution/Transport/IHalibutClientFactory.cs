@@ -1,6 +1,6 @@
 using Halibut;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Transport;
 
 public interface IHalibutClientFactory : IScopedDependency
 {

@@ -213,7 +213,7 @@ public class ManualInterventionTests
     // ========== Step-Level Environment/Channel Filtering ==========
 
     [Fact]
-    public async Task Pipeline_StepLevelAction_SkippedWhenEnvironmentDoesNotMatch()
+    public async Task Pipeline_StepLevelAction_InvisibleWhenEnvironmentDoesNotMatch()
     {
         var emittedEvents = new List<DeploymentLifecycleEvent>();
 
@@ -260,8 +260,11 @@ public class ManualInterventionTests
         lifecycle.Object.Initialize(ctx);
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
+        // Step with all actions filtered by environment is completely invisible — no events emitted
         manualHandler.Verify(h => h.ExecuteStepLevelAsync(It.IsAny<StepActionContext>(), It.IsAny<CancellationToken>()), Times.Never);
-        emittedEvents.ShouldContain(e => e is ActionSkippedEvent);
+        emittedEvents.ShouldNotContain(e => e is StepStartingEvent);
+        emittedEvents.ShouldNotContain(e => e is StepCompletedEvent);
+        emittedEvents.ShouldNotContain(e => e is ActionSkippedEvent);
     }
 
     [Fact]

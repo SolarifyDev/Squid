@@ -4,6 +4,8 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
+public record ActionEvaluationContext(int EnvironmentId, int ChannelId, HashSet<int> SkipActionIds = null);
+
 public static class StepEligibilityEvaluator
 {
     private static readonly ActionEligibilityResult ExecuteAction = new(true, ActionSkipReason.None, null);
@@ -12,7 +14,7 @@ public static class StepEligibilityEvaluator
         => EvaluateStep(step, targetRoles, previousStepSucceeded, effectiveVariables).ShouldExecute;
 
     public static bool ShouldExecuteAction(DeploymentActionDto action, int deploymentEnvironmentId, int deploymentChannelId)
-        => EvaluateAction(action, deploymentEnvironmentId, deploymentChannelId).ShouldExecute;
+        => EvaluateAction(action, new ActionEvaluationContext(deploymentEnvironmentId, deploymentChannelId)).ShouldExecute;
 
     public static StepEligibilityResult EvaluateStep(DeploymentStepDto step, HashSet<string> targetRoles, bool previousStepSucceeded, List<VariableDto> effectiveVariables = null)
     {
@@ -33,14 +35,20 @@ public static class StepEligibilityEvaluator
     }
 
     public static ActionEligibilityResult EvaluateAction(DeploymentActionDto action, int deploymentEnvironmentId, int deploymentChannelId)
+        => EvaluateAction(action, new ActionEvaluationContext(deploymentEnvironmentId, deploymentChannelId));
+
+    public static ActionEligibilityResult EvaluateAction(DeploymentActionDto action, ActionEvaluationContext ctx)
     {
+        if (ctx.SkipActionIds?.Contains(action.Id) == true)
+            return new ActionEligibilityResult(false, ActionSkipReason.ManuallySkipped, $"Action \"{action.Name}\" was manually excluded");
+
         if (action.IsDisabled)
             return new ActionEligibilityResult(false, ActionSkipReason.Disabled, $"Action \"{action.Name}\" is disabled");
 
-        if (!AppliesToEnvironment(action, deploymentEnvironmentId))
+        if (!AppliesToEnvironment(action, ctx.EnvironmentId))
             return new ActionEligibilityResult(false, ActionSkipReason.EnvironmentMismatch, $"Action \"{action.Name}\" does not apply to current environment");
 
-        if (action.Channels != null && action.Channels.Count > 0 && !action.Channels.Contains(deploymentChannelId))
+        if (action.Channels != null && action.Channels.Count > 0 && !action.Channels.Contains(ctx.ChannelId))
             return new ActionEligibilityResult(false, ActionSkipReason.ChannelMismatch, $"Action \"{action.Name}\" does not apply to current channel");
 
         return ExecuteAction;

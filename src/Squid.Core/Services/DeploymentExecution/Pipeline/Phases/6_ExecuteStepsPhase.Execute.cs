@@ -15,9 +15,14 @@ public sealed partial class ExecuteStepsPhase
     {
         var stepResult = new StepExecutionResult();
 
+        var (eligibleActions, skippedActions) = FilterEligibleActions(step);
+
+        if (eligibleActions.Count == 0 && step.Actions.Count > 0)
+            return stepResult;
+
         await lifecycle.EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = step.Name, StepDisplayOrder = stepSortOrder }), ct).ConfigureAwait(false);
 
-        var eligibleActions = await FilterEligibleActionsAsync(step, stepSortOrder, ct).ConfigureAwait(false);
+        await EmitSkippedActionEventsAsync(skippedActions, stepSortOrder, ct).ConfigureAwait(false);
 
         await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
 
@@ -254,31 +259,42 @@ public sealed partial class ExecuteStepsPhase
         return eligibleActions.Any(a => actionHandlerRegistry.ResolveScope(a) == ExecutionScope.TargetLevel);
     }
 
-    private async Task<List<DeploymentActionDto>> FilterEligibleActionsAsync(DeploymentStepDto step, int stepDisplayOrder, CancellationToken ct)
+    private (List<DeploymentActionDto> Eligible, List<(DeploymentActionDto Action, ActionEligibilityResult Eligibility)> Skipped) FilterEligibleActions(DeploymentStepDto step)
     {
+        var evalCtx = BuildActionEvaluationContext();
         var eligible = new List<DeploymentActionDto>();
+        var skipped = new List<(DeploymentActionDto, ActionEligibilityResult)>();
 
         foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
         {
-            if (_ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.Contains(action.Id) == true)
-            {
-                Log.Information("Skipping action {ActionName} ({ActionId}) due to SkipActionIds selection", action.Name, action.Id);
-                await lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
-                continue;
-            }
+            var eligibility = StepEligibilityEvaluator.EvaluateAction(action, evalCtx);
 
-            var eligibility = StepEligibilityEvaluator.EvaluateAction(action, _ctx.Deployment.EnvironmentId, _ctx.Deployment.ChannelId);
-
-            if (!eligibility.ShouldExecute)
-            {
-                Log.Information("Skipping action {ActionName}: {Reason}", action.Name, eligibility.SkipReason);
-                await lifecycle.EmitAsync(new ActionSkippedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, ActionEligibility = eligibility }), ct).ConfigureAwait(false);
-                continue;
-            }
+            if (!eligibility.ShouldExecute) { skipped.Add((action, eligibility)); continue; }
 
             eligible.Add(action);
         }
 
-        return eligible;
+        return (eligible, skipped);
+    }
+
+    private ActionEvaluationContext BuildActionEvaluationContext()
+    {
+        return new ActionEvaluationContext(
+            _ctx.Deployment.EnvironmentId,
+            _ctx.Deployment.ChannelId,
+            _ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.ToHashSet());
+    }
+
+    private async Task EmitSkippedActionEventsAsync(List<(DeploymentActionDto Action, ActionEligibilityResult Eligibility)> skipped, int stepDisplayOrder, CancellationToken ct)
+    {
+        foreach (var (action, eligibility) in skipped)
+        {
+            Log.Information("Skipping action {ActionName}: {Reason}", action.Name, eligibility.SkipReason);
+
+            if (eligibility.SkipReason == ActionSkipReason.ManuallySkipped)
+                await lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
+            else
+                await lifecycle.EmitAsync(new ActionSkippedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, ActionEligibility = eligibility }), ct).ConfigureAwait(false);
+        }
     }
 }

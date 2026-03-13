@@ -12,6 +12,7 @@ using Squid.Message.Models.Deployments.Snapshots;
 
 using static Squid.Message.Enums.EndpointResourceType;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.Machines;
 

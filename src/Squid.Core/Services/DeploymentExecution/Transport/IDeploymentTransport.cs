@@ -1,7 +1,7 @@
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Transport;
 
 public interface IDeploymentTransport : IScopedDependency
 {
