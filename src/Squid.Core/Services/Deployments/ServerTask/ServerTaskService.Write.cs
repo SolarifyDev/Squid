@@ -5,12 +5,14 @@ namespace Squid.Core.Services.Deployments.ServerTask;
 
 public partial class ServerTaskService
 {
-    public async Task<Persistence.Entities.Deployments.ServerTask> StartExecutingAsync(int taskId, CancellationToken ct = default)
+    public async Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default)
     {
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
 
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
+
+        var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
         {
@@ -18,7 +20,7 @@ public partial class ServerTaskService
 
             task.State = TaskState.Executing;
         }
-        else if (string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase))
+        else if (isResumed)
         {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
 
@@ -32,7 +34,7 @@ public partial class ServerTaskService
         if (!task.StartTime.HasValue)
             task.StartTime = DateTimeOffset.UtcNow;
 
-        return task;
+        return new StartExecutingResult(task, isResumed);
     }
 
     public Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, string detail = null, CancellationToken ct = default)

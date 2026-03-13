@@ -4,9 +4,11 @@ using Squid.Message.Models.Deployments.ServerTask;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
+public record StartExecutingResult(Persistence.Entities.Deployments.ServerTask Task, bool IsResumed);
+
 public interface IServerTaskService : IScopedDependency
 {
-    Task<Persistence.Entities.Deployments.ServerTask> StartExecutingAsync(int taskId, CancellationToken ct = default);
+    Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default);
 
     Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken ct = default);
 

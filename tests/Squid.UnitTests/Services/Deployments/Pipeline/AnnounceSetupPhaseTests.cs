@@ -109,7 +109,7 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_NoExistingNode_CreatesFallbackTaskNode()
     {
         var (phase, ctx, _, nodes) = CreateHarness();
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -121,7 +121,7 @@ public class AnnounceSetupPhaseTests
     {
         var existingTaskNode = new ActivityLog { Id = 42, NodeType = DeploymentActivityLogNodeType.Task };
         var (phase, ctx, _, _, serverTaskService) = CreateHarnessWithResumeMocks(existingTaskNode);
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -133,7 +133,7 @@ public class AnnounceSetupPhaseTests
     {
         var existingTaskNode = new ActivityLog { Id = 42, NodeType = DeploymentActivityLogNodeType.Task };
         var (phase, ctx, logs, _, _) = CreateHarnessWithResumeMocks(existingTaskNode);
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -145,7 +145,7 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_DoesNotLogDeployingMessage()
     {
         var (phase, ctx, logs, _) = CreateHarness();
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -156,7 +156,7 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_DoesNotLogTargetsResolved()
     {
         var (phase, ctx, logs, _) = CreateHarness();
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -167,7 +167,7 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_DoesNotLogTargetPreparing()
     {
         var (phase, ctx, logs, _) = CreateHarness();
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
@@ -178,7 +178,7 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_WithUnhealthyTargets_StillLogsWarning()
     {
         var (phase, ctx, logs, _) = CreateHarness();
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
         ctx.ExcludedByHealthTargets = new List<Machine>
         {
             new() { Name = "unhealthy-1", HealthStatus = MachineHealthStatus.Unhealthy }
@@ -194,13 +194,28 @@ public class AnnounceSetupPhaseTests
     // ========== Regression ==========
 
     [Fact]
+    public async Task Resume_WithoutCheckpoint_StillTakesResumePath()
+    {
+        // Reproduces the bug: manual intervention at batch 0 → no checkpoint → resume
+        // IsResume is derived from task state (Paused), not checkpoint existence
+        var (phase, ctx, logs, _) = CreateHarness();
+        ctx.IsResume = true;
+        ctx.ResumeFromBatchIndex = null; // no checkpoint — suspended before any batch completed
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        logs.ShouldContain(l => l.Message.Contains("Resuming", StringComparison.OrdinalIgnoreCase));
+        logs.ShouldNotContain(l => l.Message.Contains("Deploying", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Resume_WithExistingNode_NoDuplicateTaskNodes()
     {
         var existingTaskNode = new ActivityLog { Id = 42, NodeType = DeploymentActivityLogNodeType.Task };
         var (phase, ctx, _, nodes, _) = CreateHarnessWithResumeMocks(existingTaskNode);
 
         // Resume — should restore existing node, not create a new one
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         nodes.ShouldNotContain(n => n.NodeType == DeploymentActivityLogNodeType.Task, "Resume with existing node must not create a new task node");
@@ -222,7 +237,7 @@ public class AnnounceSetupPhaseTests
         var preparingCountAfterFresh = logs.Count(l => l.Message.Contains("Preparing target", StringComparison.OrdinalIgnoreCase));
 
         // Resume — should not duplicate any fresh deploy logs
-        ctx.ResumeFromBatchIndex = 0;
+        ctx.IsResume = true;
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
         logs.Count(l => l.Message.Contains("Deploying", StringComparison.OrdinalIgnoreCase)).ShouldBe(deployingCountAfterFresh, "Resume must not duplicate 'Deploying' log");

@@ -8,10 +8,11 @@ public sealed class LoadTaskPhase(IServerTaskService serverTaskService) : IDeplo
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        var task = await serverTaskService.StartExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        var result = await serverTaskService.StartExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
-        ctx.Task = task;
+        ctx.Task = result.Task;
+        ctx.IsResume = result.IsResumed;
 
-        Log.Information("Start processing task {TaskId}", ctx.ServerTaskId);
+        Log.Information("Start processing task {TaskId} (resume: {IsResume})", ctx.ServerTaskId, ctx.IsResume);
     }
 }

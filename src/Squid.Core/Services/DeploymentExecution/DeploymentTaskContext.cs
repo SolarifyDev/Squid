@@ -36,6 +36,7 @@ public class DeploymentTaskContext
     public bool UseGuidedFailure { get; set; }
 
     // Resume
+    public bool IsResume { get; set; }
     public int? ResumeFromBatchIndex { get; set; }
 
     // Logging

@@ -8,7 +8,7 @@ public sealed class AnnounceSetupPhase(IDeploymentLifecycle lifecycle) : IDeploy
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        if (ctx.ResumeFromBatchIndex.HasValue)
+        if (ctx.IsResume)
             await AnnounceResumeAsync(ctx, ct).ConfigureAwait(false);
         else
             await AnnounceFreshDeployAsync(ctx, ct).ConfigureAwait(false);
