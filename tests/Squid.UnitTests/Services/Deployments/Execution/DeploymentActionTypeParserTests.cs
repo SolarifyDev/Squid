@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 

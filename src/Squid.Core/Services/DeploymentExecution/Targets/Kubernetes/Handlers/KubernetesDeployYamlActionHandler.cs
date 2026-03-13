@@ -2,6 +2,7 @@ using System.Text;
 using Squid.Core.Extensions;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 

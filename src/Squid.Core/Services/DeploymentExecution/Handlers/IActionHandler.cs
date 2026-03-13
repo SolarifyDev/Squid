@@ -1,7 +1,7 @@
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
 public enum ExecutionScope
 {

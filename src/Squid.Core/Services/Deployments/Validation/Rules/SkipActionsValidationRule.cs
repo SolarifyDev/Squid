@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.Deployments.Validation.Rules;
 

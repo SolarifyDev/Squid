@@ -1,7 +1,7 @@
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
 public class StepActionContext
 {

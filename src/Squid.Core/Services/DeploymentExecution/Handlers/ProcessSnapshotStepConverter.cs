@@ -1,7 +1,7 @@
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
 public static class ProcessSnapshotStepConverter
 {
