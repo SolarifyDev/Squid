@@ -6,6 +6,7 @@ using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 

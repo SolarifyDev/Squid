@@ -1,6 +1,6 @@
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 public interface IDeploymentVariableResolver : IScopedDependency
 {

@@ -2,7 +2,7 @@ using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 public static class EffectiveVariableBuilder
 {

@@ -1,7 +1,7 @@
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 /// <summary>
 /// Filters and resolves scoped variables following Octopus-aligned precedence rules.

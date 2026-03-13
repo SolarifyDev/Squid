@@ -1,7 +1,7 @@
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 public class EndpointResourceReferences
 {

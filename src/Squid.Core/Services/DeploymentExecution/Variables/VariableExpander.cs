@@ -1,7 +1,7 @@
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Models.Deployments.Process;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 public static class VariableExpander
 {

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Snapshots;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 

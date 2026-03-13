@@ -19,6 +19,7 @@ using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Checkpoints;
 

@@ -5,7 +5,7 @@ using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Variable;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 public class DeploymentVariableResolver : IDeploymentVariableResolver
 {

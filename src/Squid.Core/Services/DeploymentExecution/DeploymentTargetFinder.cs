@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.Core.Services.DeploymentExecution;
 

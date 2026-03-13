@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 

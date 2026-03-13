@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Variables;
 

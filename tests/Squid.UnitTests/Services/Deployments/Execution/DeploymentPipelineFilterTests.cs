@@ -5,6 +5,7 @@ using static Squid.Core.Services.DeploymentExecution.StepEligibilityEvaluator;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 

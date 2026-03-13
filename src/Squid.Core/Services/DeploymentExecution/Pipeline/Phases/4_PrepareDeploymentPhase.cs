@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 

@@ -1,4 +1,4 @@
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 /// <summary>
 /// Centralized deployment variable and property key constants.

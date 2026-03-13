@@ -14,6 +14,7 @@ using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Xunit;
+using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.UnitTests.Services.Deployments.Variables;
 
