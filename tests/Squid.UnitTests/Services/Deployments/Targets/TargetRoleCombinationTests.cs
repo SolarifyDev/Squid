@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
 

@@ -1,6 +1,6 @@
 using Squid.Message.Models.Deployments.Process;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
 public static class StepBatcher
 {

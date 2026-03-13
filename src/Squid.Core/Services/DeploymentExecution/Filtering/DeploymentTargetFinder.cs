@@ -4,7 +4,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
 using Squid.Core.Services.DeploymentExecution.Variables;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
 /// <summary>
 /// Selects deployment target machines using Squid's role/tenant filtering pipeline:

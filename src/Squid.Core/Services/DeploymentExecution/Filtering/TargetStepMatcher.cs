@@ -1,7 +1,7 @@
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Variables;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
 public static class TargetStepMatcher
 {

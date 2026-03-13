@@ -11,6 +11,7 @@ using Squid.Message.Models.Deployments.Account;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 

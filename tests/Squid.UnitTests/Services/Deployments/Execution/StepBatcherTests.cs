@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 

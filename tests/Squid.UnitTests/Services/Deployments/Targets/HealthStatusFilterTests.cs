@@ -3,6 +3,7 @@ using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Enums;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
 

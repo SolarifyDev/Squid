@@ -1,4 +1,4 @@
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
 public interface IDeploymentTargetFinder : IScopedDependency
 {

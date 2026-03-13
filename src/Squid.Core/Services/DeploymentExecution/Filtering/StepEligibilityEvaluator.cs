@@ -3,7 +3,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 
-namespace Squid.Core.Services.DeploymentExecution;
+namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
 public record ActionEvaluationContext(int EnvironmentId, int ChannelId, HashSet<int> SkipActionIds = null);
 

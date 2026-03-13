@@ -4,6 +4,7 @@ using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 

@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
-using static Squid.Core.Services.DeploymentExecution.StepEligibilityEvaluator;
+using static Squid.Core.Services.DeploymentExecution.Filtering.StepEligibilityEvaluator;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
