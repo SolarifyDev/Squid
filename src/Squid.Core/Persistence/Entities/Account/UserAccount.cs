@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Account;
 
-public class UserAccount : IEntity<int>
+public class UserAccount : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -16,7 +16,9 @@ public class UserAccount : IEntity<int>
 
     public bool IsSystem { get; set; }
 
-    public DateTime CreatedAtUtc { get; set; }
-
-    public DateTime UpdatedAtUtc { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

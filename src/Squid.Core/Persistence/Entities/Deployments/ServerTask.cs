@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class ServerTask : IEntity<int>
+public class ServerTask : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -38,8 +38,6 @@ public class ServerTask : IEntity<int>
 
     public int? SpaceId { get; set; }
 
-    public DateTimeOffset LastModified { get; set; }
-
     public string BusinessProcessState { get; set; }
 
     public string ServerTaskType { get; set; }
@@ -55,4 +53,10 @@ public class ServerTask : IEntity<int>
     public string JobId { get; set; }
 
     public bool HasPendingInterruptions { get; set; }
+
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

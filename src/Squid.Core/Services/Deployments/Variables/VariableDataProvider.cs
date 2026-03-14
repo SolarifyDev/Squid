@@ -56,7 +56,6 @@ public class VariableDataProvider : IVariableDataProvider
         foreach (var variable in encryptedVariables)
         {
             variable.VariableSetId = variableSetId;
-            variable.LastModifiedOn = DateTimeOffset.UtcNow;
         }
 
         await _repository.InsertAllAsync(encryptedVariables, cancellationToken).ConfigureAwait(false);

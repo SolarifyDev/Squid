@@ -56,7 +56,7 @@ public class AuthenticationE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
                 ApiKey = apiKey,
                 Description = description,
                 IsDisabled = false,
-                CreatedAtUtc = DateTime.UtcNow
+                CreatedDate = DateTimeOffset.UtcNow
             }).ConfigureAwait(false);
 
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);

@@ -18,7 +18,7 @@ public class DeploymentActionSnapshotDataDto
 
     public bool CanBeUsedForProjectVersioning { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
 
     public Dictionary<string, string> Properties { get; set; } = new Dictionary<string, string>();
 

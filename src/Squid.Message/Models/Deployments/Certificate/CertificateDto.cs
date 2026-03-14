@@ -35,6 +35,6 @@ public class CertificateDto : IBaseModel
     public int? ReplacedBy { get; set; }
 
     // Audit
-    public DateTimeOffset? LastModifiedOn { get; set; }
-    public string LastModifiedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

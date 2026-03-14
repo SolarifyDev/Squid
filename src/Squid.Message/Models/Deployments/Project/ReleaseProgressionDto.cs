@@ -12,7 +12,7 @@ public class ReleaseProgressionReleaseDto
 {
     public int Id { get; set; }
     public string Version { get; set; }
-    public DateTimeOffset Assembled { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
     public int ChannelId { get; set; }
 }
 
@@ -27,7 +27,7 @@ public class ReleaseProgressionDeploymentDto
     public int DeploymentId { get; set; }
     public string State { get; set; }
     public string ReleaseVersion { get; set; }
-    public DateTimeOffset Created { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
     public DateTimeOffset? CompletedTime { get; set; }
     public bool HasWarningsOrErrors { get; set; }
     public bool IsCurrent { get; set; }

@@ -22,7 +22,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,
@@ -264,14 +264,14 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
     }
 
     [Fact]
-    public async Task TransitionState_UpdatesLastModified()
+    public async Task TransitionState_UpdatesLastModifiedDate()
     {
         await Run<IServerTaskDataProvider>(async provider =>
         {
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
             var before = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
-            var originalModified = before.LastModified;
+            var originalModified = before.LastModifiedDate;
 
             await Task.Delay(10).ConfigureAwait(false);
 
@@ -279,7 +279,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 .ConfigureAwait(false);
 
             var after = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
-            after.LastModified.ShouldBeGreaterThan(originalModified);
+            after.LastModifiedDate.ShouldBeGreaterThan(originalModified);
         }).ConfigureAwait(false);
     }
 
@@ -332,7 +332,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,
@@ -349,7 +349,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,

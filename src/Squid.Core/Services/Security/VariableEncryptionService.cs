@@ -77,7 +77,7 @@ public class VariableEncryptionService : IVariableEncryptionService
                 Type = variable.Type,
                 IsSensitive = variable.IsSensitive,
                 SortOrder = variable.SortOrder,
-                LastModifiedOn = variable.LastModifiedOn,
+                LastModifiedDate = variable.LastModifiedDate,
                 LastModifiedBy = variable.LastModifiedBy,
                 Value = variable.IsSensitive 
                     ? EncryptAsync(variable.Value, variableSetId)
@@ -107,7 +107,7 @@ public class VariableEncryptionService : IVariableEncryptionService
                 Type = variable.Type,
                 IsSensitive = variable.IsSensitive,
                 SortOrder = variable.SortOrder,
-                LastModifiedOn = variable.LastModifiedOn,
+                LastModifiedDate = variable.LastModifiedDate,
                 LastModifiedBy = variable.LastModifiedBy,
                 Value = variable.IsSensitive 
                     ? await DecryptAsync(variable.Value, variableSetId)

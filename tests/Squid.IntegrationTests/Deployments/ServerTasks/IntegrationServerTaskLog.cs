@@ -22,7 +22,7 @@ public class IntegrationServerTaskLog : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Executing",
                 StateOrder = 2,
                 Weight = 1,

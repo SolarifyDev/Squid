@@ -1,6 +1,7 @@
 using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Identity;
 using Squid.Core.Settings.System;
 
 namespace Squid.Core;
@@ -53,7 +54,7 @@ public class SquidModule : Module
     {
         var connectionString = new SquidConnectionString(_configuration).Value;
 
-        builder.Register(_ =>
+        builder.Register(c =>
             {
                 var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
 
@@ -61,7 +62,8 @@ public class SquidModule : Module
                     .UseNpgsql(connectionString)
                     .UseSnakeCaseNamingConvention();
 
-                return new SquidDbContext(dbContextBuilder.Options);
+                var currentUser = c.ResolveOptional<ICurrentUser>();
+                return new SquidDbContext(dbContextBuilder.Options, currentUser);
             })
             .AsSelf()
             .As<DbContext>()

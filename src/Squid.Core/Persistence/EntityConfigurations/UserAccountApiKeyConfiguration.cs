@@ -14,7 +14,7 @@ public class UserAccountApiKeyConfiguration : IEntityTypeConfiguration<UserAccou
         builder.Property(x => x.UserAccountId).IsRequired();
         builder.Property(x => x.ApiKey).HasMaxLength(128).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(256);
-        builder.Property(x => x.CreatedAtUtc).IsRequired();
+        builder.Property(x => x.CreatedDate).IsRequired();
 
         builder.HasIndex(x => x.ApiKey).IsUnique();
     }

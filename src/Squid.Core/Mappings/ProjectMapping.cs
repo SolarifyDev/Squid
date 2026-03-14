@@ -19,7 +19,10 @@ public class ProjectMapping : Profile
             .ForMember(dest => dest.DataVersion, opt => opt.Ignore())
             .ForMember(dest => dest.VariableSetId, opt => opt.Ignore())
             .ForMember(dest => dest.DeploymentProcessId, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModified, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore())
             .ForMember(dest => dest.IncludedLibraryVariableSetIds, opt => opt.MapFrom(src => SerializeIds(src.IncludedLibraryVariableSetIds)));
     }
 

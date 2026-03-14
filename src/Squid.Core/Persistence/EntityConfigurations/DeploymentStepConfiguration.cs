@@ -42,8 +42,7 @@ public class DeploymentStepConfiguration : IEntityTypeConfiguration<DeploymentSt
             .IsRequired()
             .HasDefaultValue(true);
 
-        builder.Property(ds => ds.CreatedAt)
-            .IsRequired()
-            .HasDefaultValueSql("NOW()");
+        builder.Property(ds => ds.CreatedDate)
+            .IsRequired();
     }
 }

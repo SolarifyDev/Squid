@@ -169,7 +169,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     private async Task RecordHealthStatusAsync(Machine machine, MachineHealthStatus status, string detail, CancellationToken cancellationToken)
     {
         machine.HealthStatus = status;
-        machine.HealthLastChecked = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        machine.HealthLastChecked = DateTimeOffset.UtcNow;
         machine.HealthDetail = detail;
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -215,11 +215,11 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         return IsHealthCheckDue(machine.HealthLastChecked.Value, intervalSeconds);
     }
 
-    internal static bool IsHealthCheckDue(DateTime lastCheckedUtc, int intervalSeconds)
+    internal static bool IsHealthCheckDue(DateTimeOffset lastCheckedUtc, int intervalSeconds)
     {
         var nextCheckDue = lastCheckedUtc.AddSeconds(intervalSeconds);
 
-        return DateTime.UtcNow >= nextCheckDue;
+        return DateTimeOffset.UtcNow >= nextCheckDue;
     }
 
     internal static MachineScriptPolicyDto ResolveScriptPolicy(MachineHealthCheckPolicyDto healthCheckPolicy, CommunicationStyle style)

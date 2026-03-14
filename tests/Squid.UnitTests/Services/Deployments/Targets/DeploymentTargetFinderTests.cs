@@ -70,7 +70,7 @@ public class DeploymentTargetFinderTests
         MachineId = machineId,
         SpaceId = 1,
         Json = json,
-        Created = DateTimeOffset.UtcNow
+        CreatedDate = DateTimeOffset.UtcNow
     };
 
     private void SetupGetById(int id, Machine machine)

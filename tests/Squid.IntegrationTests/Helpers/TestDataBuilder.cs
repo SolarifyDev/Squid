@@ -27,7 +27,7 @@ public class TestDataBuilder
             OwnerId = ownerId,
             Version = 1,
             RelatedDocumentIds = string.Empty,
-            LastModified = DateTimeOffset.UtcNow
+            LastModifiedDate = DateTimeOffset.UtcNow
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -51,8 +51,8 @@ public class TestDataBuilder
             Type = type,
             IsSensitive = isSensitive,
             SortOrder = 0,
-            LastModifiedOn = DateTimeOffset.UtcNow,
-            LastModifiedBy = "IntegrationTest"
+            LastModifiedDate = DateTimeOffset.UtcNow,
+            LastModifiedBy = 0
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -73,8 +73,8 @@ public class TestDataBuilder
             Type = d.Type,
             IsSensitive = d.IsSensitive,
             SortOrder = 0,
-            LastModifiedOn = DateTimeOffset.UtcNow,
-            LastModifiedBy = "IntegrationTest"
+            LastModifiedDate = DateTimeOffset.UtcNow,
+            LastModifiedBy = 0
         }).ToList();
 
         await _repository.InsertAllAsync(variables).ConfigureAwait(false);
@@ -99,7 +99,7 @@ public class TestDataBuilder
             DiscreteChannelRelease = false,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow,
             AllowIgnoreChannelRules = false
         };
 
@@ -143,8 +143,8 @@ public class TestDataBuilder
         {
             Version = 1,
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow,
-            LastModifiedBy = "IntegrationTest"
+            LastModifiedDate = DateTimeOffset.UtcNow,
+            LastModifiedBy = 0
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -171,7 +171,7 @@ public class TestDataBuilder
             PackageRequirement = "",
             IsDisabled = false,
             IsRequired = isRequired,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedDate = DateTimeOffset.UtcNow
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -196,7 +196,7 @@ public class TestDataBuilder
             IsDisabled = isDisabled,
             IsRequired = isRequired,
             CanBeUsedForProjectVersioning = false,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedDate = DateTimeOffset.UtcNow
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -294,7 +294,7 @@ public class TestDataBuilder
             ProjectDeploymentProcessSnapshotId = 0,
             ChannelId = channelId,
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow
+            LastModifiedDate = DateTimeOffset.UtcNow
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -362,7 +362,7 @@ public class TestDataBuilder
             DiscreteChannelRelease = false,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow,
             AllowIgnoreChannelRules = false
         };
 
@@ -419,7 +419,7 @@ public class TestDataBuilder
             JSON = "{}",
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow,
             ConcurrencyTag = string.Empty,
             ErrorMessage = string.Empty,
             BusinessProcessState = string.Empty,
@@ -454,7 +454,7 @@ public class TestDataBuilder
             Json = "{}",
             DeployedBy = 0,
             DeployedToMachineIds = string.Empty,
-            Created = DateTimeOffset.UtcNow
+            CreatedDate = DateTimeOffset.UtcNow
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);

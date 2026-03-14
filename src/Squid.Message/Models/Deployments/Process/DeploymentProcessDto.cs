@@ -11,9 +11,9 @@ public class DeploymentProcessDto
 
     public int SpaceId { get; set; }
 
-    public DateTimeOffset LastModified { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
-    public string LastModifiedBy { get; set; }
+    public int LastModifiedBy { get; set; }
 
     public List<DeploymentStepDto> Steps { get; set; } = new List<DeploymentStepDto>();
 }

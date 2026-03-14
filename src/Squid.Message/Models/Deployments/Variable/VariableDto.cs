@@ -20,9 +20,9 @@ public class VariableDto
 
     public int SortOrder { get; set; }
 
-    public DateTimeOffset? LastModifiedOn { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
-    public string LastModifiedBy { get; set; }
+    public int LastModifiedBy { get; set; }
 
     public List<VariableScopeDto> Scopes { get; set; } = new List<VariableScopeDto>();
 }

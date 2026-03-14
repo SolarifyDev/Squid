@@ -134,7 +134,7 @@ public class ReleaseLifecycleProgressionTests
         deployment.ShouldNotBeNull();
         deployment.DeploymentId.ShouldBe(42);
         deployment.State.ShouldBe("Success");
-        deployment.Created.ShouldBe(created);
+        deployment.CreatedDate.ShouldBe(created);
         deployment.CompletedTime.ShouldBe(completed);
     }
 

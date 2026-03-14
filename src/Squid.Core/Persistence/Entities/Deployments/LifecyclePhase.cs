@@ -2,7 +2,7 @@ using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class LifecyclePhase : IEntity<int>
+public class LifecyclePhase : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -28,4 +28,10 @@ public class LifecyclePhase : IEntity<int>
     public int? TentacleRetentionQuantity { get; set; }
     public bool? TentacleRetentionKeepForever { get; set; }
     public RetentionPolicyUnit? TentacleRetentionUnit { get; set; }
+
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

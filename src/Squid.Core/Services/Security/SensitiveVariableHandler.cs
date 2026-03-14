@@ -22,7 +22,7 @@ public class SensitiveVariableHandler : IScopedDependency
             Type = variableDto.Type,
             IsSensitive = variableDto.IsSensitive,
             SortOrder = variableDto.SortOrder,
-            LastModifiedOn = variableDto.LastModifiedOn,
+            LastModifiedDate = variableDto.LastModifiedDate,
             LastModifiedBy = variableDto.LastModifiedBy,
             Scopes = variableDto.Scopes
         };

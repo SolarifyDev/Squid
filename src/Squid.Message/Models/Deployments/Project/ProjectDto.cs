@@ -32,7 +32,7 @@ public class ProjectDto
 
     public int SpaceId { get; set; }
 
-    public DateTimeOffset LastModified { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
     public bool AllowIgnoreChannelRules { get; set; }
 }

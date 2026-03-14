@@ -30,7 +30,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Executing",
                 StateOrder = 1,
                 Weight = 1,

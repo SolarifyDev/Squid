@@ -59,7 +59,6 @@ public class DeploymentStepService : IDeploymentStepService
         var step = _mapper.Map<DeploymentStep>(command.Step);
         
         step.ProcessId = command.ProcessId;
-        step.CreatedAt = DateTimeOffset.UtcNow;
         step.StepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
 
         await _stepDataProvider.AddDeploymentStepAsync(step, true, cancellationToken).ConfigureAwait(false);
@@ -291,7 +290,6 @@ public class DeploymentStepService : IDeploymentStepService
             var mappedAction = _mapper.Map<DeploymentAction>(action);
 
             mappedAction.StepId = stepId;
-            mappedAction.CreatedAt = DateTimeOffset.UtcNow;
 
             await _actionDataProvider.AddDeploymentActionAsync(mappedAction, true, cancellationToken).ConfigureAwait(false);
 

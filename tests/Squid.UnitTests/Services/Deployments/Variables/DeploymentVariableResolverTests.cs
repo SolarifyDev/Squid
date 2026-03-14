@@ -347,7 +347,7 @@ public class DeploymentVariableResolverTests
             ReleaseId = 1,
             EnvironmentId = 1,
             DeployedBy = 1,
-            Created = DateTimeOffset.UtcNow
+            CreatedDate = DateTimeOffset.UtcNow
         };
     }
 
@@ -366,7 +366,7 @@ public class DeploymentVariableResolverTests
             Json = string.Empty,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow
+            LastModifiedDate = DateTimeOffset.UtcNow
         };
     }
 }

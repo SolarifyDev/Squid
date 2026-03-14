@@ -115,7 +115,6 @@ public partial class ProjectService : IProjectService
 
         _mapper.Map(command.Project, project);
 
-        project.LastModified = DateTimeOffset.UtcNow;
         project.IncludedLibraryVariableSetIds ??= "[]";
 
         await _projectDataProvider.UpdateProjectAsync(project, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -175,7 +174,6 @@ public partial class ProjectService : IProjectService
     {
         var project = _mapper.Map<Persistence.Entities.Deployments.Project>(command.Project);
 
-        project.LastModified = DateTimeOffset.UtcNow;
         project.IncludedLibraryVariableSetIds ??= "[]";
         project.Json ??= string.Empty;
         project.DataVersion ??= Array.Empty<byte>();
@@ -191,9 +189,7 @@ public partial class ProjectService : IProjectService
     {
         ProjectId = project.Id,
         Version = 1,
-        SpaceId = project.SpaceId,
-        LastModified = DateTimeOffset.UtcNow,
-        LastModifiedBy = "System"
+        SpaceId = project.SpaceId
     };
 
     private static VariableSet CreateVariableSet(
@@ -202,8 +198,7 @@ public partial class ProjectService : IProjectService
         SpaceId = project.SpaceId,
         OwnerType = VariableSetOwnerType.Project,
         OwnerId = project.Id,
-        Version = 1,
-        LastModified = DateTimeOffset.UtcNow
+        Version = 1
     };
 
     private static Channel CreateDefaultChannel(

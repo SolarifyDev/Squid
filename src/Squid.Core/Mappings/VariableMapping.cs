@@ -21,12 +21,17 @@ public class VariableMapping : Profile
         CreateMap<CreateVariableSetCommand, VariableSet>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.Version, opt => opt.MapFrom(src => 1))
-            .ForMember(dest => dest.LastModified, opt => opt.MapFrom(src => DateTimeOffset.UtcNow));
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
 
         CreateMap<VariableModel, Variable>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.VariableSetId, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModifiedOn, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
             .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
 
         CreateMap<VariableScopeModel, VariableScope>()

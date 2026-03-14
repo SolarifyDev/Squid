@@ -179,7 +179,7 @@ public class ConvertProcessSnapshotToStepsTests
             Condition = condition,
             IsDisabled = isDisabled,
             IsRequired = isRequired,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow,
             ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
             {
                 new() { Id = stepOrder * 10, Name = $"Action-{stepOrder}", ActionType = "Octopus.Script", ActionOrder = 1 }

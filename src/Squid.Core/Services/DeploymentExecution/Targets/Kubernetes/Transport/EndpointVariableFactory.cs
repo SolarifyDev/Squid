@@ -12,8 +12,8 @@ public static class EndpointVariableFactory
         Description = string.Empty,
         Type = Message.Enums.VariableType.String,
         IsSensitive = isSensitive,
-        LastModifiedOn = DateTimeOffset.UtcNow,
-        LastModifiedBy = "System"
+        LastModifiedDate = DateTimeOffset.UtcNow,
+        LastModifiedBy = 0
     };
 
     public static T TryDeserialize<T>(string json) where T : class

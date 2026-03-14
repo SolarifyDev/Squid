@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class Environment : IEntity<int>
+public class Environment : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -18,7 +18,9 @@ public class Environment : IEntity<int>
 
     public bool AllowDynamicInfrastructure { get; set; }
 
-    public DateTimeOffset? LastModifiedOn { get; set; }
-
-    public string LastModifiedBy { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

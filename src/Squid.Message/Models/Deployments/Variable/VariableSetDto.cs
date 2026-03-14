@@ -18,7 +18,7 @@ public class VariableSetDto
 
     public string RelatedDocumentIds { get; set; }
 
-    public DateTimeOffset? LastModified { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
     public int SpaceId { get; set; }
 

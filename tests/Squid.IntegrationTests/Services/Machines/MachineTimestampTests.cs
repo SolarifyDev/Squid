@@ -94,7 +94,7 @@ public class MachineTimestampTests : TestBase
             var machine = await provider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
             machine.HealthStatus = status;
-            machine.HealthLastChecked = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+            machine.HealthLastChecked = DateTimeOffset.UtcNow;
 
             await provider.UpdateMachineAsync(machine, cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -127,7 +127,7 @@ public class MachineTimestampTests : TestBase
         {
             var machine = BuildMachine(subscriptionId);
             machine.HealthStatus = MachineHealthStatus.Healthy;
-            machine.HealthLastChecked = new DateTime(2026, 3, 14, 10, 0, 0, DateTimeKind.Unspecified);
+            machine.HealthLastChecked = new DateTimeOffset(2026, 3, 14, 10, 0, 0, TimeSpan.Zero);
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);

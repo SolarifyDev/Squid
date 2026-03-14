@@ -95,8 +95,8 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 SortOrder = 0,
                 UseGuidedFailure = false,
                 AllowDynamicInfrastructure = false,
-                LastModifiedOn = DateTimeOffset.UtcNow,
-                LastModifiedBy = "IntegrationTest"
+                LastModifiedDate = DateTimeOffset.UtcNow,
+                LastModifiedBy = 0
             };
 
             await repository.InsertAsync(environment, CancellationToken.None).ConfigureAwait(false);
@@ -149,7 +149,7 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 ReleaseId = release.Id,
                 EnvironmentId = environment.Id,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -166,7 +166,7 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 ProjectId = project.Id,
                 EnvironmentId = environment.Id,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,

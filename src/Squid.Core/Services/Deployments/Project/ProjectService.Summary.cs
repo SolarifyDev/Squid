@@ -178,7 +178,7 @@ public partial class ProjectService
 
         return deployments
             .GroupBy(d => (d.ProjectId, d.EnvironmentId))
-            .Select(g => g.OrderByDescending(d => d.Created).First())
+            .Select(g => g.OrderByDescending(d => d.CreatedDate).First())
             .Where(d => d.TaskId.HasValue && taskMap.ContainsKey(d.TaskId.Value) && releaseMap.ContainsKey(d.ReleaseId))
             .Select(d => BuildDashboardItem(d, taskMap[d.TaskId.Value], releaseMap[d.ReleaseId]))
             .ToList();

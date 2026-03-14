@@ -34,7 +34,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,

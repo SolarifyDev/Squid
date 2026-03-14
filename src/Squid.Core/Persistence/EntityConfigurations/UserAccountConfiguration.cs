@@ -15,8 +15,8 @@ public class UserAccountConfiguration : IEntityTypeConfiguration<UserAccount>
         builder.Property(x => x.NormalizedUserName).HasMaxLength(200).IsRequired();
         builder.Property(x => x.DisplayName).HasMaxLength(200).IsRequired();
         builder.Property(x => x.PasswordHash).IsRequired();
-        builder.Property(x => x.CreatedAtUtc).IsRequired();
-        builder.Property(x => x.UpdatedAtUtc).IsRequired();
+        builder.Property(x => x.CreatedDate).IsRequired();
+        builder.Property(x => x.LastModifiedDate).IsRequired();
 
         builder.HasIndex(x => x.NormalizedUserName).IsUnique();
     }

@@ -50,7 +50,7 @@ public partial class ReleaseService
         return environments.ToDictionary(e => e.Id, e => e.Name);
     }
 
-    private async Task<Dictionary<int, (int DeploymentId, string State, DateTimeOffset Created, DateTimeOffset? CompletedTime)>> LoadLatestDeploymentsForReleaseAsync(
+    private async Task<Dictionary<int, (int DeploymentId, string State, DateTimeOffset CreatedDate, DateTimeOffset? CompletedTime)>> LoadLatestDeploymentsForReleaseAsync(
         int releaseId, PhaseProgressionResult progression, CancellationToken ct)
     {
         var allEnvIds = progression.Phases
@@ -62,7 +62,7 @@ public partial class ReleaseService
 
         var deployments = await _repository
             .QueryNoTracking<Deployment>(d => d.ReleaseId == releaseId && allEnvIds.Contains(d.EnvironmentId))
-            .OrderByDescending(d => d.Created)
+            .OrderByDescending(d => d.CreatedDate)
             .ToListAsync(ct).ConfigureAwait(false);
 
         var taskIds = deployments.Where(d => d.TaskId.HasValue).Select(d => d.TaskId.Value).Distinct().ToList();
@@ -76,7 +76,7 @@ public partial class ReleaseService
             taskMap = tasks.ToDictionary(t => t.Id);
         }
 
-        var result = new Dictionary<int, (int DeploymentId, string State, DateTimeOffset Created, DateTimeOffset? CompletedTime)>();
+        var result = new Dictionary<int, (int DeploymentId, string State, DateTimeOffset CreatedDate, DateTimeOffset? CompletedTime)>();
 
         foreach (var group in deployments.GroupBy(d => d.EnvironmentId))
         {
@@ -86,7 +86,7 @@ public partial class ReleaseService
             if (latest.TaskId.HasValue)
                 taskMap.TryGetValue(latest.TaskId.Value, out task);
 
-            result[group.Key] = (latest.Id, task?.State ?? "Unknown", latest.Created, task?.CompletedTime);
+            result[group.Key] = (latest.Id, task?.State ?? "Unknown", latest.CreatedDate, task?.CompletedTime);
         }
 
         return result;
@@ -95,7 +95,7 @@ public partial class ReleaseService
     internal static ReleaseLifecycleProgressionDto AssembleProgressionDto(
         Persistence.Entities.Deployments.Release release, Lifecycle lifecycle, PhaseProgressionResult progression,
         Dictionary<int, string> environmentNames,
-        Dictionary<int, (int DeploymentId, string State, DateTimeOffset Created, DateTimeOffset? CompletedTime)> latestDeployments)
+        Dictionary<int, (int DeploymentId, string State, DateTimeOffset CreatedDate, DateTimeOffset? CompletedTime)> latestDeployments)
     {
         var allowedSet = progression.AllowedEnvironmentIds.ToHashSet();
 
@@ -142,7 +142,7 @@ public partial class ReleaseService
     private static ReleasePhaseEnvironmentDto BuildEnvironmentDto(
         int envId, bool isAutomatic, HashSet<int> allowedSet,
         Dictionary<int, string> environmentNames,
-        Dictionary<int, (int DeploymentId, string State, DateTimeOffset Created, DateTimeOffset? CompletedTime)> latestDeployments)
+        Dictionary<int, (int DeploymentId, string State, DateTimeOffset CreatedDate, DateTimeOffset? CompletedTime)> latestDeployments)
     {
         environmentNames.TryGetValue(envId, out var envName);
         latestDeployments.TryGetValue(envId, out var deploymentInfo);
@@ -155,7 +155,7 @@ public partial class ReleaseService
             {
                 DeploymentId = deploymentInfo.DeploymentId,
                 State = deploymentInfo.State,
-                Created = deploymentInfo.Created,
+                CreatedDate = deploymentInfo.CreatedDate,
                 CompletedTime = deploymentInfo.CompletedTime
             };
         }

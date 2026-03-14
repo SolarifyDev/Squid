@@ -62,8 +62,8 @@ public class AccountService : IAccountService
             DisplayName = displayName,
             IsDisabled = false,
             IsSystem = false,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
+            CreatedDate = DateTime.UtcNow,
+            LastModifiedDate = DateTime.UtcNow
         };
 
         user.PasswordHash = _passwordHasher.HashPassword(user, password);
@@ -100,7 +100,7 @@ public class AccountService : IAccountService
         if (verifyResult == PasswordVerificationResult.SuccessRehashNeeded)
         {
             user.PasswordHash = _passwordHasher.HashPassword(user, password);
-            user.UpdatedAtUtc = DateTime.UtcNow;
+            user.LastModifiedDate = DateTime.UtcNow;
             await _repository.UpdateAsync(user, cancellationToken).ConfigureAwait(false);
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -149,7 +149,7 @@ public class AccountService : IAccountService
             UserName = user.UserName,
             DisplayName = user.DisplayName,
             IsSystem = user.IsSystem,
-            CreatedAtUtc = user.CreatedAtUtc
+            CreatedDate = user.CreatedDate
         };
     }
 }

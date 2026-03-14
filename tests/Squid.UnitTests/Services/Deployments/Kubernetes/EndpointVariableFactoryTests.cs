@@ -19,7 +19,7 @@ public class EndpointVariableFactoryTests
         variable.IsSensitive.ShouldBe(isSensitive);
         variable.Type.ShouldBe(VariableType.String);
         variable.Description.ShouldBe(string.Empty);
-        variable.LastModifiedBy.ShouldBe("System");
+        variable.LastModifiedBy.ShouldBe(0);
     }
 
     // === TryDeserialize Tests ===

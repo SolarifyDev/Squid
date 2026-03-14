@@ -198,7 +198,7 @@ public class KubernetesMultiTargetE2ETests
                 ReleaseId = release.Id,
                 EnvironmentId = environment.Id,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -286,7 +286,7 @@ public class KubernetesMultiTargetE2ETests
                 ReleaseId = release.Id,
                 EnvironmentId = environment.Id,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -364,7 +364,7 @@ public class KubernetesMultiTargetE2ETests
             ProjectId = projectId,
             EnvironmentId = environmentId,
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow,
             BusinessProcessState = "Queued",
             StateOrder = 1,
             Weight = 1,

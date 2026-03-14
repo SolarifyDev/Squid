@@ -40,8 +40,6 @@ public class VariableService : IVariableService
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
     {
         var variableSet = _mapper.Map<VariableSet>(command);
-        variableSet.LastModified = DateTimeOffset.UtcNow;
-
         await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await CreateLibraryVariableSetIfApplicableAsync(variableSet, command, cancellationToken).ConfigureAwait(false);
@@ -60,7 +58,6 @@ public class VariableService : IVariableService
         variableSet.OwnerId = command.OwnerId;
         variableSet.OwnerType = command.OwnerType;
         variableSet.SpaceId = command.SpaceId;
-        variableSet.LastModified = DateTimeOffset.UtcNow;
         variableSet.Version++;
 
         await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);

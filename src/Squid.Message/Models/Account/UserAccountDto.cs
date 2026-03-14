@@ -10,5 +10,5 @@ public class UserAccountDto : IBaseModel
 
     public bool IsSystem { get; set; }
 
-    public DateTime CreatedAtUtc { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
 }
