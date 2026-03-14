@@ -98,7 +98,7 @@ public partial class DeploymentService
             result.LifecycleId = lifecycle.Id;
 
             var progression = await _progressionEvaluator
-                .EvaluateProgressionAsync(lifecycle.Id, release.ProjectId, cancellationToken).ConfigureAwait(false);
+                .EvaluateProgressionForReleaseAsync(lifecycle.Id, release.Id, cancellationToken).ConfigureAwait(false);
 
             result.AllowedEnvironmentIds = progression.AllowedEnvironmentIds;
 
@@ -123,21 +123,21 @@ public partial class DeploymentService
     {
         if (release.ProjectDeploymentProcessSnapshotId <= 0)
             throw new InvalidOperationException($"Release {release.Id} has no deployment process snapshot.");
-        
+
         var processSnapshot = await _deploymentSnapshotService
             .LoadProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, cancellationToken).ConfigureAwait(false);
 
         var steps = ProcessSnapshotStepConverter.Convert(processSnapshot).OrderBy(step => step.StepOrder).ToList();
 
-        return steps.Select(step => BuildStepPreview(step, release.ChannelId, context, selectedMachines)).ToList();
+        return steps.Select(step => BuildStepPreview(step, step.StepOrder, release.ChannelId, context, selectedMachines)).ToList();
     }
 
-    private static DeploymentPreviewStepResult BuildStepPreview(Squid.Message.Models.Deployments.Process.DeploymentStepDto step, int releaseChannelId, DeploymentValidationContext context, List<Persistence.Entities.Deployments.Machine> selectedMachines)
+    internal DeploymentPreviewStepResult BuildStepPreview(Squid.Message.Models.Deployments.Process.DeploymentStepDto step, int displayOrder, int releaseChannelId, DeploymentValidationContext context, List<Persistence.Entities.Deployments.Machine> selectedMachines)
     {
         var result = new DeploymentPreviewStepResult
         {
             StepId = step.Id,
-            StepOrder = step.StepOrder,
+            StepOrder = displayOrder,
             StepName = step.Name,
             IsDisabled = step.IsDisabled
         };
@@ -163,6 +163,15 @@ public partial class DeploymentService
         }
 
         result.IsApplicable = true;
+
+        var allStepLevel = runnableActions.All(action => _actionHandlerRegistry.ResolveScope(action) == ExecutionScope.StepLevel);
+
+        if (allStepLevel)
+        {
+            result.IsStepLevelOnly = true;
+            return result;
+        }
+
         result.RequiredRoles = ExtractRequiredRoles(step);
 
         var matchedMachines = result.RequiredRoles.Count == 0
@@ -199,11 +208,11 @@ public partial class DeploymentService
 
     private static bool HasNoMatchingTargetsForApplicableSteps(List<DeploymentPreviewStepResult> steps)
     {
-        var applicableSteps = steps
-            .Where(step => step.IsApplicable)
+        var targetLevelSteps = steps
+            .Where(step => step.IsApplicable && !step.IsStepLevelOnly)
             .ToList();
 
-        return applicableSteps.Count > 0 && applicableSteps.All(step => step.MatchedTargets.Count == 0);
+        return targetLevelSteps.Count > 0 && targetLevelSteps.All(step => step.MatchedTargets.Count == 0);
     }
 
     private static DeploymentPreviewTargetResult ToPreviewTarget(Persistence.Entities.Deployments.Machine machine)

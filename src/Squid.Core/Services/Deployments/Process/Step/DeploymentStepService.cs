@@ -119,8 +119,12 @@ public class DeploymentStepService : IDeploymentStepService
     public async Task<DeploymentStepDeletedEvent> DeleteDeploymentStepsAsync(DeleteDeploymentStepCommand command, CancellationToken cancellationToken)
     {
         var steps = await _stepDataProvider.GetDeploymentStepsByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+        var processIds = steps.Select(s => s.ProcessId).Distinct().ToList();
 
         await _stepDataProvider.DeleteDeploymentStepsAsync(steps, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        foreach (var processId in processIds)
+            await ReindexStepOrdersAsync(processId, cancellationToken).ConfigureAwait(false);
 
         return new DeploymentStepDeletedEvent
         {
@@ -141,7 +145,12 @@ public class DeploymentStepService : IDeploymentStepService
         if (!submittedStepIds.SetEquals(existingStepIds))
             throw new InvalidOperationException($"StepOrders must include all steps for process {command.ProcessId}. Expected: [{string.Join(", ", existingStepIds)}], Got: [{string.Join(", ", submittedStepIds)}]");
 
-        var orderLookup = command.StepOrders.ToDictionary(o => o.StepId, o => o.StepOrder);
+        // Normalize client-provided ordering to contiguous 1-based values
+        var sortedOrders = command.StepOrders.OrderBy(o => o.StepOrder).ToList();
+        var orderLookup = new Dictionary<int, int>();
+
+        for (var i = 0; i < sortedOrders.Count; i++)
+            orderLookup[sortedOrders[i].StepId] = i + 1;
 
         // Phase 1: Set temporary negative orders to avoid unique constraint violations on (process_id, step_order)
         for (var i = 0; i < existingSteps.Count; i++)
@@ -152,10 +161,11 @@ public class DeploymentStepService : IDeploymentStepService
         }
 
         // Phase 2: Set real orders — all steps now have negative values, so no conflicts
-        foreach (var step in existingSteps)
+        for (var i = 0; i < existingSteps.Count; i++)
         {
-            step.StepOrder = orderLookup[step.Id];
-            await _stepDataProvider.UpdateDeploymentStepAsync(step, false, cancellationToken).ConfigureAwait(false);
+            existingSteps[i].StepOrder = orderLookup[existingSteps[i].Id];
+            var isLast = i == existingSteps.Count - 1;
+            await _stepDataProvider.UpdateDeploymentStepAsync(existingSteps[i], isLast, cancellationToken).ConfigureAwait(false);
         }
 
         var reorderedSteps = new List<DeploymentStepDto>();
@@ -239,6 +249,32 @@ public class DeploymentStepService : IDeploymentStepService
         actionDto.Channels = channels.Select(c => c.ChannelId).ToList();
 
         return actionDto;
+    }
+
+    private async Task ReindexStepOrdersAsync(int processId, CancellationToken cancellationToken)
+    {
+        var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(processId, cancellationToken).ConfigureAwait(false);
+
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var expectedOrder = i + 1;
+
+            if (steps[i].StepOrder == expectedOrder) continue;
+
+            steps[i].StepOrder = -(i + 1);
+            await _stepDataProvider.UpdateDeploymentStepAsync(steps[i], false, cancellationToken).ConfigureAwait(false);
+        }
+
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var expectedOrder = i + 1;
+
+            if (steps[i].StepOrder == expectedOrder) continue;
+
+            steps[i].StepOrder = expectedOrder;
+            var isLast = i == steps.Count - 1;
+            await _stepDataProvider.UpdateDeploymentStepAsync(steps[i], isLast, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<int> ResolveNextStepOrderAsync(int processId, CancellationToken cancellationToken)

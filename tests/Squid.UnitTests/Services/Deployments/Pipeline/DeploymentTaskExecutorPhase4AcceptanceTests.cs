@@ -174,7 +174,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         lifecycle.Initialize(ctx);
 
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("SJ-US-AKS", "web", transport, endpointJson: "endpoint-a") };
-        ctx.Steps = new List<DeploymentStepDto> { MakeStep("Deploy web", 4, null, "web", MakeAction("ActionA")) };
+        ctx.Steps = new List<DeploymentStepDto> { MakeStep("Deploy web", 1, null, "web", MakeAction("ActionA")) };
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 

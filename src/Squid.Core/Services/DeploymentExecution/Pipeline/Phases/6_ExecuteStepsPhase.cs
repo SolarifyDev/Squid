@@ -26,11 +26,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
     {
         var orderedSteps = _ctx.Steps.OrderBy(p => p.StepOrder).ToList();
         var batches = StepBatcher.BatchSteps(orderedSteps);
-        var stepSortOrderByStep = new Dictionary<DeploymentStepDto, int>();
-        var displayOrder = 0;
-
-        foreach (var step in orderedSteps)
-            stepSortOrderByStep[step] = ++displayOrder;
+        var stepSortOrderByStep = orderedSteps.ToDictionary(step => step, step => step.StepOrder);
 
         _currentBatchIndex = 0;
 

@@ -8,6 +8,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Core.Services.Deployments.Validation;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Deployments.Deployment;
@@ -30,6 +31,7 @@ public partial class DeploymentService : IDeploymentService
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IServerTaskService _serverTaskService;
+    private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
     public DeploymentService(
@@ -45,6 +47,7 @@ public partial class DeploymentService : IDeploymentService
         IDeploymentSnapshotService deploymentSnapshotService,
         IServerTaskDataProvider serverTaskDataProvider,
         IServerTaskService serverTaskService,
+        IActionHandlerRegistry actionHandlerRegistry,
         ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
@@ -59,6 +62,7 @@ public partial class DeploymentService : IDeploymentService
         _deploymentSnapshotService = deploymentSnapshotService;
         _serverTaskDataProvider = serverTaskDataProvider;
         _serverTaskService = serverTaskService;
+        _actionHandlerRegistry = actionHandlerRegistry;
         _backgroundJobClient = backgroundJobClient;
     }
 
