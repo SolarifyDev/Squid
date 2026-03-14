@@ -121,9 +121,12 @@ public partial class KubernetesPodManager
 
     public List<V1Pod> ListManagedPods()
     {
-        var pods = _ops.ListPods(
-            _settings.TentacleNamespace,
-            "app.kubernetes.io/managed-by=kubernetes-agent");
+        var labelSelector = "app.kubernetes.io/managed-by=kubernetes-agent";
+
+        if (!string.IsNullOrEmpty(_settings.ReleaseName))
+            labelSelector += $",app.kubernetes.io/instance={_settings.ReleaseName}";
+
+        var pods = _ops.ListPods(_settings.TentacleNamespace, labelSelector);
 
         return pods.Items.ToList();
     }

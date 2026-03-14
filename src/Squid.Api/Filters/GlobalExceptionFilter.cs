@@ -1,6 +1,7 @@
 using System.Net;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Serilog;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -16,10 +17,16 @@ public class GlobalExceptionFilter : IExceptionFilter
             _ => HttpStatusCode.InternalServerError
         };
 
+        Log.Error(context.Exception, "Unhandled exception on {Method} {Path}", context.HttpContext.Request.Method, context.HttpContext.Request.Path);
+
+        var message = context.Exception.InnerException != null
+            ? $"{context.Exception.Message} → {context.Exception.InnerException.Message}"
+            : context.Exception.Message;
+
         context.Result = new OkObjectResult(new SquidResponse
         {
             Code = statusCode,
-            Msg = context.Exception.Message
+            Msg = message
         });
 
         context.ExceptionHandled = true;

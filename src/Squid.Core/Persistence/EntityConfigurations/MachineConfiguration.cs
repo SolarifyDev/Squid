@@ -14,5 +14,7 @@ public class MachineConfiguration: IEntityTypeConfiguration<Machine>
             .HasConversion<string>()
             .HasMaxLength(50)
             .IsRequired();
+        builder.Property(p => p.HealthLastChecked)
+            .HasColumnType("timestamp without time zone");
     }
 }

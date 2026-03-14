@@ -169,7 +169,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     private async Task RecordHealthStatusAsync(Machine machine, MachineHealthStatus status, string detail, CancellationToken cancellationToken)
     {
         machine.HealthStatus = status;
-        machine.HealthLastChecked = DateTime.UtcNow;
+        machine.HealthLastChecked = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
         machine.HealthDetail = detail;
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);

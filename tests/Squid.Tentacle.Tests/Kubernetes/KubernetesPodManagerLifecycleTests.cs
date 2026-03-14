@@ -178,6 +178,34 @@ public class KubernetesPodManagerLifecycleTests
         _ops.Verify(o => o.ReadPodStatus("pod-1", "test-ns"), Times.Once);
     }
 
+    // === ListManagedPods ===
+
+    [Fact]
+    public void ListManagedPods_NoReleaseName_UsesBaseSelector()
+    {
+        _ops.Setup(o => o.ListPods("test-ns", "app.kubernetes.io/managed-by=kubernetes-agent"))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        _manager.ListManagedPods();
+
+        _ops.Verify(o => o.ListPods("test-ns", "app.kubernetes.io/managed-by=kubernetes-agent"), Times.Once);
+    }
+
+    [Fact]
+    public void ListManagedPods_WithReleaseName_IncludesInstanceSelector()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        var settings = new KubernetesSettings { TentacleNamespace = "test-ns", ReleaseName = "squid-prod" };
+        var manager = new KubernetesPodManager(ops.Object, settings);
+
+        ops.Setup(o => o.ListPods("test-ns", "app.kubernetes.io/managed-by=kubernetes-agent,app.kubernetes.io/instance=squid-prod"))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        manager.ListManagedPods();
+
+        ops.Verify(o => o.ListPods("test-ns", "app.kubernetes.io/managed-by=kubernetes-agent,app.kubernetes.io/instance=squid-prod"), Times.Once);
+    }
+
     // === Helpers ===
 
     private static k8s.Autorest.HttpOperationException CreateHttpOperationException(HttpStatusCode statusCode)

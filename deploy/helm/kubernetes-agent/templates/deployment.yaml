@@ -125,6 +125,8 @@ spec:
           value: "{{ .Values.tentacle.image.tag | default .Chart.AppVersion }}"
         - name: Kubernetes__TentacleImage
           value: "{{ .Values.tentacle.image.repository }}:{{ .Values.tentacle.image.tag | default .Chart.AppVersion }}"
+        - name: Kubernetes__ReleaseName
+          value: "{{ .Release.Name }}"
         - name: Kubernetes__UseScriptPods
           value: "true"
         resources:

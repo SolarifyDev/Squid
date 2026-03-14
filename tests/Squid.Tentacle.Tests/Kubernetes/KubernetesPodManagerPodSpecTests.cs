@@ -54,6 +54,17 @@ public class KubernetesPodManagerPodSpecTests
 
         pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
         pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
+        pod.Metadata.Labels.ShouldNotContainKey("app.kubernetes.io/instance");
+    }
+
+    [Fact]
+    public void CreatePod_WithReleaseName_IncludesInstanceLabel()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ReleaseName = "squid-agent-prod");
+
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/instance", "squid-agent-prod");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
     }
 
     [Fact]

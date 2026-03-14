@@ -10,4 +10,5 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/managed-by: kubernetes-agent
+      app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

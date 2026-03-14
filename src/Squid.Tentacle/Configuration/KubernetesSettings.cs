@@ -18,4 +18,5 @@ public class KubernetesSettings
     public string ScriptPodImagePullSecrets { get; set; } = "";
     public string ScriptPodTolerations { get; set; } = "";
     public string TentacleImage { get; set; } = "";
+    public string ReleaseName { get; set; } = "";
 }
