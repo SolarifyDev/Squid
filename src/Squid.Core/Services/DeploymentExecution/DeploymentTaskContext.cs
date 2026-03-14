@@ -3,6 +3,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -17,6 +18,7 @@ public class DeploymentTaskContext
     public Release Release { get; set; }
     public Project Project { get; set; }
     public Squid.Core.Persistence.Entities.Deployments.Environment Environment { get; set; }
+    public Channel Channel { get; set; }
     public DeploymentProcessSnapshotDto ProcessSnapshot { get; set; }
 
     // Variables — deployment-level only, not polluted by endpoint variables
@@ -24,15 +26,18 @@ public class DeploymentTaskContext
 
     // Targets
     public List<Machine> AllTargets { get; set; } = new();
+    public List<Machine> ExcludedByHealthTargets { get; set; }
     public List<DeploymentTargetContext> AllTargetsContext { get; set; } = new();
 
     // Execution
     public List<DeploymentStepDto> Steps { get; set; }
     public List<ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
+    public bool UseGuidedFailure { get; set; }
 
-    // Activity Tracking
-    public ActivityLog TaskActivityNode { get; set; }
+    // Resume
+    public bool IsResume { get; set; }
+    public int? ResumeFromBatchIndex { get; set; }
 
     // Logging
     private long _logSequence;

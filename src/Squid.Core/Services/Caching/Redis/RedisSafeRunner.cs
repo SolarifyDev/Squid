@@ -1,5 +1,3 @@
-using Serilog;
-using Autofac;
 using RedLockNet;
 using RedLockNet.SERedis;
 using StackExchange.Redis;

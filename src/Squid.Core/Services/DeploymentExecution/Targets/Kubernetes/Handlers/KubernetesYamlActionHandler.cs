@@ -5,6 +5,7 @@ using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 

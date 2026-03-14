@@ -1,7 +1,3 @@
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
-
 namespace Squid.Core.VariableSubstitution.Templates.Functions
 {
     internal class TextEscapeFunction

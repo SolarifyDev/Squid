@@ -10,6 +10,8 @@ using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
+using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.IntegrationTests.Deployments.Pipeline;
 

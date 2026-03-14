@@ -68,4 +68,14 @@ public class ReleaseController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("{releaseId:int}/progression")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleaseProgressionResponse))]
+    public async Task<IActionResult> GetReleaseProgressionAsync(int releaseId)
+    {
+        var request = new GetReleaseProgressionRequest { ReleaseId = releaseId };
+        var response = await _mediator.RequestAsync<GetReleaseProgressionRequest, GetReleaseProgressionResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

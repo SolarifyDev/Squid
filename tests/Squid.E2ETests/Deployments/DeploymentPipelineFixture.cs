@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.E2ETests.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.E2ETests.Deployments;
 
@@ -50,6 +51,7 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
         public IEndpointVariableContributor Variables => _inner.Variables;
         public IScriptContextWrapper ScriptWrapper => _inner.ScriptWrapper;
         public IExecutionStrategy Strategy { get; }
+        public IHealthCheckStrategy HealthChecker => _inner.HealthChecker;
         public ExecutionLocation ExecutionLocation => _inner.ExecutionLocation;
         public ExecutionBackend ExecutionBackend => _inner.ExecutionBackend;
         public bool RequiresContextPreparationForPackagedPayload => _inner.RequiresContextPreparationForPackagedPayload;

@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Transport;
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesApiScriptContextWrapper : IScriptContextWrapper

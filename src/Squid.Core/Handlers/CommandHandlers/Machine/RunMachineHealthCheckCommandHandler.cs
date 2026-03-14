@@ -7,7 +7,7 @@ public class RunMachineHealthCheckCommandHandler(IMachineHealthCheckService heal
 {
     public async Task<RunMachineHealthCheckResponse> Handle(IReceiveContext<RunMachineHealthCheckCommand> context, CancellationToken cancellationToken)
     {
-        await healthCheckService.RunHealthCheckAsync(context.Message.MachineId, cancellationToken).ConfigureAwait(false);
+        await healthCheckService.ManualHealthCheckAsync(context.Message.MachineId, cancellationToken).ConfigureAwait(false);
 
         return new RunMachineHealthCheckResponse();
     }

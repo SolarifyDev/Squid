@@ -42,6 +42,8 @@ public class DeploymentPreviewStepResult
 
     public bool IsApplicable { get; set; }
 
+    public bool IsStepLevelOnly { get; set; }
+
     public string Reason { get; set; }
 
     public List<int> RunnableActionIds { get; set; } = [];

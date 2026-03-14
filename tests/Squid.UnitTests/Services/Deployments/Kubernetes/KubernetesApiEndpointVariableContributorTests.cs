@@ -11,6 +11,8 @@ using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Snapshots;
 
 using static Squid.Message.Enums.EndpointResourceType;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -369,7 +371,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp/backend");
-        var release = new Release { Version = "1.2.3" };
+        var release = new ReleaseEntity { Version = "1.2.3" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 
@@ -384,7 +386,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithoutContainerPackage();
-        var release = new Release { Version = "2.0.0" };
+        var release = new ReleaseEntity { Version = "2.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 
@@ -401,7 +403,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithContainerPackage(feedId: 99, packageId: "myapp");
-        var release = new Release { Version = "3.0.0" };
+        var release = new ReleaseEntity { Version = "3.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 
@@ -414,7 +416,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
-        var release = new Release { Version = "4.0.0" };
+        var release = new ReleaseEntity { Version = "4.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(null, release, CancellationToken.None);
 
@@ -427,7 +429,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor();
 
         var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp");
-        var release = new Release { Version = "5.0.0" };
+        var release = new ReleaseEntity { Version = "5.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 
@@ -449,7 +451,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "library/nginx");
-        var release = new Release { Version = "1.25.0" };
+        var release = new ReleaseEntity { Version = "1.25.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 
@@ -471,7 +473,7 @@ public class KubernetesApiEndpointVariableContributorTests
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);
 
         var snapshot = MakeSnapshotWithContainerPackage(feedId: 10, packageId: "myapp");
-        var release = new Release { Version = "2.0.0" };
+        var release = new ReleaseEntity { Version = "2.0.0" };
 
         var vars = await contributor.ContributeAdditionalVariablesAsync(snapshot, release, CancellationToken.None);
 

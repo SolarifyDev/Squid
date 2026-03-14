@@ -13,5 +13,6 @@ public class ServerTaskConfiguration: IEntityTypeConfiguration<ServerTask>
 
         builder.Property(p => p.DataVersion).IsConcurrencyToken();
         builder.Property(p => p.State).HasMaxLength(50).IsRequired();
+        builder.Property(p => p.HasPendingInterruptions);
     }
 }

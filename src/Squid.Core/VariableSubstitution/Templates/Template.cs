@@ -1,6 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
-
 namespace Squid.Core.VariableSubstitution.Templates
 {
     class Template

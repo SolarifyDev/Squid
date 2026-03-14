@@ -12,6 +12,8 @@ public interface IDeploymentDataProvider : IScopedDependency
     Task UpdateDeploymentAsync(Deployment deployment, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task AddDeploymentAsync(Deployment deployment, bool forceSave = true, CancellationToken cancellationToken = default);
+
+    Task DeleteDeploymentsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentDataProvider(IRepository repository, IUnitOfWork unitOfWork) : IDeploymentDataProvider
@@ -45,5 +47,16 @@ public class DeploymentDataProvider(IRepository repository, IUnitOfWork unitOfWo
         {
             await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public async Task DeleteDeploymentsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default)
+    {
+        if (deploymentIds == null || deploymentIds.Count == 0) return;
+
+        var deployments = await repository.Query<Deployment>(d => deploymentIds.Contains(d.Id))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        await repository.DeleteAllAsync(deployments, cancellationToken).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }

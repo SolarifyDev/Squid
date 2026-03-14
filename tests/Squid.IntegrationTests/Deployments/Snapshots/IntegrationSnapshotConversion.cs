@@ -2,6 +2,8 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
+using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
@@ -33,7 +35,7 @@ public class IntegrationSnapshotConversion : SnapshotFixtureBase
             // Snapshot → Load → Convert
             var created = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
             var loaded = await snapshotService.LoadProcessSnapshotAsync(created.Id);
-            var steps = DeploymentTaskExecutor.ConvertProcessSnapshotToSteps(loaded);
+            var steps = ProcessSnapshotStepConverter.Convert(loaded);
 
             // Verify step count
             steps.Count.ShouldBe(2);

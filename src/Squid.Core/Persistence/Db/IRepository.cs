@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 using Squid.Core.Persistence.Entities;
 
 namespace Squid.Core.Persistence.Db;
@@ -45,6 +46,13 @@ public interface IRepository
 
     IQueryable<TEntity> QueryNoTracking<TEntity>(Expression<Func<TEntity, bool>>? predicate = null)
         where TEntity : class, IEntity;
+
+    Task<int> ExecuteUpdateAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        Expression<Func<SetPropertyCalls<TEntity>, SetPropertyCalls<TEntity>>> setPropertyCalls,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity;
+
+    Task<int> ExecuteDeleteAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity;
 
     DatabaseFacade Database { get; }
 }

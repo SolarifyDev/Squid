@@ -1,5 +1,3 @@
-using System.Linq;
-
 namespace Squid.Core.VariableSubstitution.Templates.Functions
 {
     internal class TextCaseFunction

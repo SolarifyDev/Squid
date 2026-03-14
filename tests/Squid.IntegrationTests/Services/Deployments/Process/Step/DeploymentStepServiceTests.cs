@@ -242,6 +242,158 @@ public class DeploymentStepServiceTests : TestBase
         }).ConfigureAwait(false);
     }
 
+    [Fact]
+    public async Task DeleteMiddleStep_ReindexesSurvivors()
+    {
+        var processId = await SeedProcessAsync();
+        var step1 = await CreateStepAsync(processId, "Step A");
+        var step2 = await CreateStepAsync(processId, "Step B");
+        var step3 = await CreateStepAsync(processId, "Step C");
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            await service.DeleteDeploymentStepsAsync(new DeleteDeploymentStepCommand { Ids = [step2.Id] }, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepDataProvider>(async provider =>
+        {
+            var steps = await provider.GetDeploymentStepsByProcessIdAsync(processId, CancellationToken.None).ConfigureAwait(false);
+
+            steps.Count.ShouldBe(2);
+            steps[0].Name.ShouldBe("Step A");
+            steps[0].StepOrder.ShouldBe(1);
+            steps[1].Name.ShouldBe("Step C");
+            steps[1].StepOrder.ShouldBe(2);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task DeleteFirstStep_ReindexesSurvivors()
+    {
+        var processId = await SeedProcessAsync();
+        var step1 = await CreateStepAsync(processId, "Step A");
+        var step2 = await CreateStepAsync(processId, "Step B");
+        var step3 = await CreateStepAsync(processId, "Step C");
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            await service.DeleteDeploymentStepsAsync(new DeleteDeploymentStepCommand { Ids = [step1.Id] }, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepDataProvider>(async provider =>
+        {
+            var steps = await provider.GetDeploymentStepsByProcessIdAsync(processId, CancellationToken.None).ConfigureAwait(false);
+
+            steps.Count.ShouldBe(2);
+            steps[0].Name.ShouldBe("Step B");
+            steps[0].StepOrder.ShouldBe(1);
+            steps[1].Name.ShouldBe("Step C");
+            steps[1].StepOrder.ShouldBe(2);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task DeleteMultipleSteps_ReindexesSurvivors()
+    {
+        var processId = await SeedProcessAsync();
+        var step1 = await CreateStepAsync(processId, "Step A");
+        var step2 = await CreateStepAsync(processId, "Step B");
+        var step3 = await CreateStepAsync(processId, "Step C");
+        var step4 = await CreateStepAsync(processId, "Step D");
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            await service.DeleteDeploymentStepsAsync(new DeleteDeploymentStepCommand { Ids = [step1.Id, step3.Id] }, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepDataProvider>(async provider =>
+        {
+            var steps = await provider.GetDeploymentStepsByProcessIdAsync(processId, CancellationToken.None).ConfigureAwait(false);
+
+            steps.Count.ShouldBe(2);
+            steps[0].Name.ShouldBe("Step B");
+            steps[0].StepOrder.ShouldBe(1);
+            steps[1].Name.ShouldBe("Step D");
+            steps[1].StepOrder.ShouldBe(2);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task ReorderSteps_NormalizesToContiguous()
+    {
+        var processId = await SeedProcessAsync();
+        var step1 = await CreateStepAsync(processId, "Step A");
+        var step2 = await CreateStepAsync(processId, "Step B");
+        var step3 = await CreateStepAsync(processId, "Step C");
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            var command = new ReorderDeploymentStepsCommand
+            {
+                ProcessId = processId,
+                StepOrders =
+                [
+                    new StepOrderItem { StepId = step1.Id, StepOrder = 10 },
+                    new StepOrderItem { StepId = step2.Id, StepOrder = 20 },
+                    new StepOrderItem { StepId = step3.Id, StepOrder = 30 }
+                ]
+            };
+
+            await service.ReorderDeploymentStepsAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepDataProvider>(async provider =>
+        {
+            var steps = await provider.GetDeploymentStepsByProcessIdAsync(processId, CancellationToken.None).ConfigureAwait(false);
+
+            steps.Count.ShouldBe(3);
+            steps[0].Name.ShouldBe("Step A");
+            steps[0].StepOrder.ShouldBe(1);
+            steps[1].Name.ShouldBe("Step B");
+            steps[1].StepOrder.ShouldBe(2);
+            steps[2].Name.ShouldBe("Step C");
+            steps[2].StepOrder.ShouldBe(3);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task ReorderSteps_ReversesOrder()
+    {
+        var processId = await SeedProcessAsync();
+        var step1 = await CreateStepAsync(processId, "Step A");
+        var step2 = await CreateStepAsync(processId, "Step B");
+        var step3 = await CreateStepAsync(processId, "Step C");
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            var command = new ReorderDeploymentStepsCommand
+            {
+                ProcessId = processId,
+                StepOrders =
+                [
+                    new StepOrderItem { StepId = step3.Id, StepOrder = 1 },
+                    new StepOrderItem { StepId = step2.Id, StepOrder = 2 },
+                    new StepOrderItem { StepId = step1.Id, StepOrder = 3 }
+                ]
+            };
+
+            await service.ReorderDeploymentStepsAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepDataProvider>(async provider =>
+        {
+            var steps = await provider.GetDeploymentStepsByProcessIdAsync(processId, CancellationToken.None).ConfigureAwait(false);
+
+            steps.Count.ShouldBe(3);
+            steps[0].Name.ShouldBe("Step C");
+            steps[0].StepOrder.ShouldBe(1);
+            steps[1].Name.ShouldBe("Step B");
+            steps[1].StepOrder.ShouldBe(2);
+            steps[2].Name.ShouldBe("Step A");
+            steps[2].StepOrder.ShouldBe(3);
+        }).ConfigureAwait(false);
+    }
+
     private async Task<int> SeedProcessAsync()
     {
         var process = default(Squid.Core.Persistence.Entities.Deployments.DeploymentProcess);

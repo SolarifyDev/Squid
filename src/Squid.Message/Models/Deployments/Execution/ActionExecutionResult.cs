@@ -2,6 +2,8 @@ namespace Squid.Message.Models.Deployments.Execution;
 
 public class ActionExecutionResult
 {
+    public string ActionName { get; set; }
+
     public string ScriptBody { get; set; }
 
     public Dictionary<string, byte[]> Files { get; set; } = new();
@@ -27,6 +29,8 @@ public class ActionExecutionResult
     public Dictionary<string, string> OutputVariables { get; set; } = new();
 
     public HashSet<string> SensitiveOutputVariableNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string ManualInterventionInstructions { get; set; }
 
     public ExecutionMode ResolveExecutionMode()
     {

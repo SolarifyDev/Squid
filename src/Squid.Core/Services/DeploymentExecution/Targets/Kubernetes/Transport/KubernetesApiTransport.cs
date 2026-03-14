@@ -1,14 +1,16 @@
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public sealed class KubernetesApiTransport(
     KubernetesApiEndpointVariableContributor variables,
     KubernetesApiScriptContextWrapper scriptWrapper,
-    LocalProcessExecutionStrategy strategy)
+    LocalProcessExecutionStrategy strategy,
+    KubernetesApiHealthCheckStrategy healthChecker)
     : DeploymentTransport(
-        CommunicationStyle.KubernetesApi, variables, scriptWrapper, strategy,
+        CommunicationStyle.KubernetesApi, variables, scriptWrapper, strategy, healthChecker,
         ExecutionLocation.ApiWorkerLocal, ExecutionBackend.LocalProcess,
         requiresContextPreparationForPackagedPayload: true);

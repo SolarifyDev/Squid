@@ -1,5 +1,4 @@
 using Halibut;
-using Serilog;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Events.Machine;
 using Squid.Message.Models.Deployments.Machine;

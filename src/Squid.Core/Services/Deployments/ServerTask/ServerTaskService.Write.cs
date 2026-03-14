@@ -5,28 +5,26 @@ namespace Squid.Core.Services.Deployments.ServerTask;
 
 public partial class ServerTaskService
 {
-    public async Task<Persistence.Entities.Deployments.ServerTask> StartExecutingAsync(int taskId, CancellationToken ct = default)
+    public async Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default)
     {
-        var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
+        var task = await _serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(taskId, ct).ConfigureAwait(false);
 
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
 
+        var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
+
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
-        {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
-            
-            task.State = TaskState.Executing;
-        }
+        else if (isResumed)
+            await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
         else if (!string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-        {
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
-        }
 
-        if (!task.StartTime.HasValue)
-            task.StartTime = DateTimeOffset.UtcNow;
+        task.State = TaskState.Executing;
+        task.StartTime ??= DateTimeOffset.UtcNow;
 
-        return task;
+        return new StartExecutingResult(task, isResumed);
     }
 
     public Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, string detail = null, CancellationToken ct = default)
@@ -80,6 +78,8 @@ public partial class ServerTaskService
     }
 
     public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken ct = default) => _serverTaskDataProvider.TransitionStateAsync(taskId, expectedCurrentState, newState, ct);
-    
+
     public Task UpdateActivityNodeStatusAsync(long nodeId, DeploymentActivityLogNodeStatus status, DateTimeOffset? endedAt = null, CancellationToken ct = default) => _activityLogDataProvider.UpdateNodeStatusAsync(nodeId, status, endedAt, ct: ct);
+
+    public Task SetHasPendingInterruptionsAsync(int serverTaskId, bool hasPending, CancellationToken ct = default) => _serverTaskDataProvider.SetHasPendingInterruptionsAsync(serverTaskId, hasPending, ct);
 }

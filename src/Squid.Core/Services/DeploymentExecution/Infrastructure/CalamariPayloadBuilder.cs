@@ -1,5 +1,6 @@
 using Squid.Core.Services.Common;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 

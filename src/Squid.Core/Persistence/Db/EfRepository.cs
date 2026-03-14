@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 using Squid.Core.Persistence.Entities;
 
 namespace Squid.Core.Persistence.Db;
@@ -118,6 +119,19 @@ public class EfRepository : IRepository
         return predicate == null
             ? _dbContext.Set<TEntity>().AsNoTracking()
             : _dbContext.Set<TEntity>().AsNoTracking().Where(predicate);
+    }
+
+    public Task<int> ExecuteUpdateAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        Expression<Func<SetPropertyCalls<TEntity>, SetPropertyCalls<TEntity>>> setPropertyCalls,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity
+    {
+        return _dbContext.Set<TEntity>().Where(predicate).ExecuteUpdateAsync(setPropertyCalls, cancellationToken);
+    }
+
+    public Task<int> ExecuteDeleteAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
+        CancellationToken cancellationToken = default) where TEntity : class, IEntity
+    {
+        return _dbContext.Set<TEntity>().Where(predicate).ExecuteDeleteAsync(cancellationToken);
     }
 
     public DatabaseFacade Database => _dbContext.Database;

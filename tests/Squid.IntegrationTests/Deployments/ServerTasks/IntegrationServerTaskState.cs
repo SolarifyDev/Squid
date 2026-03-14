@@ -54,7 +54,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Executing);
             task.CompletedTime.ShouldBeNull();
         }).ConfigureAwait(false);
@@ -72,7 +72,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Success)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Success);
             task.CompletedTime.ShouldNotBeNull();
         }).ConfigureAwait(false);
@@ -90,7 +90,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Failed)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Failed);
             task.CompletedTime.ShouldNotBeNull();
         }).ConfigureAwait(false);
@@ -108,14 +108,14 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Cancelling)
                 .ConfigureAwait(false);
 
-            var midTask = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var midTask = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             midTask.State.ShouldBe(TaskState.Cancelling);
             midTask.CompletedTime.ShouldBeNull();
 
             await provider.TransitionStateAsync(taskId, TaskState.Cancelling, TaskState.Cancelled)
                 .ConfigureAwait(false);
 
-            var finalTask = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var finalTask = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             finalTask.State.ShouldBe(TaskState.Cancelled);
             finalTask.CompletedTime.ShouldNotBeNull();
         }).ConfigureAwait(false);
@@ -131,7 +131,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Cancelled)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Cancelled);
             task.CompletedTime.ShouldNotBeNull();
         }).ConfigureAwait(false);
@@ -147,7 +147,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.TimedOut)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.TimedOut);
         }).ConfigureAwait(false);
     }
@@ -166,7 +166,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
             // State should remain unchanged
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Pending);
         }).ConfigureAwait(false);
     }
@@ -187,7 +187,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 await provider.TransitionStateAsync(taskId, TaskState.Success, TaskState.Executing)
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Success);
         }).ConfigureAwait(false);
     }
@@ -224,7 +224,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
                 await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Success)
                     .ConfigureAwait(false)).ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Pending);
         }).ConfigureAwait(false);
     }
@@ -251,13 +251,13 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
         {
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
-            var before = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var before = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             var originalVersion = before.DataVersion;
 
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing)
                 .ConfigureAwait(false);
 
-            var after = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var after = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
 
             after.DataVersion.ShouldNotBe(originalVersion);
         }).ConfigureAwait(false);
@@ -270,7 +270,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
         {
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
-            var before = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var before = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             var originalModified = before.LastModified;
 
             await Task.Delay(10).ConfigureAwait(false);
@@ -278,7 +278,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing)
                 .ConfigureAwait(false);
 
-            var after = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var after = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             after.LastModified.ShouldBeGreaterThan(originalModified);
         }).ConfigureAwait(false);
     }
@@ -380,7 +380,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             var taskId = await CreatePendingTaskAsync().ConfigureAwait(false);
 
             // Pending
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Pending);
             task.StartTime.ShouldBeNull();
             task.CompletedTime.ShouldBeNull();
@@ -388,14 +388,14 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             // Pending → Executing
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing)
                 .ConfigureAwait(false);
-            task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Executing);
             task.CompletedTime.ShouldBeNull();
 
             // Executing → Success
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Success)
                 .ConfigureAwait(false);
-            task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Success);
             task.CompletedTime.ShouldNotBeNull();
 
@@ -418,7 +418,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Executing, TaskState.Failed)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Failed);
             task.CompletedTime.ShouldNotBeNull();
 
@@ -443,7 +443,7 @@ public class IntegrationServerTaskState : ServerTaskFixtureBase
             await provider.TransitionStateAsync(taskId, TaskState.Cancelling, TaskState.Cancelled)
                 .ConfigureAwait(false);
 
-            var task = await provider.GetServerTaskByIdAsync(taskId).ConfigureAwait(false);
+            var task = await provider.GetServerTaskByIdNoTrackingAsync(taskId).ConfigureAwait(false);
             task.State.ShouldBe(TaskState.Cancelled);
             task.CompletedTime.ShouldNotBeNull();
         }).ConfigureAwait(false);

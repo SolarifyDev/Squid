@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

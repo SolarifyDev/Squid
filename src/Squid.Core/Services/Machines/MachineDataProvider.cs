@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 
 namespace Squid.Core.Services.Machines;
 

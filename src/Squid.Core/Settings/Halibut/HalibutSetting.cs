@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Configuration;
-
 namespace Squid.Core.Settings.Halibut;
 
 public class HalibutSetting : IConfigurationSetting

@@ -9,6 +9,8 @@ namespace Squid.Core.Services.Deployments.LifeCycle;
 public interface ILifecycleProgressionEvaluator : IScopedDependency
 {
     Task<PhaseProgressionResult> EvaluateProgressionAsync(int lifecycleId, int projectId, CancellationToken cancellationToken);
+
+    Task<PhaseProgressionResult> EvaluateProgressionForReleaseAsync(int lifecycleId, int releaseId, CancellationToken cancellationToken);
 }
 
 public class PhaseProgressionResult
@@ -193,6 +195,32 @@ public class LifecycleProgressionEvaluator(
         {
             set.Add(env.EnvironmentId);
         }
+    }
+
+    public async Task<PhaseProgressionResult> EvaluateProgressionForReleaseAsync(
+        int lifecycleId, int releaseId, CancellationToken cancellationToken)
+    {
+        var phases = await lifeCycleDataProvider.GetPhasesByLifecycleIdAsync(lifecycleId, cancellationToken).ConfigureAwait(false);
+
+        var phaseIds = phases.Select(p => p.Id).ToList();
+        var phaseEnvironments = await lifeCycleDataProvider.GetPhaseEnvironmentsByPhaseIdsAsync(phaseIds, cancellationToken).ConfigureAwait(false);
+
+        var deployedEnvironmentIds = await GetDeployedEnvironmentIdsForReleaseAsync(releaseId, cancellationToken).ConfigureAwait(false);
+
+        return EvaluatePhases(phases, phaseEnvironments, deployedEnvironmentIds);
+    }
+
+    private async Task<HashSet<int>> GetDeployedEnvironmentIdsForReleaseAsync(int releaseId, CancellationToken cancellationToken)
+    {
+        var query = from completion in repository.QueryNoTracking<DeploymentCompletion>(dc => dc.State == TaskState.Success)
+                    join deployment in repository.QueryNoTracking<Deployment>()
+                        on completion.DeploymentId equals deployment.Id
+                    where deployment.ReleaseId == releaseId
+                    select deployment.EnvironmentId;
+
+        var environmentIds = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return environmentIds.ToHashSet();
     }
 
     private async Task<HashSet<int>> GetDeployedEnvironmentIdsAsync(int projectId, CancellationToken cancellationToken)

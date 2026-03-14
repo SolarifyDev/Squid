@@ -7,6 +7,7 @@ using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

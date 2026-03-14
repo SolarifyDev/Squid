@@ -23,5 +23,15 @@ public enum VariableScopeType
     /// <summary>
     /// 频道作用域
     /// </summary>
-    Channel = 4
+    Channel = 4,
+
+    /// <summary>
+    /// 部署步骤动作作用域
+    /// </summary>
+    Action = 5,
+
+    /// <summary>
+    /// 部署流程作用域
+    /// </summary>
+    Process = 6
 }

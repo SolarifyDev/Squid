@@ -1,11 +1,15 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Releases.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
 namespace Squid.UnitTests.Services.Deployments.ReleaseServices;
 
@@ -18,11 +22,16 @@ public class ReleaseServiceCreateReleaseExceptionTests
     private readonly Mock<IDeploymentSnapshotService> _deploymentSnapshotService = new();
     private readonly Mock<IProjectDataProvider> _projectDataProvider = new();
     private readonly Mock<IChannelDataProvider> _channelDataProvider = new();
+    private readonly Mock<ILifecycleResolver> _lifecycleResolver = new();
+    private readonly Mock<ILifecycleProgressionEvaluator> _progressionEvaluator = new();
+    private readonly Mock<ILifeCycleDataProvider> _lifeCycleDataProvider = new();
+    private readonly Mock<IEnvironmentDataProvider> _environmentDataProvider = new();
+    private readonly Mock<IRepository> _repository = new();
 
     private ReleaseService CreateSut()
     {
-        _mapper.Setup(x => x.Map<Release>(It.IsAny<CreateReleaseCommand>()))
-            .Returns(new Release());
+        _mapper.Setup(x => x.Map<ReleaseEntity>(It.IsAny<CreateReleaseCommand>()))
+            .Returns(new ReleaseEntity());
 
         return new ReleaseService(
             _mapper.Object,
@@ -31,7 +40,12 @@ public class ReleaseServiceCreateReleaseExceptionTests
             _deploymentCompletionDataProvider.Object,
             _deploymentSnapshotService.Object,
             _projectDataProvider.Object,
-            _channelDataProvider.Object);
+            _channelDataProvider.Object,
+            _lifecycleResolver.Object,
+            _progressionEvaluator.Object,
+            _lifeCycleDataProvider.Object,
+            _environmentDataProvider.Object,
+            _repository.Object);
     }
 
     [Fact]

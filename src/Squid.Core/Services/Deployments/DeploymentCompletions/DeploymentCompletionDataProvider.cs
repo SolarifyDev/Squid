@@ -11,6 +11,8 @@ public interface IDeploymentCompletionDataProvider : IScopedDependency
     Task<List<DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default);
 
     Task<List<DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default);
+
+    Task DeleteByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentCompletionDataProvider(IRepository repository, IUnitOfWork unitOfWork) : IDeploymentCompletionDataProvider
@@ -49,5 +51,16 @@ public class DeploymentCompletionDataProvider(IRepository repository, IUnitOfWor
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return latestCompletions;
+    }
+
+    public async Task DeleteByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default)
+    {
+        if (deploymentIds == null || deploymentIds.Count == 0) return;
+
+        var completions = await repository.Query<DeploymentCompletion>(dc => deploymentIds.Contains(dc.DeploymentId))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        await repository.DeleteAllAsync(completions, cancellationToken).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }

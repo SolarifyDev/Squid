@@ -1,6 +1,9 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
+using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Releases.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -24,9 +27,11 @@ public interface IReleaseService : IScopedDependency
     Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default);
 
     Task<GetReleaseVariableSnapshotResponse> GetReleaseVariableSnapshotAsync(GetReleaseVariableSnapshotRequest request, CancellationToken cancellationToken = default);
+
+    Task<GetReleaseProgressionResponse> GetReleaseProgressionAsync(GetReleaseProgressionRequest request, CancellationToken cancellationToken = default);
 }
 
-public class ReleaseService : IReleaseService
+public partial class ReleaseService : IReleaseService
 {
     private readonly IMapper _mapper;
     private readonly IReleaseDataProvider _releaseDataProvider;
@@ -35,6 +40,11 @@ public class ReleaseService : IReleaseService
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
+    private readonly ILifecycleResolver _lifecycleResolver;
+    private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
+    private readonly ILifeCycleDataProvider _lifeCycleDataProvider;
+    private readonly IEnvironmentDataProvider _environmentDataProvider;
+    private readonly IRepository _repository;
 
     public ReleaseService(
         IMapper mapper,
@@ -43,7 +53,12 @@ public class ReleaseService : IReleaseService
         IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
         IDeploymentSnapshotService deploymentSnapshotService,
         IProjectDataProvider projectDataProvider,
-        IChannelDataProvider channelDataProvider)
+        IChannelDataProvider channelDataProvider,
+        ILifecycleResolver lifecycleResolver,
+        ILifecycleProgressionEvaluator progressionEvaluator,
+        ILifeCycleDataProvider lifeCycleDataProvider,
+        IEnvironmentDataProvider environmentDataProvider,
+        IRepository repository)
     {
         _mapper = mapper;
         _releaseDataProvider = releaseDataProvider;
@@ -52,6 +67,11 @@ public class ReleaseService : IReleaseService
         _deploymentSnapshotService = deploymentSnapshotService;
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
+        _lifecycleResolver = lifecycleResolver;
+        _progressionEvaluator = progressionEvaluator;
+        _lifeCycleDataProvider = lifeCycleDataProvider;
+        _environmentDataProvider = environmentDataProvider;
+        _repository = repository;
     }
 
     public async Task<ReleaseCreatedEvent> CreateReleaseAsync(CreateReleaseCommand command, CancellationToken cancellationToken = default)

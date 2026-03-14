@@ -1,5 +1,3 @@
-using System;
-using System.Collections;
 using Sprache;
 
 namespace Squid.Core.VariableSubstitution.Templates

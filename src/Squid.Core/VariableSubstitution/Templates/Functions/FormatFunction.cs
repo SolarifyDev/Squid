@@ -1,8 +1,3 @@
-using System;
-using System.Globalization;
-using System.Linq;
-using System.Text;
-
 namespace Squid.Core.VariableSubstitution.Templates.Functions
 {
     internal class FormatFunction

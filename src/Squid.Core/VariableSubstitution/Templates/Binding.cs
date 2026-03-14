@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace Squid.Core.VariableSubstitution.Templates
 {
     class Binding : Dictionary<string, Binding>

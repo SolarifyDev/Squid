@@ -11,6 +11,7 @@ using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 

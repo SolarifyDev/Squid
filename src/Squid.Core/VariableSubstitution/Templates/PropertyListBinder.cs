@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
 namespace Squid.Core.VariableSubstitution.Templates
 {
     static class PropertyListBinder

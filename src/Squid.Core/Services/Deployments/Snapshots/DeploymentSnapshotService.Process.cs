@@ -87,6 +87,7 @@ public partial class DeploymentSnapshotService
 
         var actionPropertiesDict = await LoadActionPropertiesDict(actionIds, cancellationToken);
         var environmentsDict = await LoadEnvironmentsDict(actionIds, cancellationToken);
+        var excludedEnvironmentsDict = await LoadExcludedEnvironmentsDict(actionIds, cancellationToken);
         var channelsDict = await LoadChannelsDict(actionIds, cancellationToken);
         var machineRolesDict = await LoadMachineRolesDict(actionIds, cancellationToken);
         var stepPropertiesDict = await LoadStepPropertiesDict(stepIds, cancellationToken);
@@ -103,6 +104,7 @@ public partial class DeploymentSnapshotService
             {
                 var actionProperties = actionPropertiesDict.TryGetValue(action.Id, out var aps) ? aps : new List<DeploymentActionProperty>();
                 var environments = environmentsDict.TryGetValue(action.Id, out var envs) ? envs : new List<int>();
+                var excludedEnvironments = excludedEnvironmentsDict.TryGetValue(action.Id, out var exEnvs) ? exEnvs : new List<int>();
                 var channels = channelsDict.TryGetValue(action.Id, out var chs) ? chs : new List<int>();
                 var machineRoles = machineRolesDict.TryGetValue(action.Id, out var mrs) ? mrs : new List<string>();
 
@@ -117,6 +119,7 @@ public partial class DeploymentSnapshotService
                     IsRequired = action.IsRequired,
                     CreatedAt = action.CreatedAt,
                     Environments = environments,
+                    ExcludedEnvironments = excludedEnvironments,
                     Channels = channels,
                     MachineRoles = machineRoles,
                     CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
@@ -169,6 +172,12 @@ public partial class DeploymentSnapshotService
     {
         var allEnvironments = await _actionEnvironmentDataProvider.GetActionEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
         return allEnvironments.GroupBy(e => e.ActionId).ToDictionary(g => g.Key, g => g.Select(e => e.EnvironmentId).ToList());
+    }
+
+    private async Task<Dictionary<int, List<int>>> LoadExcludedEnvironmentsDict(List<int> actionIds, CancellationToken cancellationToken)
+    {
+        var allExcluded = await _actionExcludedEnvironmentDataProvider.GetActionExcludedEnvironmentsByActionIdsAsync(actionIds, cancellationToken).ConfigureAwait(false);
+        return allExcluded.GroupBy(e => e.ActionId).ToDictionary(g => g.Key, g => g.Select(e => e.EnvironmentId).ToList());
     }
 
     private async Task<Dictionary<int, List<int>>> LoadChannelsDict(List<int> actionIds, CancellationToken cancellationToken)

@@ -4,6 +4,8 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Snapshots;
+using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.Deployments.Validation.Rules;
 

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Serilog;
 using Squid.Core.Services.Http;
 
 namespace Squid.Core.Services.Machines;
