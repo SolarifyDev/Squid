@@ -92,6 +92,12 @@ public partial class ReleaseService : IReleaseService
         if (channel.SpaceId != project.SpaceId)
             throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
 
+        var existingRelease = await _releaseDataProvider
+            .GetReleaseByVersionAsync(command.ProjectId, command.ChannelId, command.Version, cancellationToken).ConfigureAwait(false);
+
+        if (existingRelease != null)
+            throw new ReleaseDuplicateVersionException(command.ProjectId, command.ChannelId, command.Version);
+
         release.SpaceId = project.SpaceId;
         
         var variableSetSnapshot = await _deploymentSnapshotService
