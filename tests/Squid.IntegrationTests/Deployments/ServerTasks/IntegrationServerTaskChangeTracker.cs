@@ -184,8 +184,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ServerTaskId = taskId,
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
-                FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+                FailureEncountered = false
             };
             await repository.InsertAsync(checkpoint);
             await unitOfWork.SaveChangesAsync();

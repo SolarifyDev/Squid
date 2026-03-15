@@ -65,7 +65,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             var checkpoint = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == taskId)
@@ -93,7 +93,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Second save: ExecuteUpdateAsync path (bypasses tracker)
@@ -103,7 +103,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 1,
                 FailureEncountered = true,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             var checkpoint = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == taskId)
@@ -131,7 +131,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Subsequent save via ExecuteUpdateAsync (bypasses tracker)
@@ -141,7 +141,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 1,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Now insert a DIFFERENT entity — this should work without duplicate key errors
@@ -179,7 +179,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Delete via ExecuteDeleteAsync
@@ -217,7 +217,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 LastCompletedBatchIndex = 3,
                 FailureEncountered = true,
                 OutputVariablesJson = """[{"Name":"Squid.Action.Step1.Var","Value":"test"}]""",
-                CreatedAt = DateTimeOffset.UtcNow
+
             };
 
             await service.SaveAsync(saved);
@@ -258,7 +258,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
                 FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Update (second save → ExecuteUpdateAsync path)
@@ -269,7 +269,7 @@ public class IntegrationCheckpointPersistence : ServerTaskFixtureBase
                 LastCompletedBatchIndex = 2,
                 FailureEncountered = true,
                 OutputVariablesJson = """{"key":"value"}""",
-                CreatedAt = DateTimeOffset.UtcNow
+
             });
 
             // Load and verify updated state

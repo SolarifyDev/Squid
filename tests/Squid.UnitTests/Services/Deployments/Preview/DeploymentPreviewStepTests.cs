@@ -206,4 +206,90 @@ public class DeploymentPreviewStepTests
         result.IsApplicable.ShouldBeFalse();
         result.Reason.ShouldContain("No runnable actions");
     }
+
+    // ========== FilterCandidatesByStepRoles ==========
+
+    [Fact]
+    public void FilterCandidates_StepLevelOnlySteps_ReturnsAllMachines()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsStepLevelOnly = true, StepName = "Manual Intervention" }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterCandidates_TargetLevelWithRoles_FiltersCorrectly()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsStepLevelOnly = true, StepName = "Manual Intervention" },
+            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(1);
+        result[0].MachineName.ShouldBe("node-1");
+    }
+
+    [Fact]
+    public void FilterCandidates_MultipleTargetLevelSteps_UnionsRoles()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"), (3, "node-3", "[\"cache\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] },
+            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Run Migrations", RequiredRoles = ["db"] }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(2);
+        result.Select(t => t.MachineName).ShouldBe(["node-1", "node-2"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void FilterCandidates_TargetLevelWithNoRoles_ReturnsAllMachines()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy All", RequiredRoles = [] }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterCandidates_NullSteps_ReturnsAllMachines()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(null, machines);
+
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterCandidates_NoApplicableSteps_ReturnsAllMachines()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = false, IsDisabled = true, StepName = "Disabled Step" }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(2);
+    }
 }

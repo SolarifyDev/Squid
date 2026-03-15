@@ -13,5 +13,5 @@ public class InterruptionDto
     public InterruptionForm Form { get; set; }
     public string ResponsibleUserId { get; set; }
     public bool IsPending { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
 }

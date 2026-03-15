@@ -66,8 +66,6 @@ public partial class DeploymentSnapshotService
         {
             Version = process.Version,
             OriginalProcessId = process.Id,
-            CreatedBy = "System",
-            CreatedAt = process.LastModifiedDate,
             ContentHash = blob.ContentHash,
             SnapshotData = blob.CompressedData,
             UncompressedSize = blob.UncompressedSize,

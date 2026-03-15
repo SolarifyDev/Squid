@@ -208,8 +208,11 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     /// avoiding wasted LoadAccount/ContributeEndpointVariables/ExtractCalamari
     /// on machines that won't execute any step.
     /// Returns empty set if no steps define target roles (meaning all machines needed).
+    /// When scopeResolver is provided, steps whose enabled actions are ALL StepLevel
+    /// (e.g. Manual Intervention) are excluded from role collection — they don't
+    /// iterate targets and should not prevent pre-filtering.
     /// </summary>
-    public static HashSet<string> CollectAllTargetRoles(List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps)
+    public static HashSet<string> CollectAllTargetRoles(List<Squid.Message.Models.Deployments.Process.DeploymentStepDto> steps, Func<Squid.Message.Models.Deployments.Process.DeploymentActionDto, Handlers.ExecutionScope> scopeResolver = null)
     {
         if (steps == null || steps.Count == 0)
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -220,6 +223,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         foreach (var step in steps)
         {
             if (step.IsDisabled) continue;
+            if (scopeResolver != null && IsStepLevelOnly(step, scopeResolver)) continue;
 
             var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
 
@@ -230,7 +234,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             else
             {
                 var stepRoles = ParseCsvRoles(rolesProp.PropertyValue);
-                
+
                 allRoles.UnionWith(stepRoles);
             }
         }
@@ -240,6 +244,15 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return allRoles;
+    }
+
+    private static bool IsStepLevelOnly(Squid.Message.Models.Deployments.Process.DeploymentStepDto step, Func<Squid.Message.Models.Deployments.Process.DeploymentActionDto, Handlers.ExecutionScope> scopeResolver)
+    {
+        var enabledActions = step.Actions?.Where(a => !a.IsDisabled).ToList();
+
+        if (enabledActions == null || enabledActions.Count == 0) return false;
+
+        return enabledActions.All(a => scopeResolver(a) == Handlers.ExecutionScope.StepLevel);
     }
     
     public sealed class DeploymentMachineSelection

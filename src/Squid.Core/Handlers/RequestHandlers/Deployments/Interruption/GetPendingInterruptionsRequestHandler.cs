@@ -29,7 +29,7 @@ public class GetPendingInterruptionsRequestHandler : IRequestHandler<GetPendingI
             Form = i.FormJson != null ? JsonSerializer.Deserialize<InterruptionForm>(i.FormJson) : null,
             ResponsibleUserId = i.ResponsibleUserId,
             IsPending = i.Resolution == null,
-            CreatedAt = i.CreatedAt
+            CreatedDate = i.CreatedDate
         }).ToList();
 
         return new GetPendingInterruptionsResponse { Interruptions = dtos };

@@ -28,7 +28,10 @@ public sealed partial class ExecuteStepsPhase
 
         await EmitSkippedActionEventsAsync(skippedActions, stepSortOrder, ct).ConfigureAwait(false);
 
-        await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+        var stepLevelExecuted = await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+
+        if (stepLevelExecuted)
+            stepResult.Executed = true;
 
         if (HasTargetLevelActions(eligibleActions))
         {
@@ -64,14 +67,16 @@ public sealed partial class ExecuteStepsPhase
 
                 var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
 
-                var result = new StepExecutionResult();
+                var result = new StepExecutionResult { Executed = true };
                 await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
 
                 stepResult.Absorb(result);
             }
         }
 
-        await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed }), ct).ConfigureAwait(false);
+        var skipped = !stepResult.Executed && !stepResult.Failed;
+
+        await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed, Skipped = skipped }), ct).ConfigureAwait(false);
 
         return stepResult;
     }
@@ -176,8 +181,9 @@ public sealed partial class ExecuteStepsPhase
         }
     }
 
-    private async Task ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
+    private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
     {
+        var executed = false;
         var actionSortOrder = 0;
 
         foreach (var action in eligibleActions)
@@ -197,7 +203,10 @@ public sealed partial class ExecuteStepsPhase
             };
 
             await handler.ExecuteStepLevelAsync(ctx, ct).ConfigureAwait(false);
+            executed = true;
         }
+
+        return executed;
     }
 
     private async Task<InterruptionOutcome> HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)

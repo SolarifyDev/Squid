@@ -10,9 +10,9 @@ public class DeploymentProcessSnapshotDto
 
     public int Version { get; set; }
 
-    public string CreatedBy { get; set; }
-    
-    public DateTimeOffset CreatedAt { get; set; }
-    
+    public int CreatedBy { get; set; }
+
+    public DateTimeOffset CreatedDate { get; set; }
+
     public DeploymentProcessSnapshotDataDto Data { get; set; }
 }

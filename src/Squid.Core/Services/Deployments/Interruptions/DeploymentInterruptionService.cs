@@ -57,7 +57,6 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
             MachineName = request.MachineName,
             ErrorMessage = request.ErrorMessage,
             FormJson = request.Form != null ? JsonSerializer.Serialize(request.Form) : null,
-            CreatedAt = DateTimeOffset.UtcNow,
             SpaceId = request.SpaceId
         };
 
@@ -135,7 +134,7 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
     {
         return await repository.QueryNoTracking<DeploymentInterruption>(i =>
                 i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.Resolution != null)
-            .OrderByDescending(i => i.CreatedAt)
+            .OrderByDescending(i => i.CreatedDate)
             .FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 

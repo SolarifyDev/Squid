@@ -65,8 +65,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
                 DeploymentId = _ctx.Deployment.Id,
                 LastCompletedBatchIndex = batchIndex,
                 FailureEncountered = _ctx.FailureEncountered,
-                OutputVariablesJson = outputVariablesJson,
-                CreatedAt = DateTimeOffset.UtcNow
+                OutputVariablesJson = outputVariablesJson
             }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -108,11 +107,13 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
     {
         public List<VariableDto> OutputVariables { get; } = new();
         public bool Failed { get; set; }
+        public bool Executed { get; set; }
 
         public void Absorb(StepExecutionResult other)
         {
             OutputVariables.AddRange(other.OutputVariables);
             Failed |= other.Failed;
+            Executed |= other.Executed;
         }
     }
 }

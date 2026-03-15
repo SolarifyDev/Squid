@@ -141,6 +141,42 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
     }
 
+    // === Packages ===
+
+    protected override async Task OnPackagesAcquiringAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Acquire packages", DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
+        var nodeId = node?.Id;
+
+        await LogInfoAsync("Acquiring packages", "System", ct, nodeId).ConfigureAwait(false);
+
+        var packages = ctx.SelectedPackages;
+
+        if (packages?.Count > 0)
+        {
+            foreach (var pkg in packages)
+                await LogInfoAsync($"Package {pkg.ActionName} version {pkg.Version}", "System", ct, nodeId).ConfigureAwait(false);
+
+            await LogInfoAsync("All packages have been acquired", "System", ct, nodeId).ConfigureAwait(false);
+        }
+        else
+        {
+            await LogInfoAsync("No packages to acquire", "System", ct, nodeId).ConfigureAwait(false);
+        }
+
+        await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+    }
+
+    protected override async Task OnPackagesReleasedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var releaseSortOrder = (Ctx.Steps?.Max(s => s.StepOrder) ?? 0) + 1;
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Release packages", DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, releaseSortOrder, ct).ConfigureAwait(false);
+        var nodeId = node?.Id;
+
+        await LogInfoAsync("There are no packages to be released.", "System", ct, nodeId).ConfigureAwait(false);
+        await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+    }
+
     // === Steps ===
 
     protected override async Task OnStepStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -190,6 +226,13 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnStepCompletedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        if (ctx.Skipped)
+        {
+            await LogInfoAsync($"Step \"{ctx.StepName}\" was skipped", "System", ct, stepNodeId).ConfigureAwait(false);
+            await UpdateActivityNodeStatusAsync(stepNodeId, DeploymentActivityLogNodeStatus.Skipped, ct).ConfigureAwait(false);
+            return;
+        }
 
         if (!ctx.Failed)
             await LogInfoAsync($"Step \"{ctx.StepName}\" completed successfully", "System", ct, stepNodeId).ConfigureAwait(false);
@@ -383,10 +426,12 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         try
         {
+            var lineNumber = 0;
+
             var entries = execResult.LogLines.Select(line => new ServerTaskLogWriteEntry
             {
                 Category = stderrSet != null && stderrSet.Contains(line) ? ServerTaskLogCategory.Error : ServerTaskLogCategory.Info,
-                MessageText = line,
+                MessageText = $"{++lineNumber}\n{line}",
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = Ctx.NextLogSequence(),

@@ -291,6 +291,30 @@ public class DeploymentExecutionLoggingTests
         execLog.ShouldNotBeNull("Step should still execute after condition-met confirmation");
     }
 
+    // ========== Step Skipped — Condition Not Met ==========
+
+    [Fact]
+    public async Task StepSkipped_SuccessConditionNotMet_LogsSkippedNotSuccess()
+    {
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
+        ctx.FailureEncountered = true;
+
+        var step = MakeStep("Deploy web", 1, "web", condition: "Success");
+        step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        stepNode.ShouldNotBeNull();
+
+        var skippedLog = logs.FirstOrDefault(l => l.Message.Contains("was skipped", StringComparison.OrdinalIgnoreCase));
+        skippedLog.ShouldNotBeNull("Should log step was skipped");
+
+        var successLog = logs.FirstOrDefault(l => l.Message.Contains("completed successfully", StringComparison.OrdinalIgnoreCase));
+        successLog.ShouldBeNull("Should NOT log step completed successfully when skipped");
+    }
+
     // ========== Step Failure Suppresses Completed Log ==========
 
     [Fact]
@@ -407,6 +431,116 @@ public class DeploymentExecutionLoggingTests
         successLog.ActivityNodeId.ShouldBe(taskNode?.Id);
     }
 
+    // ========== Packages Acquire / Release ==========
+
+    [Fact]
+    public async Task PackagesAcquiring_WithPackages_LogsAcquirePhase()
+    {
+        var (lifecycle, logs, nodes) = CreateLifecycleHarness();
+        var ctx = CreateBaseContext();
+        ctx.SelectedPackages = new List<ReleaseSelectedPackage>
+        {
+            new() { ActionName = "Deploy", Version = "1.0.0" },
+            new() { ActionName = "Migrate", Version = "2.0.0" }
+        };
+        lifecycle.Initialize(ctx);
+
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
+        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { SelectedPackages = ctx.SelectedPackages }), CancellationToken.None);
+
+        var acquireNode = nodes.FirstOrDefault(n => n.Name == "Acquire packages");
+        acquireNode.ShouldNotBeNull("Should create 'Acquire packages' activity node");
+        acquireNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Step);
+
+        logs.ShouldContain(l => l.Message.Contains("Acquiring packages", StringComparison.OrdinalIgnoreCase));
+        logs.ShouldContain(l => l.Message.Contains("Package Deploy version 1.0.0", StringComparison.Ordinal));
+        logs.ShouldContain(l => l.Message.Contains("Package Migrate version 2.0.0", StringComparison.Ordinal));
+        logs.ShouldContain(l => l.Message.Contains("All packages have been acquired", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task PackagesAcquiring_NoPackages_LogsNoPackagesToAcquire()
+    {
+        var (lifecycle, logs, nodes) = CreateLifecycleHarness();
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
+        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { SelectedPackages = null }), CancellationToken.None);
+
+        var acquireNode = nodes.FirstOrDefault(n => n.Name == "Acquire packages");
+        acquireNode.ShouldNotBeNull();
+        logs.ShouldContain(l => l.Message.Contains("No packages to acquire", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task PackagesReleased_LogsReleasePhase()
+    {
+        var (lifecycle, logs, nodes) = CreateLifecycleHarness();
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
+        await lifecycle.EmitAsync(new PackagesReleasedEvent(new DeploymentEventContext()), CancellationToken.None);
+
+        var releaseNode = nodes.FirstOrDefault(n => n.Name == "Release packages");
+        releaseNode.ShouldNotBeNull("Should create 'Release packages' activity node");
+        releaseNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Step);
+        logs.ShouldContain(l => l.Message.Contains("no packages to be released", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ========== StepLevel Action Completion ==========
+
+    [Fact]
+    public async Task StepLevelAction_Completed_LogsSuccessNotSkipped()
+    {
+        var (phase, ctx, logs, nodes) = CreateStepLevelTestHarness();
+
+        var action = MakeAction("Approve");
+        action.ActionType = "Squid.ManualIntervention";
+        var step = MakeStep("Manual Approval", 1, "web");
+        step.Actions = new List<DeploymentActionDto> { action };
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var stepNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Step);
+        stepNode.ShouldNotBeNull();
+
+        var completedLog = logs.FirstOrDefault(l => l.Message.Contains("completed successfully", StringComparison.OrdinalIgnoreCase));
+        completedLog.ShouldNotBeNull("StepLevel step should log completed successfully, not skipped");
+
+        var skippedLog = logs.FirstOrDefault(l => l.Message.Contains("was skipped", StringComparison.OrdinalIgnoreCase));
+        skippedLog.ShouldBeNull("StepLevel step should NOT be logged as skipped");
+    }
+
+    // ========== Script Output Line Numbers ==========
+
+    [Fact]
+    public async Task ScriptOutput_HasLineNumbers()
+    {
+        var (phase, ctx, logs, nodes) = CreateTestHarness();
+
+        var strategy = new ScriptOutputStrategy(new List<string> { "hello", "world", "done" });
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTarget("target-1", "web", transport)
+        };
+
+        var step = MakeStep("Deploy web", 1, "web");
+        step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var scriptLogs = logs.Where(l => l.Message.Contains("\n")).OrderBy(l => l.Message).ToList();
+        scriptLogs.Count.ShouldBe(3);
+        scriptLogs[0].Message.ShouldBe("1\nhello");
+        scriptLogs[1].Message.ShouldBe("2\nworld");
+        scriptLogs[2].Message.ShouldBe("3\ndone");
+    }
+
     // ========== Test Infrastructure ==========
 
     private static (ExecuteStepsPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateTestHarness(string machineRoles = "web")
@@ -449,6 +583,27 @@ public class DeploymentExecutionLoggingTests
         {
             MakeTarget("target-1", "web", transport)
         };
+
+        lifecycle.Initialize(ctx);
+
+        return (phase, ctx, logs, nodes);
+    }
+
+    private static (ExecuteStepsPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes) CreateStepLevelTestHarness()
+    {
+        var logs = new ConcurrentBag<CapturedLog>();
+        var nodes = new ConcurrentBag<ActivityLog>();
+        var stepLevelHandler = new SimpleStepLevelHandler();
+
+        var registryMock = new Mock<IActionHandlerRegistry>();
+        registryMock.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(stepLevelHandler);
+        registryMock.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
+
+        var lifecycle = CreateLifecycle(logs, nodes);
+        var phase = new ExecuteStepsPhase(registryMock.Object, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
+
+        var ctx = CreateBaseContext();
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>();
 
         lifecycle.Initialize(ctx);
 
@@ -507,6 +662,11 @@ public class DeploymentExecutionLoggingTests
 
         serverTaskServiceMock
             .Setup(x => x.AddLogsAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(), It.IsAny<CancellationToken>()))
+            .Callback((int taskId, IReadOnlyCollection<ServerTaskLogWriteEntry> entries, CancellationToken _) =>
+            {
+                foreach (var entry in entries)
+                    logs.Add(new CapturedLog(entry.Category, entry.MessageText, entry.Source, entry.ActivityNodeId));
+            })
             .Returns(Task.CompletedTask);
 
         serverTaskServiceMock
@@ -626,6 +786,23 @@ public class DeploymentExecutionLoggingTests
         }
     }
 
+    private sealed class ScriptOutputStrategy : IExecutionStrategy
+    {
+        private readonly List<string> _lines;
+
+        public ScriptOutputStrategy(List<string> lines) => _lines = lines;
+
+        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+        {
+            return Task.FromResult(new ScriptExecutionResult
+            {
+                Success = true,
+                ExitCode = 0,
+                LogLines = _lines
+            });
+        }
+    }
+
     private sealed class FailingStrategy : IExecutionStrategy
     {
         public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -656,5 +833,20 @@ public class DeploymentExecutionLoggingTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
         }
+    }
+
+    private sealed class SimpleStepLevelHandler : IActionHandler
+    {
+        public DeploymentActionType ActionType => DeploymentActionType.ManualIntervention;
+
+        public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
+
+        public bool CanHandle(DeploymentActionDto action) => true;
+
+        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+            => Task.FromResult(new ActionExecutionResult());
+
+        public Task ExecuteStepLevelAsync(StepActionContext ctx, CancellationToken ct)
+            => Task.CompletedTask;
     }
 }

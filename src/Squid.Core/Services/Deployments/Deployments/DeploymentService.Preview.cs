@@ -44,9 +44,6 @@ public partial class DeploymentService
             .GetMachinesByFilterAsync([context.EnvironmentId], [], cancellationToken).ConfigureAwait(false);
 
         var selectedMachines = ApplyMachineSelection(machines, context.SpecificMachineIds, context.ExcludedMachineIds);
-        
-        result.AvailableMachineCount = selectedMachines.Count;
-        result.CandidateTargets = selectedMachines.OrderBy(machine => machine.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
 
         if (selectedMachines.Count == 0)
         {
@@ -71,6 +68,9 @@ public partial class DeploymentService
             Log.Warning(ex, "Failed to build step preview for release {ReleaseId}", release.Id);
             blockingReasons.Add($"Deployment process preview failed: {ex.Message}");
         }
+
+        result.CandidateTargets = FilterCandidatesByStepRoles(result.Steps, selectedMachines);
+        result.AvailableMachineCount = result.CandidateTargets.Count;
 
         if (HasNoMatchingTargetsForApplicableSteps(result.Steps))
         {
@@ -204,6 +204,32 @@ public partial class DeploymentService
         return DeploymentTargetFinder.ParseCsvRoles(stepRolesProperty.PropertyValue)
             .OrderBy(role => role, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    internal static List<DeploymentPreviewTargetResult> FilterCandidatesByStepRoles(List<DeploymentPreviewStepResult> steps, List<Persistence.Entities.Deployments.Machine> selectedMachines)
+    {
+        List<DeploymentPreviewTargetResult> AllMachines() =>
+            selectedMachines.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
+
+        if (steps == null || steps.Count == 0)
+            return AllMachines();
+
+        var targetLevelSteps = steps.Where(s => s.IsApplicable && !s.IsStepLevelOnly).ToList();
+
+        if (targetLevelSteps.Count == 0)
+            return AllMachines();
+
+        if (targetLevelSteps.Any(s => s.RequiredRoles.Count == 0))
+            return AllMachines();
+
+        var allRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var step in targetLevelSteps)
+            allRoles.UnionWith(step.RequiredRoles);
+
+        var filtered = DeploymentTargetFinder.FilterByRoles(selectedMachines, allRoles);
+
+        return filtered.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
     }
 
     private static bool HasNoMatchingTargetsForApplicableSteps(List<DeploymentPreviewStepResult> steps)

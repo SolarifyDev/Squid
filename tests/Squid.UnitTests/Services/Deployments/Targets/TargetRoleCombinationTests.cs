@@ -307,6 +307,37 @@ public class TargetRoleCombinationTests
     }
 
     [Fact]
+    public void RealisticPipeline_ManualInterventionStep_PreFilterStillNarrows()
+    {
+        // Manual Intervention step (StepLevel) has no roles but shouldn't block pre-filtering
+        var machines = new List<Machine>
+        {
+            MakeMachine(1, "k8s-api-local"),
+            MakeMachine(2, "k8s-agent-local")
+        };
+
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithAction(1, "Manual Intervention", targetRoles: null, actionType: "Squid.ManualIntervention"),
+            MakeStepWithAction(2, "Deploy web", targetRoles: "k8s-api-local", actionType: "Squid.KubernetesRunScript"),
+            MakeStepWithAction(3, "Deploy web config", targetRoles: "k8s-api-local", actionType: "Squid.KubernetesRunScript")
+        };
+
+        Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope ScopeResolver(DeploymentActionDto a) =>
+            a.ActionType == "Squid.ManualIntervention"
+                ? Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope.StepLevel
+                : Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope.TargetLevel;
+
+        var allRoles = DeploymentTargetFinder.CollectAllTargetRoles(steps, ScopeResolver);
+        allRoles.Count.ShouldBe(1);
+        allRoles.ShouldContain("k8s-api-local");
+
+        var filtered = DeploymentTargetFinder.FilterByRoles(machines, allRoles);
+        filtered.Count.ShouldBe(1);
+        filtered[0].Id.ShouldBe(1);
+    }
+
+    [Fact]
     public void RealisticPipeline_AllStepsHaveRoles_PreFilterWorks()
     {
         // Pipeline where every step has roles — pre-filtering can narrow
@@ -472,6 +503,29 @@ public class TargetRoleCombinationTests
                 PropertyValue = targetRoles
             });
         }
+
+        return step;
+    }
+
+    private static DeploymentStepDto MakeStepWithAction(int order, string name, string targetRoles, string actionType)
+    {
+        var step = MakeStep(order, name, targetRoles);
+        step.Actions = new List<DeploymentActionDto>
+        {
+            new()
+            {
+                Id = order * 100,
+                Name = name,
+                ActionOrder = 1,
+                ActionType = actionType,
+                IsRequired = true,
+                IsDisabled = false,
+                Properties = new List<DeploymentActionPropertyDto>(),
+                Environments = new List<int>(),
+                ExcludedEnvironments = new List<int>(),
+                Channels = new List<int>()
+            }
+        };
 
         return step;
     }

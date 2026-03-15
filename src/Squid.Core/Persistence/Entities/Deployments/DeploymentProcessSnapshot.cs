@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class DeploymentProcessSnapshot : IEntity<int>
+public class DeploymentProcessSnapshot : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -16,7 +16,8 @@ public class DeploymentProcessSnapshot : IEntity<int>
 
     public int UncompressedSize { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-
-    public string CreatedBy { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

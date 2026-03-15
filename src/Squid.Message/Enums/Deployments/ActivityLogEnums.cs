@@ -13,7 +13,8 @@ public enum DeploymentActivityLogNodeStatus
     Pending = 0,
     Running = 1,
     Success = 2,
-    Failed = 3
+    Failed = 3,
+    Skipped = 4
 }
 
 public enum DeploymentActivityLogCategory

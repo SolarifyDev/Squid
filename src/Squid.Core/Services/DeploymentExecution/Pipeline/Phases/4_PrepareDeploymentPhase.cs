@@ -12,7 +12,8 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentSnapshotService snapshotService,
     IDeploymentVariableResolver variableResolver,
     IDeploymentTargetFinder targetFinder,
-    IDeploymentDataProvider deploymentDataProvider) : IDeploymentPipelinePhase
+    IDeploymentDataProvider deploymentDataProvider,
+    IActionHandlerRegistry actionHandlerRegistry) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -77,9 +78,9 @@ public sealed class PrepareDeploymentPhase(
         ctx.Steps = ProcessSnapshotStepConverter.Convert(ctx.ProcessSnapshot);
     }
 
-    private static void PreFilterTargetsByRoles(DeploymentTaskContext ctx)
+    private void PreFilterTargetsByRoles(DeploymentTaskContext ctx)
     {
-        var allRoles = DeploymentTargetFinder.CollectAllTargetRoles(ctx.Steps);
+        var allRoles = DeploymentTargetFinder.CollectAllTargetRoles(ctx.Steps, actionHandlerRegistry.ResolveScope);
 
         if (allRoles.Count == 0)
             return;

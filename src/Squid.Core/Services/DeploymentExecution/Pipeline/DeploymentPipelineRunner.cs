@@ -23,9 +23,21 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             foreach (var phase in ordered)
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
 
+            await lifecycle.EmitAsync(new PackagesReleasedEvent(new DeploymentEventContext()), linkedCts.Token);
+
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
-            await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), timeout.Token);
-            await completion.OnSuccessAsync(ctx, timeout.Token);
+
+            if (ctx.FailureEncountered)
+            {
+                var ex = new InvalidOperationException("One or more steps failed during deployment");
+                await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);
+                await completion.OnFailureAsync(ctx, ex, timeout.Token);
+            }
+            else
+            {
+                await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), timeout.Token);
+                await completion.OnSuccessAsync(ctx, timeout.Token);
+            }
         }
         catch (DeploymentSuspendedException)
         {
