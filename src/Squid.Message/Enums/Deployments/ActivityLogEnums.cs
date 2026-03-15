@@ -5,7 +5,8 @@ public enum DeploymentActivityLogNodeType
     Task = 0,
     Step = 1,
     Action = 2,
-    LogEntry = 3
+    LogEntry = 3,
+    Phase = 4
 }
 
 public enum DeploymentActivityLogNodeStatus

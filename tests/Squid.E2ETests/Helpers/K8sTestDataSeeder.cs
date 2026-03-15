@@ -10,7 +10,6 @@ using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using Squid.Core.Services.DeploymentExecution.Filtering;
-
 namespace Squid.E2ETests.Helpers;
 
 public class K8sTestDataSeeder

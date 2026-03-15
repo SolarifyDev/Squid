@@ -450,7 +450,7 @@ public class DeploymentExecutionLoggingTests
 
         var acquireNode = nodes.FirstOrDefault(n => n.Name == "Acquire packages");
         acquireNode.ShouldNotBeNull("Should create 'Acquire packages' activity node");
-        acquireNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Step);
+        acquireNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Phase);
 
         logs.ShouldContain(l => l.Message.Contains("Acquiring packages", StringComparison.OrdinalIgnoreCase));
         logs.ShouldContain(l => l.Message.Contains("Package Deploy version 1.0.0", StringComparison.Ordinal));
@@ -485,7 +485,7 @@ public class DeploymentExecutionLoggingTests
 
         var releaseNode = nodes.FirstOrDefault(n => n.Name == "Release packages");
         releaseNode.ShouldNotBeNull("Should create 'Release packages' activity node");
-        releaseNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Step);
+        releaseNode.NodeType.ShouldBe(DeploymentActivityLogNodeType.Phase);
         logs.ShouldContain(l => l.Message.Contains("no packages to be released", StringComparison.OrdinalIgnoreCase));
     }
 

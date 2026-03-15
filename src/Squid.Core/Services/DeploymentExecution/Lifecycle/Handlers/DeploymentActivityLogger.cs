@@ -145,7 +145,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnPackagesAcquiringAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
-        var node = await CreateActivityNodeAsync(_taskNodeId, "Acquire packages", DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Acquire packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
         var nodeId = node?.Id;
 
         await LogInfoAsync("Acquiring packages", "System", ct, nodeId).ConfigureAwait(false);
@@ -170,7 +170,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnPackagesReleasedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var releaseSortOrder = (Ctx.Steps?.Max(s => s.StepOrder) ?? 0) + 1;
-        var node = await CreateActivityNodeAsync(_taskNodeId, "Release packages", DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, releaseSortOrder, ct).ConfigureAwait(false);
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Release packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, releaseSortOrder, ct).ConfigureAwait(false);
         var nodeId = node?.Id;
 
         await LogInfoAsync("There are no packages to be released.", "System", ct, nodeId).ConfigureAwait(false);

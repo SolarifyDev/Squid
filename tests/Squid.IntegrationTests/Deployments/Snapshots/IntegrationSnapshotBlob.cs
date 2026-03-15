@@ -6,7 +6,6 @@ using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
-
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
 public class IntegrationSnapshotBlob : SnapshotFixtureBase
