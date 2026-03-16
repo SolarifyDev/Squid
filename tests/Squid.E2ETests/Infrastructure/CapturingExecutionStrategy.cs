@@ -6,14 +6,20 @@ namespace Squid.E2ETests.Infrastructure;
 
 public class CapturingExecutionStrategy : IExecutionStrategy
 {
-    public List<ScriptExecutionRequest> CapturedRequests { get; } = new();
+    private readonly object _lock = new();
+    private readonly List<ScriptExecutionRequest> _capturedRequests = new();
+
+    public List<ScriptExecutionRequest> CapturedRequests => _capturedRequests;
 
     public Func<ScriptExecutionRequest, ScriptExecutionResult> ResultFactory { get; set; }
 
     public Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
-        CapturedRequests.Add(request);
+        lock (_lock)
+        {
+            _capturedRequests.Add(request);
+        }
 
         if (ResultFactory != null)
             return Task.FromResult(ResultFactory(request));
@@ -27,7 +33,11 @@ public class CapturingExecutionStrategy : IExecutionStrategy
 
     public void Clear()
     {
-        CapturedRequests.Clear();
+        lock (_lock)
+        {
+            _capturedRequests.Clear();
+        }
+
         ResultFactory = null;
     }
 }

@@ -182,6 +182,138 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("1", false)]
+    public async Task ExecuteDeploymentSteps_MultiTarget_RespectsMaxParallelism(string maxParallelism, bool expectConcurrent)
+    {
+        var strategy = new ConcurrencyTrackingStrategy();
+        var handler = new SimpleRunScriptHandler();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTarget("target-1", "web", transport, endpointJson: "endpoint-a"),
+            MakeTarget("target-2", "web", transport, endpointJson: "endpoint-b")
+        };
+
+        var step = MakeStep("Step1", 1, null, "web", MakeAction("TargetAction"));
+
+        if (maxParallelism != null)
+        {
+            step.Properties.Add(new DeploymentStepPropertyDto
+            {
+                StepId = 1,
+                PropertyName = SpecialVariables.Step.MaxParallelism,
+                PropertyValue = maxParallelism
+            });
+        }
+
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Requests.Count.ShouldBe(2);
+
+        if (expectConcurrent)
+            strategy.MaxObservedConcurrency.ShouldBeGreaterThan(1);
+        else
+            strategy.MaxObservedConcurrency.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ExecuteDeploymentSteps_MultiTarget_ThrottledParallelism_RespectsLimit()
+    {
+        var strategy = new ConcurrencyTrackingStrategy();
+        var handler = new SimpleRunScriptHandler();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTarget("target-1", "web", transport, endpointJson: "endpoint-a"),
+            MakeTarget("target-2", "web", transport, endpointJson: "endpoint-b"),
+            MakeTarget("target-3", "web", transport, endpointJson: "endpoint-c")
+        };
+
+        var step = MakeStep("Step1", 1, null, "web", MakeAction("TargetAction"));
+        step.Properties.Add(new DeploymentStepPropertyDto { StepId = 1, PropertyName = SpecialVariables.Step.MaxParallelism, PropertyValue = "2" });
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Requests.Count.ShouldBe(3);
+        strategy.MaxObservedConcurrency.ShouldBeGreaterThan(1);
+        strategy.MaxObservedConcurrency.ShouldBeLessThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task ExecuteDeploymentSteps_MultiTarget_RequiredStep_FailFast_CancelsRemainingTargets()
+    {
+        var strategy = new RecordingStrategy();
+        strategy.FailActions.Add("FailAction");
+        var handler = new SimpleRunScriptHandler();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTarget("target-1", "web", transport, endpointJson: "endpoint-a"),
+            MakeTarget("target-2", "web", transport, endpointJson: "endpoint-b")
+        };
+
+        var step = MakeStep("Step1", 1, null, "web", MakeAction("FailAction"));
+        step.IsRequired = true;
+        step.Properties.Add(new DeploymentStepPropertyDto { StepId = 1, PropertyName = SpecialVariables.Step.MaxParallelism, PropertyValue = "1" });
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await Should.ThrowAsync<Exception>(async () => await phase.ExecuteAsync(ctx, CancellationToken.None));
+
+        strategy.Requests.Count.ShouldBe(1, "Fail-fast should stop after first target failure");
+    }
+
+    [Fact]
+    public async Task ExecuteDeploymentSteps_MultiTarget_NonRequiredStep_ContinuesAfterFailure()
+    {
+        var strategy = new PerTargetResultStrategy(target => target == "target-1");
+        var handler = new SimpleRunScriptHandler();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTarget("target-1", "web", transport, endpointJson: "endpoint-a"),
+            MakeTarget("target-2", "web", transport, endpointJson: "endpoint-b")
+        };
+
+        var step = MakeStep("Step1", 1, null, "web", MakeAction("SomeAction"));
+        step.IsRequired = false;
+        step.Properties.Add(new DeploymentStepPropertyDto { StepId = 1, PropertyName = SpecialVariables.Step.MaxParallelism, PropertyValue = "1" });
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Requests.Count.ShouldBe(2, "Both targets should execute even though target-1 failed");
+        ctx.FailureEncountered.ShouldBeTrue();
+    }
+
     private static (IDeploymentLifecycle Lifecycle, Mock<IServerTaskService> ServerTaskServiceMock) CreateLifecycle(Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
     {
         var nextNodeId = 0L;
@@ -403,6 +535,73 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 ExecutionMode = ExecutionMode.DirectScript,
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             };
+        }
+    }
+
+    private sealed class SimpleRunScriptHandler : IActionHandler
+    {
+        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
+
+        public bool CanHandle(DeploymentActionDto action)
+            => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+
+        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+        {
+            return Task.FromResult(new ActionExecutionResult
+            {
+                ScriptBody = $"ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash,
+                ExecutionMode = ExecutionMode.DirectScript,
+                ContextPreparationPolicy = ContextPreparationPolicy.Apply
+            });
+        }
+    }
+
+    private sealed class ConcurrencyTrackingStrategy : IExecutionStrategy
+    {
+        private int _concurrency;
+
+        public ConcurrentBag<ScriptExecutionRequest> Requests { get; } = new();
+        public int MaxObservedConcurrency { get; private set; }
+
+        public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+        {
+            Requests.Add(request);
+
+            var current = Interlocked.Increment(ref _concurrency);
+
+            lock (this)
+                MaxObservedConcurrency = Math.Max(MaxObservedConcurrency, current);
+
+            await Task.Delay(50, ct).ConfigureAwait(false);
+            Interlocked.Decrement(ref _concurrency);
+
+            return new ScriptExecutionResult { Success = true, ExitCode = 0 };
+        }
+    }
+
+    private sealed class PerTargetResultStrategy : IExecutionStrategy
+    {
+        private readonly Func<string, bool> _shouldFail;
+
+        public PerTargetResultStrategy(Func<string, bool> shouldFail)
+        {
+            _shouldFail = shouldFail;
+        }
+
+        public ConcurrentBag<ScriptExecutionRequest> Requests { get; } = new();
+
+        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+        {
+            Requests.Add(request);
+
+            var fail = _shouldFail(request.Machine.Name);
+
+            return Task.FromResult(new ScriptExecutionResult
+            {
+                Success = !fail,
+                ExitCode = fail ? 1 : 0
+            });
         }
     }
 

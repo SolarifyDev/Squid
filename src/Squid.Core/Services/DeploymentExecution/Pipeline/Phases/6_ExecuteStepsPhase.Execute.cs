@@ -45,35 +45,28 @@ public sealed partial class ExecuteStepsPhase
                 return stepResult;
             }
 
-            foreach (var tc in matchingTargets)
-            {
-                var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
-                var baseScopeContext = BuildTargetScopeContext(tc, targetRoles);
-                var stepEffectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, baseScopeContext);
+            var maxParallelism = TargetParallelExecutor.ParseMaxParallelism(step);
 
-                var eligibility = StepEligibilityEvaluator.EvaluateStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, stepEffectiveVars);
+            using var failFastCts = step.IsRequired ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+            var effectiveCt = failFastCts?.Token ?? ct;
 
-                if (!eligibility.ShouldExecute)
+            var targetResults = await TargetParallelExecutor.ExecuteAsync(
+                matchingTargets, maxParallelism,
+                async (tc, targetCt) =>
                 {
-                    Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
+                    try
+                    {
+                        return await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
+                    }
+                    catch when (step.IsRequired)
+                    {
+                        failFastCts?.Cancel();
+                        throw;
+                    }
+                }, effectiveCt).ConfigureAwait(false);
 
-                    await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
-
-                    continue;
-                }
-
-                if (eligibility.Message != null)
-                    await lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
-
-                await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
-
-                var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
-
-                var result = new StepExecutionResult { Executed = true };
-                await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
-
+            foreach (var result in targetResults)
                 stepResult.Absorb(result);
-            }
         }
 
         var skipped = !stepResult.Executed && !stepResult.Failed;
@@ -81,6 +74,36 @@ public sealed partial class ExecuteStepsPhase
         await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed, Skipped = skipped }), ct).ConfigureAwait(false);
 
         return stepResult;
+    }
+
+    private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)
+    {
+        var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
+        var baseScopeContext = BuildTargetScopeContext(tc, targetRoles);
+        var stepEffectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, baseScopeContext);
+
+        var eligibility = StepEligibilityEvaluator.EvaluateStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, stepEffectiveVars);
+
+        if (!eligibility.ShouldExecute)
+        {
+            Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
+
+            await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
+
+            return new StepExecutionResult();
+        }
+
+        if (eligibility.Message != null)
+            await lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
+
+        await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
+
+        var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
+
+        var result = new StepExecutionResult { Executed = true };
+        await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
+
+        return result;
     }
 
     private VariableScopeContext BuildTargetScopeContext(DeploymentTargetContext tc, HashSet<string> targetRoles)

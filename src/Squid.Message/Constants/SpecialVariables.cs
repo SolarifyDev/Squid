@@ -68,6 +68,7 @@ public static class SpecialVariables
         public const string Container = "Squid.Action.Container";
         public const string ConditionExpression = "Squid.Step.ConditionExpression";
         public const string RequiredToSucceed = "Squid.Step.RequiredToSucceed";
+        public const string MaxParallelism = "Squid.Step.MaxParallelism";
     }
 
     public static class ScriptSyntax

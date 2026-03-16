@@ -106,15 +106,19 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
 
     private class StepExecutionResult
     {
+        private readonly object _lock = new();
         public List<VariableDto> OutputVariables { get; } = new();
         public bool Failed { get; set; }
         public bool Executed { get; set; }
 
         public void Absorb(StepExecutionResult other)
         {
-            OutputVariables.AddRange(other.OutputVariables);
-            Failed |= other.Failed;
-            Executed |= other.Executed;
+            lock (_lock)
+            {
+                OutputVariables.AddRange(other.OutputVariables);
+                Failed |= other.Failed;
+                Executed |= other.Executed;
+            }
         }
     }
 }
