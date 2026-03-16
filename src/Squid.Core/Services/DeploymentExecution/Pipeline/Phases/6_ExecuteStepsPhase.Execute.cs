@@ -8,6 +8,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -262,7 +263,7 @@ public sealed partial class ExecuteStepsPhase
         foreach (var kv in actionResult.OutputVariables)
         {
             var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
-            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, kv.Key);
+            var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
             result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });

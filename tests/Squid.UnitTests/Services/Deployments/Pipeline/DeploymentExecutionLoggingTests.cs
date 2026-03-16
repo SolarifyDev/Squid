@@ -21,8 +21,8 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
@@ -730,7 +730,7 @@ public class DeploymentExecutionLoggingTests
                 new()
                 {
                     StepId = order,
-                    PropertyName = DeploymentVariables.Action.TargetRoles,
+                    PropertyName = SpecialVariables.Step.TargetRoles,
                     PropertyValue = targetRoles
                 }
             },

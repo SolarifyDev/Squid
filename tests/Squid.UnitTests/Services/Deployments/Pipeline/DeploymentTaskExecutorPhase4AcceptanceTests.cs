@@ -16,8 +16,8 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
@@ -304,7 +304,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 new()
                 {
                     StepId = order,
-                    PropertyName = DeploymentVariables.Action.TargetRoles,
+                    PropertyName = SpecialVariables.Step.TargetRoles,
                     PropertyValue = targetRoles
                 }
             },

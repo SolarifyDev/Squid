@@ -27,6 +27,12 @@ public class VariableDto
     [JsonConverter(typeof(LegacyNullableIntConverter))]
     public int? LastModifiedBy { get; set; }
 
+    // Prompt
+    public string PromptLabel { get; set; }
+    public string PromptDescription { get; set; }
+    public bool PromptRequired { get; set; }
+    public bool IsPrompted => !string.IsNullOrEmpty(PromptLabel);
+
     public List<VariableScopeDto> Scopes { get; set; } = new List<VariableScopeDto>();
 }
 

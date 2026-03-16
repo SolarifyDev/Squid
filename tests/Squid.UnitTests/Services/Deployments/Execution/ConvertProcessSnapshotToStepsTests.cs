@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Snapshots;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
@@ -48,7 +48,7 @@ public class ConvertProcessSnapshotToStepsTests
     public void StepAndActionProperties_CorrectlyConverted()
     {
         var stepSnap = MakeStep(1, "Step", condition: "Variable");
-        stepSnap.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "web" } };
+        stepSnap.Properties = new Dictionary<string, string> { { SpecialVariables.Step.TargetRoles, "web" } };
         stepSnap.ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
         {
             new()
@@ -61,7 +61,7 @@ public class ConvertProcessSnapshotToStepsTests
         var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
         steps[0].Condition.ShouldBe("Variable");
-        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
+        steps[0].Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Step.TargetRoles && p.PropertyValue == "web");
         steps[0].Actions[0].Properties.ShouldContain(p => p.PropertyName == "Key1" && p.PropertyValue == "Val1");
     }
 
@@ -100,19 +100,19 @@ public class ConvertProcessSnapshotToStepsTests
     public void TargetRoles_MultipleStepsWithDifferentRoles()
     {
         var step1 = MakeStep(1, "Deploy Web");
-        step1.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "web" } };
+        step1.Properties = new Dictionary<string, string> { { SpecialVariables.Step.TargetRoles, "web" } };
 
         var step2 = MakeStep(2, "Deploy API");
-        step2.Properties = new Dictionary<string, string> { { DeploymentVariables.Action.TargetRoles, "api" } };
+        step2.Properties = new Dictionary<string, string> { { SpecialVariables.Step.TargetRoles, "api" } };
 
         var step3 = MakeStep(3, "Run Smoke Tests");
         // No target roles — runs on all machines
 
         var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(step1, step2, step3));
 
-        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "web");
-        steps[1].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "api");
-        steps[2].Properties.ShouldNotContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+        steps[0].Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Step.TargetRoles && p.PropertyValue == "web");
+        steps[1].Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Step.TargetRoles && p.PropertyValue == "api");
+        steps[2].Properties.ShouldNotContain(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
     }
 
     [Fact]
@@ -157,12 +157,12 @@ public class ConvertProcessSnapshotToStepsTests
         var stepSnap = MakeStep(1, "Step");
         stepSnap.Properties = new Dictionary<string, string>
         {
-            { DeploymentVariables.Action.TargetRoles, "" }
+            { SpecialVariables.Step.TargetRoles, "" }
         };
 
         var steps = ProcessSnapshotStepConverter.Convert(BuildSnapshot(stepSnap));
 
-        steps[0].Properties.ShouldContain(p => p.PropertyName == DeploymentVariables.Action.TargetRoles && p.PropertyValue == "");
+        steps[0].Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Step.TargetRoles && p.PropertyValue == "");
     }
 
     private static DeploymentStepSnapshotDataDto MakeStep(

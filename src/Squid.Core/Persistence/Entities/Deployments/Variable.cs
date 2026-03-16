@@ -20,6 +20,11 @@ public class Variable : IEntity<int>, IAuditable
 
     public int SortOrder { get; set; } = 0;
 
+    // Prompt
+    public string PromptLabel { get; set; }
+    public string PromptDescription { get; set; }
+    public bool PromptRequired { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

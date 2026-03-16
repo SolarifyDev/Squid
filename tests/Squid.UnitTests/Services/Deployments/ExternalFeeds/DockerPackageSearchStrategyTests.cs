@@ -77,6 +77,45 @@ public class DockerPackageSearchStrategyTests
     }
 
     [Fact]
+    public async Task SearchAsync_DockerHub_WithRegistryPath_ShouldScopeToNamespace()
+    {
+        var requestedUrl = default(string);
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            requestedUrl = request.RequestUri.ToString();
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {
+                        "results": [
+                            {"name": "squid-tentacle"},
+                            {"name": "kubernetes-agent"}
+                        ]
+                    }
+                    """)
+            });
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "Docker", FeedUri = "https://index.docker.io", RegistryPath = "squidcd" };
+
+        var result = await sut.SearchAsync(feed, "squid", 10, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Count.ShouldBe(2);
+        result.ShouldContain("squidcd/squid-tentacle");
+        result.ShouldContain("squidcd/kubernetes-agent");
+        requestedUrl.ShouldContain("hub.docker.com/v2/namespaces/squidcd/repositories");
+        requestedUrl.ShouldContain("name=squid");
+        requestedUrl.ShouldNotContain("search/repositories");
+    }
+
+    [Fact]
     public async Task SearchAsync_DockerHub_ShouldReturnEmpty_WhenApiFails()
     {
         var client = CreateHttpClient((_, _) =>

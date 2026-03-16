@@ -19,8 +19,8 @@ using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Checkpoints;
@@ -253,7 +253,7 @@ public class ResumeCheckpointTests
             IsDisabled = false,
             Properties = new List<DeploymentStepPropertyDto>
             {
-                new() { StepId = order, PropertyName = DeploymentVariables.Action.TargetRoles, PropertyValue = targetRoles }
+                new() { StepId = order, PropertyName = SpecialVariables.Step.TargetRoles, PropertyValue = targetRoles }
             },
             Actions = new List<DeploymentActionDto> { action }
         };

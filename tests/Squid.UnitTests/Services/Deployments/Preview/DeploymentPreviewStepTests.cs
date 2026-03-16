@@ -2,8 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Handlers;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Message.Constants;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
@@ -66,7 +66,7 @@ public class DeploymentPreviewStepTests
             properties.Add(new DeploymentStepPropertyDto
             {
                 StepId = id,
-                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyName = SpecialVariables.Step.TargetRoles,
                 PropertyValue = targetRoles
             });
         }

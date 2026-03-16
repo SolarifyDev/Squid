@@ -6,6 +6,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
@@ -329,7 +330,7 @@ public class StepCentricExecutionTests
         {
             step.Properties.Add(new DeploymentStepPropertyDto
             {
-                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyName = SpecialVariables.Step.TargetRoles,
                 PropertyValue = targetRoles
             });
         }

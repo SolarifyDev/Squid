@@ -18,14 +18,19 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
             return [];
 
         if (IsDockerHub(baseUri))
-            return await SearchDockerHubAsync(query, take, ct).ConfigureAwait(false);
+            return await SearchDockerHubAsync(feed, query, take, ct).ConfigureAwait(false);
 
         return await SearchGenericRegistryAsync(feed, baseUri, query, take, ct).ConfigureAwait(false);
     }
 
-    private async Task<List<string>> SearchDockerHubAsync(string query, int take, CancellationToken ct)
+    private async Task<List<string>> SearchDockerHubAsync(ExternalFeed feed, string query, int take, CancellationToken ct)
     {
-        var url = $"https://hub.docker.com/v2/search/repositories/?query={Uri.EscapeDataString(query)}&page_size={take}";
+        var ns = feed.RegistryPath?.Trim().Trim('/');
+
+        var url = string.IsNullOrWhiteSpace(ns)
+            ? $"https://hub.docker.com/v2/search/repositories/?query={Uri.EscapeDataString(query)}&page_size={take}"
+            : $"https://hub.docker.com/v2/namespaces/{Uri.EscapeDataString(ns)}/repositories/?page_size={take}&name={Uri.EscapeDataString(query)}";
+
         var client = httpClientFactory.CreateClient(timeout: SearchTimeout);
 
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
@@ -35,7 +40,9 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-        return ParseDockerHubResults(json);
+        return string.IsNullOrWhiteSpace(ns)
+            ? ParseDockerHubSearchResults(json)
+            : ParseDockerHubNamespaceResults(json, ns);
     }
 
     private async Task<List<string>> SearchGenericRegistryAsync(ExternalFeed feed, Uri baseUri, string query, int take, CancellationToken ct)
@@ -102,7 +109,7 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
         baseUri.Host.Contains("docker.io", StringComparison.OrdinalIgnoreCase) ||
         baseUri.Host.Contains("docker.com", StringComparison.OrdinalIgnoreCase);
 
-    private static List<string> ParseDockerHubResults(string json)
+    private static List<string> ParseDockerHubSearchResults(string json)
     {
         try
         {
@@ -118,6 +125,32 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
             {
                 if (item.TryGetProperty("repo_name", out var repoName) && repoName.ValueKind == JsonValueKind.String)
                     packages.Add(repoName.GetString());
+            }
+
+            return packages;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static List<string> ParseDockerHubNamespaceResults(string json, string ns)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+
+            if (!root.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var packages = new List<string>();
+
+            foreach (var item in results.EnumerateArray())
+            {
+                if (item.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+                    packages.Add($"{ns}/{name.GetString()}");
             }
 
             return packages;

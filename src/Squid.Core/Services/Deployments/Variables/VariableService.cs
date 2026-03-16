@@ -66,6 +66,8 @@ public class VariableService : IVariableService
 
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        await SyncLibraryVariableSetNameAsync(variableSet, command.Name, cancellationToken).ConfigureAwait(false);
+
         return _mapper.Map<VariableSetDto>(variableSet);
     }
 
@@ -217,6 +219,20 @@ public class VariableService : IVariableService
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: ct).ConfigureAwait(false);
 
         return libraryVariableSet;
+    }
+
+    private async Task SyncLibraryVariableSetNameAsync(VariableSet variableSet, string newName, CancellationToken ct)
+    {
+        if (variableSet.OwnerType != VariableSetOwnerType.LibraryVariableSet) return;
+        if (variableSet.OwnerId <= 0) return;
+
+        var lvs = await _libraryVariableSetDataProvider.GetByIdAsync(variableSet.OwnerId, ct).ConfigureAwait(false);
+
+        if (lvs == null) return;
+
+        lvs.Name = newName ?? string.Empty;
+
+        await _libraryVariableSetDataProvider.UpdateAsync(lvs, ct: ct).ConfigureAwait(false);
     }
 
     private async Task DeleteLibraryVariableSetIfApplicableAsync(VariableSet variableSet, CancellationToken ct)

@@ -1,7 +1,7 @@
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Validation;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Deployment;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
@@ -196,7 +196,7 @@ public partial class DeploymentService
     private static List<string> ExtractRequiredRoles(Squid.Message.Models.Deployments.Process.DeploymentStepDto step)
     {
         var stepRolesProperty = step.Properties?
-            .FirstOrDefault(property => property.PropertyName == DeploymentVariables.Action.TargetRoles);
+            .FirstOrDefault(property => property.PropertyName == SpecialVariables.Step.TargetRoles);
 
         if (stepRolesProperty == null || string.IsNullOrWhiteSpace(stepRolesProperty.PropertyValue))
             return [];

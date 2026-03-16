@@ -8,8 +8,8 @@ using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
 
@@ -109,7 +109,7 @@ public class DeploymentTargetFinderTests
             step.Properties.Add(new DeploymentStepPropertyDto
             {
                 StepId = 1,
-                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyName = SpecialVariables.Step.TargetRoles,
                 PropertyValue = targetRoles
             });
         }

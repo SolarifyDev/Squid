@@ -5,6 +5,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -21,6 +22,8 @@ public sealed class PrepareDeploymentPhase(
     {
         await LoadOrSnapshotAsync(ctx, ct).ConfigureAwait(false);
         await ResolveVariablesAsync(ctx, ct).ConfigureAwait(false);
+        ValidatePromptedVariables(ctx);
+        MergePromptedVariables(ctx);
         await FindTargetsAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
@@ -51,7 +54,23 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables = await variableResolver.ResolveVariablesAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
 
-        ctx.Variables.Add(new VariableDto { Name = DeploymentVariableNames.DeploymentId, Value = ctx.Deployment.Id.ToString() });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = ctx.Deployment.Id.ToString() });
+    }
+
+    private static void ValidatePromptedVariables(DeploymentTaskContext ctx)
+    {
+        var formValues = ctx.Deployment?.DeploymentRequestPayload?.FormValues;
+        var errors = PromptedVariableMerger.ValidateRequiredPrompts(ctx.Variables, formValues);
+
+        if (errors.Count > 0)
+            throw new DeploymentValidationException(string.Join("; ", errors));
+    }
+
+    private static void MergePromptedVariables(DeploymentTaskContext ctx)
+    {
+        var formValues = ctx.Deployment?.DeploymentRequestPayload?.FormValues;
+
+        PromptedVariableMerger.MergePromptedValues(ctx.Variables, formValues);
     }
 
     private async Task FindTargetsAsync(DeploymentTaskContext ctx, CancellationToken ct)

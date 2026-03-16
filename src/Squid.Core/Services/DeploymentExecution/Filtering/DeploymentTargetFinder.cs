@@ -2,7 +2,7 @@ using System.Text.Json;
 using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
-using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
@@ -225,7 +225,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
             if (step.IsDisabled) continue;
             if (scopeResolver != null && IsStepLevelOnly(step, scopeResolver)) continue;
 
-            var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+            var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
 
             if (rolesProp == null || string.IsNullOrEmpty(rolesProp.PropertyValue))
             {

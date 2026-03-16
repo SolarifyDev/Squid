@@ -36,7 +36,7 @@ public class ExtractedPipelineComponentsTests
             {
                 new()
                 {
-                    PropertyName = DeploymentVariables.Action.TargetRoles,
+                    PropertyName = SpecialVariables.Step.TargetRoles,
                     PropertyValue = "web"
                 }
             }

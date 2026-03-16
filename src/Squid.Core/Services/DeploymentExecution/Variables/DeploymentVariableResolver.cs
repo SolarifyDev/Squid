@@ -13,17 +13,20 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
     private readonly IDeploymentDataProvider _deploymentDataProvider;
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
+    private readonly ICertificateVariableExpander _certificateExpander;
 
     public DeploymentVariableResolver(
         IProjectDataProvider projectDataProvider,
         IDeploymentDataProvider deploymentDataProvider,
         IDeploymentSnapshotService deploymentSnapshotService,
-        ILibraryVariableSetDataProvider libraryVariableSetDataProvider)
+        ILibraryVariableSetDataProvider libraryVariableSetDataProvider,
+        ICertificateVariableExpander certificateExpander)
     {
         _projectDataProvider = projectDataProvider;
         _deploymentDataProvider = deploymentDataProvider;
         _deploymentSnapshotService = deploymentSnapshotService;
         _libraryVariableSetDataProvider = libraryVariableSetDataProvider;
+        _certificateExpander = certificateExpander;
     }
 
     public async Task<List<VariableDto>> ResolveVariablesAsync(int deploymentId, CancellationToken cancellationToken)
@@ -33,10 +36,13 @@ public class DeploymentVariableResolver : IDeploymentVariableResolver
         if (deployment == null)
             throw new DeploymentEntityNotFoundException("Deployment", deploymentId);
 
-        if (deployment.VariableSetSnapshotId.HasValue)
-            return await LoadVariablesFromSnapshotAsync(deployment.VariableSetSnapshotId.Value, cancellationToken).ConfigureAwait(false);
+        var variables = deployment.VariableSetSnapshotId.HasValue
+            ? await LoadVariablesFromSnapshotAsync(deployment.VariableSetSnapshotId.Value, cancellationToken).ConfigureAwait(false)
+            : await SnapshotVariablesFromProjectAsync(deployment, cancellationToken).ConfigureAwait(false);
 
-        return await SnapshotVariablesFromProjectAsync(deployment, cancellationToken).ConfigureAwait(false);
+        await _certificateExpander.ExpandAsync(variables, cancellationToken).ConfigureAwait(false);
+
+        return variables;
     }
 
     private async Task<List<VariableDto>> LoadVariablesFromSnapshotAsync(int snapshotId, CancellationToken ct)

@@ -8,6 +8,7 @@ public interface ILibraryVariableSetDataProvider : IScopedDependency
     Task AddAsync(LibraryVariableSet entity, bool forceSave = true, CancellationToken ct = default);
     Task<LibraryVariableSet> GetByIdAsync(int id, CancellationToken ct = default);
     Task<List<LibraryVariableSet>> GetByIdsAsync(List<int> ids, CancellationToken ct = default);
+    Task UpdateAsync(LibraryVariableSet entity, bool forceSave = true, CancellationToken ct = default);
     Task DeleteAsync(LibraryVariableSet entity, bool forceSave = true, CancellationToken ct = default);
 }
 
@@ -42,6 +43,14 @@ public class LibraryVariableSetDataProvider : ILibraryVariableSetDataProvider
 
         return await _repository.QueryNoTracking<LibraryVariableSet>(x => ids.Contains(x.Id))
             .ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task UpdateAsync(LibraryVariableSet entity, bool forceSave = true, CancellationToken ct = default)
+    {
+        await _repository.UpdateAsync(entity, ct).ConfigureAwait(false);
+
+        if (forceSave)
+            await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(LibraryVariableSet entity, bool forceSave = true, CancellationToken ct = default)

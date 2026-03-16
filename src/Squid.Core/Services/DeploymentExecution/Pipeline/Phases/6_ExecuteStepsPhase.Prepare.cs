@@ -7,6 +7,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -148,7 +149,7 @@ public sealed partial class ExecuteStepsPhase
 
     private static HashSet<string> ExtractStepRoles(DeploymentStepDto step)
     {
-        var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+        var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
 
         if (rolesProp == null || string.IsNullOrEmpty(rolesProp.PropertyValue))
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
