@@ -102,7 +102,7 @@ public class DockerPackageSearchStrategyTests
             .Returns(client);
 
         var sut = CreateSut();
-        var feed = new ExternalFeed { FeedType = "Docker", FeedUri = "https://index.docker.io", RegistryPath = "squidcd" };
+        var feed = new ExternalFeed { FeedType = "Docker", FeedUri = "https://index.docker.io", Username = "squidcd" };
 
         var result = await sut.SearchAsync(feed, "squid", 10, CancellationToken.None);
 

@@ -25,11 +25,15 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
 
     private async Task<List<string>> SearchDockerHubAsync(ExternalFeed feed, string query, int take, CancellationToken ct)
     {
-        var ns = feed.RegistryPath?.Trim().Trim('/');
+        var ns = ResolveNamespace(feed);
+
+        var effectiveQuery = !string.IsNullOrWhiteSpace(ns) && query.StartsWith($"{ns}/", StringComparison.OrdinalIgnoreCase)
+            ? query[($"{ns}/".Length)..]
+            : query;
 
         var url = string.IsNullOrWhiteSpace(ns)
-            ? $"https://hub.docker.com/v2/search/repositories/?query={Uri.EscapeDataString(query)}&page_size={take}"
-            : $"https://hub.docker.com/v2/namespaces/{Uri.EscapeDataString(ns)}/repositories/?page_size={take}&name={Uri.EscapeDataString(query)}";
+            ? $"https://hub.docker.com/v2/search/repositories/?query={Uri.EscapeDataString(effectiveQuery)}&page_size={take}"
+            : $"https://hub.docker.com/v2/namespaces/{Uri.EscapeDataString(ns)}/repositories/?page_size={take}&name={Uri.EscapeDataString(effectiveQuery)}";
 
         var client = httpClientFactory.CreateClient(timeout: SearchTimeout);
 
@@ -103,6 +107,19 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
         var encoded = DockerRegistryAuthHelper.ToBasicAuthValue(feed.Username, feed.Password);
 
         return new Dictionary<string, string> { ["Authorization"] = $"Basic {encoded}" };
+    }
+
+    private static string ResolveNamespace(ExternalFeed feed)
+    {
+        var registryPath = feed.RegistryPath?.Trim().Trim('/');
+        if (!string.IsNullOrWhiteSpace(registryPath))
+            return registryPath;
+
+        var username = feed.Username?.Trim();
+        if (!string.IsNullOrWhiteSpace(username))
+            return username;
+
+        return null;
     }
 
     private static bool IsDockerHub(Uri baseUri) =>

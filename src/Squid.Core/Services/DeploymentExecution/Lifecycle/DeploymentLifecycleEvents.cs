@@ -95,6 +95,7 @@ public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) 
 public sealed record ManualInterventionPromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ManualInterventionResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
-// === Cancellation / Pause ===
+// === Cancellation / Pause / Timeout ===
 public sealed record DeploymentCancelledEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record DeploymentPausedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record DeploymentTimedOutEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
