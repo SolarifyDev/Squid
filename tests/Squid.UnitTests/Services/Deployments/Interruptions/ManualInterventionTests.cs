@@ -171,7 +171,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         var ctx = new DeploymentTaskContext
         {
@@ -231,7 +231,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         // Deployment targets environment 1 (TEST), but action is configured for environment 99 (PRD)
         var ctx = new DeploymentTaskContext
@@ -282,7 +282,7 @@ public class ManualInterventionTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         lifecycle.Setup(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         // Deployment targets environment 99 (PRD), action configured for environment 99 (PRD) — should execute
         var ctx = new DeploymentTaskContext

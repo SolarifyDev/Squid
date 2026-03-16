@@ -108,7 +108,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.ResumeFromBatchIndex = 0;
@@ -135,7 +135,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -166,7 +166,7 @@ public class ResumeCheckpointTests
             .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(cp))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };

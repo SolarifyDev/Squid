@@ -1,6 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Interruptions;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Models.Deployments.Execution;
@@ -105,7 +106,6 @@ public sealed partial class ExecuteStepsPhase
         DeploymentTargetContext tc,
         CancellationToken ct)
     {
-        const int maxRetries = 10;
         var actionSortOrder = 0;
 
         foreach (var prepared in stepResults)
@@ -115,11 +115,27 @@ public sealed partial class ExecuteStepsPhase
 
             ++actionSortOrder;
             var retry = true;
-            var retryCount = 0;
+            var resumeChecked = false;
 
             while (retry)
             {
                 retry = false;
+
+                if (!resumeChecked && _ctx.IsResume && _ctx.UseGuidedFailure)
+                {
+                    resumeChecked = true;
+
+                    var resumeOutcome = await ResolveGuidedFailureOnResumeAsync(step, actionResult, stepDisplayOrder, ct).ConfigureAwait(false);
+
+                    if (resumeOutcome == InterruptionOutcome.Skip)
+                    {
+                        result.Failed = false;
+                        break;
+                    }
+
+                    if (resumeOutcome == InterruptionOutcome.Abort)
+                        throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{actionResult.ActionName}\"");
+                }
 
                 await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
 
@@ -158,21 +174,8 @@ public sealed partial class ExecuteStepsPhase
 
                     if (step.IsRequired && _ctx.UseGuidedFailure)
                     {
-                        var outcome = await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
-
-                        if (outcome == InterruptionOutcome.Retry && retryCount < maxRetries)
-                        {
-                            result.Failed = false;
-                            retry = true;
-                            retryCount++;
-                            continue;
-                        }
-
-                        if (outcome == InterruptionOutcome.Skip)
-                        {
-                            result.Failed = false;
-                            break;
-                        }
+                        await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                        // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
                     }
 
                     if (step.IsRequired)
@@ -210,7 +213,7 @@ public sealed partial class ExecuteStepsPhase
         return executed;
     }
 
-    private async Task<InterruptionOutcome> HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
+    private async Task HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
     {
         var form = InterruptionFormBuilder.BuildGuidedFailureForm(step.Name, actionResult.ActionName, tc.Machine.Name, ex.Message);
 
@@ -222,7 +225,7 @@ public sealed partial class ExecuteStepsPhase
             InterruptionType = InterruptionType.GuidedFailure
         }), ct).ConfigureAwait(false);
 
-        var interruption = await interruptionService.CreateInterruptionAsync(new CreateInterruptionRequest
+        await interruptionService.CreateInterruptionAsync(new CreateInterruptionRequest
         {
             ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id,
             InterruptionType = InterruptionType.GuidedFailure, StepDisplayOrder = stepDisplayOrder,
@@ -231,16 +234,32 @@ public sealed partial class ExecuteStepsPhase
             Form = form, SpaceId = _ctx.Deployment.SpaceId
         }, ct).ConfigureAwait(false);
 
-        await PersistCheckpointAsync(_currentBatchIndex, ct).ConfigureAwait(false);
+        // Save checkpoint with the last *completed* batch index, not the current (failing) one.
+        // On resume, the failing batch replays so the resolved interruption can be applied.
+        await PersistCheckpointAsync(_currentBatchIndex - 1, ct).ConfigureAwait(false);
 
-        var outcome = await interruptionService.WaitForInterruptionAsync(interruption.Id, ct).ConfigureAwait(false);
+        await serverTaskService.TransitionStateAsync(_ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
 
-        await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
+        throw new DeploymentSuspendedException(_ctx.ServerTaskId);
+    }
+
+    private async Task<InterruptionOutcome?> ResolveGuidedFailureOnResumeAsync(DeploymentStepDto step, ActionExecutionResult actionResult, int stepDisplayOrder, CancellationToken ct)
+    {
+        var existing = await interruptionService.FindResolvedInterruptionAsync(_ctx.ServerTaskId, step.Name, actionResult.ActionName, ct).ConfigureAwait(false);
+
+        if (existing == null) return null;
+
+        var outcome = Enum.TryParse<InterruptionOutcome>(existing.Resolution, true, out var parsed) ? parsed : (InterruptionOutcome?)null;
+
+        if (outcome.HasValue)
         {
-            StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
-            GuidedFailureResolution = outcome.ToString(),
-            InterruptionType = InterruptionType.GuidedFailure
-        }), ct).ConfigureAwait(false);
+            await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
+            {
+                StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
+                GuidedFailureResolution = outcome.Value.ToString(),
+                InterruptionType = InterruptionType.GuidedFailure
+            }), ct).ConfigureAwait(false);
+        }
 
         return outcome;
     }

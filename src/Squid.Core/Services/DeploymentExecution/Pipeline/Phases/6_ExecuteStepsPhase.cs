@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Filtering;
@@ -9,7 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
-public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService) : IDeploymentPipelinePhase
+public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService, IServerTaskService serverTaskService) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 
