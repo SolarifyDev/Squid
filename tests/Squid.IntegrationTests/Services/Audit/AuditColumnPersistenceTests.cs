@@ -87,9 +87,15 @@ public class AuditColumnPersistenceTests : TestBase
             var channel = await repo.GetByIdAsync<Channel>(channelId);
 
             channel.ShouldNotBeNull();
-            channel.CreatedDate.ShouldBe(originalCreatedDate);
+
+            // PostgreSQL timestamptz has microsecond precision (6 digits),
+            // while DateTimeOffset.UtcNow has tick precision (7 digits).
+            // Compare with a tolerance to account for the truncation on round-trip.
+            var createdDelta = (channel.CreatedDate - originalCreatedDate).Duration();
+            createdDelta.TotalMicroseconds.ShouldBeLessThan(1);
+
             channel.CreatedBy.ShouldBe(CurrentUsers.InternalUser.Id);
-            channel.LastModifiedDate.ShouldBeGreaterThan(originalCreatedDate);
+            channel.LastModifiedDate.ShouldBeGreaterThan(channel.CreatedDate);
             channel.LastModifiedBy.ShouldBe(CurrentUsers.InternalUser.Id);
         }).ConfigureAwait(false);
     }
