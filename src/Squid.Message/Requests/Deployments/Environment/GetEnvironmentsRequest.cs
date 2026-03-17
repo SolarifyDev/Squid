@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 using Squid.Message.Models.Deployments.Environment;
 
 namespace Squid.Message.Requests.Deployments.Environment;
 
+[RequiresPermission(Permission.EnvironmentView)]
 public class GetEnvironmentsRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; } = 1;

@@ -1,9 +1,12 @@
 using System.Text.Json.Serialization;
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Environment;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Environment;
 
+[RequiresPermission(Permission.EnvironmentCreate)]
 public class CreateEnvironmentCommand : ICommand
 {
     public int SpaceId { get; set; }

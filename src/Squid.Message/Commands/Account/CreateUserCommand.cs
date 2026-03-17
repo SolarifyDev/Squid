@@ -1,9 +1,12 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Account;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Account;
 
-public class RegisterCommand : ICommand
+[RequiresPermission(Permission.UserEdit)]
+public class CreateUserCommand : ICommand
 {
     public string UserName { get; set; }
 
@@ -12,11 +15,11 @@ public class RegisterCommand : ICommand
     public string? DisplayName { get; set; }
 }
 
-public class RegisterResponse : SquidResponse<RegisterResponseData>
+public class CreateUserResponse : SquidResponse<CreateUserResponseData>
 {
 }
 
-public class RegisterResponseData
+public class CreateUserResponseData
 {
     public bool IsSucceeded { get; set; }
 

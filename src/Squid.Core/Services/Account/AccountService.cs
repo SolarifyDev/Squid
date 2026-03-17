@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authentication;
+using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Account;
 using Squid.Message.Models.Account;
 using Squid.Message.Requests.Account;
@@ -10,9 +11,11 @@ namespace Squid.Core.Services.Account;
 
 public interface IAccountService : IScopedDependency
 {
-    Task<RegisterResponseData> RegisterAsync(RegisterCommand command, CancellationToken cancellationToken = default);
+    Task<CreateUserResponseData> CreateUserAsync(CreateUserCommand command, CancellationToken cancellationToken = default);
 
     Task<LoginResponseData> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default);
+
+    Task<List<UserAccountDto>> GetAllAsync(CancellationToken cancellationToken = default);
 
     Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
 
@@ -24,16 +27,18 @@ public class AccountService : IAccountService
     private readonly IRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IUserTokenService _userTokenService;
+    private readonly ITeamDataProvider _teamDataProvider;
     private readonly PasswordHasher<UserAccount> _passwordHasher = new();
 
-    public AccountService(IRepository repository, IUnitOfWork unitOfWork, IUserTokenService userTokenService)
+    public AccountService(IRepository repository, IUnitOfWork unitOfWork, IUserTokenService userTokenService, ITeamDataProvider teamDataProvider)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
         _userTokenService = userTokenService;
+        _teamDataProvider = teamDataProvider;
     }
 
-    public async Task<RegisterResponseData> RegisterAsync(RegisterCommand command, CancellationToken cancellationToken = default)
+    public async Task<CreateUserResponseData> CreateUserAsync(CreateUserCommand command, CancellationToken cancellationToken = default)
     {
         var userName = NormalizeUserNameInput(command.UserName);
         var password = command.Password;
@@ -71,7 +76,9 @@ public class AccountService : IAccountService
         await _repository.InsertAsync(user, cancellationToken).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        return new RegisterResponseData
+        await AddToEveryoneTeamAsync(user.Id, cancellationToken).ConfigureAwait(false);
+
+        return new CreateUserResponseData
         {
             IsSucceeded = true,
             UserAccount = ToDto(user)
@@ -115,6 +122,13 @@ public class AccountService : IAccountService
         };
     }
 
+    public async Task<List<UserAccountDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var users = await _repository.Query<UserAccount>(x => !x.IsSystem).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return users.Select(ToDto).ToList();
+    }
+
     public async Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         var user = await _repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == id, cancellationToken).ConfigureAwait(false);
@@ -134,6 +148,16 @@ public class AccountService : IAccountService
         if (apiKeyEntity == null) return null;
 
         return await GetByIdAsync(apiKeyEntity.UserAccountId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AddToEveryoneTeamAsync(int userId, CancellationToken ct)
+    {
+        var teams = await _teamDataProvider.GetAllBySpaceAsync(0, ct).ConfigureAwait(false);
+        var everyoneTeam = teams.FirstOrDefault(t => t.Name == "Everyone");
+
+        if (everyoneTeam == null) return;
+
+        await _teamDataProvider.AddMemberAsync(new TeamMember { TeamId = everyoneTeam.Id, UserId = userId }, ct: ct).ConfigureAwait(false);
     }
 
     private static string NormalizeUserNameInput(string? userName)

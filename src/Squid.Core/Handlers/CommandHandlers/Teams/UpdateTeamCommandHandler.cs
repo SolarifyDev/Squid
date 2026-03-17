@@ -9,6 +9,6 @@ public class UpdateTeamCommandHandler(ITeamService teamService) : ICommandHandle
     {
         var team = await teamService.UpdateAsync(context.Message, cancellationToken).ConfigureAwait(false);
 
-        return new UpdateTeamResponse { Data = new UpdateTeamResponseData { Team = team } };
+        return new UpdateTeamResponse { Data = team };
     }
 }

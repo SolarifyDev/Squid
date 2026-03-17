@@ -1,9 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Response;
-using Squid.Message.Enums;
 
 namespace Squid.Message.Commands.Deployments.Variable;
 
+[RequiresPermission(Permission.VariableEdit)]
 public class UpdateVariableSetCommand : ICommand
 {
     public int Id { get; set; }

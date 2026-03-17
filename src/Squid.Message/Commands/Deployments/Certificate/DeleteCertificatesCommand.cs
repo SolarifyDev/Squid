@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Certificate;
 
+[RequiresPermission(Permission.AccountDelete)]
 public class DeleteCertificatesCommand : ICommand
 {
     public List<int> Ids { get; set; }

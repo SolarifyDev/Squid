@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Process;
 
+[RequiresPermission(Permission.ProcessEdit)]
 public class UpdateDeploymentProcessCommand : ICommand
 {
     public int Id { get; set; }

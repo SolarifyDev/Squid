@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Release;
 
+[RequiresPermission(Permission.ReleaseView)]
 public class GetReleaseVariableSnapshotRequest : IRequest
 {
     public int ReleaseId { get; set; }

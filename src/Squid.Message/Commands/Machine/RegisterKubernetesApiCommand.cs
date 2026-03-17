@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
+[RequiresPermission(Permission.MachineCreate)]
 public class RegisterKubernetesApiCommand : ICommand
 {
     public string MachineName { get; set; }

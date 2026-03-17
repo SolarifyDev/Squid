@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Machines;
 
+[RequiresPermission(Permission.MachineView)]
 public class GetConnectionStatusRequest : IRequest
 {
     public string SubscriptionId { get; set; }

@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Process;
 
+[RequiresPermission(Permission.ProcessView)]
 public class GetDeploymentProcessRequest : IRequest
 {
     public int Id { get; set; }

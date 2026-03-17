@@ -16,6 +16,8 @@ public class Space : IEntity<int>, IAuditable
 
     public byte[] DataVersion { get; set; }
 
+    public string Description { get; set; }
+
     public bool IsPrivate { get; set; }
 
     // IAuditable

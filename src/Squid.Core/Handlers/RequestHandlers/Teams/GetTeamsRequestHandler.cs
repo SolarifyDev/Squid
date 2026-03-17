@@ -9,6 +9,6 @@ public class GetTeamsRequestHandler(ITeamService teamService) : IRequestHandler<
     {
         var teams = await teamService.GetAllBySpaceAsync(context.Message.SpaceId, cancellationToken).ConfigureAwait(false);
 
-        return new GetTeamsResponse { Data = new GetTeamsResponseData { Teams = teams } };
+        return new GetTeamsResponse { Data = teams };
     }
 }

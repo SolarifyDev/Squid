@@ -9,6 +9,6 @@ public class GetTeamMembersRequestHandler(ITeamService teamService) : IRequestHa
     {
         var members = await teamService.GetMembersAsync(context.Message.TeamId, cancellationToken).ConfigureAwait(false);
 
-        return new GetTeamMembersResponse { Data = new GetTeamMembersResponseData { Members = members } };
+        return new GetTeamMembersResponse { Data = members };
     }
 }

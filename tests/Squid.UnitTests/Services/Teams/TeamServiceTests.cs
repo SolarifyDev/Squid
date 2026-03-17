@@ -1,4 +1,5 @@
 using System;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Teams;
@@ -10,11 +11,12 @@ public class TeamServiceTests
 {
     private readonly Mock<IMapper> _mapper = new();
     private readonly Mock<ITeamDataProvider> _teamDataProvider = new();
+    private readonly Mock<IRepository> _repository = new();
     private readonly TeamService _sut;
 
     public TeamServiceTests()
     {
-        _sut = new TeamService(_mapper.Object, _teamDataProvider.Object);
+        _sut = new TeamService(_mapper.Object, _teamDataProvider.Object, _repository.Object);
     }
 
     [Fact]
@@ -75,6 +77,30 @@ public class TeamServiceTests
         _teamDataProvider.Setup(p => p.GetByIdAsync(99, It.IsAny<CancellationToken>())).ReturnsAsync((Team)null);
 
         await Should.ThrowAsync<InvalidOperationException>(() => _sut.DeleteAsync(99));
+    }
+
+    [Fact]
+    public async Task Delete_BuiltInTeam_Throws()
+    {
+        var team = new Team { Id = 1, Name = "Squid Administrators", IsBuiltIn = true };
+        _teamDataProvider.Setup(p => p.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(team);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => _sut.DeleteAsync(1));
+
+        ex.Message.ShouldContain("built-in");
+        _teamDataProvider.Verify(p => p.DeleteAsync(It.IsAny<Team>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Update_BuiltInTeam_Throws()
+    {
+        var team = new Team { Id = 1, Name = "Squid Administrators", IsBuiltIn = true };
+        _teamDataProvider.Setup(p => p.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(team);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => _sut.UpdateAsync(new UpdateTeamCommand { Id = 1, Name = "Hacked" }));
+
+        ex.Message.ShouldContain("built-in");
+        _teamDataProvider.Verify(p => p.UpdateAsync(It.IsAny<Team>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

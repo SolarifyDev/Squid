@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Channel;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Channel;
 
+[RequiresPermission(Permission.ChannelView)]
 public class GetChannelsRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; }

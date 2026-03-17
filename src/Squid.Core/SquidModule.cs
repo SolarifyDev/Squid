@@ -1,7 +1,9 @@
 using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.Spaces;
 using Squid.Core.Settings.System;
 
 namespace Squid.Core;
@@ -29,6 +31,9 @@ public class SquidModule : Module
         RegisterCaching(builder);
         RegisterAutoMapper(builder);
         RegisterDependency(builder);
+
+        builder.RegisterType<BuiltInRoleSeeder>().As<IStartable>().SingleInstance();
+        builder.RegisterType<DefaultSpaceSeeder>().As<IStartable>().SingleInstance();
     }
 
     private void RegisterLogging(ContainerBuilder builder)

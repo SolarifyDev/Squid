@@ -2,6 +2,7 @@ using System.Net;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
+using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -14,6 +15,7 @@ public class GlobalExceptionFilter : IExceptionFilter
         {
             ValidationException => HttpStatusCode.BadRequest,
             UnauthorizedAccessException => HttpStatusCode.Unauthorized,
+            PermissionDeniedException => HttpStatusCode.Forbidden,
             _ => HttpStatusCode.InternalServerError
         };
 

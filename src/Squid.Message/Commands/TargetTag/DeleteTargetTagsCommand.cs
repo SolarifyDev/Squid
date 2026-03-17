@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.TargetTag;
 
+[RequiresPermission(Permission.MachineEdit)]
 public class DeleteTargetTagsCommand : ICommand
 {
     public List<int> Ids { get; set; }

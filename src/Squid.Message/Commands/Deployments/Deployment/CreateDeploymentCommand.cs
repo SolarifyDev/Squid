@@ -1,9 +1,12 @@
 using System.Text.Json.Serialization;
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Deployment;
 
+[RequiresPermission(Permission.DeploymentCreate)]
 public class CreateDeploymentCommand : ICommand
 {
     public int ReleaseId { get; set; }

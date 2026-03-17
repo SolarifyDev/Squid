@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Teams;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Teams;
 
+[RequiresPermission(Permission.TeamEdit)]
 public class UpdateTeamCommand : ICommand
 {
     public int Id { get; set; }
@@ -11,11 +14,6 @@ public class UpdateTeamCommand : ICommand
     public int SpaceId { get; set; }
 }
 
-public class UpdateTeamResponse : SquidResponse<UpdateTeamResponseData>
+public class UpdateTeamResponse : SquidResponse<TeamDto>
 {
-}
-
-public class UpdateTeamResponseData
-{
-    public TeamDto Team { get; set; }
 }

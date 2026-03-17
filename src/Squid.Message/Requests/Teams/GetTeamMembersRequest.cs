@@ -1,18 +1,16 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Teams;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Teams;
 
+[RequiresPermission(Permission.TeamView)]
 public class GetTeamMembersRequest : IRequest
 {
     public int TeamId { get; set; }
 }
 
-public class GetTeamMembersResponse : SquidResponse<GetTeamMembersResponseData>
+public class GetTeamMembersResponse : SquidResponse<List<TeamMemberDto>>
 {
-}
-
-public class GetTeamMembersResponseData
-{
-    public List<TeamMemberDto> Members { get; set; }
 }

@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
+[RequiresPermission(Permission.MachineEdit)]
 public class GenerateKubernetesAgentUpgradeScriptCommand : ICommand
 {
     public int MachineId { get; set; }

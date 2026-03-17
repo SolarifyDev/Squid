@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Process;
 
+[RequiresPermission(Permission.ProcessView)]
 public class GetPackageReferencesRequest : IRequest
 {
     public int ProjectId { get; set; }

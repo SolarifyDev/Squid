@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.LifeCycle;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.LifeCycle;
 
+[RequiresPermission(Permission.LifecycleView)]
 public class GetLifecycleRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; }

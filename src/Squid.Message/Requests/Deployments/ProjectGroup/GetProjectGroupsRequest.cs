@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.ProjectGroup;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.ProjectGroup;
 
+[RequiresPermission(Permission.ProjectView)]
 public class GetProjectGroupsRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; }

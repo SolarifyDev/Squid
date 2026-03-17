@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Account;
 
+[RequiresPermission(Permission.AccountView)]
 public class GetDeploymentAccountsRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; } = 1;

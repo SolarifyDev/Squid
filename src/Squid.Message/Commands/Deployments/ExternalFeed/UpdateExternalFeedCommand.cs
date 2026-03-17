@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.ExternalFeed;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.ExternalFeed;
 
+[RequiresPermission(Permission.FeedEdit)]
 public class UpdateExternalFeedCommand : ICommand
 {
     public int Id { get; set; }

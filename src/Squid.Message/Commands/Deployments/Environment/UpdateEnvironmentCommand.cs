@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Environment;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Environment;
 
+[RequiresPermission(Permission.EnvironmentEdit)]
 public class UpdateEnvironmentCommand : ICommand
 {
     public int Id { get; set; }

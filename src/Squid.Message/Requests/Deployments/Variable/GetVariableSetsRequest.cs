@@ -1,9 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 using Squid.Message.Models.Deployments.Variable;
-using Squid.Message.Enums;
 
 namespace Squid.Message.Requests.Deployments.Variable;
 
+[RequiresPermission(Permission.VariableView)]
 public class GetVariableSetsRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; } = 1;

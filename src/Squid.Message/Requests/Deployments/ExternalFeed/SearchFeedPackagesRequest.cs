@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.ExternalFeed;
 
+[RequiresPermission(Permission.FeedView)]
 public class SearchFeedPackagesRequest : IRequest
 {
     public int FeedId { get; set; }

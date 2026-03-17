@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Release;
 
+[RequiresPermission(Permission.ReleaseCreate)]
 public class CreateReleaseCommand : ICommand
 {
     public string Version { get; set; }

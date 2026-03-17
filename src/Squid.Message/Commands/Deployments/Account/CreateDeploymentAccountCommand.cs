@@ -1,9 +1,11 @@
+using Squid.Message.Attributes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Account;
 
+[RequiresPermission(Permission.AccountCreate)]
 public class CreateDeploymentAccountCommand : ICommand
 {
     public int SpaceId { get; set; }

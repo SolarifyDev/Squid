@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.ProjectGroup;
 
+[RequiresPermission(Permission.ProjectDelete)]
 public class DeleteProjectGroupsCommand : ICommand
 {
     public List<int> Ids { get; set; }

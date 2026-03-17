@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Certificate;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Certificate;
 
+[RequiresPermission(Permission.AccountView)]
 public class GetCertificatesRequest : IPaginatedRequest
 {
     public int PageIndex { get; set; } = 1;

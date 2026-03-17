@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.LifeCycle;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.LifeCycle;
 
+[RequiresPermission(Permission.LifecycleEdit)]
 public class UpdateLifeCycleCommand : ICommand
 {
     public int Id { get; set; }

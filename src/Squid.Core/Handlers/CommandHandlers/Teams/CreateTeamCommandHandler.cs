@@ -9,6 +9,6 @@ public class CreateTeamCommandHandler(ITeamService teamService) : ICommandHandle
     {
         var team = await teamService.CreateAsync(context.Message, cancellationToken).ConfigureAwait(false);
 
-        return new CreateTeamResponse { Data = new CreateTeamResponseData { Team = team } };
+        return new CreateTeamResponse { Data = team };
     }
 }

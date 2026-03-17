@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
+[RequiresPermission(Permission.MachineCreate)]
 public class RegisterKubernetesAgentCommand : ICommand
 {
     public string MachineName { get; set; }
