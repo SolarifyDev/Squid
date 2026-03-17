@@ -16,6 +16,7 @@ public class DeploymentInterruption : IEntity<int>, IAuditable
     public string FormJson { get; set; }
     public string SubmittedValuesJson { get; set; }
     public string ResponsibleUserId { get; set; }
+    public string ResponsibleTeamIds { get; set; }
     public string Resolution { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
     public int SpaceId { get; set; }

@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Constants;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -67,6 +68,7 @@ public sealed class ManualInterventionActionHandler(
     private async Task SuspendForInterruptionAsync(StepActionContext ctx, CancellationToken ct)
     {
         var instructions = ctx.Action.Properties?.FirstOrDefault(p => p.PropertyName == "Squid.Action.Manual.Instructions")?.PropertyValue ?? "";
+        var responsibleTeamIds = ctx.Action.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Action.ManualResponsibleTeamIds)?.PropertyValue;
         var form = InterruptionFormBuilder.BuildManualInterventionForm(instructions);
 
         await lifecycle.EmitAsync(new ManualInterventionPromptEvent(new DeploymentEventContext
@@ -80,7 +82,8 @@ public sealed class ManualInterventionActionHandler(
             ServerTaskId = ctx.ServerTaskId, DeploymentId = ctx.DeploymentId,
             InterruptionType = InterruptionType.ManualIntervention, StepDisplayOrder = ctx.StepDisplayOrder,
             StepName = ctx.Step.Name, ActionName = ctx.Action.Name,
-            Form = form, SpaceId = ctx.SpaceId
+            Form = form, SpaceId = ctx.SpaceId,
+            ResponsibleTeamIds = responsibleTeamIds
         }, ct).ConfigureAwait(false);
 
         await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);

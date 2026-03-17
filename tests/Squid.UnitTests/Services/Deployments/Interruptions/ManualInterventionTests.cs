@@ -348,6 +348,82 @@ public class ManualInterventionTests
         lifecycle.Verify(l => l.EmitAsync(It.Is<ManualInterventionResolvedEvent>(e => e.Context.GuidedFailureResolution == "Abort"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ========== ResponsibleTeamIds ==========
+
+    [Fact]
+    public async Task SuspendForInterruption_PassesResponsibleTeamIds()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+
+        var serverTaskService = new Mock<IServerTaskService>();
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+
+        var handler = new ManualInterventionActionHandler(interruptionService.Object, serverTaskService.Object, lifecycle.Object);
+
+        var ctx = new StepActionContext
+        {
+            ServerTaskId = 1, DeploymentId = 1, SpaceId = 1,
+            Step = new DeploymentStepDto { Id = 1, Name = "Step 1" },
+            Action = new DeploymentActionDto
+            {
+                Id = 1, Name = "Manual Action", ActionType = "Squid.Manual",
+                Properties = new List<DeploymentActionPropertyDto>
+                {
+                    new() { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = "Please verify" },
+                    new() { PropertyName = "Squid.Action.Manual.ResponsibleTeamIds", PropertyValue = "5,10" }
+                }
+            },
+            Variables = new List<VariableDto>(),
+            ReleaseVersion = "1.0.0",
+            StepDisplayOrder = 1, ActionSortOrder = 1
+        };
+
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
+
+        interruptionService.Verify(s => s.CreateInterruptionAsync(
+            It.Is<CreateInterruptionRequest>(r => r.ResponsibleTeamIds == "5,10"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SuspendForInterruption_NoTeamIdsProperty_PassesNull()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+
+        var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
+
+        var ctx = new StepActionContext
+        {
+            ServerTaskId = 1, DeploymentId = 1, SpaceId = 1,
+            Step = new DeploymentStepDto { Id = 1, Name = "Step 1" },
+            Action = new DeploymentActionDto
+            {
+                Id = 1, Name = "Manual Action", ActionType = "Squid.Manual",
+                Properties = new List<DeploymentActionPropertyDto>
+                {
+                    new() { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = "Please verify" }
+                }
+            },
+            Variables = new List<VariableDto>(),
+            ReleaseVersion = "1.0.0",
+            StepDisplayOrder = 1, ActionSortOrder = 1
+        };
+
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
+
+        interruptionService.Verify(s => s.CreateInterruptionAsync(
+            It.Is<CreateInterruptionRequest>(r => r.ResponsibleTeamIds == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ========== Helpers ==========
 
     private static ManualInterventionActionHandler CreateHandler()
