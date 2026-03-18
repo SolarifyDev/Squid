@@ -9,7 +9,9 @@ public static class PermissionExtensions
 
     public static PermissionScope GetScope(this Permission permission)
     {
-        return ScopeCache.TryGetValue(permission, out var scope) ? scope : PermissionScope.SpaceOnly;
+        return ScopeCache.TryGetValue(permission, out var scope)
+            ? scope
+            : throw new InvalidOperationException($"Permission {permission} is missing [PermissionScope] attribute.");
     }
 
     public static bool CanApplyAtSpaceLevel(this Permission permission)

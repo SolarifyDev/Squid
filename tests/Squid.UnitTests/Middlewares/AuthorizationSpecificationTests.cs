@@ -174,6 +174,53 @@ public class AuthorizationSpecificationTests
         _authorizationService.Verify(x => x.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.Permission == Permission.TaskView && r.SpaceId == null), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ========== Multiple Permissions AND Logic ==========
+
+    [Fact]
+    public async Task MultiplePermissions_FirstDenied_DoesNotCheckSecond()
+    {
+        _currentUser.Setup(x => x.Id).Returns(1);
+        _authorizationService
+            .Setup(x => x.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.Permission == Permission.UserView), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new PermissionDeniedException(Permission.UserView, "Denied"));
+
+        var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
+        var context = new Mock<IContext<IMessage>>();
+        context.Setup(c => c.Message).Returns(new TestCommandWithMultipleSystemPermissions());
+
+        await Should.ThrowAsync<PermissionDeniedException>(() => spec.BeforeExecute(context.Object, CancellationToken.None));
+
+        _authorizationService.Verify(x => x.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.Permission == Permission.UserEdit), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InternalUser_SkipsAllChecks()
+    {
+        _currentUser.Setup(x => x.Id).Returns(Message.Constants.CurrentUsers.InternalUser.Id);
+
+        var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
+        var context = new Mock<IContext<IMessage>>();
+        context.Setup(c => c.Message).Returns(new TestSystemCommand());
+
+        await spec.BeforeExecute(context.Object, CancellationToken.None);
+
+        _authorizationService.Verify(x => x.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MixedPermission_WithSpaceId_PassesSpaceId()
+    {
+        _currentUser.Setup(x => x.Id).Returns(1);
+
+        var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
+        var context = new Mock<IContext<IMessage>>();
+        context.Setup(c => c.Message).Returns(new TestMixedSpaceScopedCommand());
+
+        await spec.BeforeExecute(context.Object, CancellationToken.None);
+
+        _authorizationService.Verify(x => x.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.Permission == Permission.TaskView && r.SpaceId == 7), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ========== Test Helper Classes ==========
 
     [RequiresPermission(Permission.UserView)]
@@ -196,4 +243,10 @@ public class AuthorizationSpecificationTests
 
     [RequiresPermission(Permission.TaskView)]
     private class TestMixedPermissionCommand : ICommand { }
+
+    [RequiresPermission(Permission.TaskView)]
+    private class TestMixedSpaceScopedCommand : ICommand, ISpaceScoped
+    {
+        public int? SpaceId => 7;
+    }
 }

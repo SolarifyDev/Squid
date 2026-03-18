@@ -524,6 +524,66 @@ public class AuthorizationServiceTests
         result.IsProjectGroupUnrestricted.ShouldBeTrue();
     }
 
+    // ========== Cross-Space Denial ==========
+
+    [Fact]
+    public async Task SpaceScopedRole_WrongSpace_Denied()
+    {
+        var request = new PermissionCheckRequest { UserId = 1, Permission = Permission.ProjectView, SpaceId = 2 };
+
+        SetupTeams(1, new List<int> { 10 });
+        SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole> { new() { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = 1 } });
+        SetupPermissions(50, new List<string> { "ProjectView" });
+
+        var result = await _sut.CheckPermissionAsync(request);
+
+        result.IsAuthorized.ShouldBeFalse();
+        result.Reason.ShouldContain("No roles match");
+    }
+
+    [Fact]
+    public async Task MixedPermission_SpaceScopedRole_NullSpaceId_Denied()
+    {
+        var request = new PermissionCheckRequest { UserId = 1, Permission = Permission.TaskView, SpaceId = null };
+
+        SetupTeams(1, new List<int> { 10 });
+        SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole> { new() { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = 5 } });
+        SetupPermissions(50, new List<string> { "TaskView" });
+
+        var result = await _sut.CheckPermissionAsync(request);
+
+        result.IsAuthorized.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SpaceScopedRole_SystemNullRole_MatchesAnySpace()
+    {
+        var request = new PermissionCheckRequest { UserId = 1, Permission = Permission.ProjectView, SpaceId = 99 };
+
+        SetupTeams(1, new List<int> { 10 });
+        SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole> { new() { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = null } });
+        SetupPermissions(50, new List<string> { "ProjectView" });
+        SetupEmptyScopes(100);
+
+        var result = await _sut.CheckPermissionAsync(request);
+
+        result.IsAuthorized.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task EnsurePermission_Denied_ThrowsWithCorrectPermission()
+    {
+        var request = new PermissionCheckRequest { UserId = 1, Permission = Permission.ProjectDelete, SpaceId = 1 };
+
+        SetupTeams(1, new List<int> { 10 });
+        SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole> { new() { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = 1 } });
+        SetupPermissions(50, new List<string> { "ProjectView" });
+
+        var ex = await Should.ThrowAsync<PermissionDeniedException>(_sut.EnsurePermissionAsync(request));
+
+        ex.Permission.ShouldBe(Permission.ProjectDelete);
+    }
+
     // ========== Helpers ==========
 
     private void SetupTeams(int userId, List<int> teamIds)

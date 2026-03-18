@@ -82,8 +82,6 @@ public enum Permission
     // Interruption
     [PermissionScope(PermissionScope.SpaceOnly)] InterruptionView,
     [PermissionScope(PermissionScope.SpaceOnly)] InterruptionSubmit,
-    [PermissionScope(PermissionScope.SpaceOnly)] InterruptionViewSubmitResponsible,
-
     // Team
     [PermissionScope(PermissionScope.Mixed)] TeamView,
     [PermissionScope(PermissionScope.Mixed)] TeamCreate,
