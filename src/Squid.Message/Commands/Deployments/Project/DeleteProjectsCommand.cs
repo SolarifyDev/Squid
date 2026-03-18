@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Project;
 
 [RequiresPermission(Permission.ProjectDelete)]
-public class DeleteProjectsCommand : ICommand
+public class DeleteProjectsCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

@@ -16,6 +16,8 @@ public class UserAccount : IEntity<int>, IAuditable
 
     public bool IsSystem { get; set; }
 
+    public bool MustChangePassword { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

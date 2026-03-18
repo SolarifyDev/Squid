@@ -21,4 +21,6 @@ public class LoginResponseData
     public DateTime ExpiresAtUtc { get; set; }
 
     public UserAccountDto UserAccount { get; set; }
+
+    public bool MustChangePassword { get; set; }
 }

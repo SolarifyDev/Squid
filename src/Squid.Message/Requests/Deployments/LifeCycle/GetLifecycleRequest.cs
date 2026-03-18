@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.LifeCycle;
 
 [RequiresPermission(Permission.LifecycleView)]
-public class GetLifecycleRequest : IPaginatedRequest
+public class GetLifecycleRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; }
     
     public int PageSize { get; set; }

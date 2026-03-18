@@ -6,8 +6,9 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.Message.Requests.Deployments.Variable;
 
 [RequiresPermission(Permission.VariableView)]
-public class GetVariableSetRequest : IRequest
+public class GetVariableSetRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

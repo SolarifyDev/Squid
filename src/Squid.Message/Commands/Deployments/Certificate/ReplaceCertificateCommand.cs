@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Certificate;
 
 [RequiresPermission(Permission.AccountEdit)]
-public class ReplaceCertificateCommand : ICommand
+public class ReplaceCertificateCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
     public string CertificateData { get; set; }
     public string Password { get; set; }

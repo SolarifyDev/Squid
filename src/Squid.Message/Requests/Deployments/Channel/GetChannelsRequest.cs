@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Channel;
 
 [RequiresPermission(Permission.ChannelView)]
-public class GetChannelsRequest : IPaginatedRequest
+public class GetChannelsRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; }
     
     public int PageSize { get; set; }

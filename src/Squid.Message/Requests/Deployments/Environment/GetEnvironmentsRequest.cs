@@ -6,8 +6,9 @@ using Squid.Message.Models.Deployments.Environment;
 namespace Squid.Message.Requests.Deployments.Environment;
 
 [RequiresPermission(Permission.EnvironmentView)]
-public class GetEnvironmentsRequest : IPaginatedRequest
+public class GetEnvironmentsRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; } = 1;
 
     public int PageSize { get; set; } = 20;

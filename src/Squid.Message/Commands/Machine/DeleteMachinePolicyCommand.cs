@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineDelete)]
-public class DeleteMachinePolicyCommand : ICommand
+public class DeleteMachinePolicyCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

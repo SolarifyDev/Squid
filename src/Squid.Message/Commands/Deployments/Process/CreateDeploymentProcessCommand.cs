@@ -6,7 +6,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Process;
 
 [RequiresPermission(Permission.ProcessEdit)]
-public class CreateDeploymentProcessCommand : ICommand
+public class CreateDeploymentProcessCommand : ICommand, ISpaceScoped
 {
     public int ProjectId { get; set; }
     
@@ -15,6 +15,7 @@ public class CreateDeploymentProcessCommand : ICommand
     public string Description { get; set; }
     
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     
     public string CreatedBy { get; set; }
 }

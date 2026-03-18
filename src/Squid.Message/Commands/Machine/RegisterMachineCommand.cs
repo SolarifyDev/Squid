@@ -5,12 +5,13 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class RegisterKubernetesAgentCommand : ICommand
+public class RegisterKubernetesAgentCommand : ICommand, ISpaceScoped
 {
     public string MachineName { get; set; }
     public string Thumbprint { get; set; }
     public string SubscriptionId { get; set; }
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     public string Roles { get; set; }
     public string Environments { get; set; }
     public string Namespace { get; set; } = "default";

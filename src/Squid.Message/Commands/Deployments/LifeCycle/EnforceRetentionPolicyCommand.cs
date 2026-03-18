@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.LifeCycle;
 
 [RequiresPermission(Permission.LifecycleEdit)]
-public class EnforceRetentionPolicyCommand : ICommand
+public class EnforceRetentionPolicyCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
 }
 
 public class EnforceRetentionPolicyResponse : SquidResponse<EnforceRetentionPolicyResponseData>

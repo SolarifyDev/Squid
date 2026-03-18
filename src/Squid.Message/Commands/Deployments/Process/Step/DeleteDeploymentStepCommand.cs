@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Process.Step;
 
 [RequiresPermission(Permission.ProcessEdit)]
-public class DeleteDeploymentStepCommand : ICommand
+public class DeleteDeploymentStepCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; } = new List<int>();
 }
 

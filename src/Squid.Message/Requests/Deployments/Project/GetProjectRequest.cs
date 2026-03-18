@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Project;
 
 [RequiresPermission(Permission.ProjectView)]
-public class GetProjectRequest : IRequest
+public class GetProjectRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.ExternalFeed;
 
 [RequiresPermission(Permission.FeedView)]
-public class SearchFeedPackagesRequest : IRequest
+public class SearchFeedPackagesRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int FeedId { get; set; }
     public string Query { get; set; }
     public int Take { get; set; } = 20;

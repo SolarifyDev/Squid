@@ -16,10 +16,10 @@ public class InterruptionController : ControllerBase
 
     [HttpGet("tasks/{taskId:int}/interruptions")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetPendingInterruptionsResponse))]
-    public async Task<IActionResult> GetPendingInterruptionsAsync(int taskId)
+    public async Task<IActionResult> GetPendingInterruptionsAsync(int taskId, [FromQuery] int? spaceId = null)
     {
         var response = await _mediator.RequestAsync<GetPendingInterruptionsRequest, GetPendingInterruptionsResponse>(
-            new GetPendingInterruptionsRequest { ServerTaskId = taskId }).ConfigureAwait(false);
+            new GetPendingInterruptionsRequest { ServerTaskId = taskId, SpaceId = spaceId }).ConfigureAwait(false);
 
         return Ok(response);
     }

@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Process;
 
 [RequiresPermission(Permission.ProcessView)]
-public class GetPackageReferencesRequest : IRequest
+public class GetPackageReferencesRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ProjectId { get; set; }
 }
 

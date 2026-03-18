@@ -6,7 +6,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Variable;
 
 [RequiresPermission(Permission.VariableEdit)]
-public class UpdateVariableSetCommand : ICommand
+public class UpdateVariableSetCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
 
@@ -19,6 +19,7 @@ public class UpdateVariableSetCommand : ICommand
     public VariableSetOwnerType OwnerType { get; set; }
 
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     public List<VariableModel> Variables { get; set; } = new List<VariableModel>();
 }

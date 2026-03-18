@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Squid.Message.Commands.Account;
 using Squid.Message.Requests.Account;
 using Squid.Message.Response;
 
@@ -46,6 +47,60 @@ public class AccountController : ControllerBase
         {
             return Unauthorized(new SquidResponse { Code = HttpStatusCode.Unauthorized, Msg = "User not found" });
         }
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ChangePasswordResponse))]
+    public async Task<IActionResult> ChangePasswordAsync([FromBody] ChangePasswordCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ChangePasswordCommand, ChangePasswordResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("users/{userId:int}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateUserStatusResponse))]
+    public async Task<IActionResult> UpdateUserStatusAsync(int userId, [FromBody] UpdateUserStatusCommand command, CancellationToken cancellationToken)
+    {
+        command.UserId = userId;
+
+        var response = await _mediator.SendAsync<UpdateUserStatusCommand, UpdateUserStatusResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("api-keys")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateApiKeyResponse))]
+    public async Task<IActionResult> CreateApiKeyAsync([FromBody] CreateApiKeyCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<CreateApiKeyCommand, CreateApiKeyResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpDelete("api-keys/{apiKeyId:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteApiKeyResponse))]
+    public async Task<IActionResult> DeleteApiKeyAsync(int apiKeyId, CancellationToken cancellationToken)
+    {
+        var command = new DeleteApiKeyCommand { ApiKeyId = apiKeyId };
+
+        var response = await _mediator.SendAsync<DeleteApiKeyCommand, DeleteApiKeyResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpGet("api-keys")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMyApiKeysResponse))]
+    public async Task<IActionResult> GetMyApiKeysAsync(CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<GetMyApiKeysRequest, GetMyApiKeysResponse>(new GetMyApiKeysRequest(), cancellationToken).ConfigureAwait(false);
 
         return Ok(response);
     }

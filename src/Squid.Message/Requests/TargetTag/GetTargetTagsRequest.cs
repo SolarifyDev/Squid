@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.TargetTag;
 
 [RequiresPermission(Permission.MachineView)]
-public class GetTargetTagsRequest : IRequest
+public class GetTargetTagsRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
 }
 
 public class GetTargetTagsResponse : SquidResponse<GetTargetTagsResponseData>

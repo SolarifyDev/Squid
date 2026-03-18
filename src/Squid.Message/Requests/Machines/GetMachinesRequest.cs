@@ -6,8 +6,9 @@ using Squid.Message.Models.Deployments.Machine;
 namespace Squid.Message.Requests.Machines;
 
 [RequiresPermission(Permission.MachineView)]
-public class GetMachinesRequest : IPaginatedRequest
+public class GetMachinesRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; } = 1;
 
     public int PageSize { get; set; } = 20;

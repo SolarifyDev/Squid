@@ -6,7 +6,7 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.Message.Requests.Deployments.Variable;
 
 [RequiresPermission(Permission.VariableView)]
-public class GetVariableSetsRequest : IPaginatedRequest
+public class GetVariableSetsRequest : IPaginatedRequest, ISpaceScoped
 {
     public int PageIndex { get; set; } = 1;
 

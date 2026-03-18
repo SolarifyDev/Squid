@@ -7,9 +7,10 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Environment;
 
 [RequiresPermission(Permission.EnvironmentCreate)]
-public class CreateEnvironmentCommand : ICommand
+public class CreateEnvironmentCommand : ICommand, ISpaceScoped
 {
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     public string Slug { get; set; }
 

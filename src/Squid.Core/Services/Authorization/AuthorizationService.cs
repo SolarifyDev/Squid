@@ -67,10 +67,10 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
     public async Task<ResourceScope> GetResourceScopeAsync(ResourceScopeRequest request, CancellationToken ct = default)
     {
         var teamIds = await teamDataProvider.GetTeamIdsByUserIdAsync(request.UserId, ct).ConfigureAwait(false);
-        if (teamIds.Count == 0) return ResourceScope.Unrestricted();
+        if (teamIds.Count == 0) return ResourceScope.None();
 
         var scopedRoles = await scopedUserRoleDataProvider.GetByTeamIdsAsync(teamIds, ct).ConfigureAwait(false);
-        if (scopedRoles.Count == 0) return ResourceScope.Unrestricted();
+        if (scopedRoles.Count == 0) return ResourceScope.None();
 
         var permissionsByRoleId = await BatchLoadPermissionsAsync(scopedRoles, ct).ConfigureAwait(false);
 
@@ -81,7 +81,7 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
         var grantingRoleIds = FindGrantingRoles(filteredRoles, permissionsByRoleId, request.Permission.ToString());
 
         if (grantingRoleIds.Count == 0)
-            return ResourceScope.Unrestricted();
+            return ResourceScope.None();
 
         return await BuildResourceScopeAsync(grantingRoleIds, ct).ConfigureAwait(false);
     }

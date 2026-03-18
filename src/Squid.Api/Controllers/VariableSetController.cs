@@ -43,9 +43,9 @@ public class VariableSetController : ControllerBase
 
     [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetVariableSetResponse))]
-    public async Task<IActionResult> GetVariableSetAsync(int id)
+    public async Task<IActionResult> GetVariableSetAsync(int id, [FromQuery] int? spaceId = null)
     {
-        var request = new GetVariableSetRequest { Id = id };
+        var request = new GetVariableSetRequest { Id = id, SpaceId = spaceId };
         var response = await _mediator.RequestAsync<GetVariableSetRequest, GetVariableSetResponse>(request).ConfigureAwait(false);
 
         return Ok(response);

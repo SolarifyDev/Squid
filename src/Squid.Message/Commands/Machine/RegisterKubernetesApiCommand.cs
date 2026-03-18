@@ -6,10 +6,11 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class RegisterKubernetesApiCommand : ICommand
+public class RegisterKubernetesApiCommand : ICommand, ISpaceScoped
 {
     public string MachineName { get; set; }
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     public List<string> Roles { get; set; }
     public List<int> EnvironmentIds { get; set; }
 

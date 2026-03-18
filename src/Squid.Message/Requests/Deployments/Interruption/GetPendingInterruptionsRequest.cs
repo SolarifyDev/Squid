@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Interruption;
 
 [RequiresPermission(Permission.InterruptionView)]
-public class GetPendingInterruptionsRequest : IRequest
+public class GetPendingInterruptionsRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ServerTaskId { get; set; }
 }
 

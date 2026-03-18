@@ -16,18 +16,18 @@ public class MachinePolicyController : ControllerBase
 
     [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinePoliciesResponse))]
-    public async Task<IActionResult> GetMachinePoliciesAsync(CancellationToken ct)
+    public async Task<IActionResult> GetMachinePoliciesAsync([FromQuery] int? spaceId, CancellationToken ct)
     {
-        var response = await _mediator.RequestAsync<GetMachinePoliciesRequest, GetMachinePoliciesResponse>(new GetMachinePoliciesRequest(), ct).ConfigureAwait(false);
+        var response = await _mediator.RequestAsync<GetMachinePoliciesRequest, GetMachinePoliciesResponse>(new GetMachinePoliciesRequest { SpaceId = spaceId }, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
 
     [HttpGet("{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinePolicyResponse))]
-    public async Task<IActionResult> GetMachinePolicyAsync(int id, CancellationToken ct)
+    public async Task<IActionResult> GetMachinePolicyAsync(int id, [FromQuery] int? spaceId, CancellationToken ct)
     {
-        var request = new GetMachinePolicyRequest { Id = id };
+        var request = new GetMachinePolicyRequest { Id = id, SpaceId = spaceId };
         var response = await _mediator.RequestAsync<GetMachinePolicyRequest, GetMachinePolicyResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);

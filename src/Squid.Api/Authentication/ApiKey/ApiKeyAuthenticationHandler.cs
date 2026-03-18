@@ -39,7 +39,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         
         var matchedUser = await _cacheManager.GetOrAddAsync(cacheKey,
             async _ => await _accountService.GetByApiKeyAsync(apiKey).ConfigureAwait(false),
-            new RedisCachingSetting(expiry: TimeSpan.FromHours(24)), Context.RequestAborted).ConfigureAwait(false);
+            new RedisCachingSetting(expiry: TimeSpan.FromHours(1)), Context.RequestAborted).ConfigureAwait(false);
 
         if (matchedUser == null)
             return AuthenticateResult.NoResult();

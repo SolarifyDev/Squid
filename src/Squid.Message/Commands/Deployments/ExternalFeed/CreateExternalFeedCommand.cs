@@ -7,7 +7,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.ExternalFeed;
 
 [RequiresPermission(Permission.FeedEdit)]
-public class CreateExternalFeedCommand : ICommand
+public class CreateExternalFeedCommand : ICommand, ISpaceScoped
 {
     public string FeedType { get; set; }
 
@@ -28,6 +28,7 @@ public class CreateExternalFeedCommand : ICommand
     public List<string> PackageAcquisitionLocationOptions { get; set; }
 
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 }
 
 public class CreateExternalFeedResponse : SquidResponse<CreateExternalFeedResponseData>

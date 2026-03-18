@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Release;
 
 [RequiresPermission(Permission.ReleaseView)]
-public class GetReleaseProgressionRequest : IRequest
+public class GetReleaseProgressionRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ReleaseId { get; set; }
 }
 

@@ -6,12 +6,13 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Certificate;
 
 [RequiresPermission(Permission.AccountCreate)]
-public class CreateCertificateCommand : ICommand
+public class CreateCertificateCommand : ICommand, ISpaceScoped
 {
     public string Name { get; set; }
     public string Notes { get; set; }
     public List<int> EnvironmentIds { get; set; }
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     // Import mode — provide CertificateData (base64 PFX/PEM/DER)
     public string CertificateData { get; set; }

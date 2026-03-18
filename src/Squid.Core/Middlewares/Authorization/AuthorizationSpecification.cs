@@ -1,9 +1,11 @@
 using System.Runtime.ExceptionServices;
 using Mediator.Net.Pipeline;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.Identity;
 using Squid.Message.Attributes;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
 
 namespace Squid.Core.Middlewares.Authorization;
 
@@ -38,6 +40,9 @@ public class AuthorizationSpecification<TContext> : IPipeSpecification<TContext>
 
         foreach (RequiresPermissionAttribute attr in attributes)
         {
+            if (attr.Permission.GetScope() == PermissionScope.SpaceOnly && spaceId == null)
+                throw new PermissionDeniedException(attr.Permission, "SpaceOnly permission requires SpaceId context. Command must implement ISpaceScoped.");
+
             var request = new PermissionCheckRequest
             {
                 UserId = _currentUser.Id.Value,

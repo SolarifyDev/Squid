@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.TargetTag;
 
 [RequiresPermission(Permission.MachineEdit)]
-public class DeleteTargetTagsCommand : ICommand
+public class DeleteTargetTagsCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

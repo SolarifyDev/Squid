@@ -139,6 +139,7 @@ public class BuiltInRoleSeeder : IStartable
                     DisplayName = CurrentUsers.AdminUser.DisplayName,
                     IsDisabled = false,
                     IsSystem = false,
+                    MustChangePassword = true,
                     CreatedDate = DateTime.UtcNow,
                     LastModifiedDate = DateTime.UtcNow
                 };

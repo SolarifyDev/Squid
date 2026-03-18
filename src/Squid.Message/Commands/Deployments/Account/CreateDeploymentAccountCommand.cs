@@ -6,9 +6,10 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Account;
 
 [RequiresPermission(Permission.AccountCreate)]
-public class CreateDeploymentAccountCommand : ICommand
+public class CreateDeploymentAccountCommand : ICommand, ISpaceScoped
 {
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     public string Name { get; set; }
     public AccountType AccountType { get; set; }
     public string Token { get; set; }

@@ -6,10 +6,11 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Account;
 
 [RequiresPermission(Permission.AccountEdit)]
-public class UpdateDeploymentAccountCommand : ICommand
+public class UpdateDeploymentAccountCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     public string Name { get; set; }
     public AccountType AccountType { get; set; }
     public string TokenNewValue { get; set; }

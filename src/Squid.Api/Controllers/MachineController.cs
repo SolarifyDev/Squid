@@ -72,9 +72,9 @@ public class MachineController : ControllerBase
 
     [HttpGet("latest-agent-version")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetLatestKubernetesAgentVersionResponse))]
-    public async Task<IActionResult> GetLatestKubernetesAgentVersionAsync(CancellationToken ct)
+    public async Task<IActionResult> GetLatestKubernetesAgentVersionAsync([FromQuery] int? spaceId, CancellationToken ct)
     {
-        var response = await _mediator.RequestAsync<GetLatestKubernetesAgentVersionRequest, GetLatestKubernetesAgentVersionResponse>(new GetLatestKubernetesAgentVersionRequest(), ct).ConfigureAwait(false);
+        var response = await _mediator.RequestAsync<GetLatestKubernetesAgentVersionRequest, GetLatestKubernetesAgentVersionResponse>(new GetLatestKubernetesAgentVersionRequest { SpaceId = spaceId }, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
@@ -90,9 +90,9 @@ public class MachineController : ControllerBase
 
     [HttpPost("{machineId:int}/health-check")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RunMachineHealthCheckResponse))]
-    public async Task<IActionResult> RunHealthCheckAsync(int machineId, CancellationToken ct)
+    public async Task<IActionResult> RunHealthCheckAsync(int machineId, [FromQuery] int? spaceId, CancellationToken ct)
     {
-        var command = new RunMachineHealthCheckCommand { MachineId = machineId };
+        var command = new RunMachineHealthCheckCommand { MachineId = machineId, SpaceId = spaceId };
         var response = await _mediator.SendAsync<RunMachineHealthCheckCommand, RunMachineHealthCheckResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);

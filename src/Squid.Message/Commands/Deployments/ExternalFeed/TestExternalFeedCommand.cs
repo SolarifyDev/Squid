@@ -5,8 +5,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.ExternalFeed;
 
 [RequiresPermission(Permission.FeedView)]
-public class TestExternalFeedCommand : ICommand
+public class TestExternalFeedCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

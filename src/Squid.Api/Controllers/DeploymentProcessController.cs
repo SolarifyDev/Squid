@@ -24,9 +24,9 @@ public class DeploymentProcessController : ControllerBase
 
     [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentProcessResponse))]
-    public async Task<IActionResult> GetDeploymentProcessAsync(int id)
+    public async Task<IActionResult> GetDeploymentProcessAsync(int id, [FromQuery] int? spaceId = null)
     {
-        var request = new GetDeploymentProcessRequest { Id = id };
+        var request = new GetDeploymentProcessRequest { Id = id, SpaceId = spaceId };
         var response = await _mediator.RequestAsync<GetDeploymentProcessRequest, GetDeploymentProcessResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
@@ -34,9 +34,9 @@ public class DeploymentProcessController : ControllerBase
 
     [HttpGet("{projectId:int}/package-references")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetPackageReferencesResponse))]
-    public async Task<IActionResult> GetPackageReferencesAsync(int projectId)
+    public async Task<IActionResult> GetPackageReferencesAsync(int projectId, [FromQuery] int? spaceId = null)
     {
-        var request = new GetPackageReferencesRequest { ProjectId = projectId };
+        var request = new GetPackageReferencesRequest { ProjectId = projectId, SpaceId = spaceId };
         var response = await _mediator.RequestAsync<GetPackageReferencesRequest, GetPackageReferencesResponse>(request).ConfigureAwait(false);
 
         return Ok(response);

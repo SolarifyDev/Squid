@@ -6,10 +6,11 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.LifeCycle;
 
 [RequiresPermission(Permission.LifecycleEdit)]
-public class UpdateLifeCycleCommand : ICommand
+public class UpdateLifeCycleCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
     public CreateOrUpdateLifeCycleModel LifecyclePhase { get; set; }
+    int? ISpaceScoped.SpaceId => LifecyclePhase?.Lifecycle?.SpaceId;
 }
 
 public class UpdateLifeCycleResponse : SquidResponse<UpdateLifeCycleResponseData>

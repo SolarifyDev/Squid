@@ -6,11 +6,12 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Environment;
 
 [RequiresPermission(Permission.EnvironmentEdit)]
-public class UpdateEnvironmentCommand : ICommand
+public class UpdateEnvironmentCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
 
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     public string Slug { get; set; }
 

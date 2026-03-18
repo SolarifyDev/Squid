@@ -356,24 +356,30 @@ public class AuthorizationServiceTests
     // ========== GetResourceScopeAsync ==========
 
     [Fact]
-    public async Task ResourceScope_NoTeams_ReturnsUnrestricted()
+    public async Task ResourceScope_NoTeams_ReturnsNone()
     {
         SetupTeams(1, new List<int>());
 
         var result = await _sut.GetResourceScopeAsync(new ResourceScopeRequest { UserId = 1, Permission = Permission.ProjectView, SpaceId = 1 });
 
-        result.IsUnrestricted.ShouldBeTrue();
+        result.IsUnrestricted.ShouldBeFalse();
+        result.IsProjectUnrestricted.ShouldBeFalse();
+        result.IsEnvironmentUnrestricted.ShouldBeFalse();
+        result.IsProjectGroupUnrestricted.ShouldBeFalse();
     }
 
     [Fact]
-    public async Task ResourceScope_NoRoles_ReturnsUnrestricted()
+    public async Task ResourceScope_NoRoles_ReturnsNone()
     {
         SetupTeams(1, new List<int> { 10 });
         SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole>());
 
         var result = await _sut.GetResourceScopeAsync(new ResourceScopeRequest { UserId = 1, Permission = Permission.ProjectView, SpaceId = 1 });
 
-        result.IsUnrestricted.ShouldBeTrue();
+        result.IsUnrestricted.ShouldBeFalse();
+        result.IsProjectUnrestricted.ShouldBeFalse();
+        result.IsEnvironmentUnrestricted.ShouldBeFalse();
+        result.IsProjectGroupUnrestricted.ShouldBeFalse();
     }
 
     [Fact]
@@ -485,7 +491,7 @@ public class AuthorizationServiceTests
     }
 
     [Fact]
-    public async Task ResourceScope_PermissionNotGranted_ReturnsUnrestricted()
+    public async Task ResourceScope_PermissionNotGranted_ReturnsNone()
     {
         SetupTeams(1, new List<int> { 10 });
         SetupScopedRoles(new List<int> { 10 }, new List<ScopedUserRole> { new() { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = null } });
@@ -493,7 +499,10 @@ public class AuthorizationServiceTests
 
         var result = await _sut.GetResourceScopeAsync(new ResourceScopeRequest { UserId = 1, Permission = Permission.ProjectView, SpaceId = 1 });
 
-        result.IsUnrestricted.ShouldBeTrue();
+        result.IsUnrestricted.ShouldBeFalse();
+        result.IsProjectUnrestricted.ShouldBeFalse();
+        result.IsEnvironmentUnrestricted.ShouldBeFalse();
+        result.IsProjectGroupUnrestricted.ShouldBeFalse();
     }
 
     [Fact]

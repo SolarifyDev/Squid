@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Certificate;
 
 [RequiresPermission(Permission.AccountView)]
-public class GetCertificatesRequest : IPaginatedRequest
+public class GetCertificatesRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; } = 1;
 
     public int PageSize { get; set; } = 20;

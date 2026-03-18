@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Machines;
 
 [RequiresPermission(Permission.MachineView)]
-public class GetMachinePolicyRequest : IRequest
+public class GetMachinePolicyRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

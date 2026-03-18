@@ -34,9 +34,9 @@ public class DeploymentController : ControllerBase
 
     [HttpGet("{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentResponse))]
-    public async Task<IActionResult> GetDeploymentAsync(int id, [FromQuery] bool? verbose = null, [FromQuery] int? tail = null)
+    public async Task<IActionResult> GetDeploymentAsync(int id, [FromQuery] bool? verbose = null, [FromQuery] int? tail = null, [FromQuery] int? spaceId = null)
     {
-        var request = new GetDeploymentRequest { Id = id, Verbose = verbose, Tail = tail };
+        var request = new GetDeploymentRequest { Id = id, Verbose = verbose, Tail = tail, SpaceId = spaceId };
 
         var response = await _mediator.RequestAsync<GetDeploymentRequest, GetDeploymentResponse>(request).ConfigureAwait(false);
 

@@ -7,8 +7,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Deployments.Deployment;
 
 [RequiresPermission(Permission.DeploymentCreate)]
-public class CreateDeploymentCommand : ICommand
+public class CreateDeploymentCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ReleaseId { get; set; }
 
     public int EnvironmentId { get; set; }

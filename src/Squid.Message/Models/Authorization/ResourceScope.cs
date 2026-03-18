@@ -17,4 +17,12 @@ public class ResourceScope
         IsEnvironmentUnrestricted = true,
         IsProjectGroupUnrestricted = true,
     };
+
+    public static ResourceScope None() => new()
+    {
+        IsUnrestricted = false,
+        IsProjectUnrestricted = false,
+        IsEnvironmentUnrestricted = false,
+        IsProjectGroupUnrestricted = false,
+    };
 }

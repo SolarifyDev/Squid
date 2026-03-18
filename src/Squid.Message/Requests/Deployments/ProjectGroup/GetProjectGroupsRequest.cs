@@ -6,8 +6,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.ProjectGroup;
 
 [RequiresPermission(Permission.ProjectView)]
-public class GetProjectGroupsRequest : IPaginatedRequest
+public class GetProjectGroupsRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; }
     public int PageSize { get; set; }
 }

@@ -6,15 +6,16 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Process;
 
 [RequiresPermission(Permission.ProcessView)]
-public class GetDeploymentProcessesRequest : IPaginatedRequest
+public class GetDeploymentProcessesRequest : IPaginatedRequest, ISpaceScoped
 {
     public int PageIndex { get; set; } = 1;
-    
+
     public int PageSize { get; set; } = 20;
-    
+
     public int ProjectId { get; set; }
-    
+
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 }
 
 public class GetDeploymentProcessesResponse : SquidResponse<GetDeploymentProcessesResponseData>

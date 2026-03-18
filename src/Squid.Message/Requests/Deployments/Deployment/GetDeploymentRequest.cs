@@ -7,8 +7,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Deployments.Deployment;
 
 [RequiresPermission(Permission.DeploymentView)]
-public class GetDeploymentRequest : IRequest
+public class GetDeploymentRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 
     public bool? Verbose { get; set; }
