@@ -61,9 +61,9 @@ public class DeploymentStepController : ControllerBase
 
     [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentStepResponse))]
-    public async Task<IActionResult> GetDeploymentStepAsync(int id, [FromQuery] int? spaceId = null)
+    public async Task<IActionResult> GetDeploymentStepAsync(int id)
     {
-        var request = new GetDeploymentStepRequest { Id = id, SpaceId = spaceId };
+        var request = new GetDeploymentStepRequest { Id = id };
         var response = await _mediator.RequestAsync<GetDeploymentStepRequest, GetDeploymentStepResponse>(request).ConfigureAwait(false);
 
         return Ok(response);

@@ -52,9 +52,9 @@ public class ProjectController : ControllerBase
 
     [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectResponse))]
-    public async Task<IActionResult> GetProjectAsync(int id, [FromQuery] int? spaceId = null)
+    public async Task<IActionResult> GetProjectAsync(int id)
     {
-        var request = new GetProjectRequest { Id = id, SpaceId = spaceId };
+        var request = new GetProjectRequest { Id = id };
         var response = await _mediator.RequestAsync<GetProjectRequest, GetProjectResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
@@ -71,9 +71,9 @@ public class ProjectController : ControllerBase
 
     [HttpGet("{projectId:int}/progression")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectProgressionResponse))]
-    public async Task<IActionResult> GetProjectProgressionAsync(int projectId, [FromQuery] int? spaceId = null)
+    public async Task<IActionResult> GetProjectProgressionAsync(int projectId)
     {
-        var request = new GetProjectProgressionRequest { ProjectId = projectId, SpaceId = spaceId };
+        var request = new GetProjectProgressionRequest { ProjectId = projectId };
         var response = await _mediator.RequestAsync<GetProjectProgressionRequest, GetProjectProgressionResponse>(request).ConfigureAwait(false);
 
         return Ok(response);

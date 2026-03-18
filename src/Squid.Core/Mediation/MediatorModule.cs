@@ -1,4 +1,5 @@
 using Squid.Core.Middlewares.Authorization;
+using Squid.Core.Middlewares.SpaceScope;
 using Squid.Core.Middlewares.UnifyResponse;
 using Squid.Core.Middlewares.UnitOfWork;
 
@@ -22,6 +23,7 @@ public class MediatorModule : Module
         mediatorBuilder.ConfigureGlobalReceivePipe(c =>
         {
             c.UseLogger();
+            c.UseSpaceScope();
             c.UseAuthorization();
             c.UseUnitOfWork();
             c.UseUnifyResponse();

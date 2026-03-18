@@ -61,9 +61,9 @@ public class ReleaseController : ControllerBase
 
     [HttpGet("{releaseId:int}/variable-snapshot")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleaseVariableSnapshotResponse))]
-    public async Task<IActionResult> GetReleaseVariableSnapshotAsync(int releaseId, [FromQuery] int? spaceId = null)
+    public async Task<IActionResult> GetReleaseVariableSnapshotAsync(int releaseId)
     {
-        var request = new GetReleaseVariableSnapshotRequest { ReleaseId = releaseId, SpaceId = spaceId };
+        var request = new GetReleaseVariableSnapshotRequest { ReleaseId = releaseId };
         var response = await _mediator.RequestAsync<GetReleaseVariableSnapshotRequest, GetReleaseVariableSnapshotResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
@@ -71,9 +71,9 @@ public class ReleaseController : ControllerBase
 
     [HttpGet("{releaseId:int}/progression")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleaseProgressionResponse))]
-    public async Task<IActionResult> GetReleaseProgressionAsync(int releaseId, [FromQuery] int? spaceId = null)
+    public async Task<IActionResult> GetReleaseProgressionAsync(int releaseId)
     {
-        var request = new GetReleaseProgressionRequest { ReleaseId = releaseId, SpaceId = spaceId };
+        var request = new GetReleaseProgressionRequest { ReleaseId = releaseId };
         var response = await _mediator.RequestAsync<GetReleaseProgressionRequest, GetReleaseProgressionResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
