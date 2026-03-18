@@ -3,6 +3,7 @@ using Mediator.Net.Pipeline;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
 using Squid.Message.Attributes;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Middlewares.Authorization;
 
@@ -23,6 +24,7 @@ public class AuthorizationSpecification<TContext> : IPipeSpecification<TContext>
     public async Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
         if (_currentUser.Id == null) return;
+        if (_currentUser.Id == CurrentUsers.InternalUser.Id) return;
 
         var messageType = context.Message.GetType();
         var attributes = messageType.GetCustomAttributes(typeof(RequiresPermissionAttribute), true);
