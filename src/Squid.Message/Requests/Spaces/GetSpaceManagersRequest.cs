@@ -11,6 +11,6 @@ public class GetSpaceManagersRequest : IRequest
     public int SpaceId { get; set; }
 }
 
-public class GetSpaceManagersResponse : SquidResponse<List<SpaceManagerTeamDto>>
+public class GetSpaceManagersResponse : SquidResponse<SpaceManagersDto>
 {
 }

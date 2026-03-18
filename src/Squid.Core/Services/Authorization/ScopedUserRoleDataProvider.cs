@@ -10,7 +10,7 @@ public interface IScopedUserRoleDataProvider : IScopedDependency
     Task<List<int>> GetEnvironmentScopeAsync(int scopedUserRoleId, CancellationToken ct = default);
     Task<List<int>> GetProjectGroupScopeAsync(int scopedUserRoleId, CancellationToken ct = default);
     Task AddAsync(ScopedUserRole scopedRole, bool forceSave = true, CancellationToken ct = default);
-    Task DeleteAsync(ScopedUserRole scopedRole, bool forceSave = true, CancellationToken ct = default);
+    Task DeleteAsync(int scopedUserRoleId, CancellationToken ct = default);
     Task SetProjectScopeAsync(int scopedUserRoleId, List<int> projectIds, CancellationToken ct = default);
     Task SetEnvironmentScopeAsync(int scopedUserRoleId, List<int> environmentIds, CancellationToken ct = default);
     Task SetProjectGroupScopeAsync(int scopedUserRoleId, List<int> projectGroupIds, CancellationToken ct = default);
@@ -48,11 +48,9 @@ public class ScopedUserRoleDataProvider(IUnitOfWork unitOfWork, IRepository repo
         if (forceSave) await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task DeleteAsync(ScopedUserRole scopedRole, bool forceSave = true, CancellationToken ct = default)
+    public async Task DeleteAsync(int scopedUserRoleId, CancellationToken ct = default)
     {
-        await repository.DeleteAsync(scopedRole, ct).ConfigureAwait(false);
-
-        if (forceSave) await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<ScopedUserRole>(x => x.Id == scopedUserRoleId, ct).ConfigureAwait(false);
     }
 
     public async Task SetProjectScopeAsync(int scopedUserRoleId, List<int> projectIds, CancellationToken ct = default)

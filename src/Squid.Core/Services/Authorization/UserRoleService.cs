@@ -106,7 +106,7 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
 
     public async Task RemoveRoleFromTeamAsync(int scopedUserRoleId, CancellationToken ct = default)
     {
-        await scopedUserRoleDataProvider.DeleteAsync(new ScopedUserRole { Id = scopedUserRoleId }, ct: ct).ConfigureAwait(false);
+        await scopedUserRoleDataProvider.DeleteAsync(scopedUserRoleId, ct).ConfigureAwait(false);
     }
 
     public async Task<ScopedUserRoleDto> UpdateRoleScopeAsync(UpdateRoleScopeCommand command, CancellationToken ct = default)

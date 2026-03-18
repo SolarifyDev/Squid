@@ -20,6 +20,8 @@ public class Space : IEntity<int>, IAuditable
 
     public bool IsPrivate { get; set; }
 
+    public int? OwnerTeamId { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

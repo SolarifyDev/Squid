@@ -7,7 +7,7 @@ public class GetSpaceManagersRequestHandler(ISpaceService spaceService) : IReque
 {
     public async Task<GetSpaceManagersResponse> Handle(IReceiveContext<GetSpaceManagersRequest> context, CancellationToken cancellationToken)
     {
-        var managers = await spaceService.GetManagerTeamsAsync(context.Message.SpaceId, cancellationToken).ConfigureAwait(false);
+        var managers = await spaceService.GetManagersAsync(context.Message.SpaceId, cancellationToken).ConfigureAwait(false);
 
         return new GetSpaceManagersResponse { Data = managers };
     }

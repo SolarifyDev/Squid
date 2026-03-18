@@ -12,6 +12,8 @@ public class CreateSpaceCommand : ICommand
     public string Slug { get; set; }
     public string Description { get; set; }
     public bool IsPrivate { get; set; }
+    public List<int> OwnerTeamIds { get; set; } = new();
+    public List<int> OwnerUserIds { get; set; } = new();
 }
 
 public class CreateSpaceResponse : SquidResponse<SpaceDto>

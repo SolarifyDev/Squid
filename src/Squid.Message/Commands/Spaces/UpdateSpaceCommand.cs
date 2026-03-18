@@ -14,6 +14,8 @@ public class UpdateSpaceCommand : ICommand
     public string Description { get; set; }
     public bool TaskQueueStopped { get; set; }
     public bool IsPrivate { get; set; }
+    public List<int> OwnerTeamIds { get; set; } = new();
+    public List<int> OwnerUserIds { get; set; } = new();
 }
 
 public class UpdateSpaceResponse : SquidResponse<SpaceDto>

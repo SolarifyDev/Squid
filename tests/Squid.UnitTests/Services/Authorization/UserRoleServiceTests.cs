@@ -184,7 +184,7 @@ public class UserRoleServiceTests
     {
         await _sut.RemoveRoleFromTeamAsync(100);
 
-        _scopedUserRoleDataProvider.Verify(x => x.DeleteAsync(It.Is<ScopedUserRole>(r => r.Id == 100), true, It.IsAny<CancellationToken>()), Times.Once);
+        _scopedUserRoleDataProvider.Verify(x => x.DeleteAsync(100, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

@@ -111,7 +111,7 @@ public class ScopedUserRoleDataProviderTests : TestBase
             var scopedRole = new ScopedUserRole { TeamId = team.Id, UserRoleId = role.Id };
             await provider.AddAsync(scopedRole).ConfigureAwait(false);
 
-            await provider.DeleteAsync(scopedRole).ConfigureAwait(false);
+            await provider.DeleteAsync(scopedRole.Id).ConfigureAwait(false);
 
             var results = await provider.GetByTeamIdsAsync(new List<int> { team.Id }).ConfigureAwait(false);
             results.ShouldBeEmpty();

@@ -1,0 +1,1 @@
+ALTER TABLE space ADD COLUMN IF NOT EXISTS owner_team_id INT NULL;

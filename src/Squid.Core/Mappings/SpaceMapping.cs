@@ -9,7 +9,11 @@ public class SpaceMapping : Profile
     public SpaceMapping()
     {
         CreateMap<Space, SpaceDto>();
-        CreateMap<CreateSpaceCommand, Space>();
-        CreateMap<UpdateSpaceCommand, Space>();
+        CreateMap<CreateSpaceCommand, Space>()
+            .ForSourceMember(s => s.OwnerTeamIds, o => o.DoNotValidate())
+            .ForSourceMember(s => s.OwnerUserIds, o => o.DoNotValidate());
+        CreateMap<UpdateSpaceCommand, Space>()
+            .ForSourceMember(s => s.OwnerTeamIds, o => o.DoNotValidate())
+            .ForSourceMember(s => s.OwnerUserIds, o => o.DoNotValidate());
     }
 }
