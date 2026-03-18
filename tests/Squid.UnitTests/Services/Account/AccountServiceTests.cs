@@ -68,7 +68,7 @@ public class AccountServiceTests
         SetupFindUser(user);
 
         var ex = await Should.ThrowAsync<UnauthorizedAccessException>(
-            () => _sut.ChangePasswordAsync(user.Id, "WrongPassword", "NewPass123"));
+            () => _sut.ChangePasswordAsync(user.Id, "WrongPassword", "NewPass123", isSelf: true));
 
         ex.Message.ShouldContain("Current password is incorrect");
     }
@@ -79,7 +79,7 @@ public class AccountServiceTests
         var user = CreateUserWithPassword("OldPass123");
         SetupFindUser(user);
 
-        await _sut.ChangePasswordAsync(user.Id, "OldPass123", "NewPass123");
+        await _sut.ChangePasswordAsync(user.Id, "OldPass123", "NewPass123", isSelf: true);
 
         _repository.Verify(r => r.UpdateAsync(It.Is<UserAccount>(u => u.Id == user.Id), It.IsAny<CancellationToken>()), Times.Once);
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
@@ -92,7 +92,7 @@ public class AccountServiceTests
     public async Task ChangePassword_NewPasswordTooShort_Throws(string? newPassword)
     {
         var ex = await Should.ThrowAsync<ArgumentException>(
-            () => _sut.ChangePasswordAsync(1, "OldPass123", newPassword!));
+            () => _sut.ChangePasswordAsync(1, "OldPass123", newPassword!, isSelf: true));
 
         ex.Message.ShouldContain("at least 6 characters");
     }
@@ -104,7 +104,7 @@ public class AccountServiceTests
         user.MustChangePassword = true;
         SetupFindUser(user);
 
-        await _sut.ChangePasswordAsync(user.Id, "OldPass123", "NewPass123");
+        await _sut.ChangePasswordAsync(user.Id, "OldPass123", "NewPass123", isSelf: true);
 
         user.MustChangePassword.ShouldBeFalse();
     }
@@ -116,9 +116,35 @@ public class AccountServiceTests
             .ReturnsAsync((UserAccount?)null);
 
         var ex = await Should.ThrowAsync<InvalidOperationException>(
-            () => _sut.ChangePasswordAsync(999, "OldPass123", "NewPass123"));
+            () => _sut.ChangePasswordAsync(999, "OldPass123", "NewPass123", isSelf: true));
 
         ex.Message.ShouldContain("not found");
+    }
+
+    [Fact]
+    public async Task ChangePassword_AdminReset_SetsMustChangePassword()
+    {
+        var user = CreateUserWithPassword("OldPass123");
+        user.MustChangePassword = false;
+        SetupFindUser(user);
+
+        await _sut.ChangePasswordAsync(user.Id, null, "ResetPass123", isSelf: false);
+
+        user.MustChangePassword.ShouldBeTrue();
+        _repository.Verify(r => r.UpdateAsync(It.Is<UserAccount>(u => u.Id == user.Id), It.IsAny<CancellationToken>()), Times.Once);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ChangePassword_AdminReset_SkipsCurrentPasswordVerification()
+    {
+        var user = CreateUserWithPassword("OldPass123");
+        SetupFindUser(user);
+
+        // null currentPassword should not throw — admin reset skips verification
+        await _sut.ChangePasswordAsync(user.Id, null, "ResetPass123", isSelf: false);
+
+        _repository.Verify(r => r.UpdateAsync(It.Is<UserAccount>(u => u.Id == user.Id), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

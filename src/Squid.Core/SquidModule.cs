@@ -59,16 +59,24 @@ public class SquidModule : Module
     {
         var connectionString = new SquidConnectionString(_configuration).Value;
 
-        builder.Register(c =>
+        builder.Register(_ =>
             {
-                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
+                var optionsBuilder = new DbContextOptionsBuilder<SquidDbContext>();
 
-                dbContextBuilder
+                optionsBuilder
                     .UseNpgsql(connectionString)
                     .UseSnakeCaseNamingConvention();
 
+                return optionsBuilder.Options;
+            })
+            .As<DbContextOptions<SquidDbContext>>()
+            .SingleInstance();
+
+        builder.Register(c =>
+            {
+                var options = c.Resolve<DbContextOptions<SquidDbContext>>();
                 var currentUser = c.ResolveOptional<ICurrentUser>();
-                return new SquidDbContext(dbContextBuilder.Options, currentUser);
+                return new SquidDbContext(options, currentUser);
             })
             .AsSelf()
             .As<DbContext>()

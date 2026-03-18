@@ -7,7 +7,6 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
@@ -314,19 +313,13 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         ctx.FailureEncountered.ShouldBeTrue();
     }
 
-    private static (IDeploymentLifecycle Lifecycle, Mock<IServerTaskService> ServerTaskServiceMock) CreateLifecycle(Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
+    private static (IDeploymentLifecycle Lifecycle, Mock<IDeploymentLogWriter> LogWriterMock) CreateLifecycle(Action<DeploymentActivityLogNodeType, string> onAddActivityNode = null)
     {
         var nextNodeId = 0L;
-        var serverTaskServiceMock = new Mock<IServerTaskService>();
-        serverTaskServiceMock
-            .Setup(x => x.AddActivityNodeAsync(
-                It.IsAny<int>(),
-                It.IsAny<long?>(),
-                It.IsAny<string>(),
-                It.IsAny<DeploymentActivityLogNodeType>(),
-                It.IsAny<DeploymentActivityLogNodeStatus>(),
-                It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+        var logWriter = new Mock<IDeploymentLogWriter>();
+
+        logWriter
+            .Setup(x => x.AddActivityNodeAsync(It.IsAny<int>(), It.IsAny<long?>(), It.IsAny<string>(), It.IsAny<DeploymentActivityLogNodeType>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken _) =>
             {
                 onAddActivityNode?.Invoke(nodeType, name);
@@ -343,36 +336,27 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                     StartedAt = DateTimeOffset.UtcNow
                 };
             });
-        serverTaskServiceMock
-            .Setup(x => x.UpdateActivityNodeStatusAsync(
-                It.IsAny<long>(),
-                It.IsAny<DeploymentActivityLogNodeStatus>(),
-                It.IsAny<DateTimeOffset?>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        serverTaskServiceMock
-            .Setup(x => x.AddLogAsync(
-                It.IsAny<int>(),
-                It.IsAny<long>(),
-                It.IsAny<ServerTaskLogCategory>(),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<long?>(),
-                It.IsAny<DateTimeOffset?>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        serverTaskServiceMock
-            .Setup(x => x.AddLogsAsync(
-                It.IsAny<int>(),
-                It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(),
-                It.IsAny<CancellationToken>()))
+
+        logWriter
+            .Setup(x => x.UpdateActivityNodeStatusAsync(It.IsAny<long>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object, new Mock<IActivityLogDataProvider>().Object);
+        logWriter
+            .Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        logWriter
+            .Setup(x => x.AddLogsAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        logWriter
+            .Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ActivityLog>());
+
+        var logger = new DeploymentActivityLogger(logWriter.Object);
         var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
 
-        return (lifecycle, serverTaskServiceMock);
+        return (lifecycle, logWriter);
     }
 
     private static DeploymentTaskContext CreateBaseContext()

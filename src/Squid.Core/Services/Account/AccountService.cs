@@ -18,7 +18,7 @@ public interface IAccountService : IScopedDependency
     Task<List<UserAccountDto>> GetAllAsync(CancellationToken cancellationToken = default);
     Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
     Task<UserAccountDto?> GetByApiKeyAsync(string apiKey, CancellationToken cancellationToken = default);
-    Task ChangePasswordAsync(int userId, string currentPassword, string newPassword, CancellationToken ct = default);
+    Task ChangePasswordAsync(int userId, string? currentPassword, string newPassword, bool isSelf, CancellationToken ct = default);
     Task UpdateUserStatusAsync(int userId, bool isDisabled, int currentUserId, CancellationToken ct = default);
     Task<CreateApiKeyResponseData> CreateApiKeyAsync(int userId, string description, CancellationToken ct = default);
     Task DeleteApiKeyAsync(int apiKeyId, int currentUserId, CancellationToken ct = default);
@@ -139,7 +139,7 @@ public class AccountService : IAccountService
     {
         var user = await _repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == id, cancellationToken).ConfigureAwait(false);
 
-        if (user == null || user.IsDisabled) return null;
+        if (user == null) return null;
 
         return ToDto(user);
     }
@@ -156,7 +156,7 @@ public class AccountService : IAccountService
         return await GetByIdAsync(apiKeyEntity.UserAccountId, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task ChangePasswordAsync(int userId, string currentPassword, string newPassword, CancellationToken ct = default)
+    public async Task ChangePasswordAsync(int userId, string? currentPassword, string newPassword, bool isSelf, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
             throw new ArgumentException("New password must be at least 6 characters");
@@ -166,13 +166,16 @@ public class AccountService : IAccountService
         if (user == null)
             throw new InvalidOperationException($"User {userId} not found");
 
-        var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, currentPassword);
+        if (isSelf)
+        {
+            var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, currentPassword!);
 
-        if (verifyResult == PasswordVerificationResult.Failed)
-            throw new UnauthorizedAccessException("Current password is incorrect");
+            if (verifyResult == PasswordVerificationResult.Failed)
+                throw new UnauthorizedAccessException("Current password is incorrect");
+        }
 
         user.PasswordHash = _passwordHasher.HashPassword(user, newPassword);
-        user.MustChangePassword = false;
+        user.MustChangePassword = !isSelf;
         user.LastModifiedDate = DateTime.UtcNow;
 
         await _repository.UpdateAsync(user, ct).ConfigureAwait(false);
@@ -299,6 +302,7 @@ public class AccountService : IAccountService
             UserName = user.UserName,
             DisplayName = user.DisplayName,
             IsSystem = user.IsSystem,
+            IsDisabled = user.IsDisabled,
             CreatedDate = user.CreatedDate
         };
     }

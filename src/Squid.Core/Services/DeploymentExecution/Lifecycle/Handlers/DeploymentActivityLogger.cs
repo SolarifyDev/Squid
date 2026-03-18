@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
@@ -11,15 +10,13 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 {
     private long? _taskNodeId;
-    private readonly IServerTaskService _serverTaskService;
-    private readonly IActivityLogDataProvider _activityLogDataProvider;
+    private readonly IDeploymentLogWriter _logWriter;
     private readonly ConcurrentDictionary<int, long?> _stepNodes = new();
     private readonly ConcurrentDictionary<(int StepDisplayOrder, string MachineName, int ActionSortOrder), long?> _actionNodes = new();
 
-    public DeploymentActivityLogger(IServerTaskService serverTaskService, IActivityLogDataProvider activityLogDataProvider)
+    public DeploymentActivityLogger(IDeploymentLogWriter logWriter)
     {
-        _serverTaskService = serverTaskService;
-        _activityLogDataProvider = activityLogDataProvider;
+        _logWriter = logWriter;
     }
 
     // === Deployment ===
@@ -41,7 +38,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         try
         {
-            var nodes = await _activityLogDataProvider.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
+            var nodes = await _logWriter.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
 
             RestoreTaskNode(nodes);
             RestoreStepNodes(nodes);
@@ -266,8 +263,9 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override Task OnActionRunningAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+        var suffix = string.IsNullOrWhiteSpace(ctx.MachineName) ? "" : $" on {ctx.MachineName}";
 
-        return LogInfoAsync($"Running action \"{ctx.ActionName}\"", "System", ct, stepNodeId);
+        return LogInfoAsync($"Running action \"{ctx.ActionName}\"{suffix}", "System", ct, stepNodeId);
     }
 
     // === Actions (execution) ===
@@ -396,7 +394,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         try
         {
-            return await _serverTaskService.AddActivityNodeAsync(Ctx.ServerTaskId, parentId, name, nodeType, status, sortOrder, ct).ConfigureAwait(false);
+            return await _logWriter.AddActivityNodeAsync(Ctx.ServerTaskId, parentId, name, nodeType, status, sortOrder, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -410,7 +408,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         try
         {
             var seq = Ctx.NextLogSequence();
-            await _serverTaskService.AddLogAsync(Ctx.ServerTaskId, seq, category, message, source, activityNodeId, DateTimeOffset.UtcNow, null, ct).ConfigureAwait(false);
+            await _logWriter.AddLogAsync(Ctx.ServerTaskId, seq, category, message, source, activityNodeId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -438,7 +436,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
                 ActivityNodeId = activityNodeId
             }).ToList();
 
-            await _serverTaskService.AddLogsAsync(Ctx.ServerTaskId, entries, ct).ConfigureAwait(false);
+            await _logWriter.AddLogsAsync(Ctx.ServerTaskId, entries, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -452,7 +450,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         try
         {
-            await _serverTaskService.UpdateActivityNodeStatusAsync(nodeId.Value, status, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            await _logWriter.UpdateActivityNodeStatusAsync(nodeId.Value, status, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

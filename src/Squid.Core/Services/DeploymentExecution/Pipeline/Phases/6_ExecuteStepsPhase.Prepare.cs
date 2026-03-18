@@ -43,7 +43,7 @@ public sealed partial class ExecuteStepsPhase
                 continue;
             }
 
-            await lifecycle.EmitAsync(new ActionRunningEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
+            await lifecycle.EmitAsync(new ActionRunningEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
             var actionScopeContext = baseScopeContext with { ActionId = action.Id, ActionName = action.Name };
             var actionEffective = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, actionScopeContext);

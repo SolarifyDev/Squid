@@ -10,5 +10,7 @@ public class UserAccountDto : IBaseModel
 
     public bool IsSystem { get; set; }
 
+    public bool IsDisabled { get; set; }
+
     public DateTimeOffset CreatedDate { get; set; }
 }
