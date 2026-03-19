@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -165,7 +166,7 @@ public class KubernetesYamlActionHandlerTests
     {
         var handler = new KubernetesYamlActionHandler(Enumerable.Empty<IActionYamlGenerator>());
 
-        handler.ActionType.ShouldBe(DeploymentActionType.KubernetesDeployContainers);
+        handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployContainers);
     }
 
     [Fact]

@@ -5,10 +5,18 @@ public static class SpecialVariables
     public static class ActionTypes
     {
         public const string Script = "Squid.Script";
+        public const string KubernetesRunScript = "Squid.KubernetesRunScript";
         public const string KubernetesDeployRawYaml = "Squid.KubernetesDeployRawYaml";
+        public const string KubernetesDeployContainers = "Squid.KubernetesDeployContainers";
+        public const string HelmChartUpgrade = "Squid.HelmChartUpgrade";
+        public const string KubernetesDeployIngress = "Squid.KubernetesDeployIngress";
+        public const string KubernetesDeployService = "Squid.KubernetesDeployService";
+        public const string KubernetesDeployConfigMap = "Squid.KubernetesDeployConfigMap";
+        public const string KubernetesDeploySecret = "Squid.KubernetesDeploySecret";
         public const string TentaclePackage = "Squid.TentaclePackage";
         public const string HttpRequest = "Squid.HttpRequest";
         public const string Manual = "Squid.Manual";
+        public const string HealthCheck = "Squid.HealthCheck";
         public const string DeployRelease = "Squid.DeployRelease";
         public const string DeployIngress = "Squid.DeployIngress";
     }

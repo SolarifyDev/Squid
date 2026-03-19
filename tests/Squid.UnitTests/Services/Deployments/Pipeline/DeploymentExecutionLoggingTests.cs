@@ -814,10 +814,7 @@ public class DeploymentExecutionLoggingTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
-
-        public bool CanHandle(DeploymentActionDto action)
-            => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+        public string ActionType => "Squid.KubernetesRunScript";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
@@ -833,11 +830,9 @@ public class DeploymentExecutionLoggingTests
 
     private sealed class SimpleStepLevelHandler : IActionHandler
     {
-        public DeploymentActionType ActionType => DeploymentActionType.ManualIntervention;
+        public string ActionType => "Squid.Manual";
 
         public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
-
-        public bool CanHandle(DeploymentActionDto action) => true;
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
             => Task.FromResult(new ActionExecutionResult());

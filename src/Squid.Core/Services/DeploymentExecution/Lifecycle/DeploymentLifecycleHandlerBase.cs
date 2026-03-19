@@ -27,6 +27,9 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         StepConditionMetEvent e => OnStepConditionMetAsync(e.Context, ct),
         StepExecutingOnTargetEvent e => OnStepExecutingOnTargetAsync(e.Context, ct),
         StepCompletedEvent e => OnStepCompletedAsync(e.Context, ct),
+        HealthCheckStartingEvent e => OnHealthCheckStartingAsync(e.Context, ct),
+        HealthCheckTargetResultEvent e => OnHealthCheckTargetResultAsync(e.Context, ct),
+        HealthCheckCompletedEvent e => OnHealthCheckCompletedAsync(e.Context, ct),
         ActionManuallyExcludedEvent e => OnActionManuallyExcludedAsync(e.Context, ct),
         ActionSkippedEvent e => OnActionSkippedAsync(e.Context, ct),
         ActionNoHandlerEvent e => OnActionNoHandlerAsync(e.Context, ct),
@@ -68,6 +71,11 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnStepConditionMetAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnStepExecutingOnTargetAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnStepCompletedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
+    // === Health Check ===
+    protected virtual Task OnHealthCheckStartingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnHealthCheckTargetResultAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnHealthCheckCompletedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
     // === Actions (pre-execution) ===
     protected virtual Task OnActionManuallyExcludedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;

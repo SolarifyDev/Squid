@@ -14,11 +14,9 @@ public sealed class ManualInterventionActionHandler(
     IServerTaskService serverTaskService,
     IDeploymentLifecycle lifecycle) : IActionHandler
 {
-    public DeploymentActionType ActionType => DeploymentActionType.ManualIntervention;
+    public string ActionType => SpecialVariables.ActionTypes.Manual;
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
-
-    public bool CanHandle(DeploymentActionDto action) => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

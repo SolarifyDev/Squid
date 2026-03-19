@@ -29,7 +29,7 @@ public class ManualInterventionTests
 
         var action = new DeploymentActionDto { ActionType = "Squid.Manual" };
 
-        handler.CanHandle(action).ShouldBeTrue();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Theory]
@@ -43,7 +43,7 @@ public class ManualInterventionTests
 
         var action = new DeploymentActionDto { ActionType = actionType };
 
-        handler.CanHandle(action).ShouldBeFalse();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeFalse();
     }
 
     [Fact]

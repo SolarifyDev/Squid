@@ -504,10 +504,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             _barrier = barrier;
         }
 
-        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
-
-        public bool CanHandle(DeploymentActionDto action)
-            => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+        public string ActionType => "Squid.KubernetesRunScript";
 
         public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
@@ -528,10 +525,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
-
-        public bool CanHandle(DeploymentActionDto action)
-            => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+        public string ActionType => "Squid.KubernetesRunScript";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {

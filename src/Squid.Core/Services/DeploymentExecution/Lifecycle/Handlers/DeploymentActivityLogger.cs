@@ -244,6 +244,37 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         await UpdateActivityNodeStatusAsync(stepNodeId, ctx.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
+    // === Health Check ===
+
+    protected override Task OnHealthCheckStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync("Running health check", "System", ct, stepNodeId);
+    }
+
+    protected override Task OnHealthCheckTargetResultAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        if (ctx.HealthCheckHealthy == true)
+            return LogInfoAsync($"Health check passed for {ctx.MachineName}: {ctx.HealthCheckDetail}", ctx.MachineName, ct, stepNodeId);
+
+        return LogWarningAsync($"Health check failed for {ctx.MachineName}: {ctx.HealthCheckDetail}", ctx.MachineName, ct, stepNodeId);
+    }
+
+    protected override Task OnHealthCheckCompletedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+        var healthy = ctx.HealthCheckHealthyCount;
+        var unhealthy = ctx.HealthCheckUnhealthyCount;
+
+        if (unhealthy == 0)
+            return LogInfoAsync($"Health check completed: all {healthy} target(s) healthy", "System", ct, stepNodeId);
+
+        return LogWarningAsync($"Health check completed: {healthy} healthy, {unhealthy} unhealthy", "System", ct, stepNodeId);
+    }
+
     // === Actions (pre-execution) ===
 
     protected override Task OnActionManuallyExcludedAsync(DeploymentEventContext ctx, CancellationToken ct)

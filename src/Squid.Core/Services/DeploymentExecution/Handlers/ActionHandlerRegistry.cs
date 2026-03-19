@@ -11,22 +11,20 @@ public interface IActionHandlerRegistry : IScopedDependency
 
 public class ActionHandlerRegistry : IActionHandlerRegistry
 {
-    private readonly IReadOnlyDictionary<DeploymentActionType, IActionHandler> _handlers;
+    private readonly IReadOnlyDictionary<string, IActionHandler> _handlers;
 
     public ActionHandlerRegistry(IEnumerable<IActionHandler> handlers)
     {
         ArgumentNullException.ThrowIfNull(handlers);
 
-        _handlers = handlers.ToDictionary(h => h.ActionType);
+        _handlers = handlers.ToDictionary(h => h.ActionType, StringComparer.OrdinalIgnoreCase);
     }
 
     public IActionHandler Resolve(DeploymentActionDto action)
     {
-        if (action == null || !DeploymentActionTypeParser.TryParse(action.ActionType, out var actionType))
-            return null;
+        if (string.IsNullOrEmpty(action?.ActionType)) return null;
 
-        if (!_handlers.TryGetValue(actionType, out var handler))
-            return null;
+        if (!_handlers.TryGetValue(action.ActionType, out var handler)) return null;
 
         return handler.CanHandle(action) ? handler : null;
     }

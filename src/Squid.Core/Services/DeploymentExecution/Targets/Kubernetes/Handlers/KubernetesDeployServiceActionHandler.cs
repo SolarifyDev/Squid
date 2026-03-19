@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -9,14 +10,7 @@ public class KubernetesDeployServiceActionHandler : IActionHandler
 {
     private readonly ServiceResourceGenerator _generator = new();
 
-    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployService;
-
-    public bool CanHandle(DeploymentActionDto action)
-    {
-        if (action == null) return false;
-
-        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
-    }
+    public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployService;
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

@@ -684,10 +684,7 @@ public class DeploymentMultiTargetLoggingTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
-
-        public bool CanHandle(DeploymentActionDto action)
-            => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+        public string ActionType => "Squid.KubernetesRunScript";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {

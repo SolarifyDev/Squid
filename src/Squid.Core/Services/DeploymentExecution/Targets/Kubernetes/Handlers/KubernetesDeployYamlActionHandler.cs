@@ -9,14 +9,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesDeployYamlActionHandler : IActionHandler
 {
-    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployRawYaml;
-
-    public bool CanHandle(DeploymentActionDto action)
-    {
-        if (action == null) return false;
-
-        return DeploymentActionTypeParser.Is(action.ActionType, ActionType);
-    }
+    public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployRawYaml;
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

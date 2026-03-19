@@ -1,5 +1,6 @@
 using Squid.Core.Extensions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -12,11 +13,9 @@ namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
 public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDeploymentTargetFinder targetFinder) : IActionHandler
 {
-    public DeploymentActionType ActionType => DeploymentActionType.HealthCheck;
+    public string ActionType => SpecialVariables.ActionTypes.HealthCheck;
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
-
-    public bool CanHandle(DeploymentActionDto action) => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

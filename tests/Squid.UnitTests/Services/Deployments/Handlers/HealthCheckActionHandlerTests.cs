@@ -11,6 +11,7 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -25,7 +26,7 @@ public class HealthCheckActionHandlerTests
     {
         var handler = CreateHandler(out _);
 
-        handler.ActionType.ShouldBe(DeploymentActionType.HealthCheck);
+        handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.HealthCheck);
     }
 
     [Fact]
@@ -42,7 +43,7 @@ public class HealthCheckActionHandlerTests
         var handler = CreateHandler(out _);
         var action = new DeploymentActionDto { ActionType = "Squid.HealthCheck" };
 
-        handler.CanHandle(action).ShouldBeTrue();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Fact]
@@ -51,7 +52,7 @@ public class HealthCheckActionHandlerTests
         var handler = CreateHandler(out _);
         var action = new DeploymentActionDto { ActionType = "Squid.KubernetesRunScript" };
 
-        handler.CanHandle(action).ShouldBeFalse();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeFalse();
     }
 
     // === Connection Test + SkipUnavailable ===
