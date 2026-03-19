@@ -132,6 +132,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
             {
                 ScriptBody = script,
                 Syntax = ScriptSyntax.Bash,
+                ExecutionMode = ExecutionMode.DirectScript,
                 Machine = tc.Machine,
                 Files = new Dictionary<string, byte[]>(),
                 Variables = new List<VariableDto>()

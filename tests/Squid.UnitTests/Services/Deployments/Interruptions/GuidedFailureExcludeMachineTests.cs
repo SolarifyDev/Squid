@@ -53,7 +53,7 @@ public class GuidedFailureExcludeMachineTests
     public async Task GuidedFailure_ResumeWithExcludeMachine_ExcludesTargetAndContinues()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "ExcludeMachine", MachineName = "machine-1" });
 
         var strategy = new TestExecutionStrategy(_ =>
@@ -77,8 +77,10 @@ public class GuidedFailureExcludeMachineTests
     public async Task GuidedFailure_ResumeWithExcludeMachine_MultipleTargets_OnlyExcludesFailingOne()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "ExcludeMachine", MachineName = "machine-1" });
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
 
         var callCount = 0;
         var strategy = new TestExecutionStrategy(_ =>
@@ -101,6 +103,72 @@ public class GuidedFailureExcludeMachineTests
         ctx.AllTargetsContext.Single(tc => tc.Machine.Name == "machine-2").IsExcluded.ShouldBeFalse();
         // machine-2 still executes its action
         callCount.ShouldBeGreaterThan(0);
+    }
+
+    // ========== Multi-Target Resume: Per-Machine Isolation ==========
+
+    [Fact]
+    public async Task GuidedFailure_ResumeMultiTarget_DifferentOutcomesPerMachine()
+    {
+        var executedMachines = new List<string>();
+        var strategy = new TestExecutionStrategy(req =>
+        {
+            executedMachines.Add(req.Machine.Name);
+            return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } };
+        });
+
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Skip", MachineName = "machine-1" });
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Retry", MachineName = "machine-2" });
+
+        var serverTaskService = new Mock<IServerTaskService>();
+
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContextMultiTarget(useGuidedFailure: true, isResume: true, strategy: strategy);
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        // machine-1 was skipped, machine-2 was retried (executed)
+        executedMachines.ShouldNotContain("machine-1");
+        executedMachines.ShouldContain("machine-2");
+    }
+
+    [Fact]
+    public async Task GuidedFailure_ResumeMultiTarget_OnlyFailingMachineHasInterruption()
+    {
+        var executedMachines = new List<string>();
+        var strategy = new TestExecutionStrategy(req =>
+        {
+            executedMachines.Add(req.Machine.Name);
+            return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } };
+        });
+
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "ExcludeMachine", MachineName = "machine-1" });
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), "machine-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
+
+        var serverTaskService = new Mock<IServerTaskService>();
+
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContextMultiTarget(useGuidedFailure: true, isResume: true, strategy: strategy);
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        // machine-1 excluded, machine-2 executes normally
+        ctx.AllTargetsContext.Single(tc => tc.Machine.Name == "machine-1").IsExcluded.ShouldBeTrue();
+        ctx.AllTargetsContext.Single(tc => tc.Machine.Name == "machine-2").IsExcluded.ShouldBeFalse();
+        executedMachines.ShouldContain("machine-2");
+        executedMachines.ShouldNotContain("machine-1");
     }
 
     // ========== Helpers ==========

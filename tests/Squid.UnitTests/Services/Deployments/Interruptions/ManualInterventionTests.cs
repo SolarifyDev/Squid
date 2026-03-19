@@ -85,7 +85,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_FirstRun_CreatesInterruptionAndThrowsSuspended()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
@@ -106,7 +106,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithProceed_ReturnsNormally()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Proceed" });
 
         var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
@@ -121,7 +121,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithAbort_ThrowsDeploymentAbortedException()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
 
         var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
@@ -134,7 +134,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_FirstRun_EmitsManualInterventionPromptEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
@@ -320,7 +320,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithProceed_EmitsResolvedEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Proceed" });
 
         var lifecycle = new Mock<IDeploymentLifecycle>();
@@ -336,7 +336,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithAbort_EmitsResolvedEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
 
         var lifecycle = new Mock<IDeploymentLifecycle>();
@@ -354,7 +354,7 @@ public class ManualInterventionTests
     public async Task SuspendForInterruption_PassesResponsibleTeamIds()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
@@ -393,7 +393,7 @@ public class ManualInterventionTests
     public async Task SuspendForInterruption_NoTeamIdsProperty_PassesNull()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });

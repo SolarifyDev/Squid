@@ -47,7 +47,7 @@ public sealed class ManualInterventionActionHandler(
 
     private async Task<InterruptionOutcome?> ResolveExistingInterruptionAsync(StepActionContext ctx, CancellationToken ct)
     {
-        var existing = await interruptionService.FindResolvedInterruptionAsync(ctx.ServerTaskId, ctx.Step.Name, ctx.Action.Name, ct).ConfigureAwait(false);
+        var existing = await interruptionService.FindResolvedInterruptionAsync(ctx.ServerTaskId, ctx.Step.Name, ctx.Action.Name, null, ct).ConfigureAwait(false);
 
         if (existing == null) return null;
 

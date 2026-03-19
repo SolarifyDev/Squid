@@ -9,6 +9,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -215,6 +216,52 @@ public class HealthCheckActionHandlerTests
         settings.CheckType.ShouldBe(expectedType);
         settings.ErrorHandling.ShouldBe(expectedError);
         settings.IncludeNewTargets.ShouldBe(expectedInclude);
+    }
+
+    // === FullHealthCheck ===
+
+    [Fact]
+    public async Task ExecuteStepLevelAsync_FullHealthCheck_SetsExecutionModeOnRequest()
+    {
+        var handler = CreateHandler(out _);
+        ScriptExecutionRequest capturedRequest = null;
+
+        var strategy = new Mock<IExecutionStrategy>();
+        strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
+
+        var checker = new Mock<IHealthCheckStrategy>();
+        checker.Setup(h => h.DefaultHealthCheckScript).Returns("echo health");
+        checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "ok"));
+
+        var transport = new Mock<IDeploymentTransport>();
+        transport.Setup(t => t.HealthChecker).Returns(checker.Object);
+        transport.Setup(t => t.Strategy).Returns(strategy.Object);
+
+        var ctx = new StepActionContext
+        {
+            Step = new DeploymentStepDto { Name = "HC Step" },
+            Action = BuildAction(checkType: "FullHealthCheck"),
+            StepDisplayOrder = 1,
+            DeploymentContext = new DeploymentTaskContext
+            {
+                AllTargetsContext = new List<DeploymentTargetContext>
+                {
+                    new()
+                    {
+                        Machine = new Machine { Id = 1, Name = "node-1" },
+                        Transport = transport.Object
+                    }
+                }
+            }
+        };
+
+        await handler.ExecuteStepLevelAsync(ctx, CancellationToken.None);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
     }
 
     // === Helpers ===

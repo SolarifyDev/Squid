@@ -37,7 +37,7 @@ public interface IDeploymentInterruptionService : IScopedDependency
 
     Task<List<DeploymentInterruption>> GetPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 
-    Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default);
+    Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default);
 
     Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 }
@@ -139,10 +139,10 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         return await repository.ToListAsync<DeploymentInterruption>(i => i.ServerTaskId == serverTaskId && i.Resolution == null, ct).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default)
+    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default)
     {
         return await repository.QueryNoTracking<DeploymentInterruption>(i =>
-                i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.Resolution != null)
+                i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.MachineName == machineName && i.Resolution != null)
             .OrderByDescending(i => i.CreatedDate)
             .FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }

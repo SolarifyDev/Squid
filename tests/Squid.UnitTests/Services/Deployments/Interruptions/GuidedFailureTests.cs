@@ -130,7 +130,7 @@ public class GuidedFailureTests
         });
 
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Retry" });
 
         var serverTaskService = new Mock<IServerTaskService>();
@@ -153,7 +153,7 @@ public class GuidedFailureTests
     public async Task GuidedFailure_ResumeWithSkip_SkipsAction()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Skip" });
 
         var strategy = new TestExecutionStrategy(_ =>
@@ -178,7 +178,7 @@ public class GuidedFailureTests
     public async Task GuidedFailure_ResumeWithAbort_ThrowsAbortedException()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
 
         var strategy = new TestExecutionStrategy(_ =>
@@ -220,7 +220,7 @@ public class GuidedFailureTests
     public async Task GuidedFailure_RetryThenFailsAgain_SuspendsAgain()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Retry" });
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 2 });
