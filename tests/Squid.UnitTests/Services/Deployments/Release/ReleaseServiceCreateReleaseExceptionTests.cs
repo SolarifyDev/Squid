@@ -22,6 +22,8 @@ public class ReleaseServiceCreateReleaseExceptionTests
     private readonly Mock<IDeploymentSnapshotService> _deploymentSnapshotService = new();
     private readonly Mock<IProjectDataProvider> _projectDataProvider = new();
     private readonly Mock<IChannelDataProvider> _channelDataProvider = new();
+    private readonly Mock<IChannelVersionRuleDataProvider> _channelVersionRuleDataProvider = new();
+    private readonly Mock<IChannelVersionRuleValidator> _channelVersionRuleValidator = new();
     private readonly Mock<ILifecycleResolver> _lifecycleResolver = new();
     private readonly Mock<ILifecycleProgressionEvaluator> _progressionEvaluator = new();
     private readonly Mock<ILifeCycleDataProvider> _lifeCycleDataProvider = new();
@@ -41,6 +43,8 @@ public class ReleaseServiceCreateReleaseExceptionTests
             _deploymentSnapshotService.Object,
             _projectDataProvider.Object,
             _channelDataProvider.Object,
+            _channelVersionRuleDataProvider.Object,
+            _channelVersionRuleValidator.Object,
             _lifecycleResolver.Object,
             _progressionEvaluator.Object,
             _lifeCycleDataProvider.Object,

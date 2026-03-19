@@ -77,6 +77,11 @@ public partial class KubernetesPodManager
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
         }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.BadRequest && ex.Response.Content?.Contains("PodInitializing") == true)
+        {
+            Log.Debug("Pod {PodName} container not ready yet (PodInitializing)", podName);
+            return string.Empty;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to read logs for pod {PodName}", podName);

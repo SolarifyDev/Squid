@@ -13,6 +13,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     private readonly IDeploymentLogWriter _logWriter;
     private readonly ConcurrentDictionary<int, long?> _stepNodes = new();
     private readonly ConcurrentDictionary<(int StepDisplayOrder, string MachineName, int ActionSortOrder), long?> _actionNodes = new();
+    private SensitiveValueMasker _masker;
 
     public DeploymentActivityLogger(IDeploymentLogWriter logWriter)
     {
@@ -23,6 +24,8 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnDeploymentStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
+        InitializeSensitiveMasker();
+
         var projectName = string.IsNullOrWhiteSpace(Ctx.Project?.Name) ? $"Project {Ctx.Deployment?.ProjectId}" : Ctx.Project.Name;
         var releaseVersion = string.IsNullOrWhiteSpace(Ctx.Release?.Version) ? "Unknown" : Ctx.Release.Version;
         var environmentName = string.IsNullOrWhiteSpace(Ctx.Environment?.Name) ? $"Environment {Ctx.Deployment?.EnvironmentId}" : Ctx.Environment.Name;
@@ -36,6 +39,8 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
+        InitializeSensitiveMasker();
+
         try
         {
             var nodes = await _logWriter.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
@@ -382,6 +387,43 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return "Executing";
     }
 
+    // === Sensitive Value Masking ===
+
+    private void InitializeSensitiveMasker()
+    {
+        var sensitiveValues = CollectSensitiveValues();
+        _masker = new SensitiveValueMasker(sensitiveValues);
+
+        if (_masker.ValueCount > 0)
+            Log.Debug("Initialized sensitive value masker with {Count} values for task {TaskId}", _masker.ValueCount, Ctx.ServerTaskId);
+    }
+
+    private IEnumerable<string> CollectSensitiveValues()
+    {
+        if (Ctx.Variables != null)
+        {
+            foreach (var v in Ctx.Variables)
+            {
+                if (v.IsSensitive) yield return v.Value;
+            }
+        }
+
+        if (Ctx.AllTargetsContext == null) yield break;
+
+        foreach (var tc in Ctx.AllTargetsContext)
+        {
+            if (tc.EndpointVariables == null) continue;
+
+            foreach (var v in tc.EndpointVariables)
+            {
+                if (v.IsSensitive) yield return v.Value;
+            }
+        }
+    }
+
+    private string MaskSensitiveValues(string text)
+        => _masker?.Mask(text) ?? text;
+
     // === Persistence Helpers ===
 
     private async Task FlushLogWriterAsync(CancellationToken ct)
@@ -423,7 +465,8 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         try
         {
             var seq = Ctx.NextLogSequence();
-            await _logWriter.AddLogAsync(Ctx.ServerTaskId, seq, category, message, source, activityNodeId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            var maskedMessage = MaskSensitiveValues(message);
+            await _logWriter.AddLogAsync(Ctx.ServerTaskId, seq, category, maskedMessage, source, activityNodeId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -442,7 +485,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
             var entries = execResult.LogLines.Select(line => new ServerTaskLogWriteEntry
             {
                 Category = stderrSet != null && stderrSet.Contains(line) ? ServerTaskLogCategory.Error : ServerTaskLogCategory.Info,
-                MessageText = line,
+                MessageText = MaskSensitiveValues(line),
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = Ctx.NextLogSequence(),
