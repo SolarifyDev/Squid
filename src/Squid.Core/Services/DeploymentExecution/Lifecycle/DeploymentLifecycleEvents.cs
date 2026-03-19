@@ -44,6 +44,12 @@ public class DeploymentEventContext
     // Guided failure / Manual intervention
     public string GuidedFailureResolution { get; init; }
     public InterruptionType? InterruptionType { get; init; }
+
+    // Health check
+    public bool? HealthCheckHealthy { get; init; }
+    public string HealthCheckDetail { get; init; }
+    public int HealthCheckHealthyCount { get; init; }
+    public int HealthCheckUnhealthyCount { get; init; }
 }
 
 public abstract record DeploymentLifecycleEvent(DeploymentEventContext Context);
@@ -94,6 +100,11 @@ public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) 
 // === Manual Intervention ===
 public sealed record ManualInterventionPromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ManualInterventionResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Health Check ===
+public sealed record HealthCheckStartingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record HealthCheckTargetResultEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record HealthCheckCompletedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Cancellation / Pause / Timeout ===
 public sealed record DeploymentCancelledEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

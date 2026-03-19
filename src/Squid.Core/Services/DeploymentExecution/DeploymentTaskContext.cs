@@ -53,4 +53,14 @@ public class DeploymentTargetContext
 
     // Isolated endpoint variables (not polluting global _ctx.Variables)
     public List<VariableDto> EndpointVariables { get; set; } = new();
+
+    // Exclusion state — set by health checks, guided failure, or any future filter
+    public bool IsExcluded { get; private set; }
+    public string ExclusionReason { get; private set; }
+
+    public void Exclude(string reason)
+    {
+        IsExcluded = true;
+        ExclusionReason = reason;
+    }
 }

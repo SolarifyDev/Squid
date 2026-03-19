@@ -11,4 +11,5 @@ public enum DeploymentActionType
     KubernetesDeployConfigMap = 7,
     KubernetesDeploySecret = 8,
     ManualIntervention = 9,
+    HealthCheck = 10,
 }

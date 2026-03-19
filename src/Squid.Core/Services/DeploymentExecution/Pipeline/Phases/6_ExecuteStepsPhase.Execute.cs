@@ -15,6 +15,13 @@ using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
+internal enum ActionDirective
+{
+    Execute,
+    Skip,
+    Abort
+}
+
 public sealed partial class ExecuteStepsPhase
 {
     private async Task<StepExecutionResult> ExecuteStepAcrossTargetsAsync(DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
@@ -38,6 +45,8 @@ public sealed partial class ExecuteStepsPhase
         if (HasTargetLevelActions(eligibleActions))
         {
             var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
+
+            matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
 
             if (matchingTargets.Count == 0)
             {
@@ -133,78 +142,93 @@ public sealed partial class ExecuteStepsPhase
 
         foreach (var prepared in stepResults)
         {
-            var actionResult = prepared.Result;
-            var effectiveVariables = prepared.EffectiveVariables;
-
             ++actionSortOrder;
-            var retry = true;
-            var resumeChecked = false;
 
-            while (retry)
+            var directive = await ResolveResumeDirectiveAsync(step, prepared.Result, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+
+            if (directive == ActionDirective.Abort)
+                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{prepared.Result.ActionName}\"");
+
+            if (directive == ActionDirective.Skip)
             {
-                retry = false;
-
-                if (!resumeChecked && _ctx.IsResume && _ctx.UseGuidedFailure)
-                {
-                    resumeChecked = true;
-
-                    var resumeOutcome = await ResolveGuidedFailureOnResumeAsync(step, actionResult, stepDisplayOrder, ct).ConfigureAwait(false);
-
-                    if (resumeOutcome == InterruptionOutcome.Skip)
-                    {
-                        result.Failed = false;
-                        break;
-                    }
-
-                    if (resumeOutcome == InterruptionOutcome.Abort)
-                        throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{actionResult.ActionName}\"");
-                }
-
-                await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
-
-                try
-                {
-                    var strategy = tc.Transport?.Strategy;
-
-                    if (strategy == null)
-                        throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
-
-                    var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
-                    var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
-
-                    CaptureOutputVariables(actionResult, execResult.LogLines);
-
-                    await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
-
-                    if (!execResult.Success)
-                        throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
-
-                    await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
-
-                    CollectOutputVariables(result, step.Name, actionResult);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    result.Failed = true;
-
-                    Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
-
-                    await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
-
-                    if (step.IsRequired && _ctx.UseGuidedFailure)
-                    {
-                        await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
-                        // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
-                    }
-
-                    if (step.IsRequired)
-                        throw;
-                }
+                result.Failed = false;
+                continue;
             }
+
+            await ExecuteSingleActionAsync(prepared, step, stepDisplayOrder, actionSortOrder, result, tc, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<ActionDirective> ResolveResumeDirectiveAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
+    {
+        if (!_ctx.IsResume || !_ctx.UseGuidedFailure) return ActionDirective.Execute;
+
+        var outcome = await ResolveGuidedFailureOnResumeAsync(step, actionResult, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+
+        return outcome switch
+        {
+            InterruptionOutcome.Skip => ActionDirective.Skip,
+            InterruptionOutcome.Abort => ActionDirective.Abort,
+            InterruptionOutcome.ExcludeMachine => ApplyExcludeAndSkip(tc),
+            _ => ActionDirective.Execute
+        };
+    }
+
+    private static ActionDirective ApplyExcludeAndSkip(DeploymentTargetContext tc)
+    {
+        tc.Exclude("Excluded via guided failure");
+        Log.Information("Machine {MachineName} excluded from remaining deployment steps via guided failure", tc.Machine.Name);
+        return ActionDirective.Skip;
+    }
+
+    private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, CancellationToken ct)
+    {
+        var actionResult = prepared.Result;
+        var effectiveVariables = prepared.EffectiveVariables;
+
+        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
+
+        try
+        {
+            var strategy = tc.Transport?.Strategy;
+
+            if (strategy == null)
+                throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
+
+            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
+            var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
+
+            CaptureOutputVariables(actionResult, execResult.LogLines);
+
+            await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
+
+            if (!execResult.Success)
+                throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
+
+            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
+
+            CollectOutputVariables(result, step.Name, actionResult);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            result.Failed = true;
+
+            Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+
+            await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
+
+            if (step.IsRequired && _ctx.UseGuidedFailure)
+            {
+                await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
+            }
+
+            if (step.IsRequired)
+                throw;
         }
     }
 
@@ -226,7 +250,8 @@ public sealed partial class ExecuteStepsPhase
             {
                 ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id, SpaceId = _ctx.Deployment.SpaceId,
                 Step = step, Action = action, Variables = _ctx.Variables, ReleaseVersion = _ctx.Release?.Version,
-                StepDisplayOrder = stepDisplayOrder, ActionSortOrder = actionSortOrder
+                StepDisplayOrder = stepDisplayOrder, ActionSortOrder = actionSortOrder,
+                DeploymentContext = _ctx
             };
 
             await handler.ExecuteStepLevelAsync(ctx, ct).ConfigureAwait(false);
@@ -266,13 +291,16 @@ public sealed partial class ExecuteStepsPhase
         throw new DeploymentSuspendedException(_ctx.ServerTaskId);
     }
 
-    private async Task<InterruptionOutcome?> ResolveGuidedFailureOnResumeAsync(DeploymentStepDto step, ActionExecutionResult actionResult, int stepDisplayOrder, CancellationToken ct)
+    private async Task<InterruptionOutcome?> ResolveGuidedFailureOnResumeAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
     {
         var existing = await interruptionService.FindResolvedInterruptionAsync(_ctx.ServerTaskId, step.Name, actionResult.ActionName, ct).ConfigureAwait(false);
 
         if (existing == null) return null;
 
         var outcome = Enum.TryParse<InterruptionOutcome>(existing.Resolution, true, out var parsed) ? parsed : (InterruptionOutcome?)null;
+
+        if (outcome == InterruptionOutcome.ExcludeMachine && !string.Equals(existing.MachineName, tc.Machine.Name, StringComparison.OrdinalIgnoreCase))
+            return null;
 
         if (outcome.HasValue)
         {

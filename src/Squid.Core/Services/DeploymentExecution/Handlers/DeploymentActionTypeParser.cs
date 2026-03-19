@@ -63,6 +63,12 @@ public static class DeploymentActionTypeParser
             return true;
         }
 
+        if (string.Equals(actionType, "Squid.HealthCheck", StringComparison.OrdinalIgnoreCase))
+        {
+            parsed = DeploymentActionType.HealthCheck;
+            return true;
+        }
+
         return false;
     }
 

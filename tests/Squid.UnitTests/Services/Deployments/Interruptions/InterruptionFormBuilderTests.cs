@@ -20,7 +20,7 @@ public class InterruptionFormBuilderTests
         form.Elements[2].Name.ShouldBe("Result");
 
         var buttons = form.Elements[2].Control.ShouldBeOfType<SubmitButtonGroupControl>();
-        buttons.Buttons.ShouldBe(new List<string> { "Abort", "Retry", "Ignore" });
+        buttons.Buttons.ShouldBe(new List<string> { "Abort", "Retry", "Ignore", "Exclude Machine" });
     }
 
     [Fact]
@@ -45,6 +45,7 @@ public class InterruptionFormBuilderTests
     [InlineData(InterruptionType.GuidedFailure, "Retry", InterruptionOutcome.Retry)]
     [InlineData(InterruptionType.GuidedFailure, "Ignore", InterruptionOutcome.Skip)]
     [InlineData(InterruptionType.GuidedFailure, "Abort", InterruptionOutcome.Abort)]
+    [InlineData(InterruptionType.GuidedFailure, "Exclude Machine", InterruptionOutcome.ExcludeMachine)]
     [InlineData(InterruptionType.ManualIntervention, "Proceed", InterruptionOutcome.Proceed)]
     [InlineData(InterruptionType.ManualIntervention, "Abort", InterruptionOutcome.Abort)]
     public void ResolveOutcome_MapsButtonToExpectedOutcome(InterruptionType type, string button, InterruptionOutcome expected)
