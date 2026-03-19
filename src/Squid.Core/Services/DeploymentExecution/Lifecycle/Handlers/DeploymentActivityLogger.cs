@@ -78,6 +78,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         await LogInfoAsync("Deployment completed successfully", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
@@ -85,6 +86,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
         await LogErrorAsync(ctx.Exception?.Message ?? ctx.Error ?? "Unknown error", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
     }
 
     // === Target Preparation ===
@@ -340,6 +342,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         await LogWarningAsync("Deployment was cancelled", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
     }
 
@@ -380,6 +383,18 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     }
 
     // === Persistence Helpers ===
+
+    private async Task FlushLogWriterAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _logWriter.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to flush log writer for task {TaskId}", Ctx.ServerTaskId);
+        }
+    }
 
     private Task LogInfoAsync(string message, string source, CancellationToken ct, long? nodeId = null)
         => PersistTaskLogAsync(ServerTaskLogCategory.Info, message, source, nodeId ?? _taskNodeId, ct);
@@ -424,12 +439,10 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         try
         {
-            var lineNumber = 0;
-
             var entries = execResult.LogLines.Select(line => new ServerTaskLogWriteEntry
             {
                 Category = stderrSet != null && stderrSet.Contains(line) ? ServerTaskLogCategory.Error : ServerTaskLogCategory.Info,
-                MessageText = $"{++lineNumber}\n{line}",
+                MessageText = line,
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = Ctx.NextLogSequence(),

@@ -350,6 +350,10 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             .Returns(Task.CompletedTask);
 
         logWriter
+            .Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        logWriter
             .Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActivityLog>());
 

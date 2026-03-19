@@ -6,17 +6,25 @@ using Squid.Message.Enums.Deployments;
 namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 
 /// <summary>
-/// Thread-safe log writer that creates a fresh DbContext per operation.
-/// Each write gets its own connection from the pool — no DbContext contention
-/// when called concurrently from parallel target execution.
+/// Thread-safe log writer with Channel-based buffering for task logs.
+/// AddLogAsync/AddLogsAsync enqueue to an unbounded Channel and return immediately.
+/// A background task batch-writes to DB every 300ms.
+/// Activity node operations remain synchronous (must return IDs / timely status updates).
 /// </summary>
-public sealed class DeploymentLogWriter : IDeploymentLogWriter
+public sealed class DeploymentLogWriter : IDeploymentLogWriter, IAsyncDisposable
 {
+    private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(300);
+
     private readonly DbContextOptions<SquidDbContext> _dbOptions;
+    private readonly System.Threading.Channels.Channel<ServerTaskLog> _channel = System.Threading.Channels.Channel.CreateUnbounded<ServerTaskLog>(new System.Threading.Channels.UnboundedChannelOptions { SingleWriter = false, SingleReader = false });
+    private readonly SemaphoreSlim _flushLock = new(1, 1);
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Task _backgroundTask;
 
     public DeploymentLogWriter(DbContextOptions<SquidDbContext> dbOptions)
     {
         _dbOptions = dbOptions;
+        _backgroundTask = BackgroundFlushLoopAsync(_cts.Token);
     }
 
     public async Task<ActivityLog> AddActivityNodeAsync(int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken ct = default)
@@ -51,7 +59,7 @@ public sealed class DeploymentLogWriter : IDeploymentLogWriter
                 .SetProperty(n => n.LastModifiedDate, DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
     }
 
-    public async Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, CancellationToken ct = default)
+    public Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, CancellationToken ct = default)
     {
         var log = new ServerTaskLog
         {
@@ -64,30 +72,47 @@ public sealed class DeploymentLogWriter : IDeploymentLogWriter
             SequenceNumber = sequenceNumber
         };
 
-        await using var db = CreateContext();
-        await db.AddAsync(log, ct).ConfigureAwait(false);
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _channel.Writer.TryWrite(log);
+
+        return Task.CompletedTask;
     }
 
-    public async Task AddLogsAsync(int taskId, IReadOnlyCollection<ServerTaskLogWriteEntry> entries, CancellationToken ct = default)
+    public Task AddLogsAsync(int taskId, IReadOnlyCollection<ServerTaskLogWriteEntry> entries, CancellationToken ct = default)
     {
-        if (entries == null || entries.Count == 0) return;
+        if (entries == null || entries.Count == 0) return Task.CompletedTask;
 
-        var logs = entries.Select(entry => new ServerTaskLog
+        foreach (var entry in entries)
         {
-            ServerTaskId = taskId,
-            ActivityNodeId = entry.ActivityNodeId,
-            Category = entry.Category,
-            MessageText = entry.MessageText,
-            Detail = entry.Detail,
-            Source = entry.Source,
-            OccurredAt = entry.OccurredAt ?? DateTimeOffset.UtcNow,
-            SequenceNumber = entry.SequenceNumber
-        }).ToList();
+            var log = new ServerTaskLog
+            {
+                ServerTaskId = taskId,
+                ActivityNodeId = entry.ActivityNodeId,
+                Category = entry.Category,
+                MessageText = entry.MessageText,
+                Detail = entry.Detail,
+                Source = entry.Source,
+                OccurredAt = entry.OccurredAt ?? DateTimeOffset.UtcNow,
+                SequenceNumber = entry.SequenceNumber
+            };
 
-        await using var db = CreateContext();
-        await db.AddRangeAsync(logs, ct).ConfigureAwait(false);
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            _channel.Writer.TryWrite(log);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task FlushAsync(CancellationToken ct = default)
+    {
+        await _flushLock.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await DrainAndWriteAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _flushLock.Release();
+        }
     }
 
     public async Task<List<ActivityLog>> GetTreeByTaskIdAsync(int serverTaskId, CancellationToken ct = default)
@@ -99,6 +124,81 @@ public sealed class DeploymentLogWriter : IDeploymentLogWriter
             .Where(n => n.ServerTaskId == serverTaskId)
             .OrderBy(n => n.SortOrder)
             .ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+
+        try
+        {
+            await _backgroundTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on cancellation
+        }
+
+        await _flushLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
+        {
+            await DrainAndWriteAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _flushLock.Release();
+        }
+
+        _cts.Dispose();
+        _flushLock.Dispose();
+    }
+
+    private async Task BackgroundFlushLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(FlushInterval, ct).ConfigureAwait(false);
+                await _flushLock.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            try
+            {
+                await DrainAndWriteAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Background log flush failed");
+            }
+            finally
+            {
+                _flushLock.Release();
+            }
+        }
+    }
+
+    private async Task DrainAndWriteAsync(CancellationToken ct)
+    {
+        var batch = new List<ServerTaskLog>();
+
+        while (_channel.Reader.TryRead(out var log))
+            batch.Add(log);
+
+        if (batch.Count == 0) return;
+
+        await using var db = CreateContext();
+        await db.AddRangeAsync(batch, ct).ConfigureAwait(false);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     private SquidDbContext CreateContext() => new(_dbOptions);

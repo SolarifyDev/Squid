@@ -346,6 +346,9 @@ public class AnnounceSetupPhaseTests
         mock.Setup(x => x.AddLogsAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        mock.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         mock.Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActivityLog>());
 

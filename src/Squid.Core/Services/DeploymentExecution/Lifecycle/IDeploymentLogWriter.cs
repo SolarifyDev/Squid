@@ -6,8 +6,8 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 
 /// <summary>
 /// Thread-safe writer for deployment activity nodes and task logs.
-/// Each operation creates its own DbContext, allowing concurrent writes
-/// from parallel target execution without DbContext contention.
+/// Log writes are buffered in a Channel and batch-flushed to DB every 300ms.
+/// Activity node operations write synchronously (must return IDs / timely status).
 /// </summary>
 public interface IDeploymentLogWriter : ISingletonDependency
 {
@@ -18,6 +18,8 @@ public interface IDeploymentLogWriter : ISingletonDependency
     Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, CancellationToken ct = default);
 
     Task AddLogsAsync(int taskId, IReadOnlyCollection<ServerTaskLogWriteEntry> entries, CancellationToken ct = default);
+
+    Task FlushAsync(CancellationToken ct = default);
 
     Task<List<ActivityLog>> GetTreeByTaskIdAsync(int serverTaskId, CancellationToken ct = default);
 }

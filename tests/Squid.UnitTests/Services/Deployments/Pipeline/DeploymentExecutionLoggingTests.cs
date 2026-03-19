@@ -512,10 +512,10 @@ public class DeploymentExecutionLoggingTests
         skippedLog.ShouldBeNull("StepLevel step should NOT be logged as skipped");
     }
 
-    // ========== Script Output Line Numbers ==========
+    // ========== Script Output ==========
 
     [Fact]
-    public async Task ScriptOutput_HasLineNumbers()
+    public async Task ScriptOutput_PersistsRawLines()
     {
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
@@ -532,11 +532,11 @@ public class DeploymentExecutionLoggingTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        var scriptLogs = logs.Where(l => l.Message.Contains("\n")).OrderBy(l => l.Message).ToList();
+        var scriptLogs = logs.Where(l => l.Message is "hello" or "world" or "done").OrderBy(l => l.Message).ToList();
         scriptLogs.Count.ShouldBe(3);
-        scriptLogs[0].Message.ShouldBe("1\nhello");
-        scriptLogs[1].Message.ShouldBe("2\nworld");
-        scriptLogs[2].Message.ShouldBe("3\ndone");
+        scriptLogs[0].Message.ShouldBe("done");
+        scriptLogs[1].Message.ShouldBe("hello");
+        scriptLogs[2].Message.ShouldBe("world");
     }
 
     // ========== Test Infrastructure ==========
@@ -662,6 +662,9 @@ public class DeploymentExecutionLoggingTests
                 foreach (var entry in entries)
                     logs.Add(new CapturedLog(entry.Category, entry.MessageText, entry.Source, entry.ActivityNodeId));
             })
+            .Returns(Task.CompletedTask);
+
+        mock.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         mock.Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))

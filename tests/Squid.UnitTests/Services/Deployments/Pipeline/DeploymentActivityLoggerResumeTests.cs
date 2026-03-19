@@ -27,6 +27,9 @@ public class DeploymentActivityLoggerResumeTests
         logWriter.Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        logWriter.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         var logger = new DeploymentActivityLogger(logWriter.Object);
         var ctx = new DeploymentTaskContext { ServerTaskId = 1 };
         logger.Initialize(ctx);
@@ -49,6 +52,9 @@ public class DeploymentActivityLoggerResumeTests
             .ReturnsAsync(new List<ActivityLog>());
 
         logWriter.Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        logWriter.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var logger = new DeploymentActivityLogger(logWriter.Object);

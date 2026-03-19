@@ -119,7 +119,7 @@ public class DeploymentMultiTargetLoggingTests
         var taskNode = nodes.FirstOrDefault(n => n.NodeType == DeploymentActivityLogNodeType.Task);
         var actionNodes = nodes.Where(n => n.NodeType == DeploymentActivityLogNodeType.Action).Select(n => n.Id).ToHashSet();
 
-        var scriptLogs = logs.Where(l => l.Message.Contains("\n")).ToList();
+        var scriptLogs = logs.Where(l => l.Message.StartsWith("line-", StringComparison.Ordinal)).ToList();
         scriptLogs.ShouldNotBeEmpty("Should have script output logs");
 
         foreach (var log in scriptLogs)
@@ -513,6 +513,9 @@ public class DeploymentMultiTargetLoggingTests
                 foreach (var entry in entries)
                     logs.Add(new CapturedLog(entry.Category, entry.MessageText, entry.Source, entry.ActivityNodeId));
             })
+            .Returns(Task.CompletedTask);
+
+        mock.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         mock.Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
