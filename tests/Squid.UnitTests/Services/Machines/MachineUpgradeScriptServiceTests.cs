@@ -1,10 +1,7 @@
-using System;
 using System.Net;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Account;
-using Squid.Core.Services.Authentication;
-using Squid.Core.Services.Identity;
 using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Models.Deployments.Machine;
@@ -15,16 +12,12 @@ public class MachineUpgradeScriptServiceTests
 {
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
-    private readonly Mock<ICurrentUser> _currentUser = new();
-    private readonly Mock<IUserTokenService> _userTokenService = new();
     private readonly Mock<IAccountService> _accountService = new();
     private readonly MachineScriptService _service;
 
     public MachineUpgradeScriptServiceTests()
     {
         _service = new MachineScriptService(
-            _currentUser.Object,
-            _userTokenService.Object,
             _accountService.Object,
             _machineDataProvider.Object,
             _agentVersionProvider.Object);

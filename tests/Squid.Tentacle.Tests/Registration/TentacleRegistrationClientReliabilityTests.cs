@@ -77,6 +77,31 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
         server.LastRequestBody.ShouldContain("\"machineName\":\"tentacle-sub\"");
     }
 
+    [Theory]
+    [InlineData("my-api-key", "", "X-API-KEY", "my-api-key")]
+    [InlineData("", "my-bearer", "Authorization", "Bearer my-bearer")]
+    public async Task RegisterAsync_Uses_Correct_Auth_Header(string apiKey, string bearerToken, string expectedHeader, string expectedValue)
+    {
+        await using var server = ScriptedRegistrationServer.Start();
+        server.Enqueue(HttpStatusCode.OK, """{"data":{"machineId":1,"serverThumbprint":"T","subscriptionUri":"poll://s/"}}""");
+
+        var client = new TentacleRegistrationClient(
+            new TentacleSettings
+            {
+                ServerUrl = server.BaseAddress.ToString().TrimEnd('/'),
+                BearerToken = bearerToken,
+                ApiKey = apiKey
+            },
+            "/api/machines/register/kubernetes-agent",
+            new Dictionary<string, string>(),
+            CreateFastRetryOptions(maxRetries: 1));
+
+        await client.RegisterAsync("s", "t", TestCancellationToken);
+
+        server.LastRequestHeaders.ShouldContainKey(expectedHeader);
+        server.LastRequestHeaders[expectedHeader].ShouldBe(expectedValue);
+    }
+
     private static TentacleRegistrationClient CreateClient(
         ScriptedRegistrationServer server,
         TentacleRegistrationClientOptions options)
@@ -111,6 +136,7 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
         private readonly Queue<(HttpStatusCode StatusCode, string Body)> _responses = new();
         private int _requestCount;
         private string _lastRequestBody = string.Empty;
+        private Dictionary<string, string> _lastRequestHeaders = new();
 
         private ScriptedRegistrationServer(int port)
         {
@@ -124,6 +150,7 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
         public Uri BaseAddress { get; }
         public int RequestCount => Volatile.Read(ref _requestCount);
         public string LastRequestBody => Volatile.Read(ref _lastRequestBody);
+        public Dictionary<string, string> LastRequestHeaders => _lastRequestHeaders;
 
         public static ScriptedRegistrationServer Start()
             => new(TcpPortAllocator.GetEphemeralPort());
@@ -144,6 +171,11 @@ public class TentacleRegistrationClientReliabilityTests : TimedTestBase
                     {
                         Volatile.Write(ref _lastRequestBody, await reader.ReadToEndAsync(ct).ConfigureAwait(false));
                     }
+
+                    var headers = new Dictionary<string, string>();
+                    foreach (string key in ctx.Request.Headers.AllKeys)
+                        headers[key] = ctx.Request.Headers[key];
+                    _lastRequestHeaders = headers;
 
                     if (!_responses.TryDequeue(out var response))
                     {

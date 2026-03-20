@@ -69,6 +69,13 @@ spec:
             secretKeyRef:
               name: {{ include "kubernetes-agent.fullname" . }}-secret
               key: bearer-token
+        {{- if .Values.tentacle.apiKey }}
+        - name: Tentacle__ApiKey
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "kubernetes-agent.fullname" . }}-secret
+              key: api-key
+        {{- end }}
         - name: Tentacle__Roles
           value: {{ join "," .Values.tentacle.roles | quote }}
         - name: Tentacle__Flavor

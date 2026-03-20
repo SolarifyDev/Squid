@@ -8,6 +8,7 @@ public class TentacleSettings
     public string ServerUrl { get; set; } = "https://localhost:7078";
     public string ServerCommsUrl { get; set; } = string.Empty;
     public string BearerToken { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
     public string ServerCertificate { get; set; } = string.Empty;
     public string MachineName { get; set; } = string.Empty;
     public string Roles { get; set; } = string.Empty;
