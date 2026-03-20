@@ -63,7 +63,7 @@ public partial class DeploymentSnapshotDataProvider
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
-        var orderedQuery = query.OrderByDescending(s => s.CreatedAt);
+        var orderedQuery = query.OrderByDescending(s => s.CreatedDate);
 
         if (pageIndex.HasValue && pageSize.HasValue)
             orderedQuery = (IOrderedQueryable<DeploymentProcessSnapshot>)orderedQuery.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
@@ -77,7 +77,7 @@ public partial class DeploymentSnapshotDataProvider
                 ContentHash = s.ContentHash,
                 CompressionType = s.CompressionType,
                 UncompressedSize = s.UncompressedSize,
-                CreatedAt = s.CreatedAt,
+                CreatedDate = s.CreatedDate,
                 CreatedBy = s.CreatedBy
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);

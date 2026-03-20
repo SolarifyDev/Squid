@@ -6,5 +6,6 @@ public enum InterruptionOutcome
     Retry = 1,
     Skip = 2,
     Abort = 3,
-    Proceed = 4
+    Proceed = 4,
+    ExcludeMachine = 5
 }

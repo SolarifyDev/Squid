@@ -40,6 +40,8 @@ public partial class ReleaseService : IReleaseService
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
+    private readonly IChannelVersionRuleDataProvider _channelVersionRuleDataProvider;
+    private readonly IChannelVersionRuleValidator _channelVersionRuleValidator;
     private readonly ILifecycleResolver _lifecycleResolver;
     private readonly ILifecycleProgressionEvaluator _progressionEvaluator;
     private readonly ILifeCycleDataProvider _lifeCycleDataProvider;
@@ -54,6 +56,8 @@ public partial class ReleaseService : IReleaseService
         IDeploymentSnapshotService deploymentSnapshotService,
         IProjectDataProvider projectDataProvider,
         IChannelDataProvider channelDataProvider,
+        IChannelVersionRuleDataProvider channelVersionRuleDataProvider,
+        IChannelVersionRuleValidator channelVersionRuleValidator,
         ILifecycleResolver lifecycleResolver,
         ILifecycleProgressionEvaluator progressionEvaluator,
         ILifeCycleDataProvider lifeCycleDataProvider,
@@ -67,6 +71,8 @@ public partial class ReleaseService : IReleaseService
         _deploymentSnapshotService = deploymentSnapshotService;
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
+        _channelVersionRuleDataProvider = channelVersionRuleDataProvider;
+        _channelVersionRuleValidator = channelVersionRuleValidator;
         _lifecycleResolver = lifecycleResolver;
         _progressionEvaluator = progressionEvaluator;
         _lifeCycleDataProvider = lifeCycleDataProvider;
@@ -91,6 +97,14 @@ public partial class ReleaseService : IReleaseService
 
         if (channel.SpaceId != project.SpaceId)
             throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
+
+        await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
+
+        var existingRelease = await _releaseDataProvider
+            .GetReleaseByVersionAsync(command.ProjectId, command.ChannelId, command.Version, cancellationToken).ConfigureAwait(false);
+
+        if (existingRelease != null)
+            throw new ReleaseDuplicateVersionException(command.ProjectId, command.ChannelId, command.Version);
 
         release.SpaceId = project.SpaceId;
         
@@ -209,6 +223,24 @@ public partial class ReleaseService : IReleaseService
             });
 
         await _releaseSelectedPackageDataProvider.InsertAllAsync(entities, ct).ConfigureAwait(false);
+    }
+
+    private async Task ValidateChannelVersionRulesAsync(int channelId, List<CreateReleaseSelectedPackageDto> selectedPackages, CancellationToken ct)
+    {
+        if (selectedPackages == null || selectedPackages.Count == 0) return;
+
+        var rules = await _channelVersionRuleDataProvider.GetRulesByChannelIdAsync(channelId, ct).ConfigureAwait(false);
+        if (rules.Count == 0) return;
+
+        var packages = selectedPackages
+            .Where(sp => !string.IsNullOrWhiteSpace(sp.ActionName) && !string.IsNullOrWhiteSpace(sp.Version))
+            .Select(sp => new SelectedPackageInfo(sp.ActionName, sp.Version))
+            .ToList();
+
+        var violations = _channelVersionRuleValidator.Validate(rules, packages);
+
+        if (violations.Count > 0)
+            throw new ReleaseVersionRuleViolationException(channelId, violations);
     }
 
     private async Task<List<int>> GetCurrentDeployedReleaseIdsAsync(int? projectId, CancellationToken cancellationToken)

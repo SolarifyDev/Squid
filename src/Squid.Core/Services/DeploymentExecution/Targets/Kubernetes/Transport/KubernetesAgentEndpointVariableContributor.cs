@@ -2,6 +2,7 @@ using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -17,9 +18,9 @@ public class KubernetesAgentEndpointVariableContributor : IEndpointVariableContr
 
         return new List<VariableDto>
         {
-            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? string.Empty),
-            EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
-            EndpointVariableFactory.Make(KubernetesCommonVariableNames.PrintEvaluatedVariables, KubernetesBooleanValues.True)
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.Namespace, endpoint.Namespace ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };
     }
 }

@@ -22,7 +22,7 @@ public class DeploymentStepDto
     
     public bool IsRequired { get; set; }
     
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
     
     public List<DeploymentStepPropertyDto> Properties { get; set; } = new List<DeploymentStepPropertyDto>();
     

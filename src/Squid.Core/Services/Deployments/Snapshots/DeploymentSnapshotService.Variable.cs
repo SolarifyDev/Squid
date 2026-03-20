@@ -84,7 +84,6 @@ public partial class DeploymentSnapshotService
     {
         return new VariableSetSnapshot
         {
-            CreatedBy = "System",
             ContentHash = blob.ContentHash,
             SnapshotData = blob.CompressedData,
             UncompressedSize = blob.UncompressedSize,

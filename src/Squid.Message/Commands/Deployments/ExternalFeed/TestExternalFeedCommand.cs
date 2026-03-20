@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.ExternalFeed;
 
-public class TestExternalFeedCommand : ICommand
+[RequiresPermission(Permission.FeedView)]
+public class TestExternalFeedCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

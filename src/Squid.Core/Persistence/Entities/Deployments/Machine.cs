@@ -2,7 +2,7 @@ using Squid.Message.Enums;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class Machine : IEntity<int>
+public class Machine : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -46,7 +46,13 @@ public class Machine : IEntity<int>
 
     public MachineHealthStatus HealthStatus { get; set; } = MachineHealthStatus.Unknown;
 
-    public DateTime? HealthLastChecked { get; set; }
+    public DateTimeOffset? HealthLastChecked { get; set; }
 
     public string HealthDetail { get; set; }
+
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

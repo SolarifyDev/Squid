@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Release;
 
-public class CreateReleaseCommand : ICommand
+[RequiresPermission(Permission.ReleaseCreate)]
+public class CreateReleaseCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public string Version { get; set; }
     
     public int ChannelId { get; set; }

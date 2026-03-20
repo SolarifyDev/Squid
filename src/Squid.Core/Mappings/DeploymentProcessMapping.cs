@@ -32,7 +32,10 @@ public class DeploymentProcessMapping : Profile
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.ProcessId, opt => opt.Ignore())
             .ForMember(dest => dest.StepOrder, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore());
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
 
         CreateMap<StepPropertyModel, DeploymentStepProperty>()
             .ForMember(dest => dest.StepId, opt => opt.Ignore());
@@ -41,7 +44,10 @@ public class DeploymentProcessMapping : Profile
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.StepId, opt => opt.Ignore())
             .ForMember(dest => dest.ActionOrder, opt => opt.Ignore())
-            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore())
             .ForMember(dest => dest.FeedId, opt => opt.Ignore())
             .ForMember(dest => dest.PackageId, opt => opt.Ignore());
 
@@ -51,13 +57,17 @@ public class DeploymentProcessMapping : Profile
         CreateMap<CreateDeploymentProcessCommand, DeploymentProcess>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())
             .ForMember(dest => dest.Version, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModified, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
             .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
 
         CreateMap<UpdateDeploymentProcessCommand, DeploymentProcess>()
             .ForMember(dest => dest.Version, opt => opt.Ignore())
             .ForMember(dest => dest.SpaceId, opt => opt.Ignore())
-            .ForMember(dest => dest.LastModified, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+            .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())
             .ForMember(dest => dest.LastModifiedBy, opt => opt.Ignore());
     }
 }

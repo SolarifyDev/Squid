@@ -106,7 +106,7 @@ public partial class DeploymentService : IDeploymentService
             SpaceId = release.SpaceId,
             ProjectId = release.ProjectId,
             EnvironmentId = command.EnvironmentId,
-            LastModified = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow,
             BusinessProcessState = "Queued",
             StateOrder = 1,
             Weight = 1,
@@ -125,7 +125,7 @@ public partial class DeploymentService : IDeploymentService
             ReleaseId = command.ReleaseId,
             EnvironmentId = command.EnvironmentId,
             DeployedBy = deployedBy,
-            Created = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
             Json = JsonSerializer.Serialize(deploymentRequestPayload)

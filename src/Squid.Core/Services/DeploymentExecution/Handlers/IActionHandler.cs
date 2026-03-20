@@ -11,11 +11,12 @@ public enum ExecutionScope
 
 public interface IActionHandler : IScopedDependency
 {
-    DeploymentActionType ActionType { get; }
+    string ActionType { get; }
 
     ExecutionScope ExecutionScope => ExecutionScope.TargetLevel;
 
-    bool CanHandle(DeploymentActionDto action);
+    bool CanHandle(DeploymentActionDto action)
+        => string.Equals(action?.ActionType, ActionType, StringComparison.OrdinalIgnoreCase);
 
     Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct);
 

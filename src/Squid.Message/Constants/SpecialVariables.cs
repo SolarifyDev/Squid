@@ -5,10 +5,18 @@ public static class SpecialVariables
     public static class ActionTypes
     {
         public const string Script = "Squid.Script";
+        public const string KubernetesRunScript = "Squid.KubernetesRunScript";
         public const string KubernetesDeployRawYaml = "Squid.KubernetesDeployRawYaml";
+        public const string KubernetesDeployContainers = "Squid.KubernetesDeployContainers";
+        public const string HelmChartUpgrade = "Squid.HelmChartUpgrade";
+        public const string KubernetesDeployIngress = "Squid.KubernetesDeployIngress";
+        public const string KubernetesDeployService = "Squid.KubernetesDeployService";
+        public const string KubernetesDeployConfigMap = "Squid.KubernetesDeployConfigMap";
+        public const string KubernetesDeploySecret = "Squid.KubernetesDeploySecret";
         public const string TentaclePackage = "Squid.TentaclePackage";
         public const string HttpRequest = "Squid.HttpRequest";
         public const string Manual = "Squid.Manual";
+        public const string HealthCheck = "Squid.HealthCheck";
         public const string DeployRelease = "Squid.DeployRelease";
         public const string DeployIngress = "Squid.DeployIngress";
     }
@@ -68,6 +76,7 @@ public static class SpecialVariables
         public const string Container = "Squid.Action.Container";
         public const string ConditionExpression = "Squid.Step.ConditionExpression";
         public const string RequiredToSucceed = "Squid.Step.RequiredToSucceed";
+        public const string MaxParallelism = "Squid.Step.MaxParallelism";
     }
 
     public static class ScriptSyntax
@@ -88,5 +97,68 @@ public static class SpecialVariables
         public const string Patch = "PATCH";
         public const string Head = "HEAD";
         public const string Options = "OPTIONS";
+    }
+
+    public static class Deployment
+    {
+        public const string Id = "Squid.Deployment.Id";
+    }
+
+    public static class Project
+    {
+        public const string Id = "Squid.Project.Id";
+        public const string Name = "Squid.Project.Name";
+    }
+
+    public static class Release
+    {
+        public const string Number = "Squid.Release.Number";
+    }
+
+    public static class Environment
+    {
+        public const string Id = "Squid.Environment.Id";
+        public const string Name = "Squid.Environment.Name";
+    }
+
+    public static class Machine
+    {
+        public const string Id = "Squid.Machine.Id";
+        public const string Name = "Squid.Machine.Name";
+        public const string Roles = "Squid.Machine.Roles";
+    }
+
+    public static class Account
+    {
+        public const string AccountType = "Squid.Account.AccountType";
+        public const string CredentialsJson = "Squid.Account.CredentialsJson";
+    }
+
+    public static class Kubernetes
+    {
+        public const string ClusterUrl = "Squid.Action.Kubernetes.ClusterUrl";
+        public const string SkipTlsVerification = "Squid.Action.Kubernetes.SkipTlsVerification";
+        public const string ClusterCertificate = "Squid.Action.Kubernetes.ClusterCertificate";
+        public const string OutputKubectlVersion = "Squid.Action.Kubernetes.OutputKubectlVersion";
+        public const string CustomKubectlExecutable = "Squid.Action.Kubernetes.CustomKubectlExecutable";
+        public const string Namespace = "Squid.Action.Kubernetes.Namespace";
+        public const string SuppressEnvironmentLogging = "Squid.Action.Script.SuppressEnvironmentLogging";
+        public const string PrintEvaluatedVariables = "SquidPrintEvaluatedVariables";
+        public const string ContainerImage = "ContainerImage";
+    }
+
+    public static class Certificate
+    {
+        public const string ThumbprintSuffix = ".Thumbprint";
+        public const string SubjectCommonNameSuffix = ".SubjectCommonName";
+        public const string PfxSuffix = ".Pfx";
+        public const string NotAfterSuffix = ".NotAfter";
+        public const string HasPrivateKeySuffix = ".HasPrivateKey";
+    }
+
+    public static class Output
+    {
+        public static string Variable(string stepName, string variableName)
+            => $"Squid.Action[{stepName}].Output.{variableName}";
     }
 }

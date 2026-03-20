@@ -15,6 +15,8 @@ public interface IReleaseDataProvider : IScopedDependency
     Task<(int, List<Persistence.Entities.Deployments.Release>)> GetReleasesAsync(int pageIndex, int pageSize, int projectId, int? channelId = null, CancellationToken cancellationToken = default);
 
     Task<List<int>> GetReleaseIdsByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default);
+
+    Task<Persistence.Entities.Deployments.Release> GetReleaseByVersionAsync(int projectId, int channelId, string version, CancellationToken cancellationToken = default);
 }
 
 public class ReleaseDataProvider : IReleaseDataProvider
@@ -65,6 +67,12 @@ public class ReleaseDataProvider : IReleaseDataProvider
         query = query.Skip((pageIndex - 1) * pageSize).Take(pageSize);
 
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    public async Task<Persistence.Entities.Deployments.Release> GetReleaseByVersionAsync(int projectId, int channelId, string version, CancellationToken cancellationToken = default)
+    {
+        return await _repository.FirstOrDefaultAsync<Persistence.Entities.Deployments.Release>(
+            x => x.ProjectId == projectId && x.ChannelId == channelId && x.Version == version, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<int>> GetReleaseIdsByDeploymentIdsAsync(List<int> deploymentIds, CancellationToken cancellationToken = default)

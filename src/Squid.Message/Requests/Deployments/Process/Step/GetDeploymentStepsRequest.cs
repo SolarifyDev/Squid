@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Process.Step;
 
-public class GetDeploymentStepsRequest : IPaginatedRequest
+[RequiresPermission(Permission.ProcessView)]
+public class GetDeploymentStepsRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ProcessId { get; set; }
 
     public int PageIndex { get; set; } = 1;

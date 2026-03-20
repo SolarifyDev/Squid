@@ -20,7 +20,7 @@ public class DeploymentStepSnapshotDataDto
 
     public bool IsRequired { get; set; } = true;
 
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
 
     public Dictionary<string, string> Properties { get; set; } = new Dictionary<string, string>();
 

@@ -29,7 +29,7 @@ public class ApiUser : ICurrentUser, IScopedDependency
             var currentAuthScheme = _httpContextAccessor.HttpContext.User.Identity?.AuthenticationType;
             
             var idClaim = _httpContextAccessor.HttpContext.User.Claims
-                .SingleOrDefault(x => x.Type == ClaimTypes.NameIdentifier && x.Subject?.AuthenticationType == currentAuthScheme)?.Value;
+                .FirstOrDefault(x => x.Type == ClaimTypes.NameIdentifier && x.Subject?.AuthenticationType == currentAuthScheme)?.Value;
             
             return int.TryParse(idClaim, out var id) ? id : null;
         }
@@ -44,7 +44,7 @@ public class ApiUser : ICurrentUser, IScopedDependency
             var currentAuthScheme = _httpContextAccessor.HttpContext?.User.Identity?.AuthenticationType;
             
             return _httpContextAccessor?.HttpContext?.User.Claims
-                .SingleOrDefault(x => x.Type == ClaimTypes.Name && x.Subject?.AuthenticationType == currentAuthScheme)?.Value ?? string.Empty;
+                .FirstOrDefault(x => x.Type == ClaimTypes.Name && x.Subject?.AuthenticationType == currentAuthScheme)?.Value ?? string.Empty;
         }
     }
 }

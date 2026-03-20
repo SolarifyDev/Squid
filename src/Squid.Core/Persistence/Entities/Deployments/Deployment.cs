@@ -3,7 +3,7 @@ using Squid.Message.Models.Deployments.Deployment;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class Deployment : IEntity<int>
+public class Deployment : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
     
@@ -33,8 +33,12 @@ public class Deployment : IEntity<int>
 
     public int? VariableSetSnapshotId { get; set; }
 
-    public DateTimeOffset Created { get; set; }
-
     [NotMapped]
     public DeploymentRequestPayload DeploymentRequestPayload { get; set; } = new();
+
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

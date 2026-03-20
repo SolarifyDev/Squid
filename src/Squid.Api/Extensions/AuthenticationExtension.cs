@@ -21,10 +21,11 @@ public static class AuthenticationExtension
             {
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
-                    ValidateLifetime = false,
+                    ValidateLifetime = true,
                     ValidateAudience = false,
                     ValidateIssuer = false,
                     ValidateIssuerSigningKey = true,
+                    ClockSkew = TimeSpan.FromMinutes(5),
                     IssuerSigningKey = new SymmetricSecurityKey(
                         Encoding.UTF8.GetBytes(jwtKey.PadRight(256 / 8, '\0')))
                 };
@@ -37,6 +38,8 @@ public static class AuthenticationExtension
             options.DefaultPolicy = new AuthorizationPolicyBuilder(
                 JwtBearerDefaults.AuthenticationScheme,
                 AuthenticationSchemeConstants.ApiKeyAuthenticationScheme).RequireAuthenticatedUser().Build();
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser().Build();
         });
     }
 }

@@ -46,7 +46,7 @@ public class MachineDto : IBaseModel
 
     public MachineHealthStatus HealthStatus { get; set; }
 
-    public DateTime? HealthLastChecked { get; set; }
+    public DateTimeOffset? HealthLastChecked { get; set; }
 
     public string HealthDetail { get; set; }
 }

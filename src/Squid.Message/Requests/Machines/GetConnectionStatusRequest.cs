@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Machines;
 
-public class GetConnectionStatusRequest : IRequest
+[RequiresPermission(Permission.MachineView)]
+public class GetConnectionStatusRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public string SubscriptionId { get; set; }
 }
 

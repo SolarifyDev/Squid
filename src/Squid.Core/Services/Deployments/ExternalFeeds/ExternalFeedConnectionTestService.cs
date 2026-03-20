@@ -1,8 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Http;
 using Squid.Message.Commands.Deployments.ExternalFeed;
@@ -20,8 +17,7 @@ public class ExternalFeedConnectionTestService(
     IEnumerable<IExternalFeedProbeRule<ExternalFeedProbePlan>> probeRules) : IExternalFeedConnectionTestService
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
-    private static readonly Regex WwwAuthenticateParameterRegex = new(@"(?<key>[A-Za-z][A-Za-z0-9_-]*)=""(?<value>[^""]*)""", RegexOptions.Compiled);
-    
+
     private readonly IReadOnlyList<IExternalFeedProbeRule<ExternalFeedProbePlan>> _probeRules = probeRules.OrderBy(x => x.Order).ToList();
 
     public async Task<TestExternalFeedResponseData> TestAsync(int feedId, CancellationToken cancellationToken)
@@ -90,11 +86,11 @@ public class ExternalFeedConnectionTestService(
         if (!ShouldUseDockerBearerTokenFlow(feed, challengeResponse))
             return null;
 
-        if (!TryBuildDockerTokenEndpoint(challengeResponse, out var tokenEndpoint))
+        if (!DockerRegistryAuthHelper.TryBuildDockerTokenEndpoint(challengeResponse, out var tokenEndpoint))
             return Fail("Registry authentication challenge is invalid.");
 
-        var tokenRequest = await RequestDockerBearerTokenAsync(
-            tokenEndpoint, feed.Username, feed.Password, cancellationToken).ConfigureAwait(false);
+        var tokenRequest = await DockerRegistryAuthHelper.RequestBearerTokenAsync(
+            httpClientFactory, tokenEndpoint, feed.Username, feed.Password, cancellationToken).ConfigureAwait(false);
 
         if (!tokenRequest.Success)
             return Fail(tokenRequest.FailureMessage);
@@ -115,126 +111,9 @@ public class ExternalFeedConnectionTestService(
         return Fail($"Server responded with HTTP {(int)authenticatedProbeResponse.StatusCode} {authenticatedProbeResponse.ReasonPhrase}.");
     }
 
-    private async Task<(bool Success, string Token, string FailureMessage)> RequestDockerBearerTokenAsync(
-        Uri tokenEndpoint, string username, string password, CancellationToken cancellationToken)
-    {
-        var authClient = httpClientFactory.CreateClient(timeout: TestTimeout);
-        using var tokenRequest = new HttpRequestMessage(HttpMethod.Get, tokenEndpoint);
-        tokenRequest.Headers.Authorization = new AuthenticationHeaderValue("Basic", ToBasicAuthValue(username, password));
-
-        using var tokenResponse = await authClient
-            .SendAsync(tokenRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-
-        if (tokenResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            return (false, null, $"Registry credentials were rejected by token service (HTTP {(int)tokenResponse.StatusCode}).");
-
-        if (!tokenResponse.IsSuccessStatusCode)
-            return (false, null, $"Token service responded with HTTP {(int)tokenResponse.StatusCode} {tokenResponse.ReasonPhrase}.");
-
-        var tokenJson = await tokenResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var token = ExtractBearerToken(tokenJson);
-
-        return string.IsNullOrWhiteSpace(token)
-            ? (false, null, "Token service response did not contain a bearer token.")
-            : (true, token, null);
-    }
-
     private static bool ShouldUseDockerBearerTokenFlow(ExternalFeed feed, HttpResponseMessage response) =>
-        response.StatusCode == HttpStatusCode.Unauthorized && HasCredentials(feed) && IsContainerRegistryFeed(feed) &&
+        response.StatusCode == HttpStatusCode.Unauthorized && DockerRegistryAuthHelper.HasCredentials(feed) && DockerRegistryAuthHelper.IsContainerRegistryFeed(feed) &&
         response.Headers.WwwAuthenticate.Any(x => x.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase));
-
-    private static bool HasCredentials(ExternalFeed feed) => !string.IsNullOrWhiteSpace(feed?.Username) && !string.IsNullOrWhiteSpace(feed.Password);
-
-    private static bool IsContainerRegistryFeed(ExternalFeed feed)
-    {
-        if (string.IsNullOrWhiteSpace(feed?.FeedType))
-            return false;
-
-        return feed.FeedType.Contains("Docker", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("Container Registry", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("Elastic Container Registry", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("OCI Registry", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("ECR", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("ACR", StringComparison.OrdinalIgnoreCase) ||
-               feed.FeedType.Contains("GCR", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryBuildDockerTokenEndpoint(HttpResponseMessage response, out Uri tokenEndpoint)
-    {
-        tokenEndpoint = null;
-
-        var bearerChallenge = response.Headers.WwwAuthenticate
-            .FirstOrDefault(x => x.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase));
-        if (bearerChallenge == null)
-            return false;
-
-        var parameters = ParseChallengeParameters(bearerChallenge.Parameter);
-        if (!parameters.TryGetValue("realm", out var realm) || string.IsNullOrWhiteSpace(realm))
-            return false;
-
-        if (!Uri.TryCreate(realm, UriKind.Absolute, out var realmUri))
-            return false;
-
-        var builder = new UriBuilder(realmUri);
-        var queryParts = builder.Query.TrimStart('?')
-            .Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
-
-        if (parameters.TryGetValue("service", out var service) && !string.IsNullOrWhiteSpace(service))
-            queryParts.Add($"service={Uri.EscapeDataString(service)}");
-
-        if (parameters.TryGetValue("scope", out var scope) && !string.IsNullOrWhiteSpace(scope))
-            queryParts.Add($"scope={Uri.EscapeDataString(scope)}");
-
-        builder.Query = string.Join("&", queryParts);
-        tokenEndpoint = builder.Uri;
-        return true;
-    }
-
-    private static Dictionary<string, string> ParseChallengeParameters(string parameter)
-    {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        if (string.IsNullOrWhiteSpace(parameter))
-            return values;
-
-        foreach (Match match in WwwAuthenticateParameterRegex.Matches(parameter))
-        {
-            var key = match.Groups["key"].Value;
-            var value = match.Groups["value"].Value;
-
-            if (!string.IsNullOrWhiteSpace(key))
-                values[key] = value;
-        }
-
-        return values;
-    }
-
-    private static string ExtractBearerToken(string tokenJson)
-    {
-        if (string.IsNullOrWhiteSpace(tokenJson))
-            return null;
-
-        try
-        {
-            using var document = JsonDocument.Parse(tokenJson);
-            var root = document.RootElement;
-
-            if (root.TryGetProperty("token", out var tokenElement) &&
-                tokenElement.ValueKind == JsonValueKind.String)
-                return tokenElement.GetString();
-
-            if (root.TryGetProperty("access_token", out var accessTokenElement) &&
-                accessTokenElement.ValueKind == JsonValueKind.String)
-                return accessTokenElement.GetString();
-
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
 
     private ExternalFeedProbePlan ResolveProbePlan(ExternalFeed feed, Uri normalizedBaseUri)
     {
@@ -255,13 +134,10 @@ public class ExternalFeedConnectionTestService(
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
             return null;
 
-        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
-        
+        var encoded = DockerRegistryAuthHelper.ToBasicAuthValue(username, password);
+
         return new Dictionary<string, string> { ["Authorization"] = $"Basic {encoded}" };
     }
-
-    private static string ToBasicAuthValue(string username, string password) =>
-        Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
 
     private static TestExternalFeedResponseData Ok(string message) => new() { Success = true, Message = message };
 

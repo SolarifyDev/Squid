@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class MachinePolicy : IEntity<int>
+public class MachinePolicy : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -31,4 +31,10 @@ public class MachinePolicy : IEntity<int>
     public string ConnectionRetryTimeLimit { get; set; }
 
     public string ConnectionConnectTimeout { get; set; }
+
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

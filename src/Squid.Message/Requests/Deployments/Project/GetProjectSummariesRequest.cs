@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Project;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Project;
 
-public class GetProjectSummariesRequest : IRequest
+[RequiresPermission(Permission.ProjectView)]
+public class GetProjectSummariesRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> ProjectGroupIds { get; set; }
     public List<int> ProjectIds { get; set; }
     public List<int> EnvironmentIds { get; set; }

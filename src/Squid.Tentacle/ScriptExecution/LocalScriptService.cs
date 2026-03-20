@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
@@ -33,7 +34,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
         if (!_scripts.TryGetValue(request.Ticket.TaskId, out var running))
-            return CompletedResponse(request.Ticket, -1);
+            return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
 
         var logs = DrainLogs(running);
         var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
@@ -45,13 +46,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
     {
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
-            return CompletedResponse(command.Ticket, -1);
+            return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
 
         if (!running.Process.HasExited)
             running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
         var logs = DrainLogs(running);
-        var exitCode = running.Process.HasExited ? running.Process.ExitCode : -1;
+        var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
@@ -62,7 +63,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
-            return CompletedResponse(command.Ticket, -1);
+            return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
 
         try
         {
@@ -79,7 +80,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, -1, logs, running.LogSequence);
+        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
     }
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)

@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Process;
 
-public class GetPackageReferencesRequest : IRequest
+[RequiresPermission(Permission.ProcessView)]
+public class GetPackageReferencesRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ProjectId { get; set; }
 }
 

@@ -23,7 +23,7 @@ public static class ProcessSnapshotStepConverter
                 PackageRequirement = string.Empty,
                 IsDisabled = stepSnap.IsDisabled,
                 IsRequired = stepSnap.IsRequired,
-                CreatedAt = stepSnap.CreatedAt,
+                CreatedDate = stepSnap.CreatedDate,
                 Properties = stepSnap.Properties.Select(
                     kvp => new DeploymentStepPropertyDto
                     {
@@ -43,7 +43,7 @@ public static class ProcessSnapshotStepConverter
                         IsDisabled = action.IsDisabled,
                         IsRequired = action.IsRequired,
                         CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
-                        CreatedAt = action.CreatedAt,
+                        CreatedDate = action.CreatedDate,
                         Properties = action.Properties.Select(
                             kvp => new DeploymentActionPropertyDto
                             {

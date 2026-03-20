@@ -1,8 +1,11 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
-public class GenerateKubernetesAgentInstallScriptCommand : ICommand
+[RequiresPermission(Permission.MachineCreate)]
+public class GenerateKubernetesAgentInstallScriptCommand : ICommand, ISpaceScoped
 {
     public string AgentName { get; set; }
     public string ServerUrl { get; set; }
@@ -10,6 +13,7 @@ public class GenerateKubernetesAgentInstallScriptCommand : ICommand
     public List<string> Environments { get; set; } = [];
     public List<string> Tags { get; set; } = [];
     public int SpaceId { get; set; } = 1;
+    int? ISpaceScoped.SpaceId => SpaceId;
     public string DefaultNamespace { get; set; }
     public string ChartRef { get; set; }
 }

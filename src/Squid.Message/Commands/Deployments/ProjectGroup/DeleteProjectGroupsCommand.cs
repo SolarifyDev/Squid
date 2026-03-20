@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.ProjectGroup;
 
-public class DeleteProjectGroupsCommand : ICommand
+[RequiresPermission(Permission.ProjectDelete)]
+public class DeleteProjectGroupsCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

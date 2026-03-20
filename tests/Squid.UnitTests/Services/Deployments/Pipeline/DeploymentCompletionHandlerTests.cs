@@ -61,6 +61,18 @@ public class DeploymentCompletionHandlerTests
         _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.Is<DeploymentCompletion>(dc => dc.State == TaskState.Failed), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task OnFailure_CleansUpCheckpoint()
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnFailureAsync(ctx, new Exception("test error"), CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ========== OnCancelledAsync ==========
 
     [Fact]

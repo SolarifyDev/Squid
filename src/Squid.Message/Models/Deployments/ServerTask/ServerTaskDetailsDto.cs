@@ -18,7 +18,7 @@ public class ServerTaskSummaryDto
 
     public DateTimeOffset? CompletedTime { get; set; }
 
-    public DateTimeOffset LastModified { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
     public string ErrorMessage { get; set; }
 

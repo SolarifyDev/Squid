@@ -1,13 +1,11 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
-using Squid.Core.Services.Deployments.Interruptions;
-using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -28,11 +26,16 @@ public sealed partial class ExecuteStepsPhase
 
         await EmitSkippedActionEventsAsync(skippedActions, stepSortOrder, ct).ConfigureAwait(false);
 
-        await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+        var stepLevelExecuted = await ExecuteStepLevelActionsAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+
+        if (stepLevelExecuted)
+            stepResult.Executed = true;
 
         if (HasTargetLevelActions(eligibleActions))
         {
             var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
+
+            matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
 
             if (matchingTargets.Count == 0)
             {
@@ -40,40 +43,65 @@ public sealed partial class ExecuteStepsPhase
                 return stepResult;
             }
 
-            foreach (var tc in matchingTargets)
-            {
-                var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
-                var baseScopeContext = BuildTargetScopeContext(tc, targetRoles);
-                var stepEffectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, baseScopeContext);
+            var maxParallelism = TargetParallelExecutor.ParseMaxParallelism(step);
 
-                var eligibility = StepEligibilityEvaluator.EvaluateStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, stepEffectiveVars);
+            using var failFastCts = step.IsRequired ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+            var effectiveCt = failFastCts?.Token ?? ct;
 
-                if (!eligibility.ShouldExecute)
+            var targetResults = await TargetParallelExecutor.ExecuteAsync(
+                matchingTargets, maxParallelism,
+                async (tc, targetCt) =>
                 {
-                    Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
+                    try
+                    {
+                        return await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
+                    }
+                    catch when (step.IsRequired)
+                    {
+                        failFastCts?.Cancel();
+                        throw;
+                    }
+                }, effectiveCt).ConfigureAwait(false);
 
-                    await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
-
-                    continue;
-                }
-
-                if (eligibility.Message != null)
-                    await lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
-
-                await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
-
-                var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
-
-                var result = new StepExecutionResult();
-                await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
-
+            foreach (var result in targetResults)
                 stepResult.Absorb(result);
-            }
         }
 
-        await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed }), ct).ConfigureAwait(false);
+        var skipped = !stepResult.Executed && !stepResult.Failed;
+
+        await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed, Skipped = skipped }), ct).ConfigureAwait(false);
 
         return stepResult;
+    }
+
+    private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)
+    {
+        var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
+        var baseScopeContext = BuildTargetScopeContext(tc, targetRoles);
+        var stepEffectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, baseScopeContext);
+
+        var eligibility = StepEligibilityEvaluator.EvaluateStep(step, targetRoles, previousStepSucceeded: !_ctx.FailureEncountered, stepEffectiveVars);
+
+        if (!eligibility.ShouldExecute)
+        {
+            Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
+
+            await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
+
+            return new StepExecutionResult();
+        }
+
+        if (eligibility.Message != null)
+            await lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
+
+        await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
+
+        var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
+
+        var result = new StepExecutionResult { Executed = true };
+        await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
+
+        return result;
     }
 
     private VariableScopeContext BuildTargetScopeContext(DeploymentTargetContext tc, HashSet<string> targetRoles)
@@ -99,85 +127,81 @@ public sealed partial class ExecuteStepsPhase
         DeploymentTargetContext tc,
         CancellationToken ct)
     {
-        const int maxRetries = 10;
         var actionSortOrder = 0;
 
         foreach (var prepared in stepResults)
         {
-            var actionResult = prepared.Result;
-            var effectiveVariables = prepared.EffectiveVariables;
-
             ++actionSortOrder;
-            var retry = true;
-            var retryCount = 0;
 
-            while (retry)
+            var directive = await ResolveResumeDirectiveAsync(step, prepared.Result, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+
+            if (directive == ActionDirective.Abort)
+                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{prepared.Result.ActionName}\"");
+
+            if (directive == ActionDirective.Skip)
             {
-                retry = false;
-
-                await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
-
-                try
-                {
-                    var strategy = tc.Transport?.Strategy;
-
-                    if (strategy == null)
-                        throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
-
-                    var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
-                    var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
-
-                    CaptureOutputVariables(actionResult, execResult.LogLines);
-
-                    await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
-
-                    if (!execResult.Success)
-                        throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
-
-                    await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
-
-                    CollectOutputVariables(result, step.Name, actionResult);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    result.Failed = true;
-
-                    Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
-
-                    await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
-
-                    if (step.IsRequired && _ctx.UseGuidedFailure)
-                    {
-                        var outcome = await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
-
-                        if (outcome == InterruptionOutcome.Retry && retryCount < maxRetries)
-                        {
-                            result.Failed = false;
-                            retry = true;
-                            retryCount++;
-                            continue;
-                        }
-
-                        if (outcome == InterruptionOutcome.Skip)
-                        {
-                            result.Failed = false;
-                            break;
-                        }
-                    }
-
-                    if (step.IsRequired)
-                        throw;
-                }
+                result.Failed = false;
+                continue;
             }
+
+            await ExecuteSingleActionAsync(prepared, step, stepDisplayOrder, actionSortOrder, result, tc, ct).ConfigureAwait(false);
         }
     }
 
-    private async Task ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
+    private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, CancellationToken ct)
     {
+        var actionResult = prepared.Result;
+        var effectiveVariables = prepared.EffectiveVariables;
+
+        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
+
+        try
+        {
+            var strategy = tc.Transport?.Strategy;
+
+            if (strategy == null)
+                throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
+
+            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
+            var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
+
+            CaptureOutputVariables(actionResult, execResult.LogLines);
+
+            await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
+
+            if (!execResult.Success)
+                throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
+
+            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
+
+            CollectOutputVariables(result, step.Name, actionResult);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            result.Failed = true;
+
+            Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+
+            await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
+
+            if (step.IsRequired && _ctx.UseGuidedFailure)
+            {
+                await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
+            }
+
+            if (step.IsRequired)
+                throw;
+        }
+    }
+
+    private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
+    {
+        var executed = false;
         var actionSortOrder = 0;
 
         foreach (var action in eligibleActions)
@@ -193,46 +217,15 @@ public sealed partial class ExecuteStepsPhase
             {
                 ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id, SpaceId = _ctx.Deployment.SpaceId,
                 Step = step, Action = action, Variables = _ctx.Variables, ReleaseVersion = _ctx.Release?.Version,
-                StepDisplayOrder = stepDisplayOrder, ActionSortOrder = actionSortOrder
+                StepDisplayOrder = stepDisplayOrder, ActionSortOrder = actionSortOrder,
+                DeploymentContext = _ctx
             };
 
             await handler.ExecuteStepLevelAsync(ctx, ct).ConfigureAwait(false);
+            executed = true;
         }
-    }
 
-    private async Task<InterruptionOutcome> HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
-    {
-        var form = InterruptionFormBuilder.BuildGuidedFailureForm(step.Name, actionResult.ActionName, tc.Machine.Name, ex.Message);
-
-        await lifecycle.EmitAsync(new GuidedFailurePromptEvent(new DeploymentEventContext
-        {
-            StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
-            ActionName = actionResult.ActionName, MachineName = tc.Machine.Name,
-            ActionSortOrder = actionSortOrder, Error = ex.Message,
-            InterruptionType = InterruptionType.GuidedFailure
-        }), ct).ConfigureAwait(false);
-
-        var interruption = await interruptionService.CreateInterruptionAsync(new CreateInterruptionRequest
-        {
-            ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id,
-            InterruptionType = InterruptionType.GuidedFailure, StepDisplayOrder = stepDisplayOrder,
-            StepName = step.Name, ActionName = actionResult.ActionName,
-            MachineName = tc.Machine.Name, ErrorMessage = ex.Message,
-            Form = form, SpaceId = _ctx.Deployment.SpaceId
-        }, ct).ConfigureAwait(false);
-
-        await PersistCheckpointAsync(_currentBatchIndex, ct).ConfigureAwait(false);
-
-        var outcome = await interruptionService.WaitForInterruptionAsync(interruption.Id, ct).ConfigureAwait(false);
-
-        await lifecycle.EmitAsync(new GuidedFailureResolvedEvent(new DeploymentEventContext
-        {
-            StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
-            GuidedFailureResolution = outcome.ToString(),
-            InterruptionType = InterruptionType.GuidedFailure
-        }), ct).ConfigureAwait(false);
-
-        return outcome;
+        return executed;
     }
 
     private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
@@ -253,7 +246,7 @@ public sealed partial class ExecuteStepsPhase
         foreach (var kv in actionResult.OutputVariables)
         {
             var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
-            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, kv.Key);
+            var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
             result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });

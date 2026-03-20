@@ -58,4 +58,13 @@ public class ExternalFeedController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("search-packages")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(SearchFeedPackagesResponse))]
+    public async Task<IActionResult> SearchFeedPackagesAsync([FromQuery] SearchFeedPackagesRequest request)
+    {
+        var response = await _mediator.RequestAsync<SearchFeedPackagesRequest, SearchFeedPackagesResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

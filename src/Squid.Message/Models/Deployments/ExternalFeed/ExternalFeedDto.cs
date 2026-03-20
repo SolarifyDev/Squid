@@ -24,7 +24,7 @@ public class ExternalFeedDto : IBaseModel
 
     public int SpaceId { get; set; }
 
-    public DateTimeOffset? LastModifiedOn { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 
-    public string LastModifiedBy { get; set; }
+    public int LastModifiedBy { get; set; }
 } 

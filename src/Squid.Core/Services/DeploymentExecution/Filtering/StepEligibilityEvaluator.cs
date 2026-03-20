@@ -127,7 +127,7 @@ public static class StepEligibilityEvaluator
             return true;
 
         var stepRolesProperty = step.Properties?
-            .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+            .FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
 
         if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
             return true;

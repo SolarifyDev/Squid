@@ -6,9 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Squid.Calamari</RootNamespace>
     <AssemblyName>squid-calamari</AssemblyName>
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
     <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishSingleFile)' != ''">
+    <SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

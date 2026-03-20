@@ -19,12 +19,17 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         TargetPreparingEvent e => OnTargetPreparingAsync(e.Context, ct),
         TargetTransportMissingEvent e => OnTargetTransportMissingAsync(e.Context, ct),
         MachineConstraintsResolvedEvent e => OnMachineConstraintsResolvedAsync(e.Context, ct),
+        PackagesAcquiringEvent e => OnPackagesAcquiringAsync(e.Context, ct),
+        PackagesReleasedEvent e => OnPackagesReleasedAsync(e.Context, ct),
         StepStartingEvent e => OnStepStartingAsync(e.Context, ct),
         StepNoMatchingTargetsEvent e => OnStepNoMatchingTargetsAsync(e.Context, ct),
         StepSkippedOnTargetEvent e => OnStepSkippedOnTargetAsync(e.Context, ct),
         StepConditionMetEvent e => OnStepConditionMetAsync(e.Context, ct),
         StepExecutingOnTargetEvent e => OnStepExecutingOnTargetAsync(e.Context, ct),
         StepCompletedEvent e => OnStepCompletedAsync(e.Context, ct),
+        HealthCheckStartingEvent e => OnHealthCheckStartingAsync(e.Context, ct),
+        HealthCheckTargetResultEvent e => OnHealthCheckTargetResultAsync(e.Context, ct),
+        HealthCheckCompletedEvent e => OnHealthCheckCompletedAsync(e.Context, ct),
         ActionManuallyExcludedEvent e => OnActionManuallyExcludedAsync(e.Context, ct),
         ActionSkippedEvent e => OnActionSkippedAsync(e.Context, ct),
         ActionNoHandlerEvent e => OnActionNoHandlerAsync(e.Context, ct),
@@ -55,6 +60,10 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnTargetTransportMissingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnMachineConstraintsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
+    // === Packages ===
+    protected virtual Task OnPackagesAcquiringAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnPackagesReleasedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
     // === Steps ===
     protected virtual Task OnStepStartingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnStepNoMatchingTargetsAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
@@ -62,6 +71,11 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnStepConditionMetAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnStepExecutingOnTargetAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnStepCompletedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
+    // === Health Check ===
+    protected virtual Task OnHealthCheckStartingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnHealthCheckTargetResultAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnHealthCheckCompletedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
     // === Actions (pre-execution) ===
     protected virtual Task OnActionManuallyExcludedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;

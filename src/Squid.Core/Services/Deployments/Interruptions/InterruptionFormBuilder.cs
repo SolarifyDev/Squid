@@ -13,7 +13,7 @@ public static class InterruptionFormBuilder
             {
                 new() { Name = "Guidance", Control = new ParagraphControl { Text = $"Action \"{actionName}\" failed on {machineName} during step \"{stepName}\": {errorMessage}" } },
                 new() { Name = "Notes", Control = new TextAreaControl { Label = "Notes" } },
-                new() { Name = "Result", Control = new SubmitButtonGroupControl { Buttons = new List<string> { "Abort", "Retry", "Ignore" } } }
+                new() { Name = "Result", Control = new SubmitButtonGroupControl { Buttons = new List<string> { "Abort", "Retry", "Ignore", "Exclude Machine" } } }
             }
         };
     }
@@ -42,6 +42,7 @@ public static class InterruptionFormBuilder
                 "Retry" => InterruptionOutcome.Retry,
                 "Ignore" => InterruptionOutcome.Skip,
                 "Abort" => InterruptionOutcome.Abort,
+                "Exclude Machine" => InterruptionOutcome.ExcludeMachine,
                 _ => InterruptionOutcome.Abort
             },
             InterruptionType.ManualIntervention => result switch

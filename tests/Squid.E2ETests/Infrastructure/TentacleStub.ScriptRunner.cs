@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.E2ETests.Infrastructure;
@@ -39,7 +40,7 @@ public partial class TentacleStub
             if (!_scripts.TryGetValue(request.Ticket.TaskId, out var running))
             {
                 return new ScriptStatusResponse(
-                    request.Ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), 0);
+                    request.Ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, new List<ProcessOutput>(), 0);
             }
 
             var logs = DrainLogs(running, request.LastLogSequence);
@@ -55,14 +56,14 @@ public partial class TentacleStub
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
             {
                 return new ScriptStatusResponse(
-                    command.Ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), 0);
+                    command.Ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, new List<ProcessOutput>(), 0);
             }
 
             if (!running.Process.HasExited)
                 running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
             var logs = DrainLogs(running, command.LastLogSequence);
-            var exitCode = running.Process.HasExited ? running.Process.ExitCode : -1;
+            var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
             CleanupWorkDir(running.WorkDir);
             running.Process.Dispose();
@@ -76,7 +77,7 @@ public partial class TentacleStub
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
             {
                 return new ScriptStatusResponse(
-                    command.Ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), 0);
+                    command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), 0);
             }
 
             try
@@ -92,7 +93,7 @@ public partial class TentacleStub
             running.Process.Dispose();
 
             return new ScriptStatusResponse(
-                command.Ticket, ProcessState.Complete, -1, logs, running.LogSequence);
+                command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
         }
 
         private static void WriteScriptFile(string workDir, string scriptBody)

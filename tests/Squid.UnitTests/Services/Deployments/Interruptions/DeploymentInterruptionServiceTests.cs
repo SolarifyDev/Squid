@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Identity;
 
 namespace Squid.UnitTests.Services.Deployments.Interruptions;
 
@@ -12,11 +13,13 @@ public class DeploymentInterruptionServiceTests
     private readonly Mock<IRepository> _repository = new();
     private readonly Mock<IUnitOfWork> _unitOfWork = new();
     private readonly Mock<IServerTaskService> _serverTaskService = new();
+    private readonly Mock<IInterruptionAuthorizationService> _authService = new();
+    private readonly Mock<ICurrentUser> _currentUser = new();
     private readonly DeploymentInterruptionService _sut;
 
     public DeploymentInterruptionServiceTests()
     {
-        _sut = new DeploymentInterruptionService(_repository.Object, _unitOfWork.Object, _serverTaskService.Object);
+        _sut = new DeploymentInterruptionService(_repository.Object, _unitOfWork.Object, _serverTaskService.Object, _authService.Object, _currentUser.Object);
     }
 
     // ========== CancelPendingInterruptionsAsync ==========
@@ -55,5 +58,27 @@ public class DeploymentInterruptionServiceTests
 
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _serverTaskService.Verify(s => s.SetHasPendingInterruptionsAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ========== CreateInterruptionAsync — ResponsibleTeamIds ==========
+
+    [Theory]
+    [InlineData("1,2,3")]
+    [InlineData(null)]
+    public async Task CreateInterruption_MapsResponsibleTeamIds(string responsibleTeamIds)
+    {
+        var request = new CreateInterruptionRequest
+        {
+            ServerTaskId = 1, DeploymentId = 1, SpaceId = 1,
+            InterruptionType = Squid.Message.Enums.Deployments.InterruptionType.ManualIntervention,
+            StepName = "Step", ActionName = "Action",
+            ResponsibleTeamIds = responsibleTeamIds
+        };
+
+        await _sut.CreateInterruptionAsync(request);
+
+        _repository.Verify(r => r.InsertAsync(
+            It.Is<DeploymentInterruption>(i => i.ResponsibleTeamIds == responsibleTeamIds),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

@@ -1,4 +1,5 @@
 using k8s.Models;
+using Squid.Message.Constants;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
@@ -22,13 +23,39 @@ public partial class KubernetesPodManager
     public string CreatePod(string ticketId)
     {
         var podName = $"squid-script-{ticketId[..12]}";
-        var pod = BuildPodSpec(podName, ticketId);
 
+        var existingPod = FindPodByTicket(ticketId);
+
+        if (existingPod != null)
+        {
+            Log.Information("Reusing existing pod {PodName} for ticket {TicketId}", existingPod, ticketId);
+            return existingPod;
+        }
+
+        var pod = BuildPodSpec(podName, ticketId);
         _ops.CreatePod(pod, _settings.TentacleNamespace);
 
         Log.Information("Created script pod {PodName} for ticket {TicketId}", podName, ticketId);
 
         return podName;
+    }
+
+    public string? FindPodByTicket(string ticketId)
+    {
+        try
+        {
+            var labelSelector = $"squid.io/ticket-id={ticketId}";
+            var pods = _ops.ListPods(_settings.TentacleNamespace, labelSelector);
+
+            var existing = pods?.Items?.FirstOrDefault();
+
+            return existing?.Metadata?.Name;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to search for existing pod with ticket {TicketId}", ticketId);
+            return null;
+        }
     }
 
     public string? GetPodPhase(string podName)
@@ -56,7 +83,7 @@ public partial class KubernetesPodManager
             if (containerStatus?.State?.Terminated == null)
             {
                 Log.Warning("Pod {PodName} container 'script' has no Terminated state", podName);
-                return -1;
+                return ScriptExitCodes.PodNotFound;
             }
 
             return containerStatus.State.Terminated.ExitCode;
@@ -64,7 +91,7 @@ public partial class KubernetesPodManager
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to read exit code for pod {PodName}", podName);
-            return -1;
+            return ScriptExitCodes.PodNotFound;
         }
     }
 
@@ -76,6 +103,11 @@ public partial class KubernetesPodManager
 
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.BadRequest && ex.Response.Content?.Contains("PodInitializing") == true)
+        {
+            Log.Debug("Pod {PodName} container not ready yet (PodInitializing)", podName);
+            return string.Empty;
         }
         catch (Exception ex)
         {
@@ -121,9 +153,12 @@ public partial class KubernetesPodManager
 
     public List<V1Pod> ListManagedPods()
     {
-        var pods = _ops.ListPods(
-            _settings.TentacleNamespace,
-            "app.kubernetes.io/managed-by=kubernetes-agent");
+        var labelSelector = "app.kubernetes.io/managed-by=kubernetes-agent";
+
+        if (!string.IsNullOrEmpty(_settings.ReleaseName))
+            labelSelector += $",app.kubernetes.io/instance={_settings.ReleaseName}";
+
+        var pods = _ops.ListPods(_settings.TentacleNamespace, labelSelector);
 
         return pods.Items.ToList();
     }

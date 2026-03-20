@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class DeploymentAction : IEntity<int>
+public class DeploymentAction : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -24,5 +24,9 @@ public class DeploymentAction : IEntity<int>
 
     public bool CanBeUsedForProjectVersioning { get; set; } = false;
 
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

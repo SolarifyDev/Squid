@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -14,4 +15,7 @@ public class StepActionContext
     public string ReleaseVersion { get; init; }
     public int StepDisplayOrder { get; init; }
     public int ActionSortOrder { get; init; }
+
+    // Populated for step-level handlers that need target context
+    public DeploymentTaskContext DeploymentContext { get; init; }
 }

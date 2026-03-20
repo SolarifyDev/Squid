@@ -40,8 +40,6 @@ public class VariableService : IVariableService
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
     {
         var variableSet = _mapper.Map<VariableSet>(command);
-        variableSet.LastModified = DateTimeOffset.UtcNow;
-
         await _variableDataProvider.AddVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await CreateLibraryVariableSetIfApplicableAsync(variableSet, command, cancellationToken).ConfigureAwait(false);
@@ -60,7 +58,6 @@ public class VariableService : IVariableService
         variableSet.OwnerId = command.OwnerId;
         variableSet.OwnerType = command.OwnerType;
         variableSet.SpaceId = command.SpaceId;
-        variableSet.LastModified = DateTimeOffset.UtcNow;
         variableSet.Version++;
 
         await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
@@ -68,6 +65,8 @@ public class VariableService : IVariableService
         await AddVariablesToSetAsync(variableSet.Id, command.Variables, cancellationToken).ConfigureAwait(false);
 
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await SyncLibraryVariableSetNameAsync(variableSet, command.Name, cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
     }
@@ -220,6 +219,20 @@ public class VariableService : IVariableService
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: ct).ConfigureAwait(false);
 
         return libraryVariableSet;
+    }
+
+    private async Task SyncLibraryVariableSetNameAsync(VariableSet variableSet, string newName, CancellationToken ct)
+    {
+        if (variableSet.OwnerType != VariableSetOwnerType.LibraryVariableSet) return;
+        if (variableSet.OwnerId <= 0) return;
+
+        var lvs = await _libraryVariableSetDataProvider.GetByIdAsync(variableSet.OwnerId, ct).ConfigureAwait(false);
+
+        if (lvs == null) return;
+
+        lvs.Name = newName ?? string.Empty;
+
+        await _libraryVariableSetDataProvider.UpdateAsync(lvs, ct: ct).ConfigureAwait(false);
     }
 
     private async Task DeleteLibraryVariableSetIfApplicableAsync(VariableSet variableSet, CancellationToken ct)

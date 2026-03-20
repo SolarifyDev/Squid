@@ -26,6 +26,7 @@ public class DeploymentEventContext
     // Result
     public int ExitCode { get; init; }
     public bool Failed { get; init; }
+    public bool Skipped { get; init; }
     public string Error { get; init; }
     public string Message { get; init; }
     public Exception Exception { get; init; }
@@ -34,12 +35,21 @@ public class DeploymentEventContext
     public StepEligibilityResult? StepEligibility { get; init; }
     public ActionEligibilityResult? ActionEligibility { get; init; }
 
+    // Packages
+    public List<ReleaseSelectedPackage> SelectedPackages { get; init; }
+
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
 
     // Guided failure / Manual intervention
     public string GuidedFailureResolution { get; init; }
     public InterruptionType? InterruptionType { get; init; }
+
+    // Health check
+    public bool? HealthCheckHealthy { get; init; }
+    public string HealthCheckDetail { get; init; }
+    public int HealthCheckHealthyCount { get; init; }
+    public int HealthCheckUnhealthyCount { get; init; }
 }
 
 public abstract record DeploymentLifecycleEvent(DeploymentEventContext Context);
@@ -56,6 +66,10 @@ public sealed record UnhealthyTargetsExcludedEvent(DeploymentEventContext Contex
 public sealed record TargetPreparingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record TargetTransportMissingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record MachineConstraintsResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Packages ===
+public sealed record PackagesAcquiringEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record PackagesReleasedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Steps ===
 public sealed record StepStartingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
@@ -87,6 +101,12 @@ public sealed record GuidedFailureResolvedEvent(DeploymentEventContext Context) 
 public sealed record ManualInterventionPromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ManualInterventionResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
-// === Cancellation / Pause ===
+// === Health Check ===
+public sealed record HealthCheckStartingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record HealthCheckTargetResultEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record HealthCheckCompletedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
+// === Cancellation / Pause / Timeout ===
 public sealed record DeploymentCancelledEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record DeploymentPausedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record DeploymentTimedOutEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

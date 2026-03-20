@@ -86,7 +86,7 @@ public class RetentionPolicyEnforcer(
         {
             var deployments = await repository
                 .QueryNoTracking<Deployment>(d => d.ProjectId == projectId && d.EnvironmentId == environmentId)
-                .OrderByDescending(d => d.Created)
+                .OrderByDescending(d => d.CreatedDate)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
 
             var deploymentsToDelete = GetDeploymentsExceedingRetention(deployments, unit, quantity, currentlyDeployedReleaseIds);
@@ -114,7 +114,7 @@ public class RetentionPolicyEnforcer(
             {
                 if (currentlyDeployedReleaseIds.Contains(deployment.ReleaseId)) continue;
                 
-                if (deployment.Created >= cutoff) continue;
+                if (deployment.CreatedDate >= cutoff) continue;
 
                 result.Add(deployment);
             }

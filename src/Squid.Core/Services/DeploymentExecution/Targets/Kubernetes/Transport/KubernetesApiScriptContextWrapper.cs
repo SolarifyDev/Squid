@@ -1,4 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Constants;
+
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
@@ -17,7 +19,7 @@ public class KubernetesApiScriptContextWrapper : IScriptContextWrapper
         if (endpoint == null) return script;
 
         var customKubectl = context.Variables?
-            .FirstOrDefault(v => string.Equals(v.Name, KubernetesApiVariableNames.CustomKubectlExecutable, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(v => string.Equals(v.Name, SpecialVariables.Kubernetes.CustomKubectlExecutable, StringComparison.OrdinalIgnoreCase))
             ?.Value;
 
         return _builder.WrapWithContext(script, context, customKubectl);

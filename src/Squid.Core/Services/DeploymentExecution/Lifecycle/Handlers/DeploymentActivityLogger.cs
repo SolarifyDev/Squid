@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
@@ -11,21 +10,22 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 {
     private long? _taskNodeId;
-    private readonly IServerTaskService _serverTaskService;
-    private readonly IActivityLogDataProvider _activityLogDataProvider;
+    private readonly IDeploymentLogWriter _logWriter;
     private readonly ConcurrentDictionary<int, long?> _stepNodes = new();
     private readonly ConcurrentDictionary<(int StepDisplayOrder, string MachineName, int ActionSortOrder), long?> _actionNodes = new();
+    private SensitiveValueMasker _masker;
 
-    public DeploymentActivityLogger(IServerTaskService serverTaskService, IActivityLogDataProvider activityLogDataProvider)
+    public DeploymentActivityLogger(IDeploymentLogWriter logWriter)
     {
-        _serverTaskService = serverTaskService;
-        _activityLogDataProvider = activityLogDataProvider;
+        _logWriter = logWriter;
     }
 
     // === Deployment ===
 
     protected override async Task OnDeploymentStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
+        InitializeSensitiveMasker();
+
         var projectName = string.IsNullOrWhiteSpace(Ctx.Project?.Name) ? $"Project {Ctx.Deployment?.ProjectId}" : Ctx.Project.Name;
         var releaseVersion = string.IsNullOrWhiteSpace(Ctx.Release?.Version) ? "Unknown" : Ctx.Release.Version;
         var environmentName = string.IsNullOrWhiteSpace(Ctx.Environment?.Name) ? $"Environment {Ctx.Deployment?.EnvironmentId}" : Ctx.Environment.Name;
@@ -39,9 +39,11 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
+        InitializeSensitiveMasker();
+
         try
         {
-            var nodes = await _activityLogDataProvider.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
+            var nodes = await _logWriter.GetTreeByTaskIdAsync(Ctx.ServerTaskId, ct).ConfigureAwait(false);
 
             RestoreTaskNode(nodes);
             RestoreStepNodes(nodes);
@@ -81,6 +83,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         await LogInfoAsync("Deployment completed successfully", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
@@ -88,6 +91,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
         await LogErrorAsync(ctx.Exception?.Message ?? ctx.Error ?? "Unknown error", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
     }
 
     // === Target Preparation ===
@@ -141,6 +145,42 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
     }
 
+    // === Packages ===
+
+    protected override async Task OnPackagesAcquiringAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Acquire packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
+        var nodeId = node?.Id;
+
+        await LogInfoAsync("Acquiring packages", "System", ct, nodeId).ConfigureAwait(false);
+
+        var packages = ctx.SelectedPackages;
+
+        if (packages?.Count > 0)
+        {
+            foreach (var pkg in packages)
+                await LogInfoAsync($"Package {pkg.ActionName} version {pkg.Version}", "System", ct, nodeId).ConfigureAwait(false);
+
+            await LogInfoAsync("All packages have been acquired", "System", ct, nodeId).ConfigureAwait(false);
+        }
+        else
+        {
+            await LogInfoAsync("No packages to acquire", "System", ct, nodeId).ConfigureAwait(false);
+        }
+
+        await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+    }
+
+    protected override async Task OnPackagesReleasedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var releaseSortOrder = (Ctx.Steps?.Max(s => s.StepOrder) ?? 0) + 1;
+        var node = await CreateActivityNodeAsync(_taskNodeId, "Release packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, releaseSortOrder, ct).ConfigureAwait(false);
+        var nodeId = node?.Id;
+
+        await LogInfoAsync("There are no packages to be released.", "System", ct, nodeId).ConfigureAwait(false);
+        await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+    }
+
     // === Steps ===
 
     protected override async Task OnStepStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -191,10 +231,48 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
+        if (ctx.Skipped)
+        {
+            await LogInfoAsync($"Step \"{ctx.StepName}\" was skipped", "System", ct, stepNodeId).ConfigureAwait(false);
+            await UpdateActivityNodeStatusAsync(stepNodeId, DeploymentActivityLogNodeStatus.Skipped, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (!ctx.Failed)
             await LogInfoAsync($"Step \"{ctx.StepName}\" completed successfully", "System", ct, stepNodeId).ConfigureAwait(false);
 
         await UpdateActivityNodeStatusAsync(stepNodeId, ctx.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
+    }
+
+    // === Health Check ===
+
+    protected override Task OnHealthCheckStartingAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync("Running health check", "System", ct, stepNodeId);
+    }
+
+    protected override Task OnHealthCheckTargetResultAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        if (ctx.HealthCheckHealthy == true)
+            return LogInfoAsync($"Health check passed for {ctx.MachineName}: {ctx.HealthCheckDetail}", ctx.MachineName, ct, stepNodeId);
+
+        return LogWarningAsync($"Health check failed for {ctx.MachineName}: {ctx.HealthCheckDetail}", ctx.MachineName, ct, stepNodeId);
+    }
+
+    protected override Task OnHealthCheckCompletedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+        var healthy = ctx.HealthCheckHealthyCount;
+        var unhealthy = ctx.HealthCheckUnhealthyCount;
+
+        if (unhealthy == 0)
+            return LogInfoAsync($"Health check completed: all {healthy} target(s) healthy", "System", ct, stepNodeId);
+
+        return LogWarningAsync($"Health check completed: {healthy} healthy, {unhealthy} unhealthy", "System", ct, stepNodeId);
     }
 
     // === Actions (pre-execution) ===
@@ -223,8 +301,9 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override Task OnActionRunningAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+        var suffix = string.IsNullOrWhiteSpace(ctx.MachineName) ? "" : $" on {ctx.MachineName}";
 
-        return LogInfoAsync($"Running action \"{ctx.ActionName}\"", "System", ct, stepNodeId);
+        return LogInfoAsync($"Running action \"{ctx.ActionName}\"{suffix}", "System", ct, stepNodeId);
     }
 
     // === Actions (execution) ===
@@ -299,6 +378,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         await LogWarningAsync("Deployment was cancelled", "System", ct).ConfigureAwait(false);
+        await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
     }
 
@@ -338,7 +418,56 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return "Executing";
     }
 
+    // === Sensitive Value Masking ===
+
+    private void InitializeSensitiveMasker()
+    {
+        var sensitiveValues = CollectSensitiveValues();
+        _masker = new SensitiveValueMasker(sensitiveValues);
+
+        if (_masker.ValueCount > 0)
+            Log.Debug("Initialized sensitive value masker with {Count} values for task {TaskId}", _masker.ValueCount, Ctx.ServerTaskId);
+    }
+
+    private IEnumerable<string> CollectSensitiveValues()
+    {
+        if (Ctx.Variables != null)
+        {
+            foreach (var v in Ctx.Variables)
+            {
+                if (v.IsSensitive) yield return v.Value;
+            }
+        }
+
+        if (Ctx.AllTargetsContext == null) yield break;
+
+        foreach (var tc in Ctx.AllTargetsContext)
+        {
+            if (tc.EndpointVariables == null) continue;
+
+            foreach (var v in tc.EndpointVariables)
+            {
+                if (v.IsSensitive) yield return v.Value;
+            }
+        }
+    }
+
+    private string MaskSensitiveValues(string text)
+        => _masker?.Mask(text) ?? text;
+
     // === Persistence Helpers ===
+
+    private async Task FlushLogWriterAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _logWriter.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to flush log writer for task {TaskId}", Ctx.ServerTaskId);
+        }
+    }
 
     private Task LogInfoAsync(string message, string source, CancellationToken ct, long? nodeId = null)
         => PersistTaskLogAsync(ServerTaskLogCategory.Info, message, source, nodeId ?? _taskNodeId, ct);
@@ -353,7 +482,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         try
         {
-            return await _serverTaskService.AddActivityNodeAsync(Ctx.ServerTaskId, parentId, name, nodeType, status, sortOrder, ct).ConfigureAwait(false);
+            return await _logWriter.AddActivityNodeAsync(Ctx.ServerTaskId, parentId, name, nodeType, status, sortOrder, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -367,7 +496,8 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         try
         {
             var seq = Ctx.NextLogSequence();
-            await _serverTaskService.AddLogAsync(Ctx.ServerTaskId, seq, category, message, source, activityNodeId, DateTimeOffset.UtcNow, null, ct).ConfigureAwait(false);
+            var maskedMessage = MaskSensitiveValues(message);
+            await _logWriter.AddLogAsync(Ctx.ServerTaskId, seq, category, maskedMessage, source, activityNodeId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -386,14 +516,14 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
             var entries = execResult.LogLines.Select(line => new ServerTaskLogWriteEntry
             {
                 Category = stderrSet != null && stderrSet.Contains(line) ? ServerTaskLogCategory.Error : ServerTaskLogCategory.Info,
-                MessageText = line,
+                MessageText = MaskSensitiveValues(line),
                 Source = source,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = Ctx.NextLogSequence(),
                 ActivityNodeId = activityNodeId
             }).ToList();
 
-            await _serverTaskService.AddLogsAsync(Ctx.ServerTaskId, entries, ct).ConfigureAwait(false);
+            await _logWriter.AddLogsAsync(Ctx.ServerTaskId, entries, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -407,7 +537,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         try
         {
-            await _serverTaskService.UpdateActivityNodeStatusAsync(nodeId.Value, status, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            await _logWriter.UpdateActivityNodeStatusAsync(nodeId.Value, status, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

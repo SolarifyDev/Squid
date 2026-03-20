@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Filtering;
@@ -9,7 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
-public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService) : IDeploymentPipelinePhase
+public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService, IServerTaskService serverTaskService) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 
@@ -65,8 +66,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
                 DeploymentId = _ctx.Deployment.Id,
                 LastCompletedBatchIndex = batchIndex,
                 FailureEncountered = _ctx.FailureEncountered,
-                OutputVariablesJson = outputVariablesJson,
-                CreatedAt = DateTimeOffset.UtcNow
+                OutputVariablesJson = outputVariablesJson
             }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -106,13 +106,19 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
 
     private class StepExecutionResult
     {
+        private readonly object _lock = new();
         public List<VariableDto> OutputVariables { get; } = new();
         public bool Failed { get; set; }
+        public bool Executed { get; set; }
 
         public void Absorb(StepExecutionResult other)
         {
-            OutputVariables.AddRange(other.OutputVariables);
-            Failed |= other.Failed;
+            lock (_lock)
+            {
+                OutputVariables.AddRange(other.OutputVariables);
+                Failed |= other.Failed;
+                Executed |= other.Executed;
+            }
         }
     }
 }

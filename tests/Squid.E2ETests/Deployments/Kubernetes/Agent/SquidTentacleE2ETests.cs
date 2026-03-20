@@ -354,7 +354,7 @@ public class SquidTentacleE2ETests
                 ReleaseId = release.Id,
                 EnvironmentId = environmentId,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -371,7 +371,7 @@ public class SquidTentacleE2ETests
                 ProjectId = project.Id,
                 EnvironmentId = environmentId,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,

@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
-public class DeleteMachinesCommand : ICommand
+[RequiresPermission(Permission.MachineDelete)]
+public class DeleteMachinesCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

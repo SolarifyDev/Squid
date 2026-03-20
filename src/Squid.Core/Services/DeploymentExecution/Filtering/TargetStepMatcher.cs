@@ -1,5 +1,5 @@
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
-using Squid.Core.Services.DeploymentExecution.Variables;
 
 namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
@@ -8,7 +8,7 @@ public static class TargetStepMatcher
     public static List<DeploymentTargetContext> FindMatchingTargetsForStep(DeploymentStepDto step, List<DeploymentTargetContext> allTargets)
     {
         var stepRolesProperty = step.Properties?
-            .FirstOrDefault(p => p.PropertyName == DeploymentVariables.Action.TargetRoles);
+            .FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
 
         if (stepRolesProperty == null || string.IsNullOrEmpty(stepRolesProperty.PropertyValue))
             return allTargets;

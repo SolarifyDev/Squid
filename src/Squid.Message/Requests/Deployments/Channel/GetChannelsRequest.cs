@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Channel;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Channel;
 
-public class GetChannelsRequest : IPaginatedRequest
+[RequiresPermission(Permission.ChannelView)]
+public class GetChannelsRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; }
     
     public int PageSize { get; set; }

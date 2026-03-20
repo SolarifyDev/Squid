@@ -386,30 +386,9 @@ internal static class KubernetesReadinessGatePayloadProperties
     internal const string ConditionType = "conditionType";
 }
 
-internal static class KubernetesScriptProperties
-{
-    internal const string Syntax = "Squid.Action.Script.Syntax";
-    internal const string ScriptBody = "Squid.Action.Script.ScriptBody";
-    internal const string SuppressEnvironmentLogging = "Squid.Action.Script.SuppressEnvironmentLogging";
-}
-
 internal static class KubernetesRawYamlProperties
 {
     internal const string InlineYaml = "Squid.Action.KubernetesYaml.InlineYaml";
-}
-
-internal static class KubernetesApiVariableNames
-{
-    internal const string ClusterUrl = "Squid.Action.Kubernetes.ClusterUrl";
-    internal const string SkipTlsVerification = "Squid.Action.Kubernetes.SkipTlsVerification";
-    internal const string ClusterCertificate = "Squid.Action.Kubernetes.ClusterCertificate";
-    internal const string OutputKubectlVersion = "Squid.Action.Kubernetes.OutputKubectlVersion";
-    internal const string CustomKubectlExecutable = "Squid.Action.Kubernetes.CustomKubectlExecutable";
-}
-
-internal static class KubernetesCommonVariableNames
-{
-    internal const string PrintEvaluatedVariables = "SquidPrintEvaluatedVariables";
 }
 
 internal static class KubernetesHelmProperties

@@ -46,4 +46,49 @@ public class DeploymentPipelineRunnerTests
 
         sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(45));
     }
+
+    [Fact]
+    public async Task FailureEncountered_CallsOnFailure_NotOnSuccess()
+    {
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        var completion = new Mock<IDeploymentCompletionHandler>();
+        completion.Setup(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var failurePhase = new Mock<IDeploymentPipelinePhase>();
+        failurePhase.Setup(p => p.Order).Returns(1);
+        failurePhase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Callback<DeploymentTaskContext, CancellationToken>((ctx, _) => ctx.FailureEncountered = true)
+            .Returns(Task.CompletedTask);
+
+        var registry = new TaskCancellationRegistry();
+        var runner = new DeploymentPipelineRunner(new[] { failurePhase.Object }, lifecycle.Object, completion.Object, registry);
+
+        await runner.ProcessAsync(1, CancellationToken.None);
+
+        completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Once);
+        completion.Verify(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task NoFailure_CallsOnSuccess()
+    {
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        var completion = new Mock<IDeploymentCompletionHandler>();
+        completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var okPhase = new Mock<IDeploymentPipelinePhase>();
+        okPhase.Setup(p => p.Order).Returns(1);
+        okPhase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var registry = new TaskCancellationRegistry();
+        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry);
+
+        await runner.ProcessAsync(1, CancellationToken.None);
+
+        completion.Verify(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

@@ -55,8 +55,6 @@ public class DeploymentProcessService : IDeploymentProcessService
             .GetNextVersionAsync(command.ProjectId, cancellationToken)
             .ConfigureAwait(false);
 
-        process.LastModified = DateTimeOffset.UtcNow;
-
         await _processDataProvider.AddDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new DeploymentProcessCreatedEvent
@@ -74,7 +72,6 @@ public class DeploymentProcessService : IDeploymentProcessService
         }
 
         _mapper.Map(command, process);
-        process.LastModified = DateTimeOffset.UtcNow;
 
         await _processDataProvider.UpdateDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
 

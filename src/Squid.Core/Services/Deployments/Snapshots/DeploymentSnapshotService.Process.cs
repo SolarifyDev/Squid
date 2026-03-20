@@ -66,8 +66,6 @@ public partial class DeploymentSnapshotService
         {
             Version = process.Version,
             OriginalProcessId = process.Id,
-            CreatedBy = "System",
-            CreatedAt = process.LastModified,
             ContentHash = blob.ContentHash,
             SnapshotData = blob.CompressedData,
             UncompressedSize = blob.UncompressedSize,
@@ -117,7 +115,7 @@ public partial class DeploymentSnapshotService
                     WorkerPoolId = action.WorkerPoolId,
                     IsDisabled = action.IsDisabled,
                     IsRequired = action.IsRequired,
-                    CreatedAt = action.CreatedAt,
+                    CreatedDate = action.CreatedDate,
                     Environments = environments,
                     ExcludedEnvironments = excludedEnvironments,
                     Channels = channels,
@@ -139,7 +137,7 @@ public partial class DeploymentSnapshotService
                 StartTrigger = step.StartTrigger,
                 IsDisabled = step.IsDisabled,
                 IsRequired = step.IsRequired,
-                CreatedAt = step.CreatedAt,
+                CreatedDate = step.CreatedDate,
                 ActionSnapshots = actionSnapshots,
                 Properties = stepProperties.ToDictionary(p => p.PropertyName, p => p.PropertyValue)
             };

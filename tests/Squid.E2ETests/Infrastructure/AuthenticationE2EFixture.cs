@@ -22,13 +22,13 @@ public class AuthenticationE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             .SingleInstance();
     }
 
-    public Task<RegisterResponseData> RegisterUserAsync(
+    public Task<CreateUserResponseData> CreateUserAsync(
         string userName = "e2e-user",
         string password = "123456",
         string? displayName = null)
     {
-        return Run<IAccountService, RegisterResponseData>(service =>
-            service.RegisterAsync(new RegisterCommand
+        return Run<IAccountService, CreateUserResponseData>(service =>
+            service.CreateUserAsync(new CreateUserCommand
             {
                 UserName = userName,
                 Password = password,
@@ -56,7 +56,7 @@ public class AuthenticationE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
                 ApiKey = apiKey,
                 Description = description,
                 IsDisabled = false,
-                CreatedAtUtc = DateTime.UtcNow
+                CreatedDate = DateTimeOffset.UtcNow
             }).ConfigureAwait(false);
 
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);

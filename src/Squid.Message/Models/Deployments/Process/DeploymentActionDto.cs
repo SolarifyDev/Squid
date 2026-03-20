@@ -20,7 +20,7 @@ public class DeploymentActionDto
 
     public bool CanBeUsedForProjectVersioning { get; set; }
 
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
 
     public List<DeploymentActionPropertyDto> Properties { get; set; } = new List<DeploymentActionPropertyDto>();
 

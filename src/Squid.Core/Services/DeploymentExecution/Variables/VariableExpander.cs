@@ -21,7 +21,7 @@ public static class VariableExpander
             IsDisabled = action.IsDisabled,
             IsRequired = action.IsRequired,
             CanBeUsedForProjectVersioning = action.CanBeUsedForProjectVersioning,
-            CreatedAt = action.CreatedAt,
+            CreatedDate = action.CreatedDate,
             Environments = action.Environments,
             ExcludedEnvironments = action.ExcludedEnvironments,
             Channels = action.Channels,

@@ -33,6 +33,6 @@ public class ReleaseEnvironmentDeploymentDto
 {
     public int DeploymentId { get; set; }
     public string State { get; set; }
-    public DateTimeOffset Created { get; set; }
+    public DateTimeOffset CreatedDate { get; set; }
     public DateTimeOffset? CompletedTime { get; set; }
 }

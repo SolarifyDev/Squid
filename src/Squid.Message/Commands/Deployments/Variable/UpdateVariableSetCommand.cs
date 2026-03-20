@@ -1,10 +1,12 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Response;
-using Squid.Message.Enums;
 
 namespace Squid.Message.Commands.Deployments.Variable;
 
-public class UpdateVariableSetCommand : ICommand
+[RequiresPermission(Permission.VariableEdit)]
+public class UpdateVariableSetCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
 
@@ -17,6 +19,7 @@ public class UpdateVariableSetCommand : ICommand
     public VariableSetOwnerType OwnerType { get; set; }
 
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     public List<VariableModel> Variables { get; set; } = new List<VariableModel>();
 }

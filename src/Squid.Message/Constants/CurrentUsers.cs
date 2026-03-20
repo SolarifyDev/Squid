@@ -7,4 +7,11 @@ public static class CurrentUsers
         public static int Id = 8888;
         public static string Name = "internal_user";
     }
+
+    public static class AdminUser
+    {
+        public const string UserName = "admin";
+        public const string DefaultPassword = "Admin@123456";
+        public const string DisplayName = "Administrator";
+    }
 }

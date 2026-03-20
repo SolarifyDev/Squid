@@ -8,8 +8,8 @@ using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
 
@@ -70,7 +70,7 @@ public class DeploymentTargetFinderTests
         MachineId = machineId,
         SpaceId = 1,
         Json = json,
-        Created = DateTimeOffset.UtcNow
+        CreatedDate = DateTimeOffset.UtcNow
     };
 
     private void SetupGetById(int id, Machine machine)
@@ -109,7 +109,7 @@ public class DeploymentTargetFinderTests
             step.Properties.Add(new DeploymentStepPropertyDto
             {
                 StepId = 1,
-                PropertyName = DeploymentVariables.Action.TargetRoles,
+                PropertyName = SpecialVariables.Step.TargetRoles,
                 PropertyValue = targetRoles
             });
         }
@@ -869,6 +869,126 @@ public class DeploymentTargetFinderTests
         result.Count.ShouldBe(2);
         result.ShouldContain("web-server");
         result.ShouldContain("frontend");
+    }
+
+    // ============================
+    // CollectAllTargetRoles with ScopeResolver (StepLevel exclusion)
+    // ============================
+
+    [Fact]
+    public void CollectAllTargetRoles_StepLevelOnlyStep_NoRoles_SkippedByResolver()
+    {
+        var manualStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { manualStep, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps, StepLevelResolver);
+
+        result.Count.ShouldBe(1);
+        result.ShouldContain("web");
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_StepLevelOnlyStep_NoRoles_WithoutResolver_DisablesPreFilter()
+    {
+        var manualStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { manualStep, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_MixedScopeStep_NoRoles_StillDisablesPreFilter()
+    {
+        var mixedStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"), MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { mixedStep, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps, StepLevelResolver);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_StepNoActions_NoRoles_StillDisablesPreFilter()
+    {
+        var emptyStep = MakeStepWithRoles(null);
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { emptyStep, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps, StepLevelResolver);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_DisabledStepLevelAction_FallsBackToTargetLevel()
+    {
+        var step = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention", isDisabled: true));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { step, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps, StepLevelResolver);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_MultipleStepLevelSteps_AllSkipped_PreFilterWorks()
+    {
+        var manual1 = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
+        var manual2 = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var apiStep = MakeStepWithRolesAndActions("api", MakeAction("Squid.KubernetesRunScript"));
+
+        var steps = new List<DeploymentStepDto> { manual1, manual2, webStep, apiStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps, StepLevelResolver);
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("web");
+        result.ShouldContain("api");
+    }
+
+    private static Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope StepLevelResolver(DeploymentActionDto action)
+    {
+        if (action.ActionType == "Squid.ManualIntervention")
+            return Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope.StepLevel;
+
+        return Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope.TargetLevel;
+    }
+
+    private static DeploymentStepDto MakeStepWithRolesAndActions(string targetRoles, params DeploymentActionDto[] actions)
+    {
+        var step = MakeStepWithRoles(targetRoles);
+        step.Actions = actions.ToList();
+
+        return step;
+    }
+
+    private static DeploymentActionDto MakeAction(string actionType, bool isDisabled = false)
+    {
+        return new DeploymentActionDto
+        {
+            Id = actionType.GetHashCode(),
+            Name = actionType,
+            ActionOrder = 1,
+            ActionType = actionType,
+            IsRequired = true,
+            IsDisabled = isDisabled,
+            Properties = new List<DeploymentActionPropertyDto>(),
+            Environments = new List<int>(),
+            ExcludedEnvironments = new List<int>(),
+            Channels = new List<int>()
+        };
     }
 
     // ============================

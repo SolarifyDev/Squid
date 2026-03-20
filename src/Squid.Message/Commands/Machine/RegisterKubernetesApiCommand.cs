@@ -1,12 +1,16 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
-public class RegisterKubernetesApiCommand : ICommand
+[RequiresPermission(Permission.MachineCreate)]
+public class RegisterKubernetesApiCommand : ICommand, ISpaceScoped
 {
     public string MachineName { get; set; }
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     public List<string> Roles { get; set; }
     public List<int> EnvironmentIds { get; set; }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.Checkpoints;
@@ -59,61 +60,111 @@ public class GuidedFailureTests
     public void TaskState_Paused_IsValid()
         => TaskState.IsValid(TaskState.Paused).ShouldBeTrue();
 
-    // ========== Guided Failure: Retry ==========
+    // ========== Guided Failure: Suspend ==========
 
     [Fact]
-    public async Task GuidedFailure_Retry_ReExecutesAction()
+    public async Task GuidedFailure_ActionFails_ThrowsSuspendedException()
     {
-        var callCount = 0;
-
         var interruptionService = new Mock<IDeploymentInterruptionService>();
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
-        interruptionService.Setup(s => s.WaitForInterruptionAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(InterruptionOutcome.Retry);
 
         var serverTaskService = new Mock<IServerTaskService>();
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true);
+        lifecycle.Initialize(ctx);
 
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
+
+        interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ========== Guided Failure: Checkpoint Before Suspending ==========
+
+    [Fact]
+    public async Task GuidedFailure_ActionFails_PersistsCheckpointBeforeSuspending()
+    {
+        var callOrder = new List<string>();
+
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("checkpoint"))
+            .Returns(Task.CompletedTask);
+
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+
+        var serverTaskService = new Mock<IServerTaskService>();
+        serverTaskService.Setup(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("transition"))
+            .Returns(Task.CompletedTask);
+
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, checkpointService.Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true);
+        lifecycle.Initialize(ctx);
+
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
+
+        callOrder.ShouldContain("checkpoint");
+        callOrder.ShouldContain("transition");
+        callOrder.IndexOf("checkpoint").ShouldBeLessThan(callOrder.IndexOf("transition"));
+    }
+
+    // ========== Guided Failure: Resume with Retry ==========
+
+    [Fact]
+    public async Task GuidedFailure_ResumeWithRetry_ReExecutesAction()
+    {
+        var callCount = 0;
         var retryStrategy = new TestExecutionStrategy(_ =>
         {
             callCount++;
-            if (callCount == 1)
-                return new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } };
             return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } };
         });
-        var ctx = CreateBaseContext(useGuidedFailure: true, strategy: retryStrategy);
-        lifecycle.Initialize(ctx);
-
-        await phase.ExecuteAsync(ctx, CancellationToken.None);
-
-        callCount.ShouldBe(2);
-        ctx.FailureEncountered.ShouldBeFalse();
-    }
-
-    // ========== Guided Failure: Skip ==========
-
-    [Fact]
-    public async Task GuidedFailure_Skip_ContinuesWithoutFailure()
-    {
-        var strategy = new TestExecutionStrategy(_ =>
-            new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } });
 
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
-        interruptionService.Setup(s => s.WaitForInterruptionAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(InterruptionOutcome.Skip);
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Retry" });
 
         var serverTaskService = new Mock<IServerTaskService>();
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
-        var ctx = CreateBaseContext(useGuidedFailure: true);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: retryStrategy);
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        callCount.ShouldBe(1);
+        ctx.FailureEncountered.ShouldBeFalse();
+    }
+
+    // ========== Guided Failure: Resume with Skip ==========
+
+    [Fact]
+    public async Task GuidedFailure_ResumeWithSkip_SkipsAction()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Skip" });
+
+        var strategy = new TestExecutionStrategy(_ =>
+            new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
+
+        var serverTaskService = new Mock<IServerTaskService>();
+
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -121,29 +172,27 @@ public class GuidedFailureTests
         ctx.FailureEncountered.ShouldBeFalse();
     }
 
-    // ========== Guided Failure: Abort ==========
+    // ========== Guided Failure: Resume with Abort ==========
 
     [Fact]
-    public async Task GuidedFailure_Abort_Throws()
+    public async Task GuidedFailure_ResumeWithAbort_ThrowsAbortedException()
     {
-        var strategy = new TestExecutionStrategy(_ =>
-            new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } });
-
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
-        interruptionService.Setup(s => s.WaitForInterruptionAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(InterruptionOutcome.Abort);
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
+
+        var strategy = new TestExecutionStrategy(_ =>
+            new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
 
         var serverTaskService = new Mock<IServerTaskService>();
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
-        var ctx = CreateBaseContext(useGuidedFailure: true);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
-        await Should.ThrowAsync<Exception>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
+        await Should.ThrowAsync<DeploymentAbortedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
     }
 
     // ========== Guided Failure: Disabled → Throws Directly ==========
@@ -151,15 +200,12 @@ public class GuidedFailureTests
     [Fact]
     public async Task GuidedFailure_Disabled_ThrowsDirectly()
     {
-        var strategy = new TestExecutionStrategy(_ =>
-            new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } });
-
         var interruptionService = new Mock<IDeploymentInterruptionService>();
         var serverTaskService = new Mock<IServerTaskService>();
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
         var ctx = CreateBaseContext(useGuidedFailure: false);
         lifecycle.Initialize(ctx);
 
@@ -168,45 +214,32 @@ public class GuidedFailureTests
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ========== Guided Failure: Checkpoint Before Waiting ==========
+    // ========== Guided Failure: Retry then fail again → suspends again ==========
 
     [Fact]
-    public async Task GuidedFailure_Retry_PersistsCheckpointBeforeWaiting()
+    public async Task GuidedFailure_RetryThenFailsAgain_SuspendsAgain()
     {
-        var callOrder = new List<string>();
-
-        var checkpointService = new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>();
-        checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
-            .Callback(() => callOrder.Add("checkpoint"))
-            .Returns(Task.CompletedTask);
-
         var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Retry" });
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
-        interruptionService.Setup(s => s.WaitForInterruptionAsync(1, It.IsAny<CancellationToken>()))
-            .Callback(() => callOrder.Add("wait"))
-            .ReturnsAsync(InterruptionOutcome.Retry);
+            .ReturnsAsync(new DeploymentInterruption { Id = 2 });
 
-        var callCount = 0;
-        var retryStrategy = new TestExecutionStrategy(_ =>
-        {
-            callCount++;
-            if (callCount == 1)
-                return new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail" } };
-            return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } };
-        });
+        var strategy = new TestExecutionStrategy(_ =>
+            new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "fail again" } });
+
+        var serverTaskService = new Mock<IServerTaskService>();
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, checkpointService.Object);
-        var ctx = CreateBaseContext(useGuidedFailure: true, strategy: retryStrategy);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
-        await phase.ExecuteAsync(ctx, CancellationToken.None);
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
 
-        callOrder.ShouldContain("checkpoint");
-        callOrder.ShouldContain("wait");
-        callOrder.IndexOf("checkpoint").ShouldBeLessThan(callOrder.IndexOf("wait"));
+        interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========== Helpers ==========
@@ -236,7 +269,7 @@ public class GuidedFailureTests
         return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);
     }
 
-    private static DeploymentTaskContext CreateBaseContext(bool useGuidedFailure = false, IExecutionStrategy strategy = null)
+    private static DeploymentTaskContext CreateBaseContext(bool useGuidedFailure = false, bool isResume = false, IExecutionStrategy strategy = null)
     {
         var effectiveStrategy = strategy ?? new TestExecutionStrategy(_ =>
             new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "script failed" } });
@@ -248,6 +281,7 @@ public class GuidedFailureTests
             Release = new ReleaseEntity { Id = 1, Version = "1.0.0" },
             Project = new Project { Id = 1, Name = "Test" },
             UseGuidedFailure = useGuidedFailure,
+            IsResume = isResume,
             Variables = new List<VariableDto>(),
             SelectedPackages = new List<ReleaseSelectedPackage>(),
             Steps = new List<DeploymentStepDto>

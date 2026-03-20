@@ -1,9 +1,12 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Process;
 
-public class CreateDeploymentProcessCommand : ICommand
+[RequiresPermission(Permission.ProcessEdit)]
+public class CreateDeploymentProcessCommand : ICommand, ISpaceScoped
 {
     public int ProjectId { get; set; }
     
@@ -12,6 +15,7 @@ public class CreateDeploymentProcessCommand : ICommand
     public string Description { get; set; }
     
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
     
     public string CreatedBy { get; set; }
 }

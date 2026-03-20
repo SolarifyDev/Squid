@@ -2,7 +2,7 @@ using Squid.Message.Enums;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class Certificate : IEntity<int>
+public class Certificate : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
     public int SpaceId { get; set; }
@@ -38,7 +38,9 @@ public class Certificate : IEntity<int>
     public DateTimeOffset? Archived { get; set; }
     public int? ReplacedBy { get; set; }
 
-    // Audit
-    public DateTimeOffset? LastModifiedOn { get; set; }
-    public string LastModifiedBy { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

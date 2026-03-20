@@ -19,22 +19,12 @@ public class AccountController : ControllerBase
     }
 
     [AllowAnonymous]
-    [HttpPost("register")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterResponse))]
-    public async Task<IActionResult> RegisterAsync([FromBody] RegisterCommand command, CancellationToken cancellationToken)
-    {
-        var response = await _mediator.SendAsync<RegisterCommand, RegisterResponse>(command, cancellationToken).ConfigureAwait(false);
-        
-        return Ok(response);
-    }
-
-    [AllowAnonymous]
     [HttpPost("login")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(LoginResponse))]
     public async Task<IActionResult> LoginAsync([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
         var response = await _mediator.RequestAsync<LoginRequest, LoginResponse>(request, cancellationToken).ConfigureAwait(false);
-        
+
         return Ok(response);
     }
 
@@ -44,7 +34,7 @@ public class AccountController : ControllerBase
     public async Task<IActionResult> MeAsync(CancellationToken cancellationToken)
     {
         var idValue = User.Claims.FirstOrDefault(x => x.Type == ClaimTypes.NameIdentifier)?.Value;
-        
+
         if (!int.TryParse(idValue, out var userId))
         {
             return Unauthorized(new SquidResponse { Code = HttpStatusCode.Unauthorized, Msg = "Invalid token" });
@@ -57,6 +47,60 @@ public class AccountController : ControllerBase
         {
             return Unauthorized(new SquidResponse { Code = HttpStatusCode.Unauthorized, Msg = "User not found" });
         }
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ChangePasswordResponse))]
+    public async Task<IActionResult> ChangePasswordAsync([FromBody] ChangePasswordCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ChangePasswordCommand, ChangePasswordResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("users/{userId:int}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateUserStatusResponse))]
+    public async Task<IActionResult> UpdateUserStatusAsync(int userId, [FromBody] UpdateUserStatusCommand command, CancellationToken cancellationToken)
+    {
+        command.UserId = userId;
+
+        var response = await _mediator.SendAsync<UpdateUserStatusCommand, UpdateUserStatusResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("api-keys")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(CreateApiKeyResponse))]
+    public async Task<IActionResult> CreateApiKeyAsync([FromBody] CreateApiKeyCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<CreateApiKeyCommand, CreateApiKeyResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpDelete("api-keys/{apiKeyId:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteApiKeyResponse))]
+    public async Task<IActionResult> DeleteApiKeyAsync(int apiKeyId, CancellationToken cancellationToken)
+    {
+        var command = new DeleteApiKeyCommand { ApiKeyId = apiKeyId };
+
+        var response = await _mediator.SendAsync<DeleteApiKeyCommand, DeleteApiKeyResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpGet("api-keys")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMyApiKeysResponse))]
+    public async Task<IActionResult> GetMyApiKeysAsync(CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<GetMyApiKeysRequest, GetMyApiKeysResponse>(new GetMyApiKeysRequest(), cancellationToken).ConfigureAwait(false);
 
         return Ok(response);
     }

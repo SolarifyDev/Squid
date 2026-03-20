@@ -65,3 +65,20 @@ public sealed class ReleaseSpaceMismatchException : CreateReleaseAssertionExcept
         ChannelSpaceId = channelSpaceId;
     }
 }
+
+public sealed class ReleaseDuplicateVersionException : CreateReleaseAssertionException
+{
+    public int ProjectId { get; }
+
+    public int ChannelId { get; }
+
+    public string Version { get; }
+
+    public ReleaseDuplicateVersionException(int projectId, int channelId, string version)
+        : base($"Release version '{version}' already exists for project {projectId} in channel {channelId}")
+    {
+        ProjectId = projectId;
+        ChannelId = channelId;
+        Version = version;
+    }
+}

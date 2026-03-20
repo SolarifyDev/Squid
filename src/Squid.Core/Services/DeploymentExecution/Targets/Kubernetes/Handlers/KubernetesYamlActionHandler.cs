@@ -22,13 +22,13 @@ public class KubernetesYamlActionHandler : IActionHandler
         _externalFeedDataProvider = externalFeedDataProvider;
     }
 
-    public DeploymentActionType ActionType => DeploymentActionType.KubernetesDeployContainers;
+    public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployContainers;
 
     public bool CanHandle(DeploymentActionDto action)
     {
         if (action == null) return false;
 
-        return DeploymentActionTypeParser.Is(action.ActionType, ActionType)
+        return string.Equals(action.ActionType, ActionType, StringComparison.OrdinalIgnoreCase)
                && _yamlGenerators.Any(g => g.CanHandle(action));
     }
 

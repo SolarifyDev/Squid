@@ -1,11 +1,15 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Models.Deployments.ServerTask;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Deployment;
 
-public class GetDeploymentRequest : IRequest
+[RequiresPermission(Permission.DeploymentView)]
+public class GetDeploymentRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 
     public bool? Verbose { get; set; }

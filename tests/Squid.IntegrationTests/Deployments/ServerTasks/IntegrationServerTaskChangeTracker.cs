@@ -34,7 +34,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ProjectId = 1,
                 EnvironmentId = 1,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,
@@ -184,8 +184,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ServerTaskId = taskId,
                 DeploymentId = 1,
                 LastCompletedBatchIndex = 0,
-                FailureEncountered = false,
-                CreatedAt = DateTimeOffset.UtcNow
+                FailureEncountered = false
             };
             await repository.InsertAsync(checkpoint);
             await unitOfWork.SaveChangesAsync();

@@ -2,7 +2,7 @@ using Squid.Message.Enums;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class VariableSet : IEntity<int>
+public class VariableSet : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -20,5 +20,9 @@ public class VariableSet : IEntity<int>
 
     public string RelatedDocumentIds { get; set; }
 
-    public DateTimeOffset? LastModified { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

@@ -6,8 +6,8 @@ public class ReleaseDto
     
     public string Version { get; set; }
     
-    public DateTimeOffset Assembled { get; set; }
-    
+    public DateTimeOffset CreatedDate { get; set; }
+
     public int ProjectId { get; set; }
     
     public int ProjectVariableSetSnapshotId { get; set; }
@@ -20,5 +20,5 @@ public class ReleaseDto
     
     public int SpaceId { get; set; }
     
-    public DateTimeOffset LastModified { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
 }

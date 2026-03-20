@@ -43,6 +43,8 @@ public sealed class DeploymentCompletionHandler(
         {
             await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Failed, cancellationToken).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
+
+        await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
 
     public async Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)

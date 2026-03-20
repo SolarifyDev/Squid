@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Release;
 
-public class GetReleaseVariableSnapshotRequest : IRequest
+[RequiresPermission(Permission.ReleaseView)]
+public class GetReleaseVariableSnapshotRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ReleaseId { get; set; }
 }
 

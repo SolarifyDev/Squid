@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Machines;
 
-public class GetMachinePoliciesRequest : IRequest
+[RequiresPermission(Permission.MachineView)]
+public class GetMachinePoliciesRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
 }
 
 public class GetMachinePoliciesResponse : SquidResponse<GetMachinePoliciesResponseData>

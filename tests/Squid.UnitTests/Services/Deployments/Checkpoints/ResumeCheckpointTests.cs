@@ -9,7 +9,6 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.Checkpoints;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
@@ -19,8 +18,8 @@ using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
-using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Checkpoints;
@@ -108,7 +107,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.ResumeFromBatchIndex = 0;
@@ -135,7 +134,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -166,7 +165,7 @@ public class ResumeCheckpointTests
             .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(cp))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -186,28 +185,40 @@ public class ResumeCheckpointTests
 
     // ========== Helpers ==========
 
-    private static (IDeploymentLifecycle Lifecycle, Mock<IServerTaskService> ServerTaskServiceMock) CreateLifecycle()
+    private static (IDeploymentLifecycle Lifecycle, Mock<IDeploymentLogWriter> LogWriterMock) CreateLifecycle()
     {
         var nextNodeId = 0L;
-        var serverTaskServiceMock = new Mock<IServerTaskService>();
-        serverTaskServiceMock
+        var logWriter = new Mock<IDeploymentLogWriter>();
+
+        logWriter
             .Setup(x => x.AddActivityNodeAsync(It.IsAny<int>(), It.IsAny<long?>(), It.IsAny<string>(), It.IsAny<DeploymentActivityLogNodeType>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken _) =>
                 new ActivityLog { Id = Interlocked.Increment(ref nextNodeId), ServerTaskId = taskId, ParentId = parentId, Name = name, NodeType = nodeType, Status = status, SortOrder = sortOrder, StartedAt = DateTimeOffset.UtcNow });
-        serverTaskServiceMock
+
+        logWriter
             .Setup(x => x.UpdateActivityNodeStatusAsync(It.IsAny<long>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        serverTaskServiceMock
-            .Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+
+        logWriter
+            .Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        serverTaskServiceMock
+
+        logWriter
             .Setup(x => x.AddLogsAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object, new Mock<IActivityLogDataProvider>().Object);
+        logWriter
+            .Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        logWriter
+            .Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ActivityLog>());
+
+        var logger = new DeploymentActivityLogger(logWriter.Object);
         var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
 
-        return (lifecycle, serverTaskServiceMock);
+        return (lifecycle, logWriter);
     }
 
     private static IActionHandlerRegistry CreateRegistry()
@@ -253,7 +264,7 @@ public class ResumeCheckpointTests
             IsDisabled = false,
             Properties = new List<DeploymentStepPropertyDto>
             {
-                new() { StepId = order, PropertyName = DeploymentVariables.Action.TargetRoles, PropertyValue = targetRoles }
+                new() { StepId = order, PropertyName = SpecialVariables.Step.TargetRoles, PropertyValue = targetRoles }
             },
             Actions = new List<DeploymentActionDto> { action }
         };
@@ -307,9 +318,7 @@ public class ResumeCheckpointTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public DeploymentActionType ActionType => DeploymentActionType.KubernetesRunScript;
-
-        public bool CanHandle(DeploymentActionDto action) => DeploymentActionTypeParser.Is(action?.ActionType, ActionType);
+        public string ActionType => "Squid.KubernetesRunScript";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {

@@ -1,9 +1,12 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Account;
 
-public class GetDeploymentAccountsRequest : IPaginatedRequest
+[RequiresPermission(Permission.AccountView)]
+public class GetDeploymentAccountsRequest : IPaginatedRequest, ISpaceScoped
 {
     public int PageIndex { get; set; } = 1;
     public int PageSize { get; set; } = 20;

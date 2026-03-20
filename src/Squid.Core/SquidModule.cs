@@ -1,6 +1,9 @@
 using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Identity;
+using Squid.Core.Services.Spaces;
 using Squid.Core.Settings.System;
 
 namespace Squid.Core;
@@ -28,6 +31,9 @@ public class SquidModule : Module
         RegisterCaching(builder);
         RegisterAutoMapper(builder);
         RegisterDependency(builder);
+
+        builder.RegisterType<BuiltInRoleSeeder>().As<IStartable>().SingleInstance();
+        builder.RegisterType<DefaultSpaceSeeder>().As<IStartable>().SingleInstance();
     }
 
     private void RegisterLogging(ContainerBuilder builder)
@@ -55,13 +61,22 @@ public class SquidModule : Module
 
         builder.Register(_ =>
             {
-                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
+                var optionsBuilder = new DbContextOptionsBuilder<SquidDbContext>();
 
-                dbContextBuilder
+                optionsBuilder
                     .UseNpgsql(connectionString)
                     .UseSnakeCaseNamingConvention();
 
-                return new SquidDbContext(dbContextBuilder.Options);
+                return optionsBuilder.Options;
+            })
+            .As<DbContextOptions<SquidDbContext>>()
+            .SingleInstance();
+
+        builder.Register(c =>
+            {
+                var options = c.Resolve<DbContextOptions<SquidDbContext>>();
+                var currentUser = c.ResolveOptional<ICurrentUser>();
+                return new SquidDbContext(options, currentUser);
             })
             .AsSelf()
             .As<DbContext>()

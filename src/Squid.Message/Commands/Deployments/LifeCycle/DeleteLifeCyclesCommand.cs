@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.LifeCycle;
 
-public class DeleteLifeCyclesCommand : ICommand
+[RequiresPermission(Permission.LifecycleDelete)]
+public class DeleteLifeCyclesCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

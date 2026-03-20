@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Variable;
 
-public class DeleteVariableSetCommand : ICommand
+[RequiresPermission(Permission.VariableEdit)]
+public class DeleteVariableSetCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int Id { get; set; }
 }
 

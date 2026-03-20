@@ -412,7 +412,7 @@ public class ProjectServiceProgressionTests : TestBase
                 JSON = "{}",
                 DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 ConcurrencyTag = string.Empty,
                 ErrorMessage = string.Empty,
                 BusinessProcessState = string.Empty,
@@ -566,7 +566,7 @@ public class ProjectServiceProgressionTests : TestBase
         var deployment = releaseDto.Deployments[seed.DevEnvId][0];
 
         deployment.CompletedTime.ShouldNotBeNull();
-        deployment.Created.ShouldNotBe(default);
+        deployment.CreatedDate.ShouldNotBe(default);
     }
 
     [Fact]

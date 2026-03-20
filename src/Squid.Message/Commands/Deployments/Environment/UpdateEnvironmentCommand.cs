@@ -1,13 +1,17 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Environment;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Environment;
 
-public class UpdateEnvironmentCommand : ICommand
+[RequiresPermission(Permission.EnvironmentEdit)]
+public class UpdateEnvironmentCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }
 
     public int SpaceId { get; set; }
+    int? ISpaceScoped.SpaceId => SpaceId;
 
     public string Slug { get; set; }
 

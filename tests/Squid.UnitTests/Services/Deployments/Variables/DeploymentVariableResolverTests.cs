@@ -24,6 +24,7 @@ public class DeploymentVariableResolverTests
     private readonly Mock<IDeploymentDataProvider> _deploymentDataProvider = new();
     private readonly Mock<IDeploymentSnapshotService> _snapshotService = new();
     private readonly Mock<ILibraryVariableSetDataProvider> _libraryVariableSetDataProvider = new();
+    private readonly Mock<ICertificateVariableExpander> _certificateExpander = new();
     private readonly DeploymentVariableResolver _resolver;
 
     public DeploymentVariableResolverTests()
@@ -32,7 +33,8 @@ public class DeploymentVariableResolverTests
             _projectDataProvider.Object,
             _deploymentDataProvider.Object,
             _snapshotService.Object,
-            _libraryVariableSetDataProvider.Object);
+            _libraryVariableSetDataProvider.Object,
+            _certificateExpander.Object);
     }
 
     // === ResolveVariablesAsync — Snapshot Path ===
@@ -347,7 +349,7 @@ public class DeploymentVariableResolverTests
             ReleaseId = 1,
             EnvironmentId = 1,
             DeployedBy = 1,
-            Created = DateTimeOffset.UtcNow
+            CreatedDate = DateTimeOffset.UtcNow
         };
     }
 
@@ -366,7 +368,7 @@ public class DeploymentVariableResolverTests
             Json = string.Empty,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            LastModified = DateTimeOffset.UtcNow
+            LastModifiedDate = DateTimeOffset.UtcNow
         };
     }
 }

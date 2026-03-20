@@ -2,7 +2,7 @@ using Squid.Message.Enums;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class Variable : IEntity<int>
+public class Variable : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -20,7 +20,14 @@ public class Variable : IEntity<int>
 
     public int SortOrder { get; set; } = 0;
 
-    public DateTimeOffset? LastModifiedOn { get; set; }
+    // Prompt
+    public string PromptLabel { get; set; }
+    public string PromptDescription { get; set; }
+    public bool PromptRequired { get; set; }
 
-    public string LastModifiedBy { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

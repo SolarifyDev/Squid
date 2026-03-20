@@ -1,7 +1,10 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authentication;
+using Squid.Core.Services.Caching;
+using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Account;
 using Squid.Message.Models.Account;
 using Squid.Message.Requests.Account;
@@ -10,13 +13,16 @@ namespace Squid.Core.Services.Account;
 
 public interface IAccountService : IScopedDependency
 {
-    Task<RegisterResponseData> RegisterAsync(RegisterCommand command, CancellationToken cancellationToken = default);
-
+    Task<CreateUserResponseData> CreateUserAsync(CreateUserCommand command, CancellationToken cancellationToken = default);
     Task<LoginResponseData> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default);
-
+    Task<List<UserAccountDto>> GetAllAsync(CancellationToken cancellationToken = default);
     Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
-
     Task<UserAccountDto?> GetByApiKeyAsync(string apiKey, CancellationToken cancellationToken = default);
+    Task ChangePasswordAsync(int userId, string? currentPassword, string newPassword, bool isSelf, CancellationToken ct = default);
+    Task UpdateUserStatusAsync(int userId, bool isDisabled, int currentUserId, CancellationToken ct = default);
+    Task<CreateApiKeyResponseData> CreateApiKeyAsync(int userId, string description, CancellationToken ct = default);
+    Task DeleteApiKeyAsync(int apiKeyId, int currentUserId, CancellationToken ct = default);
+    Task<List<ApiKeyDto>> GetApiKeysAsync(int userId, CancellationToken ct = default);
 }
 
 public class AccountService : IAccountService
@@ -24,16 +30,20 @@ public class AccountService : IAccountService
     private readonly IRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IUserTokenService _userTokenService;
+    private readonly ITeamDataProvider _teamDataProvider;
+    private readonly ICacheManager _cacheManager;
     private readonly PasswordHasher<UserAccount> _passwordHasher = new();
 
-    public AccountService(IRepository repository, IUnitOfWork unitOfWork, IUserTokenService userTokenService)
+    public AccountService(IRepository repository, IUnitOfWork unitOfWork, IUserTokenService userTokenService, ITeamDataProvider teamDataProvider, ICacheManager cacheManager)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
         _userTokenService = userTokenService;
+        _teamDataProvider = teamDataProvider;
+        _cacheManager = cacheManager;
     }
 
-    public async Task<RegisterResponseData> RegisterAsync(RegisterCommand command, CancellationToken cancellationToken = default)
+    public async Task<CreateUserResponseData> CreateUserAsync(CreateUserCommand command, CancellationToken cancellationToken = default)
     {
         var userName = NormalizeUserNameInput(command.UserName);
         var password = command.Password;
@@ -62,8 +72,8 @@ public class AccountService : IAccountService
             DisplayName = displayName,
             IsDisabled = false,
             IsSystem = false,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
+            CreatedDate = DateTime.UtcNow,
+            LastModifiedDate = DateTime.UtcNow
         };
 
         user.PasswordHash = _passwordHasher.HashPassword(user, password);
@@ -71,7 +81,9 @@ public class AccountService : IAccountService
         await _repository.InsertAsync(user, cancellationToken).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        return new RegisterResponseData
+        await AddToEveryoneTeamAsync(user.Id, cancellationToken).ConfigureAwait(false);
+
+        return new CreateUserResponseData
         {
             IsSucceeded = true,
             UserAccount = ToDto(user)
@@ -100,7 +112,7 @@ public class AccountService : IAccountService
         if (verifyResult == PasswordVerificationResult.SuccessRehashNeeded)
         {
             user.PasswordHash = _passwordHasher.HashPassword(user, password);
-            user.UpdatedAtUtc = DateTime.UtcNow;
+            user.LastModifiedDate = DateTime.UtcNow;
             await _repository.UpdateAsync(user, cancellationToken).ConfigureAwait(false);
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -111,15 +123,23 @@ public class AccountService : IAccountService
         {
             AccessToken = token.AccessToken,
             ExpiresAtUtc = token.ExpiresAtUtc,
-            UserAccount = ToDto(user)
+            UserAccount = ToDto(user),
+            MustChangePassword = user.MustChangePassword
         };
+    }
+
+    public async Task<List<UserAccountDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var users = await _repository.Query<UserAccount>(x => !x.IsSystem).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return users.Select(ToDto).ToList();
     }
 
     public async Task<UserAccountDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         var user = await _repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == id, cancellationToken).ConfigureAwait(false);
 
-        if (user == null || user.IsDisabled) return null;
+        if (user == null) return null;
 
         return ToDto(user);
     }
@@ -136,6 +156,139 @@ public class AccountService : IAccountService
         return await GetByIdAsync(apiKeyEntity.UserAccountId, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task ChangePasswordAsync(int userId, string? currentPassword, string newPassword, bool isSelf, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+            throw new ArgumentException("New password must be at least 6 characters");
+
+        var user = await _repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == userId, ct).ConfigureAwait(false);
+
+        if (user == null)
+            throw new InvalidOperationException($"User {userId} not found");
+
+        if (isSelf)
+        {
+            var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, currentPassword!);
+
+            if (verifyResult == PasswordVerificationResult.Failed)
+                throw new UnauthorizedAccessException("Current password is incorrect");
+        }
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, newPassword);
+        user.MustChangePassword = !isSelf;
+        user.LastModifiedDate = DateTime.UtcNow;
+
+        await _repository.UpdateAsync(user, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task UpdateUserStatusAsync(int userId, bool isDisabled, int currentUserId, CancellationToken ct = default)
+    {
+        if (userId == currentUserId)
+            throw new InvalidOperationException("Cannot disable your own account");
+
+        var user = await _repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == userId, ct).ConfigureAwait(false);
+
+        if (user == null)
+            throw new InvalidOperationException($"User {userId} not found");
+
+        if (user.IsSystem)
+            throw new InvalidOperationException("Cannot disable a system user");
+
+        user.IsDisabled = isDisabled;
+        user.LastModifiedDate = DateTime.UtcNow;
+
+        await _repository.UpdateAsync(user, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        if (isDisabled)
+            await InvalidateApiKeyCacheForUserAsync(userId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<CreateApiKeyResponseData> CreateApiKeyAsync(int userId, string description, CancellationToken ct = default)
+    {
+        var rawKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
+        var entity = new UserAccountApiKey
+        {
+            UserAccountId = userId,
+            ApiKey = rawKey,
+            Description = description,
+            IsDisabled = false,
+            CreatedDate = DateTimeOffset.UtcNow,
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+
+        await _repository.InsertAsync(entity, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return new CreateApiKeyResponseData
+        {
+            Id = entity.Id,
+            ApiKey = rawKey,
+            Description = description
+        };
+    }
+
+    public async Task DeleteApiKeyAsync(int apiKeyId, int currentUserId, CancellationToken ct = default)
+    {
+        var apiKey = await _repository.FirstOrDefaultAsync<UserAccountApiKey>(x => x.Id == apiKeyId, ct).ConfigureAwait(false);
+
+        if (apiKey == null)
+            throw new InvalidOperationException($"API Key {apiKeyId} not found");
+
+        apiKey.IsDisabled = true;
+        apiKey.LastModifiedDate = DateTimeOffset.UtcNow;
+
+        await _repository.UpdateAsync(apiKey, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        var cacheKey = $"auth:apikey:user:{apiKey.ApiKey}";
+        await _cacheManager.RemoveAsync(cacheKey, new RedisCachingSetting(), ct).ConfigureAwait(false);
+    }
+
+    public async Task<List<ApiKeyDto>> GetApiKeysAsync(int userId, CancellationToken ct = default)
+    {
+        var keys = await _repository.Query<UserAccountApiKey>(x => x.UserAccountId == userId && !x.IsDisabled)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        return keys.Select(k => new ApiKeyDto
+        {
+            Id = k.Id,
+            MaskedKey = MaskApiKey(k.ApiKey),
+            Description = k.Description,
+            CreatedDate = k.CreatedDate
+        }).ToList();
+    }
+
+    private async Task InvalidateApiKeyCacheForUserAsync(int userId, CancellationToken ct)
+    {
+        var keys = await _repository.Query<UserAccountApiKey>(x => x.UserAccountId == userId && !x.IsDisabled)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        foreach (var key in keys)
+        {
+            var cacheKey = $"auth:apikey:user:{key.ApiKey}";
+            await _cacheManager.RemoveAsync(cacheKey, new RedisCachingSetting(), ct).ConfigureAwait(false);
+        }
+    }
+
+    private static string MaskApiKey(string apiKey)
+    {
+        if (string.IsNullOrEmpty(apiKey) || apiKey.Length <= 8) return "****";
+        return string.Concat(apiKey.AsSpan(0, 4), "****", apiKey.AsSpan(apiKey.Length - 4));
+    }
+
+    private async Task AddToEveryoneTeamAsync(int userId, CancellationToken ct)
+    {
+        var teams = await _teamDataProvider.GetAllBySpaceAsync(0, ct).ConfigureAwait(false);
+        var everyoneTeam = teams.FirstOrDefault(t => t.Name == "Everyone");
+
+        if (everyoneTeam == null) return;
+
+        await _teamDataProvider.AddMemberAsync(new TeamMember { TeamId = everyoneTeam.Id, UserId = userId }, ct: ct).ConfigureAwait(false);
+    }
+
     private static string NormalizeUserNameInput(string? userName)
     {
         return (userName ?? string.Empty).Trim();
@@ -149,7 +302,8 @@ public class AccountService : IAccountService
             UserName = user.UserName,
             DisplayName = user.DisplayName,
             IsSystem = user.IsSystem,
-            CreatedAtUtc = user.CreatedAtUtc
+            IsDisabled = user.IsDisabled,
+            CreatedDate = user.CreatedDate
         };
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -49,46 +50,46 @@ public class KubernetesDeployYamlActionHandlerTests
         Action = action
     };
 
-    // === CanHandle Tests ===
+    // === CanHandle Tests (default interface implementation) ===
 
     [Fact]
     public void CanHandle_MatchingActionType_ReturnsTrue()
     {
         var action = CreateAction("Squid.KubernetesDeployRawYaml");
-        _handler.CanHandle(action).ShouldBeTrue();
+        ((IActionHandler)_handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Fact]
     public void CanHandle_CaseInsensitive_ReturnsTrue()
     {
         var action = CreateAction("squid.kubernetesdeployrawyaml");
-        _handler.CanHandle(action).ShouldBeTrue();
+        ((IActionHandler)_handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Fact]
     public void CanHandle_DifferentActionType_ReturnsFalse()
     {
         var action = CreateAction("Squid.KubernetesRunScript");
-        _handler.CanHandle(action).ShouldBeFalse();
+        ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }
 
     [Fact]
     public void CanHandle_NullAction_ReturnsFalse()
     {
-        _handler.CanHandle(null).ShouldBeFalse();
+        ((IActionHandler)_handler).CanHandle(null).ShouldBeFalse();
     }
 
     [Fact]
     public void CanHandle_NullActionType_ReturnsFalse()
     {
         var action = new DeploymentActionDto { ActionType = null };
-        _handler.CanHandle(action).ShouldBeFalse();
+        ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }
 
     [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
-        _handler.ActionType.ShouldBe(DeploymentActionType.KubernetesDeployRawYaml);
+        _handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployRawYaml);
     }
 
     // === PrepareAsync — Inline YAML Tests ===

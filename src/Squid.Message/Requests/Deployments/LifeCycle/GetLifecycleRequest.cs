@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.LifeCycle;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.LifeCycle;
 
-public class GetLifecycleRequest : IPaginatedRequest
+[RequiresPermission(Permission.LifecycleView)]
+public class GetLifecycleRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; }
     
     public int PageSize { get; set; }

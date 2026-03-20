@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Message.Requests.Machines;
 
-public class GetMachinesRequest : IPaginatedRequest
+[RequiresPermission(Permission.MachineView)]
+public class GetMachinesRequest : IPaginatedRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int PageIndex { get; set; } = 1;
 
     public int PageSize { get; set; } = 20;

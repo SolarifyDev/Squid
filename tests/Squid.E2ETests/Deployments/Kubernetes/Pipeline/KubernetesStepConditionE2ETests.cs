@@ -12,7 +12,6 @@ using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using Squid.Core.Services.DeploymentExecution.Script;
-
 namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 
 [Collection("KindCluster")]
@@ -279,7 +278,7 @@ public class KubernetesStepConditionE2ETests
                 ReleaseId = release.Id,
                 EnvironmentId = environment.Id,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -296,7 +295,7 @@ public class KubernetesStepConditionE2ETests
                 ProjectId = project.Id,
                 EnvironmentId = environment.Id,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,
@@ -450,7 +449,7 @@ public class KubernetesStepConditionE2ETests
                 ReleaseId = release.Id,
                 EnvironmentId = environment.Id,
                 DeployedBy = 1,
-                Created = DateTimeOffset.UtcNow,
+                CreatedDate = DateTimeOffset.UtcNow,
                 Json = string.Empty
             };
 
@@ -467,7 +466,7 @@ public class KubernetesStepConditionE2ETests
                 ProjectId = project.Id,
                 EnvironmentId = environment.Id,
                 SpaceId = 1,
-                LastModified = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow,
                 BusinessProcessState = "Queued",
                 StateOrder = 1,
                 Weight = 1,

@@ -2,7 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
-using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Message.Constants;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
@@ -19,7 +19,7 @@ public class IntegrationProcessSnapshot : SnapshotFixtureBase
             var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step", "Action", "Success");
             var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", "Octopus.Script");
             await builder.CreateActionPropertiesAsync(action.Id, ("Octopus.Action.Script.ScriptBody", "echo hello"));
-            await builder.CreateStepPropertiesAsync(step.Id, (DeploymentVariables.Action.TargetRoles, "web"));
+            await builder.CreateStepPropertiesAsync(step.Id, (SpecialVariables.Step.TargetRoles, "web"));
             await builder.CreateActionEnvironmentsAsync(action.Id, 10, 20);
             await builder.CreateActionChannelsAsync(action.Id, 5);
             await builder.CreateActionMachineRolesAsync(action.Id, "web-server", "api-server");
@@ -35,8 +35,8 @@ public class IntegrationProcessSnapshot : SnapshotFixtureBase
             var stepSnap = snapshot.Data.StepSnapshots[0];
             stepSnap.Name.ShouldBe("Deploy Step");
             stepSnap.StepOrder.ShouldBe(1);
-            stepSnap.Properties.ShouldContainKey(DeploymentVariables.Action.TargetRoles);
-            stepSnap.Properties[DeploymentVariables.Action.TargetRoles].ShouldBe("web");
+            stepSnap.Properties.ShouldContainKey(SpecialVariables.Step.TargetRoles);
+            stepSnap.Properties[SpecialVariables.Step.TargetRoles].ShouldBe("web");
 
             stepSnap.ActionSnapshots.Count.ShouldBe(1);
             var actionSnap = stepSnap.ActionSnapshots[0];

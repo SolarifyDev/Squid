@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Interruption;
 
-public class GetPendingInterruptionsRequest : IRequest
+[RequiresPermission(Permission.InterruptionView)]
+public class GetPendingInterruptionsRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public int ServerTaskId { get; set; }
 }
 

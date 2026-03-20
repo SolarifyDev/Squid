@@ -18,7 +18,7 @@ public partial class ServerTaskService
             QueueTime = task.QueueTime,
             StartTime = task.StartTime,
             CompletedTime = task.CompletedTime,
-            LastModified = task.LastModified,
+            LastModifiedDate = task.LastModifiedDate,
             ErrorMessage = task.ErrorMessage,
             HasWarningsOrErrors = task.HasWarningsOrErrors,
             HasPendingInterruptions = task.HasPendingInterruptions,

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Identity;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Interruption;
 
@@ -19,6 +20,7 @@ public class CreateInterruptionRequest
     public string ErrorMessage { get; set; }
     public InterruptionForm Form { get; set; }
     public int SpaceId { get; set; }
+    public string ResponsibleTeamIds { get; set; }
 }
 
 public interface IDeploymentInterruptionService : IScopedDependency
@@ -35,12 +37,12 @@ public interface IDeploymentInterruptionService : IScopedDependency
 
     Task<List<DeploymentInterruption>> GetPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 
-    Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default);
+    Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default);
 
     Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 }
 
-public class DeploymentInterruptionService(IRepository repository, IUnitOfWork unitOfWork, IServerTaskService serverTaskService) : IDeploymentInterruptionService
+public class DeploymentInterruptionService(IRepository repository, IUnitOfWork unitOfWork, IServerTaskService serverTaskService, IInterruptionAuthorizationService authService, ICurrentUser currentUser) : IDeploymentInterruptionService
 {
     private const int PollIntervalMs = 5000;
 
@@ -57,8 +59,8 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
             MachineName = request.MachineName,
             ErrorMessage = request.ErrorMessage,
             FormJson = request.Form != null ? JsonSerializer.Serialize(request.Form) : null,
-            CreatedAt = DateTimeOffset.UtcNow,
-            SpaceId = request.SpaceId
+            SpaceId = request.SpaceId,
+            ResponsibleTeamIds = request.ResponsibleTeamIds
         };
 
         await repository.InsertAsync(interruption, ct).ConfigureAwait(false);
@@ -75,6 +77,9 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
 
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
+
+        if (currentUser.Id.HasValue)
+            await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false);
 
         var outcome = InterruptionFormBuilder.ResolveOutcome(interruption.InterruptionType, values);
 
@@ -97,6 +102,9 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
 
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
+
+        if (int.TryParse(userId, out var uid))
+            await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
 
         interruption.ResponsibleUserId = userId;
 
@@ -131,11 +139,11 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         return await repository.ToListAsync<DeploymentInterruption>(i => i.ServerTaskId == serverTaskId && i.Resolution == null, ct).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, CancellationToken ct = default)
+    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default)
     {
         return await repository.QueryNoTracking<DeploymentInterruption>(i =>
-                i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.Resolution != null)
-            .OrderByDescending(i => i.CreatedAt)
+                i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.MachineName == machineName && i.Resolution != null)
+            .OrderByDescending(i => i.CreatedDate)
             .FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 

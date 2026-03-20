@@ -35,7 +35,7 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         entity.SpaceId = command.SpaceId;
         entity.Notes = command.Notes;
         entity.EnvironmentIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
-        entity.LastModifiedOn = DateTimeOffset.UtcNow;
+
 
         await certificateDataProvider.AddCertificateAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -109,7 +109,7 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         entity.Name = command.Name;
         entity.Notes = command.Notes;
         entity.EnvironmentIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
-        entity.LastModifiedOn = DateTimeOffset.UtcNow;
+
 
         await certificateDataProvider.UpdateCertificateAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -135,13 +135,10 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
         newEntity.Password = command.Password;
         newEntity.SpaceId = original.SpaceId;
         newEntity.EnvironmentIds = original.EnvironmentIds;
-        newEntity.LastModifiedOn = DateTimeOffset.UtcNow;
-
         await certificateDataProvider.AddCertificateAsync(newEntity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         original.Archived = DateTimeOffset.UtcNow;
         original.ReplacedBy = newEntity.Id;
-        original.LastModifiedOn = DateTimeOffset.UtcNow;
 
         await certificateDataProvider.UpdateCertificateAsync(original, cancellationToken: cancellationToken).ConfigureAwait(false);
 

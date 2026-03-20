@@ -38,7 +38,6 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task UpdateDeploymentProcessAsync(DeploymentProcess process, bool forceSave = true, CancellationToken cancellationToken = default)
     {
-        process.LastModified = DateTimeOffset.UtcNow;
         await _repository.UpdateAsync(process, cancellationToken).ConfigureAwait(false);
 
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -75,7 +74,7 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
         var results = await query
             .OrderByDescending(p => p.Version)
-            .ThenByDescending(p => p.LastModified)
+            .ThenByDescending(p => p.LastModifiedDate)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return (count, results);

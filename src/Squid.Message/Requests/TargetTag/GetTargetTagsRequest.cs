@@ -1,10 +1,14 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.TargetTag;
 using Squid.Message.Response;
 
 namespace Squid.Message.Requests.TargetTag;
 
-public class GetTargetTagsRequest : IRequest
+[RequiresPermission(Permission.MachineView)]
+public class GetTargetTagsRequest : IRequest, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
 }
 
 public class GetTargetTagsResponse : SquidResponse<GetTargetTagsResponseData>

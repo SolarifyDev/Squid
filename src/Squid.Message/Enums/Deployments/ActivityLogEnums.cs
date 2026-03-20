@@ -5,7 +5,8 @@ public enum DeploymentActivityLogNodeType
     Task = 0,
     Step = 1,
     Action = 2,
-    LogEntry = 3
+    LogEntry = 3,
+    Phase = 4
 }
 
 public enum DeploymentActivityLogNodeStatus
@@ -13,7 +14,8 @@ public enum DeploymentActivityLogNodeStatus
     Pending = 0,
     Running = 1,
     Success = 2,
-    Failed = 3
+    Failed = 3,
+    Skipped = 4
 }
 
 public enum DeploymentActivityLogCategory

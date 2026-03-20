@@ -1,6 +1,6 @@
 namespace Squid.Core.Persistence.Entities.Deployments;
 
-public class ExternalFeed : IEntity<int>
+public class ExternalFeed : IEntity<int>, IAuditable
 {
     public int Id { get; set; }
 
@@ -26,7 +26,9 @@ public class ExternalFeed : IEntity<int>
 
     public int SpaceId { get; set; }
 
-    public DateTimeOffset? LastModifiedOn { get; set; }
-
-    public string LastModifiedBy { get; set; }
+    // IAuditable
+    public DateTimeOffset CreatedDate { get; set; }
+    public int CreatedBy { get; set; }
+    public DateTimeOffset LastModifiedDate { get; set; }
+    public int LastModifiedBy { get; set; }
 }

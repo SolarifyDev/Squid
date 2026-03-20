@@ -91,7 +91,7 @@ public partial class ProjectService
         {
             var channelReleases = await _repository
                 .QueryNoTracking<ReleaseEntity>(r => r.ProjectId == projectId && r.ChannelId == channel.Id)
-                .OrderByDescending(r => r.Assembled)
+                .OrderByDescending(r => r.CreatedDate)
                 .Take(ReleasesPerChannel)
                 .ToListAsync(ct).ConfigureAwait(false);
 
@@ -109,7 +109,7 @@ public partial class ProjectService
 
         return await _repository
             .QueryNoTracking<ReleaseEntity>(r => allReleaseIds.Contains(r.Id))
-            .OrderByDescending(r => r.Assembled)
+            .OrderByDescending(r => r.CreatedDate)
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -136,7 +136,7 @@ public partial class ProjectService
 
         return await _repository
             .QueryNoTracking<Deployment>(d => releaseIds.Contains(d.ReleaseId))
-            .OrderByDescending(d => d.Created)
+            .OrderByDescending(d => d.CreatedDate)
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -159,7 +159,7 @@ public partial class ProjectService
     {
         return deployments
             .GroupBy(d => d.EnvironmentId)
-            .Select(g => g.OrderByDescending(d => d.Created).First())
+            .Select(g => g.OrderByDescending(d => d.CreatedDate).First())
             .Select(d => d.Id)
             .ToHashSet();
     }
@@ -191,7 +191,7 @@ public partial class ProjectService
                 .GroupBy(d => d.EnvironmentId)
                 .ToDictionary(
                     g => g.Key,
-                    g => g.OrderByDescending(d => d.Created)
+                    g => g.OrderByDescending(d => d.CreatedDate)
                         .Select(d => BuildDeploymentDto(d, releaseMap, taskMap, currentDeploymentIds))
                         .ToList());
 
@@ -203,7 +203,7 @@ public partial class ProjectService
                 {
                     Id = release.Id,
                     Version = release.Version,
-                    Assembled = release.Assembled,
+                    CreatedDate = release.CreatedDate,
                     ChannelId = release.ChannelId
                 },
                 Channel = channel != null
@@ -229,7 +229,7 @@ public partial class ProjectService
             DeploymentId = deployment.Id,
             State = task?.State ?? "Unknown",
             ReleaseVersion = release?.Version ?? "",
-            Created = deployment.Created,
+            CreatedDate = deployment.CreatedDate,
             CompletedTime = task?.CompletedTime,
             HasWarningsOrErrors = task?.HasWarningsOrErrors ?? false,
             IsCurrent = currentDeploymentIds.Contains(deployment.Id)

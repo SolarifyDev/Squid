@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
@@ -237,7 +238,7 @@ public class SensitiveOutputVariableTests
         foreach (var kv in actionResult.OutputVariables)
         {
             var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
-            var qualifiedName = DeploymentVariables.Action.OutputVariable(stepName, kv.Key);
+            var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             outputVariables.Add(new() { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
             outputVariables.Add(new() { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });

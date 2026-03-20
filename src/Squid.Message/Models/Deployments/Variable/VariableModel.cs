@@ -10,5 +10,8 @@ public class VariableModel
     public VariableType Type { get; set; }
     public bool IsSensitive { get; set; }
     public int SortOrder { get; set; }
+    public string PromptLabel { get; set; }
+    public string PromptDescription { get; set; }
+    public bool PromptRequired { get; set; }
     public List<VariableScopeModel> Scopes { get; set; } = new();
 }

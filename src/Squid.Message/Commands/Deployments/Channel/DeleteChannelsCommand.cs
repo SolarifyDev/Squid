@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Channel;
 
-public class DeleteChannelsCommand : ICommand
+[RequiresPermission(Permission.ChannelDelete)]
+public class DeleteChannelsCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 

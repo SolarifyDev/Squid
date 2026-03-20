@@ -178,7 +178,7 @@ public class RetentionPolicyEnforcerTests
         {
             Id = id,
             ReleaseId = releaseId,
-            Created = created,
+            CreatedDate = created,
             ProjectId = 1,
             EnvironmentId = 1
         };

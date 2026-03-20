@@ -7,7 +7,6 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
-using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
@@ -120,12 +119,12 @@ public class AnnounceSetupPhaseTests
     public async Task Resume_RestoresExistingTaskNode()
     {
         var existingTaskNode = new ActivityLog { Id = 42, NodeType = DeploymentActivityLogNodeType.Task };
-        var (phase, ctx, _, _, serverTaskService) = CreateHarnessWithResumeMocks(existingTaskNode);
+        var (phase, ctx, _, _, logWriter) = CreateHarnessWithResumeMocks(existingTaskNode);
         ctx.IsResume = true;
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        serverTaskService.Verify(s => s.UpdateActivityNodeStatusAsync(42, DeploymentActivityLogNodeStatus.Running, It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()), Times.Once);
+        logWriter.Verify(s => s.UpdateActivityNodeStatusAsync(42, DeploymentActivityLogNodeStatus.Running, It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -280,42 +279,41 @@ public class AnnounceSetupPhaseTests
         return (phase, ctx, logs, nodes);
     }
 
-    private static (AnnounceSetupPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes, Mock<IServerTaskService> ServerTaskService) CreateHarnessWithResumeMocks(ActivityLog existingTaskNode)
+    private static (AnnounceSetupPhase Phase, DeploymentTaskContext Ctx, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes, Mock<IDeploymentLogWriter> LogWriter) CreateHarnessWithResumeMocks(ActivityLog existingTaskNode)
     {
         var logs = new ConcurrentBag<CapturedLog>();
         var nodes = new ConcurrentBag<ActivityLog>();
-        var serverTaskServiceMock = CreateServerTaskServiceMock(logs, nodes);
+        var logWriter = CreateLogWriterMock(logs, nodes);
 
-        var activityLogDataProvider = new Mock<IActivityLogDataProvider>();
-        activityLogDataProvider
+        logWriter
             .Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActivityLog> { existingTaskNode });
 
-        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object, activityLogDataProvider.Object);
+        var logger = new DeploymentActivityLogger(logWriter.Object);
         var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
         var phase = new AnnounceSetupPhase(lifecycle);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
-        return (phase, ctx, logs, nodes, serverTaskServiceMock);
+        return (phase, ctx, logs, nodes, logWriter);
     }
 
-    private static (IDeploymentLifecycle Lifecycle, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes, Mock<IServerTaskService> ServerTaskService) CreateLifecycleHarness()
+    private static (IDeploymentLifecycle Lifecycle, ConcurrentBag<CapturedLog> Logs, ConcurrentBag<ActivityLog> Nodes, Mock<IDeploymentLogWriter> LogWriter) CreateLifecycleHarness()
     {
         var logs = new ConcurrentBag<CapturedLog>();
         var nodes = new ConcurrentBag<ActivityLog>();
-        var serverTaskServiceMock = CreateServerTaskServiceMock(logs, nodes);
+        var logWriter = CreateLogWriterMock(logs, nodes);
 
-        var logger = new DeploymentActivityLogger(serverTaskServiceMock.Object, new Mock<IActivityLogDataProvider>().Object);
+        var logger = new DeploymentActivityLogger(logWriter.Object);
         var lifecycle = new DeploymentLifecyclePublisher(new IDeploymentLifecycleHandler[] { logger });
 
-        return (lifecycle, logs, nodes, serverTaskServiceMock);
+        return (lifecycle, logs, nodes, logWriter);
     }
 
-    private static Mock<IServerTaskService> CreateServerTaskServiceMock(ConcurrentBag<CapturedLog> logs, ConcurrentBag<ActivityLog> nodes)
+    private static Mock<IDeploymentLogWriter> CreateLogWriterMock(ConcurrentBag<CapturedLog> logs, ConcurrentBag<ActivityLog> nodes)
     {
         var nextNodeId = 0L;
-        var mock = new Mock<IServerTaskService>();
+        var mock = new Mock<IDeploymentLogWriter>();
 
         mock.Setup(x => x.AddActivityNodeAsync(It.IsAny<int>(), It.IsAny<long?>(), It.IsAny<string>(), It.IsAny<DeploymentActivityLogNodeType>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken _) =>
@@ -338,8 +336,8 @@ public class AnnounceSetupPhaseTests
         mock.Setup(x => x.UpdateActivityNodeStatusAsync(It.IsAny<long>(), It.IsAny<DeploymentActivityLogNodeStatus>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((int taskId, long seq, ServerTaskLogCategory cat, string msg, string src, long? nodeId, DateTimeOffset? at, string detail, CancellationToken _) =>
+        mock.Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .Callback((int taskId, long seq, ServerTaskLogCategory cat, string msg, string src, long? nodeId, DateTimeOffset? at, CancellationToken _) =>
             {
                 logs.Add(new CapturedLog(cat, msg, src, nodeId));
             })
@@ -347,6 +345,12 @@ public class AnnounceSetupPhaseTests
 
         mock.Setup(x => x.AddLogsAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<ServerTaskLogWriteEntry>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+
+        mock.Setup(x => x.FlushAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        mock.Setup(x => x.GetTreeByTaskIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ActivityLog>());
 
         return mock;
     }

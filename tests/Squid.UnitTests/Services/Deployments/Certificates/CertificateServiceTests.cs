@@ -569,24 +569,6 @@ public class CertificateServiceTests
             () => _service.UpdateCertificateAsync(command, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task UpdateCertificateAsync_SetsLastModifiedOn()
-    {
-        var entity = CreateExistingCertificateEntity();
-        var originalModified = entity.LastModifiedOn;
-
-        _dataProvider.Setup(p => p.GetCertificateByIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(entity);
-        _dataProvider.Setup(p => p.UpdateCertificateAsync(It.IsAny<Certificate>(), true, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var command = new UpdateCertificateCommand { Id = 1, Name = "Updated" };
-
-        await _service.UpdateCertificateAsync(command, CancellationToken.None);
-
-        entity.LastModifiedOn.ShouldNotBe(originalModified);
-    }
-
     // === ReplaceCertificateAsync ===
 
     [Fact]
@@ -1107,7 +1089,7 @@ public class CertificateServiceTests
             SignatureAlgorithmName = "sha256RSA",
             SubjectAlternativeNames = null,
             EnvironmentIds = null,
-            LastModifiedOn = DateTimeOffset.UtcNow.AddDays(-10)
+            LastModifiedDate = DateTimeOffset.UtcNow.AddDays(-10)
         };
     }
 }

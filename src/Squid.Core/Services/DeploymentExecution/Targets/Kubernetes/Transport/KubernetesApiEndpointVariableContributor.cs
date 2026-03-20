@@ -7,6 +7,7 @@ using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -42,15 +43,15 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
         return new List<VariableDto>
         {
-            EndpointVariableFactory.Make(KubernetesApiVariableNames.ClusterUrl, endpoint.ClusterUrl ?? string.Empty),
-            EndpointVariableFactory.Make("Squid.Account.AccountType", accountTypeStr),
-            EndpointVariableFactory.Make("Squid.Account.CredentialsJson", accountData?.CredentialsJson ?? string.Empty, isSensitive: true),
-            EndpointVariableFactory.Make(KubernetesApiVariableNames.SkipTlsVerification, endpoint.SkipTlsVerification ?? KubernetesBooleanValues.False),
-            EndpointVariableFactory.Make(KubernetesProperties.LegacyNamespace, endpoint.Namespace ?? string.Empty),
-            EndpointVariableFactory.Make(KubernetesApiVariableNames.ClusterCertificate, ResolveClusterCertificate(context)),
-            EndpointVariableFactory.Make(KubernetesScriptProperties.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
-            EndpointVariableFactory.Make(KubernetesApiVariableNames.OutputKubectlVersion, KubernetesBooleanValues.True),
-            EndpointVariableFactory.Make(KubernetesCommonVariableNames.PrintEvaluatedVariables, KubernetesBooleanValues.True)
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.ClusterUrl, endpoint.ClusterUrl ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Account.AccountType, accountTypeStr),
+            EndpointVariableFactory.Make(SpecialVariables.Account.CredentialsJson, accountData?.CredentialsJson ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.SkipTlsVerification, endpoint.SkipTlsVerification ?? KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.Namespace, endpoint.Namespace ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.ClusterCertificate, ResolveClusterCertificate(context)),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.SuppressEnvironmentLogging, KubernetesBooleanValues.False),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.OutputKubectlVersion, KubernetesBooleanValues.True),
+            EndpointVariableFactory.Make(SpecialVariables.Kubernetes.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };
     }
 
@@ -65,7 +66,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         CancellationToken ct)
     {
         var containerImage = await BuildContainerImageAsync(processSnapshot, release, ct).ConfigureAwait(false);
-        return new List<VariableDto> { EndpointVariableFactory.Make("ContainerImage", containerImage) };
+        return new List<VariableDto> { EndpointVariableFactory.Make(SpecialVariables.Kubernetes.ContainerImage, containerImage) };
     }
 
     private async Task<string> BuildContainerImageAsync(

@@ -19,7 +19,7 @@ public class AuthenticationFixture
     [Fact]
     public async Task ShouldRegisterAndLoginSuccessfully()
     {
-        var register = await _fixture.RegisterUserAsync(
+        var register = await _fixture.CreateUserAsync(
             userName: "auth-fixture-user",
             password: "123456",
             displayName: "Auth Fixture User");
@@ -36,7 +36,7 @@ public class AuthenticationFixture
     [Fact]
     public async Task ShouldResolveUserByApiKeyFromDatabase()
     {
-        var register = await _fixture.RegisterUserAsync(
+        var register = await _fixture.CreateUserAsync(
             userName: "apikey-user",
             password: "123456");
 

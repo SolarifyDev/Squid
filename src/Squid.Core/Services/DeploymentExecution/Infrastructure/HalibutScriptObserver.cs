@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
@@ -32,7 +33,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 return new ScriptExecutionResult
                 {
                     Success = false,
-                    ExitCode = -1,
+                    ExitCode = ScriptExitCodes.Timeout,
                     LogLines = new List<string> { $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout" }
                 };
             }

@@ -40,11 +40,7 @@ public partial class KubernetesPodManager
             {
                 Name = podName,
                 NamespaceProperty = _settings.TentacleNamespace,
-                Labels = new Dictionary<string, string>
-                {
-                    ["app.kubernetes.io/managed-by"] = "kubernetes-agent",
-                    ["squid.io/ticket-id"] = ticketId
-                }
+                Labels = BuildLabels(ticketId)
             },
             Spec = new V1PodSpec
             {
@@ -157,6 +153,20 @@ public partial class KubernetesPodManager
             mainContainer.Env ??= new List<V1EnvVar>();
             mainContainer.Env = mainContainer.Env.Concat(template.AdditionalEnvVars).ToList();
         }
+    }
+
+    private Dictionary<string, string> BuildLabels(string ticketId)
+    {
+        var labels = new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/managed-by"] = "kubernetes-agent",
+            ["squid.io/ticket-id"] = ticketId
+        };
+
+        if (!string.IsNullOrEmpty(_settings.ReleaseName))
+            labels["app.kubernetes.io/instance"] = _settings.ReleaseName;
+
+        return labels;
     }
 
     private V1PodSecurityContext BuildPodSecurityContext()

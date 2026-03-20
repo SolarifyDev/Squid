@@ -124,7 +124,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
                 t => t.Id == taskId && t.State == expectedCurrentState,
                 s => s.SetProperty(t => t.State, newState)
                       .SetProperty(t => t.DataVersion, dataVersion)
-                      .SetProperty(t => t.LastModified, now)
+                      .SetProperty(t => t.LastModifiedDate, now)
                       .SetProperty(t => t.CompletedTime, now),
                 ct);
         }
@@ -135,7 +135,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
                 t => t.Id == taskId && t.State == expectedCurrentState,
                 s => s.SetProperty(t => t.State, newState)
                       .SetProperty(t => t.DataVersion, dataVersion)
-                      .SetProperty(t => t.LastModified, now)
+                      .SetProperty(t => t.LastModifiedDate, now)
                       .SetProperty(t => t.StartTime, now),
                 ct);
         }
@@ -144,7 +144,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             t => t.Id == taskId && t.State == expectedCurrentState,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
-                  .SetProperty(t => t.LastModified, now),
+                  .SetProperty(t => t.LastModifiedDate, now),
             ct);
     }
 
@@ -180,7 +180,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     {
         await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             t => t.Id == taskId, 
-            s => s.SetProperty(t => t.HasPendingInterruptions, hasPending).SetProperty(t => t.LastModified, DateTimeOffset.UtcNow), 
+            s => s.SetProperty(t => t.HasPendingInterruptions, hasPending).SetProperty(t => t.LastModifiedDate, DateTimeOffset.UtcNow), 
             cancellationToken).ConfigureAwait(false);
     }
 }

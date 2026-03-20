@@ -36,7 +36,7 @@ public class ExtractedPipelineComponentsTests
             {
                 new()
                 {
-                    PropertyName = DeploymentVariables.Action.TargetRoles,
+                    PropertyName = SpecialVariables.Step.TargetRoles,
                     PropertyValue = "web"
                 }
             }
@@ -107,7 +107,7 @@ public class ExtractedPipelineComponentsTests
             Condition = "Success",
             IsRequired = true,
             IsDisabled = false,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow,
             Properties = new Dictionary<string, string>(),
             ActionSnapshots = new List<DeploymentActionSnapshotDataDto>
             {

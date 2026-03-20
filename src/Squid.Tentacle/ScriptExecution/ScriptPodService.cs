@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
@@ -13,6 +14,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     private readonly KubernetesSettings _kubernetesSettings;
     private readonly KubernetesPodManager _podManager;
     private readonly ConcurrentDictionary<string, ScriptPodContext> _scripts = new();
+    private readonly ConcurrentDictionary<string, ScriptStatusResponse> _terminalResults = new();
+    private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
+    private readonly ScriptIsolationMutex _isolationMutex = new();
 
     public ScriptPodService(
         TentacleSettings tentacleSettings,
@@ -27,23 +31,57 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     public ScriptTicket StartScript(StartScriptCommand command)
     {
         var ticketId = Guid.NewGuid().ToString("N");
-        var workDir = PrepareWorkspace(ticketId, command);
+
+        if (_scripts.TryGetValue(ticketId, out var existing))
+        {
+            Log.Information("Reusing in-memory script context for ticket {TicketId}", ticketId);
+            return new ScriptTicket(ticketId);
+        }
+
+        var mutexLock = _isolationMutex.Acquire(command);
+        _mutexLocks[ticketId] = mutexLock;
+
+        var eosMarkerToken = EosMarker.GenerateMarkerToken();
+        var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
+
+        var workDir = PrepareWorkspace(ticketId, wrappedCommand);
         var podName = _podManager.CreatePod(ticketId);
 
-        _scripts[ticketId] = new ScriptPodContext(ticketId, podName, workDir);
+        _scripts[ticketId] = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken);
 
         Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
 
         return new ScriptTicket(ticketId);
     }
 
+    private static StartScriptCommand WrapCommandWithEosMarker(StartScriptCommand command, string eosMarkerToken)
+    {
+        var wrappedBody = EosMarker.WrapScript(command.ScriptBody, eosMarkerToken);
+
+        return new StartScriptCommand(
+            wrappedBody,
+            command.Isolation,
+            command.ScriptIsolationMutexTimeout,
+            command.IsolationMutexName,
+            command.Arguments,
+            command.TaskId,
+            command.Files.ToArray());
+    }
+
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
+        if (_terminalResults.TryGetValue(request.Ticket.TaskId, out var terminal))
+            return terminal;
+
         if (!_scripts.TryGetValue(request.Ticket.TaskId, out var ctx))
-            return CompletedResponse(request.Ticket, -1);
+            return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
+
+        var logs = DrainLogs(ctx);
+
+        if (ctx.EosDetected)
+            return new ScriptStatusResponse(request.Ticket, ProcessState.Complete, ctx.EosExitCode, logs, ctx.LogSequence);
 
         var phase = _podManager.GetPodPhase(ctx.PodName);
-        var logs = DrainLogs(ctx);
         var state = MapPhaseToState(phase);
         var exitCode = state == ProcessState.Complete
             ? _podManager.GetPodExitCode(ctx.PodName) : 0;
@@ -53,34 +91,64 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
     {
-        if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
-            return CompletedResponse(command.Ticket, -1);
+        try
+        {
+            if (_terminalResults.TryRemove(command.Ticket.TaskId, out var terminal))
+                return terminal;
 
-        _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
+            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+                return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
 
-        var logs = DrainFinalLogs(ctx);
-        var exitCode = _podManager.GetPodExitCode(ctx.PodName);
+            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
 
-        _podManager.DeletePod(ctx.PodName);
-        CleanupWorkspace(ctx.WorkDir);
+            var logs = DrainFinalLogs(ctx);
+            var exitCode = _podManager.GetPodExitCode(ctx.PodName);
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
+            _podManager.DeletePod(ctx.PodName);
+            CleanupWorkspace(ctx.WorkDir);
+
+            return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
+        }
+        finally
+        {
+            ReleaseMutexLock(command.Ticket.TaskId);
+        }
     }
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
-        if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
-            return CompletedResponse(command.Ticket, -1);
+        try
+        {
+            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+                return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
 
-        _podManager.DeletePod(ctx.PodName);
-        CleanupWorkspace(ctx.WorkDir);
+            _podManager.DeletePod(ctx.PodName);
+            CleanupWorkspace(ctx.WorkDir);
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), ctx.LogSequence);
+            return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), ctx.LogSequence);
+        }
+        finally
+        {
+            ReleaseMutexLock(command.Ticket.TaskId);
+        }
     }
 
     public string WorkspaceBasePath => _tentacleSettings.WorkspacePath;
 
     public ConcurrentDictionary<string, ScriptPodContext> ActiveScripts => _scripts;
+
+    public void InjectTerminalResult(string ticketId, int exitCode, List<ProcessOutput> logs)
+    {
+        var response = new ScriptStatusResponse(new ScriptTicket(ticketId), ProcessState.Complete, exitCode, logs, 0);
+
+        _terminalResults[ticketId] = response;
+    }
+
+    private void ReleaseMutexLock(string ticketId)
+    {
+        if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
+            lockHandle.Dispose();
+    }
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)
         => new(ticket, ProcessState.Complete, exitCode, new List<ProcessOutput>(), 0);

@@ -1,4 +1,5 @@
 using Squid.Message.Contracts.Tentacle;
+using Serilog;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -37,11 +38,31 @@ public partial class ScriptPodService
 
         foreach (var line in lines)
         {
+            if (TryDetectEosMarker(ctx, line))
+                continue;
+
             var parsed = PodLogLineParser.Parse(line);
             logs.Add(new ProcessOutput(parsed.Source, parsed.Text));
             ctx.LogSequence++;
         }
 
         return logs;
+    }
+
+    private static bool TryDetectEosMarker(ScriptPodContext ctx, string line)
+    {
+        if (ctx.EosDetected) return false;
+        if (string.IsNullOrEmpty(ctx.EosMarkerToken)) return false;
+
+        var result = EosMarker.TryParse(line, ctx.EosMarkerToken);
+
+        if (result == null) return false;
+
+        ctx.EosDetected = true;
+        ctx.EosExitCode = result.ExitCode;
+
+        Log.Debug("EOS marker detected for ticket {TicketId}, exit code {ExitCode}", ctx.TicketId, result.ExitCode);
+
+        return true;
     }
 }

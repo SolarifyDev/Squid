@@ -29,7 +29,7 @@ public class ManualInterventionTests
 
         var action = new DeploymentActionDto { ActionType = "Squid.Manual" };
 
-        handler.CanHandle(action).ShouldBeTrue();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Theory]
@@ -43,7 +43,7 @@ public class ManualInterventionTests
 
         var action = new DeploymentActionDto { ActionType = actionType };
 
-        handler.CanHandle(action).ShouldBeFalse();
+        ((IActionHandler)handler).CanHandle(action).ShouldBeFalse();
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_FirstRun_CreatesInterruptionAndThrowsSuspended()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
@@ -106,7 +106,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithProceed_ReturnsNormally()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Proceed" });
 
         var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
@@ -121,7 +121,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithAbort_ThrowsDeploymentAbortedException()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
 
         var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
@@ -134,7 +134,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_FirstRun_EmitsManualInterventionPromptEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeploymentInterruption)null);
         interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
@@ -171,7 +171,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         var ctx = new DeploymentTaskContext
         {
@@ -231,7 +231,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         // Deployment targets environment 1 (TEST), but action is configured for environment 99 (PRD)
         var ctx = new DeploymentTaskContext
@@ -282,7 +282,7 @@ public class ManualInterventionTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         lifecycle.Setup(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
 
         // Deployment targets environment 99 (PRD), action configured for environment 99 (PRD) — should execute
         var ctx = new DeploymentTaskContext
@@ -320,7 +320,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithProceed_EmitsResolvedEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Proceed" });
 
         var lifecycle = new Mock<IDeploymentLifecycle>();
@@ -336,7 +336,7 @@ public class ManualInterventionTests
     public async Task ExecuteStepLevelAsync_ResumeWithAbort_EmitsResolvedEvent()
     {
         var interruptionService = new Mock<IDeploymentInterruptionService>();
-        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentInterruption { Resolution = "Abort" });
 
         var lifecycle = new Mock<IDeploymentLifecycle>();
@@ -346,6 +346,82 @@ public class ManualInterventionTests
         await Should.ThrowAsync<DeploymentAbortedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
 
         lifecycle.Verify(l => l.EmitAsync(It.Is<ManualInterventionResolvedEvent>(e => e.Context.GuidedFailureResolution == "Abort"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ========== ResponsibleTeamIds ==========
+
+    [Fact]
+    public async Task SuspendForInterruption_PassesResponsibleTeamIds()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+
+        var serverTaskService = new Mock<IServerTaskService>();
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+
+        var handler = new ManualInterventionActionHandler(interruptionService.Object, serverTaskService.Object, lifecycle.Object);
+
+        var ctx = new StepActionContext
+        {
+            ServerTaskId = 1, DeploymentId = 1, SpaceId = 1,
+            Step = new DeploymentStepDto { Id = 1, Name = "Step 1" },
+            Action = new DeploymentActionDto
+            {
+                Id = 1, Name = "Manual Action", ActionType = "Squid.Manual",
+                Properties = new List<DeploymentActionPropertyDto>
+                {
+                    new() { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = "Please verify" },
+                    new() { PropertyName = "Squid.Action.Manual.ResponsibleTeamIds", PropertyValue = "5,10" }
+                }
+            },
+            Variables = new List<VariableDto>(),
+            ReleaseVersion = "1.0.0",
+            StepDisplayOrder = 1, ActionSortOrder = 1
+        };
+
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
+
+        interruptionService.Verify(s => s.CreateInterruptionAsync(
+            It.Is<CreateInterruptionRequest>(r => r.ResponsibleTeamIds == "5,10"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SuspendForInterruption_NoTeamIdsProperty_PassesNull()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DeploymentInterruption)null);
+        interruptionService.Setup(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Id = 1 });
+
+        var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, new Mock<IDeploymentLifecycle>().Object);
+
+        var ctx = new StepActionContext
+        {
+            ServerTaskId = 1, DeploymentId = 1, SpaceId = 1,
+            Step = new DeploymentStepDto { Id = 1, Name = "Step 1" },
+            Action = new DeploymentActionDto
+            {
+                Id = 1, Name = "Manual Action", ActionType = "Squid.Manual",
+                Properties = new List<DeploymentActionPropertyDto>
+                {
+                    new() { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = "Please verify" }
+                }
+            },
+            Variables = new List<VariableDto>(),
+            ReleaseVersion = "1.0.0",
+            StepDisplayOrder = 1, ActionSortOrder = 1
+        };
+
+        await Should.ThrowAsync<DeploymentSuspendedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
+
+        interruptionService.Verify(s => s.CreateInterruptionAsync(
+            It.Is<CreateInterruptionRequest>(r => r.ResponsibleTeamIds == null),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========== Helpers ==========

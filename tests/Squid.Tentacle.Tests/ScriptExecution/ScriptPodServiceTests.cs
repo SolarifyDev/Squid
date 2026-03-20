@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using k8s.Models;
+using Squid.Message.Constants;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
@@ -19,6 +20,8 @@ public class ScriptPodServiceTests : IDisposable
 
     public ScriptPodServiceTests()
     {
+        DiskSpaceChecker.Enabled = false;
+
         _tempWorkspace = Path.Combine(Path.GetTempPath(), $"squid-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempWorkspace);
 
@@ -44,6 +47,9 @@ public class ScriptPodServiceTests : IDisposable
 
         _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
             .Returns((V1Pod pod, string ns) => pod);
+
+        _ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
     }
 
     [Fact]
@@ -68,7 +74,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var scriptPath = Path.Combine(_tempWorkspace, ticket.TaskId, "script.sh");
         File.Exists(scriptPath).ShouldBeTrue();
-        File.ReadAllText(scriptPath).ShouldBe("echo hello world");
+        File.ReadAllText(scriptPath).ShouldContain("echo hello world");
     }
 
     [Fact]
@@ -132,14 +138,14 @@ public class ScriptPodServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetStatus_UnknownTicket_ReturnsCompletedWithMinusOne()
+    public void GetStatus_UnknownTicket_ReturnsCompletedWithUnknownResultCode()
     {
         var service = CreateService();
 
         var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("unknown"), 0));
 
         status.State.ShouldBe(ProcessState.Complete);
-        status.ExitCode.ShouldBe(-1);
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
     }
 
     [Fact]
@@ -176,7 +182,7 @@ public class ScriptPodServiceTests : IDisposable
     }
 
     [Fact]
-    public void CancelScript_DeletesPodAndReturnsMinusOne()
+    public void CancelScript_DeletesPodAndReturnsCanceledCode()
     {
         var service = CreateService();
         var ticket = service.StartScript(MakeCommand("sleep 999"));
@@ -184,20 +190,131 @@ public class ScriptPodServiceTests : IDisposable
         var status = service.CancelScript(new CancelScriptCommand(ticket, 0));
 
         status.State.ShouldBe(ProcessState.Complete);
-        status.ExitCode.ShouldBe(-1);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
 
         _ops.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns"), Times.Once);
     }
 
     [Fact]
-    public void CancelScript_UnknownTicket_ReturnsCompletedWithMinusOne()
+    public void CancelScript_UnknownTicket_ReturnsCanceledCode()
     {
         var service = CreateService();
 
         var status = service.CancelScript(new CancelScriptCommand(new ScriptTicket("unknown"), 0));
 
         status.State.ShouldBe(ProcessState.Complete);
-        status.ExitCode.ShouldBe(-1);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+    }
+
+    [Fact]
+    public void GetStatus_EosMarkerInLogs_ReturnsCompleteEarly()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ctx = service.ActiveScripts[ticket.TaskId];
+
+        SetupPodPhase("Running");
+
+        var eosLine = $"EOS-{ctx.EosMarkerToken}<<>>42";
+        SetupPodLogs($"output line 1\n{eosLine}\n");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(42);
+        status.Logs.ShouldNotContain(l => l.Text.Contains("EOS-"));
+    }
+
+    [Fact]
+    public void GetStatus_NoEosMarker_FallsBackToPodPhase()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodPhase("Running");
+        SetupPodLogs("just output\n");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+    }
+
+    [Fact]
+    public void StartScript_WrapsScriptWithEosMarker()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo hello"));
+
+        var scriptPath = Path.Combine(_tempWorkspace, ticket.TaskId, "script.sh");
+        var content = File.ReadAllText(scriptPath);
+
+        content.ShouldContain("echo hello");
+        content.ShouldContain("__squid_exit_code__=$?");
+        content.ShouldContain("EOS-");
+        content.ShouldContain("exit $__squid_exit_code__");
+    }
+
+    // ========== Isolation Mutex ==========
+
+    [Fact]
+    public void StartScript_FullIsolation_AcquiresMutex()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo isolated", "test-mutex");
+
+        var ticket = service.StartScript(command);
+
+        ticket.ShouldNotBeNull();
+        service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_FullIsolation_BlocksSecondScript_UntilCompleted()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo first", "blocking-mutex", TimeSpan.FromMilliseconds(300));
+
+        var ticket1 = service.StartScript(command);
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        Should.Throw<TimeoutException>(() => service.StartScript(command));
+
+        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+
+        var ticket2 = service.StartScript(command);
+        ticket2.ShouldNotBeNull();
+
+        service.CompleteScript(new CompleteScriptCommand(ticket2, 0));
+    }
+
+    [Fact]
+    public void CancelScript_ReleasesIsolationMutex()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo cancel", "cancel-mutex", TimeSpan.FromMilliseconds(300));
+
+        var ticket1 = service.StartScript(command);
+
+        service.CancelScript(new CancelScriptCommand(ticket1, 0));
+
+        var ticket2 = service.StartScript(command);
+        ticket2.ShouldNotBeNull();
+
+        service.CancelScript(new CancelScriptCommand(ticket2, 0));
+    }
+
+    [Fact]
+    public void StartScript_NoIsolation_DoesNotBlock()
+    {
+        var service = CreateService();
+
+        var ticket1 = service.StartScript(MakeCommand("echo 1"));
+        var ticket2 = service.StartScript(MakeCommand("echo 2"));
+
+        ticket1.TaskId.ShouldNotBe(ticket2.TaskId);
+        service.ActiveScripts.Count.ShouldBe(2);
     }
 
     // ========== Helpers ==========
@@ -215,6 +332,17 @@ public class ScriptPodServiceTests : IDisposable
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
+            Array.Empty<string>(),
+            null);
+    }
+
+    private static StartScriptCommand MakeIsolatedCommand(string scriptBody, string mutexName, TimeSpan? timeout = null)
+    {
+        return new StartScriptCommand(
+            scriptBody,
+            ScriptIsolationLevel.FullIsolation,
+            timeout ?? TimeSpan.FromMinutes(5),
+            mutexName,
             Array.Empty<string>(),
             null);
     }

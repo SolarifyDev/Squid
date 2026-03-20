@@ -1,9 +1,13 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Environment;
 
-public class DeleteEnvironmentsCommand : ICommand
+[RequiresPermission(Permission.EnvironmentDelete)]
+public class DeleteEnvironmentsCommand : ICommand, ISpaceScoped
 {
+    public int? SpaceId { get; set; }
     public List<int> Ids { get; set; }
 }
 
