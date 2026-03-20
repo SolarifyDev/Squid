@@ -1,13 +1,15 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+ARG TARGETARCH
 WORKDIR /src
 
-COPY src/Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj ./
-RUN dotnet restore
+COPY NuGet.Config .
+COPY src/Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj Squid.Tentacle.Watchdog/
+RUN dotnet restore Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj
 
-COPY src/Squid.Tentacle.Watchdog/ ./
-RUN dotnet publish -c Release -o /app --no-restore
+COPY src/Squid.Tentacle.Watchdog/ Squid.Tentacle.Watchdog/
+RUN dotnet publish Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/runtime:9.0-alpine
 WORKDIR /app
 COPY --from=build /app .
 
