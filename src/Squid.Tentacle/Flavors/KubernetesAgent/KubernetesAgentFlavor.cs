@@ -40,7 +40,7 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
                 : KubernetesClientConfiguration.BuildConfigFromConfigFile();
 
             var k8sClient = new k8s.Kubernetes(k8sConfig);
-            var podOps = new KubernetesPodOperations(k8sClient);
+            IKubernetesPodOperations podOps = new ResilientKubernetesPodOperations(new KubernetesPodOperations(k8sClient));
             var podMgr = new KubernetesPodManager(podOps, kubernetesSettings);
             var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr);
             var podMonitor = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings);

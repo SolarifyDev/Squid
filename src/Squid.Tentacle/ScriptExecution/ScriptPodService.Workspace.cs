@@ -19,9 +19,11 @@ public partial class ScriptPodService
 
     private string PrepareWorkspace(string ticketId, StartScriptCommand command)
     {
+        DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(_tentacleSettings.WorkspacePath);
+
         var workDir = Path.Combine(_tentacleSettings.WorkspacePath, ticketId);
-        Directory.CreateDirectory(workDir);
-        SetUnixMode(workDir, DirectoryMode);
+        ResilientFileSystem.CreateDirectory(workDir);
+        ResilientFileSystem.SetUnixFileMode(workDir, DirectoryMode);
 
         WriteScriptFile(workDir, command.ScriptBody);
         WriteAdditionalFiles(workDir, command.Files);
@@ -32,8 +34,8 @@ public partial class ScriptPodService
     private static void WriteScriptFile(string workDir, string scriptBody)
     {
         var scriptPath = Path.Combine(workDir, "script.sh");
-        File.WriteAllText(scriptPath, scriptBody);
-        SetUnixMode(scriptPath, ExecutableFileMode);
+        ResilientFileSystem.WriteAllText(scriptPath, scriptBody);
+        ResilientFileSystem.SetUnixFileMode(scriptPath, ExecutableFileMode);
     }
 
     private static void WriteAdditionalFiles(string workDir, List<ScriptFile> files)
@@ -45,8 +47,8 @@ public partial class ScriptPodService
             var filePath = Path.Combine(workDir, file.Name);
             var fileDir = Path.GetDirectoryName(filePath);
 
-            if (!string.IsNullOrEmpty(fileDir) && !Directory.Exists(fileDir))
-                Directory.CreateDirectory(fileDir);
+            if (!string.IsNullOrEmpty(fileDir) && !ResilientFileSystem.DirectoryExists(fileDir))
+                ResilientFileSystem.CreateDirectory(fileDir);
 
             var tempPath = Path.GetTempFileName();
 
@@ -56,35 +58,22 @@ public partial class ScriptPodService
                     .SaveToAsync(tempPath, CancellationToken.None)
                     .GetAwaiter().GetResult();
 
-                File.Move(tempPath, filePath, overwrite: true);
-                SetUnixMode(filePath, FileMode);
+                ResilientFileSystem.Move(tempPath, filePath, overwrite: true);
+                ResilientFileSystem.SetUnixFileMode(filePath, FileMode);
 
                 if (file.EncryptionPassword != null)
                 {
-                    File.WriteAllText(filePath + ".key", file.EncryptionPassword);
-                    SetUnixMode(filePath + ".key", FileMode);
+                    ResilientFileSystem.WriteAllText(filePath + ".key", file.EncryptionPassword);
+                    ResilientFileSystem.SetUnixFileMode(filePath + ".key", FileMode);
                 }
             }
             catch
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
+                if (ResilientFileSystem.FileExists(tempPath))
+                    ResilientFileSystem.DeleteFile(tempPath);
 
                 throw;
             }
-        }
-    }
-
-    private static void SetUnixMode(string path, UnixFileMode mode)
-    {
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(path, mode);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to set permissions on {Path}", path);
         }
     }
 
@@ -92,8 +81,8 @@ public partial class ScriptPodService
     {
         try
         {
-            if (Directory.Exists(workDir))
-                Directory.Delete(workDir, recursive: true);
+            if (ResilientFileSystem.DirectoryExists(workDir))
+                ResilientFileSystem.DeleteDirectory(workDir, recursive: true);
         }
         catch (Exception ex)
         {

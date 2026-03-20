@@ -1,6 +1,9 @@
+using Squid.Message.Constants;
+using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
+using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
 
 namespace Squid.Tentacle.Kubernetes;
 
@@ -8,6 +11,7 @@ public class KubernetesPodMonitor
 {
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan PendingPodTimeout = TimeSpan.FromMinutes(5);
 
     private readonly KubernetesPodManager _podManager;
     private readonly ScriptPodService _scriptPodService;
@@ -32,6 +36,7 @@ public class KubernetesPodMonitor
             try
             {
                 await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
+                FailPendingPods();
                 CleanupOrphanedPods();
                 CleanupOrphanedWorkspaces();
             }
@@ -42,6 +47,43 @@ public class KubernetesPodMonitor
             catch (Exception ex)
             {
                 Log.Warning(ex, "Pod monitor cleanup cycle failed");
+            }
+        }
+    }
+
+    internal void FailPendingPods()
+    {
+        var pods = _podManager.ListManagedPods();
+        var activeTickets = _scriptPodService.ActiveScripts;
+
+        foreach (var pod in pods)
+        {
+            if (pod.Status?.Phase != "Pending") continue;
+
+            var createdAt = pod.Metadata?.CreationTimestamp;
+            if (createdAt == null) continue;
+
+            var age = DateTime.UtcNow - createdAt.Value;
+            if (age < PendingPodTimeout) continue;
+
+            string ticketId = null;
+            pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
+
+            if (ticketId == null || !activeTickets.ContainsKey(ticketId)) continue;
+
+            var podName = pod.Metadata.Name;
+
+            Log.Warning("Pod {PodName} stuck in Pending for {AgeMinutes:F0}m, marking as failed (ticket {TicketId})",
+                podName, age.TotalMinutes, ticketId);
+
+            if (activeTickets.TryRemove(ticketId, out var ctx))
+            {
+                _podManager.DeletePod(podName);
+
+                var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
+                    $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
+
+                _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
             }
         }
     }
@@ -113,12 +155,12 @@ public class KubernetesPodMonitor
 
     private void CleanupOrphanedWorkspaces()
     {
-        if (!Directory.Exists(_tentacleSettings.WorkspacePath))
+        if (!RFS.DirectoryExists(_tentacleSettings.WorkspacePath))
             return;
 
         var activeTickets = _scriptPodService.ActiveScripts;
 
-        foreach (var dir in Directory.GetDirectories(_tentacleSettings.WorkspacePath))
+        foreach (var dir in RFS.GetDirectories(_tentacleSettings.WorkspacePath))
         {
             var ticketId = Path.GetFileName(dir);
 
@@ -133,7 +175,7 @@ public class KubernetesPodMonitor
 
             try
             {
-                Directory.Delete(dir, recursive: true);
+                RFS.DeleteDirectory(dir, recursive: true);
 
                 Log.Information("Cleaned up orphaned workspace {Dir}", dir);
             }

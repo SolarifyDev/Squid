@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -93,7 +94,7 @@ public class HalibutScriptObserverTests
             .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Running, 0, new List<ProcessOutput>(), 0));
 
         _scriptClient.Setup(s => s.CancelScriptAsync(It.IsAny<CancelScriptCommand>()))
-            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, -1, new List<ProcessOutput>(), 0));
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), 0));
 
         var shortTimeout = TimeSpan.FromMilliseconds(100);
 
@@ -101,7 +102,7 @@ public class HalibutScriptObserverTests
             _machine, _scriptClient.Object, _ticket, shortTimeout, CancellationToken.None);
 
         result.Success.ShouldBeFalse();
-        result.ExitCode.ShouldBe(-1);
+        result.ExitCode.ShouldBe(ScriptExitCodes.Timeout);
         result.LogLines.ShouldNotBeEmpty();
         _scriptClient.Verify(s => s.CancelScriptAsync(It.IsAny<CancelScriptCommand>()), Times.Once);
     }
