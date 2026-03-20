@@ -1,6 +1,4 @@
 using System;
-using System.Threading;
-using System.Threading.Tasks;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.ScriptExecution;
 
@@ -11,25 +9,15 @@ public class ScriptIsolationMutexTests
     private readonly ScriptIsolationMutex _mutex = new();
 
     [Fact]
-    public void TryAcquire_NoIsolation_ReturnsTrue()
-    {
-        var command = MakeCommand(ScriptIsolationLevel.NoIsolation);
-
-        var result = _mutex.TryAcquire(command, out var handle);
-
-        result.ShouldBeTrue();
-        handle.ShouldNotBeNull();
-        handle.Dispose();
-    }
-
-    [Fact]
-    public void TryAcquire_NoIsolation_MultipleConcurrent_AllSucceed()
+    public void NoIsolation_MultipleReaders_AllSucceed()
     {
         var handles = new IDisposable?[10];
 
         for (var i = 0; i < 10; i++)
         {
-            _mutex.TryAcquire(MakeCommand(ScriptIsolationLevel.NoIsolation), out handles[i]);
+            var result = _mutex.TryAcquire(MakeCommand(ScriptIsolationLevel.NoIsolation), out handles[i]);
+            result.ShouldBeTrue();
+            handles[i].ShouldNotBeNull();
         }
 
         foreach (var h in handles)
@@ -37,53 +25,117 @@ public class ScriptIsolationMutexTests
     }
 
     [Fact]
-    public void TryAcquire_FullIsolation_ReturnsHandle()
+    public void FullIsolation_BlocksSecondWriter()
     {
         var command = MakeCommand(ScriptIsolationLevel.FullIsolation);
 
-        var result = _mutex.TryAcquire(command, out var handle);
+        _mutex.TryAcquire(command, out var handle1);
+
+        var result = _mutex.TryAcquire(command, out var handle2);
+
+        result.ShouldBeFalse();
+        handle2.ShouldBeNull();
+
+        handle1!.Dispose();
+    }
+
+    [Fact]
+    public void FullIsolation_BlocksReader()
+    {
+        var writer = MakeCommand(ScriptIsolationLevel.FullIsolation);
+        var reader = MakeCommand(ScriptIsolationLevel.NoIsolation);
+
+        _mutex.TryAcquire(writer, out var writerHandle);
+
+        var result = _mutex.TryAcquire(reader, out var readerHandle);
+
+        result.ShouldBeFalse();
+        readerHandle.ShouldBeNull();
+
+        writerHandle!.Dispose();
+    }
+
+    [Fact]
+    public void NoIsolation_BlocksWriter()
+    {
+        var reader = MakeCommand(ScriptIsolationLevel.NoIsolation);
+        var writer = MakeCommand(ScriptIsolationLevel.FullIsolation);
+
+        _mutex.TryAcquire(reader, out var readerHandle);
+
+        var result = _mutex.TryAcquire(writer, out var writerHandle);
+
+        result.ShouldBeFalse();
+        writerHandle.ShouldBeNull();
+
+        readerHandle!.Dispose();
+    }
+
+    [Fact]
+    public void Writer_AfterAllReadersRelease_Succeeds()
+    {
+        var reader = MakeCommand(ScriptIsolationLevel.NoIsolation);
+        var writer = MakeCommand(ScriptIsolationLevel.FullIsolation);
+
+        _mutex.TryAcquire(reader, out var r1);
+        _mutex.TryAcquire(reader, out var r2);
+
+        _mutex.TryAcquire(writer, out _).ShouldBeFalse();
+
+        r1!.Dispose();
+
+        _mutex.TryAcquire(writer, out _).ShouldBeFalse();
+
+        r2!.Dispose();
+
+        var result = _mutex.TryAcquire(writer, out var writerHandle);
 
         result.ShouldBeTrue();
-        handle.ShouldNotBeNull();
-        handle.Dispose();
+        writerHandle.ShouldNotBeNull();
+        writerHandle!.Dispose();
     }
 
     [Fact]
-    public void TryAcquire_FullIsolation_SecondAttempt_ReturnsFalse()
+    public void Reader_AfterWriterRelease_Succeeds()
     {
-        var command = MakeCommand(ScriptIsolationLevel.FullIsolation, "test-mutex", TimeSpan.FromSeconds(5));
+        var writer = MakeCommand(ScriptIsolationLevel.FullIsolation);
+        var reader = MakeCommand(ScriptIsolationLevel.NoIsolation);
 
-        _mutex.TryAcquire(command, out var handle1);
+        _mutex.TryAcquire(writer, out var writerHandle);
 
-        var result = _mutex.TryAcquire(command, out var handle2);
+        _mutex.TryAcquire(reader, out _).ShouldBeFalse();
 
-        result.ShouldBeFalse();
-        handle2.ShouldBeNull();
+        writerHandle!.Dispose();
 
-        handle1!.Dispose();
+        var result = _mutex.TryAcquire(reader, out var readerHandle);
+
+        result.ShouldBeTrue();
+        readerHandle.ShouldNotBeNull();
+        readerHandle!.Dispose();
     }
 
     [Fact]
-    public void TryAcquire_FullIsolation_DifferentMutexNames_DoNotBlock()
+    public void DifferentMutexNames_Independent()
     {
-        var command1 = MakeCommand(ScriptIsolationLevel.FullIsolation, "mutex-a", TimeSpan.FromSeconds(5));
-        var command2 = MakeCommand(ScriptIsolationLevel.FullIsolation, "mutex-b", TimeSpan.FromSeconds(5));
+        var commandA = MakeCommand(ScriptIsolationLevel.FullIsolation, "mutex-a");
+        var commandB = MakeCommand(ScriptIsolationLevel.FullIsolation, "mutex-b");
+
+        _mutex.TryAcquire(commandA, out var handleA).ShouldBeTrue();
+        _mutex.TryAcquire(commandB, out var handleB).ShouldBeTrue();
+
+        handleA!.Dispose();
+        handleB!.Dispose();
+    }
+
+    [Fact]
+    public void NullMutexName_UsesDefault()
+    {
+        var command1 = MakeCommand(ScriptIsolationLevel.FullIsolation, null);
+        var command2 = MakeCommand(ScriptIsolationLevel.FullIsolation, null);
 
         _mutex.TryAcquire(command1, out var handle1);
-        _mutex.TryAcquire(command2, out var handle2);
 
-        handle1!.Dispose();
-        handle2!.Dispose();
-    }
-
-    [Fact]
-    public void TryAcquire_FullIsolation_NullMutexName_UsesDefault()
-    {
-        var command = MakeCommand(ScriptIsolationLevel.FullIsolation, null, TimeSpan.FromMilliseconds(200));
-
-        _mutex.TryAcquire(command, out var handle1);
-
-        var result = _mutex.TryAcquire(command, out var handle2);
+        var result = _mutex.TryAcquire(command2, out var handle2);
 
         result.ShouldBeFalse();
         handle2.ShouldBeNull();
@@ -92,7 +144,7 @@ public class ScriptIsolationMutexTests
     }
 
     [Fact]
-    public void Dispose_Handle_Twice_DoesNotThrow()
+    public void Dispose_Idempotent()
     {
         var command = MakeCommand(ScriptIsolationLevel.FullIsolation);
 
@@ -103,43 +155,14 @@ public class ScriptIsolationMutexTests
     }
 
     [Fact]
-    public void Dispose_Handle_ReleasesForNextAcquire()
+    public void Dispose_ReaderHandle_Idempotent()
     {
-        var command = MakeCommand(ScriptIsolationLevel.FullIsolation, "release-test", TimeSpan.FromMilliseconds(500));
+        var command = MakeCommand(ScriptIsolationLevel.NoIsolation);
 
-        _mutex.TryAcquire(command, out var handle1);
-        handle1!.Dispose();
+        _mutex.TryAcquire(command, out var handle);
 
-        var result = _mutex.TryAcquire(command, out var handle2);
-
-        result.ShouldBeTrue();
-        handle2.ShouldNotBeNull();
-        handle2.Dispose();
-    }
-
-    [Theory]
-    [InlineData(ScriptIsolationLevel.NoIsolation, false)]
-    [InlineData(ScriptIsolationLevel.FullIsolation, true)]
-    public void TryAcquire_IsolationLevel_DeterminesBlocking(ScriptIsolationLevel level, bool shouldBlock)
-    {
-        var command = MakeCommand(level, "blocking-test", TimeSpan.FromMilliseconds(200));
-
-        _mutex.TryAcquire(command, out var handle1);
-
-        if (shouldBlock)
-        {
-            var result = _mutex.TryAcquire(command, out var handle2);
-            result.ShouldBeFalse();
-            handle2.ShouldBeNull();
-        }
-        else
-        {
-            var result = _mutex.TryAcquire(command, out var handle2);
-            result.ShouldBeTrue();
-            handle2!.Dispose();
-        }
-
-        handle1!.Dispose();
+        handle!.Dispose();
+        Should.NotThrow(() => handle.Dispose());
     }
 
     private static StartScriptCommand MakeCommand(ScriptIsolationLevel isolation, string? mutexName = null, TimeSpan? timeout = null)

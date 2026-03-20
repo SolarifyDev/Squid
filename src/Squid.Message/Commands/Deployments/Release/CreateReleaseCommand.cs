@@ -16,7 +16,9 @@ public class CreateReleaseCommand : ICommand, ISpaceScoped
     public int ProjectId { get; set; }
     
     public string ReleaseNote { get; set; }
-    
+
+    public bool IgnoreChannelRules { get; set; }
+
     public List<CreateReleaseSelectedPackageDto> SelectedPackages { get; set; } = new();
 }
 

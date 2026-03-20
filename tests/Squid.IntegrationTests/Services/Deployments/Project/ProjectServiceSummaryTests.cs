@@ -276,7 +276,7 @@ public class ProjectServiceSummaryTests : TestBase
     [Fact]
     public async Task GetSummaries_WithDeployments_ReturnsDashboardItems()
     {
-        int devEnvId = 0;
+        int devEnvId = 0, deploymentId = 0;
 
         await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
@@ -294,7 +294,8 @@ public class ProjectServiceSummaryTests : TestBase
             var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id).ConfigureAwait(false);
             var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
             var task = await builder.CreateServerTaskAsync("Success").ConfigureAwait(false);
-            await builder.CreateDeploymentAsync(project.Id, devEnv.Id, release.Id, task.Id, channel.Id).ConfigureAwait(false);
+            var deployment = await builder.CreateDeploymentAsync(project.Id, devEnv.Id, release.Id, task.Id, channel.Id).ConfigureAwait(false);
+            deploymentId = deployment.Id;
         }).ConfigureAwait(false);
 
         var result = await Run<IProjectService, GetProjectSummariesResponse>(async service =>
@@ -304,6 +305,7 @@ public class ProjectServiceSummaryTests : TestBase
         }).ConfigureAwait(false);
 
         result.Data.Items.Count.ShouldBe(1);
+        result.Data.Items[0].DeploymentId.ShouldBe(deploymentId);
         result.Data.Items[0].EnvironmentId.ShouldBe(devEnvId);
         result.Data.Items[0].ReleaseVersion.ShouldBe("1.0.0");
         result.Data.Items[0].State.ShouldBe("Success");
@@ -356,6 +358,50 @@ public class ProjectServiceSummaryTests : TestBase
 
         groupB.EnvironmentIds.ShouldContain(prodEnvId);
         groupB.EnvironmentIds.ShouldNotContain(devEnvId);
+    }
+
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 2)]
+    public async Task GetSummaries_DiscreteChannelRelease_ControlsDashboardGrouping(bool discrete, int expectedItemCount)
+    {
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var lifecycle = await builder.CreateLifecycleAsync().ConfigureAwait(false);
+            var devEnv = await builder.CreateEnvironmentAsync("Dev").ConfigureAwait(false);
+            await builder.CreateLifecyclePhaseAsync(lifecycle.Id, devEnv.Id).ConfigureAwait(false);
+
+            var group = await builder.CreateProjectGroupAsync().ConfigureAwait(false);
+            var varSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
+            var project = await builder.CreateProjectAsync(varSet.Id, 0, group.Id, lifecycle.Id, "Discrete Test", discreteChannelRelease: discrete).ConfigureAwait(false);
+
+            var channelA = await builder.CreateChannelAsync(project.Id, lifecycle.Id, "Channel A").ConfigureAwait(false);
+            var channelB = await builder.CreateChannelAsync(project.Id, lifecycle.Id, "Channel B").ConfigureAwait(false);
+
+            var releaseA = await builder.CreateReleaseAsync(project.Id, channelA.Id, "1.0.0").ConfigureAwait(false);
+            var releaseB = await builder.CreateReleaseAsync(project.Id, channelB.Id, "2.0.0").ConfigureAwait(false);
+
+            var taskA = await builder.CreateServerTaskAsync("Success").ConfigureAwait(false);
+            var taskB = await builder.CreateServerTaskAsync("Success").ConfigureAwait(false);
+
+            await builder.CreateDeploymentAsync(project.Id, devEnv.Id, releaseA.Id, taskA.Id, channelA.Id).ConfigureAwait(false);
+            await builder.CreateDeploymentAsync(project.Id, devEnv.Id, releaseB.Id, taskB.Id, channelB.Id).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        var result = await Run<IProjectService, GetProjectSummariesResponse>(async service =>
+        {
+            return await service.GetProjectSummariesAsync(
+                new GetProjectSummariesRequest(), CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        result.Data.Items.Count.ShouldBe(expectedItemCount);
+
+        if (discrete)
+        {
+            result.Data.Items.Select(i => i.ChannelName).ToHashSet().ShouldBe(new HashSet<string> { "Channel A", "Channel B" });
+        }
     }
 
     private record StandardSeed(int GroupId, int ProjectId, int LifecycleId, int DevEnvId, int ProdEnvId);

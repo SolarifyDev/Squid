@@ -404,6 +404,213 @@ public class ScriptPodServiceTests : IDisposable
         service.ActiveScripts.Count.ShouldBe(2);
     }
 
+    // ========== Mixed Isolation ==========
+
+    [Fact]
+    public void StartScript_FullIsolation_BlocksNoIsolation()
+    {
+        var service = CreateService();
+        var writer = MakeIsolatedCommand("echo writer", "mixed-mutex");
+        var reader = MakeCommand("echo reader", "mixed-mutex");
+
+        var ticket1 = service.StartScript(writer);
+        var ticket2 = service.StartScript(reader);
+
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_NoIsolation_BlocksFullIsolation()
+    {
+        var service = CreateService();
+        var reader = MakeCommand("echo reader", "mixed-mutex-2");
+        var writer = MakeIsolatedCommand("echo writer", "mixed-mutex-2");
+
+        var ticket1 = service.StartScript(reader);
+        var ticket2 = service.StartScript(writer);
+
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_NoIsolation_MultipleParallel_SameMutex()
+    {
+        var service = CreateService();
+
+        var ticket1 = service.StartScript(MakeCommand("echo 1", "parallel-mutex"));
+        var ticket2 = service.StartScript(MakeCommand("echo 2", "parallel-mutex"));
+        var ticket3 = service.StartScript(MakeCommand("echo 3", "parallel-mutex"));
+
+        service.ActiveScripts.Count.ShouldBe(3);
+        service.PendingScripts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CompleteScript_FullIsolation_UnblocksPendingNoIsolation()
+    {
+        var service = CreateService();
+        var writer = MakeIsolatedCommand("echo writer", "unblock-mutex");
+        var reader = MakeCommand("echo reader", "unblock-mutex");
+
+        var ticket1 = service.StartScript(writer);
+        var ticket2 = service.StartScript(reader);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+
+        service.PendingScripts.ShouldBeEmpty();
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+    }
+
+    // ========== Pending Batch Launch ==========
+
+    [Fact]
+    public void CompleteScript_FullIsolation_BatchLaunchesMultiplePendingNoIsolation()
+    {
+        var service = CreateService();
+        var writer = MakeIsolatedCommand("echo writer", "batch-mutex");
+        var reader1 = MakeCommand("echo reader1", "batch-mutex");
+        var reader2 = MakeCommand("echo reader2", "batch-mutex");
+        var reader3 = MakeCommand("echo reader3", "batch-mutex");
+
+        var writerTicket = service.StartScript(writer);
+        var readerTicket1 = service.StartScript(reader1);
+        var readerTicket2 = service.StartScript(reader2);
+        var readerTicket3 = service.StartScript(reader3);
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.Count.ShouldBe(3);
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(writerTicket, 0));
+
+        service.PendingScripts.ShouldBeEmpty();
+        service.ActiveScripts.Count.ShouldBe(3);
+        service.ActiveScripts.ContainsKey(readerTicket1.TaskId).ShouldBeTrue();
+        service.ActiveScripts.ContainsKey(readerTicket2.TaskId).ShouldBeTrue();
+        service.ActiveScripts.ContainsKey(readerTicket3.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CompleteScript_FullIsolation_StopsAfterLaunchingPendingWriter()
+    {
+        var service = CreateService();
+        var writer1 = MakeIsolatedCommand("echo writer1", "serial-mutex");
+        var writer2 = MakeIsolatedCommand("echo writer2", "serial-mutex");
+        var reader = MakeCommand("echo reader", "serial-mutex");
+
+        var ticket1 = service.StartScript(writer1);
+        var ticket2 = service.StartScript(writer2);
+        var ticket3 = service.StartScript(reader);
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.Count.ShouldBe(2);
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void CompleteScript_ThreeFullIsolation_ExecuteSequentially()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo serial", "sequential-mutex");
+
+        var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+        var ticket3 = service.StartScript(command);
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.Count.ShouldBe(2);
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.Count.ShouldBe(1);
+
+        // ConcurrentDictionary iteration order is non-deterministic, so find which ticket was launched
+        var secondActive = service.ActiveScripts.Keys.Single();
+        service.CompleteScript(new CompleteScriptCommand(new ScriptTicket(secondActive), 0));
+
+        service.ActiveScripts.Count.ShouldBe(1);
+        service.PendingScripts.ShouldBeEmpty();
+
+        var thirdActive = service.ActiveScripts.Keys.Single();
+        service.CompleteScript(new CompleteScriptCommand(new ScriptTicket(thirdActive), 0));
+
+        service.ActiveScripts.ShouldBeEmpty();
+        service.PendingScripts.ShouldBeEmpty();
+
+        // All 3 pods created: 1 immediate + 2 via pending dequeue
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Exactly(3));
+    }
+
+    // ========== State File ==========
+
+    [Fact]
+    public void LaunchScript_WritesStateFile()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo hello"));
+
+        var statePath = Path.Combine(_tempWorkspace, ticket.TaskId, ".squid-state.json");
+        File.Exists(statePath).ShouldBeTrue();
+
+        var state = ScriptStateFile.TryRead(Path.Combine(_tempWorkspace, ticket.TaskId));
+        state.ShouldNotBeNull();
+        state!.TicketId.ShouldBe(ticket.TaskId);
+        state.Isolation.ShouldBe("NoIsolation");
+    }
+
+    [Fact]
+    public void LaunchScript_FullIsolation_WritesStateFile()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo test", "state-mutex");
+        var ticket = service.StartScript(command);
+
+        var state = ScriptStateFile.TryRead(Path.Combine(_tempWorkspace, ticket.TaskId));
+        state.ShouldNotBeNull();
+        state!.Isolation.ShouldBe("FullIsolation");
+        state.IsolationMutexName.ShouldBe("state-mutex");
+    }
+
+    [Fact]
+    public void CompleteScript_DeletesStateFile()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo done"));
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
+        Directory.Exists(workDir).ShouldBeFalse();
+    }
+
     // ========== Helpers ==========
 
     private ScriptPodService CreateService()
@@ -412,13 +619,13 @@ public class ScriptPodServiceTests : IDisposable
         return new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
     }
 
-    private static StartScriptCommand MakeCommand(string scriptBody)
+    private static StartScriptCommand MakeCommand(string scriptBody, string? mutexName = null)
     {
         return new StartScriptCommand(
             scriptBody,
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
-            null,
+            mutexName,
             Array.Empty<string>(),
             null);
     }

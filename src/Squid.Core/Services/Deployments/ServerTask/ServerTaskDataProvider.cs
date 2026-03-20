@@ -23,6 +23,8 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task<Persistence.Entities.Deployments.ServerTask> GetServerTaskByIdNoTrackingAsync(int taskId, CancellationToken cancellationToken = default);
 
     Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default);
+
+    Task<bool> HasExecutingTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
 }
 
 public class ServerTaskDataProvider : IServerTaskDataProvider
@@ -174,6 +176,13 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     {
         return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> HasExecutingTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default)
+    {
+        return await _repository.AnyAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.ConcurrencyTag == tag && t.Id != excludeId && t.State == TaskState.Executing,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default)

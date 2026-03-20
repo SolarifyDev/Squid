@@ -64,6 +64,12 @@ spec:
           value: "{{ .Values.tentacle.serverUrl }}"
         - name: Tentacle__ServerCommsUrl
           value: "{{ .Values.tentacle.serverCommsUrl }}"
+        {{- if .Values.tentacle.serverCommsAddresses }}
+        - name: Tentacle__ServerCommsAddresses
+          value: {{ join "," .Values.tentacle.serverCommsAddresses | quote }}
+        {{- end }}
+        - name: Tentacle__PollingConnectionCount
+          value: "{{ .Values.tentacle.pollingConnectionCount }}"
         - name: Tentacle__BearerToken
           valueFrom:
             secretKeyRef:
@@ -136,6 +142,10 @@ spec:
           value: "{{ .Release.Name }}"
         - name: Kubernetes__UseScriptPods
           value: "true"
+        {{- if and .Values.watchdog.enabled .Values.workspace.nfs.enabled }}
+        - name: WATCHDOG_ENABLED
+          value: "true"
+        {{- end }}
         resources:
           {{- toYaml .Values.tentacle.resources | nindent 10 }}
         volumeMounts:
@@ -143,6 +153,32 @@ spec:
           mountPath: /squid/work
         - name: certs
           mountPath: /squid/certs
+      {{- if and .Values.watchdog.enabled .Values.workspace.nfs.enabled }}
+      - name: nfs-watchdog
+        image: "{{ .Values.watchdog.image.repository }}:{{ .Values.watchdog.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.watchdog.image.pullPolicy | default "IfNotPresent" }}
+        env:
+        - name: WATCHDOG_DIRECTORY
+          value: "/squid/work"
+        {{- if .Values.watchdog.loopSeconds }}
+        - name: WATCHDOG_LOOP_SECONDS
+          value: "{{ .Values.watchdog.loopSeconds }}"
+        {{- end }}
+        {{- if .Values.watchdog.initialBackoffSeconds }}
+        - name: WATCHDOG_INITIAL_BACKOFF_SECONDS
+          value: "{{ .Values.watchdog.initialBackoffSeconds }}"
+        {{- end }}
+        {{- if .Values.watchdog.timeoutSeconds }}
+        - name: WATCHDOG_TIMEOUT_SECONDS
+          value: "{{ .Values.watchdog.timeoutSeconds }}"
+        {{- end }}
+        resources:
+          {{- toYaml .Values.watchdog.resources | nindent 10 }}
+        volumeMounts:
+        - name: workspace
+          mountPath: /squid/work
+          readOnly: true
+      {{- end }}
       volumes:
       - name: workspace
         persistentVolumeClaim:

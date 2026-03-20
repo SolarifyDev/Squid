@@ -266,17 +266,17 @@ public class TestDataBuilder
         await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
     }
 
-    public async Task<Channel> CreateChannelAsync(int projectId, int lifecycleId = 1)
+    public async Task<Channel> CreateChannelAsync(int projectId, int lifecycleId = 1, string name = "Default Channel")
     {
         var entity = new Channel
         {
-            Name = "Default Channel",
-            Description = "Default channel for integration test",
+            Name = name,
+            Description = $"{name} for integration test",
             ProjectId = projectId,
             LifecycleId = lifecycleId,
             SpaceId = 1,
-            Slug = "default-channel",
-            IsDefault = true
+            Slug = name.ToLowerInvariant().Replace(" ", "-"),
+            IsDefault = name == "Default Channel"
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -345,7 +345,8 @@ public class TestDataBuilder
         int deploymentProcessId,
         int projectGroupId,
         int lifecycleId,
-        string name = "Test Project")
+        string name = "Test Project",
+        bool discreteChannelRelease = false)
     {
         var entity = new Project
         {
@@ -359,7 +360,7 @@ public class TestDataBuilder
             AutoCreateRelease = false,
             Json = string.Empty,
             IncludedLibraryVariableSetIds = "[]",
-            DiscreteChannelRelease = false,
+            DiscreteChannelRelease = discreteChannelRelease,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             LastModifiedDate = DateTimeOffset.UtcNow,

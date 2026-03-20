@@ -1,29 +1,37 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry) : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
     private static readonly TimeSpan DefaultDeploymentTimeout = TimeSpan.FromMinutes(60);
+    private static readonly TimeSpan DefaultConcurrencyMaxWait = TimeSpan.FromSeconds(300);
+    private static readonly TimeSpan DefaultConcurrencyPollInterval = TimeSpan.FromMilliseconds(3000);
 
     internal TimeSpan DeploymentTimeout { get; init; } = DefaultDeploymentTimeout;
+    internal TimeSpan ConcurrencyMaxWait { get; init; } = DefaultConcurrencyMaxWait;
+    internal TimeSpan ConcurrencyPollInterval { get; init; } = DefaultConcurrencyPollInterval;
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
         var ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
+
         var registryCts = registry.Register(serverTaskId);
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
-        lifecycle.Initialize(ctx);
-
-        var ordered = phases.OrderBy(p => p.Order).ToList();
-
         try
         {
+            await WaitForConcurrencySlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
+
+            lifecycle.Initialize(ctx);
+
+            var ordered = phases.OrderBy(p => p.Order).ToList();
+
             foreach (var phase in ordered)
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
 
@@ -90,5 +98,29 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             Log.Error(ex, "Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
         }
+    }
+
+    private async Task WaitForConcurrencySlotAsync(int serverTaskId, CancellationToken ct)
+    {
+        var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        if (task == null || string.IsNullOrEmpty(task.ConcurrencyTag)) return;
+
+        var deadline = DateTime.UtcNow.Add(ConcurrencyMaxWait);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var hasBlocker = await serverTaskDataProvider.HasExecutingTaskWithTagAsync(task.ConcurrencyTag, serverTaskId, ct).ConfigureAwait(false);
+
+            if (!hasBlocker) return;
+
+            Log.Information("Task {TaskId} waiting for concurrency slot (tag: {Tag})", serverTaskId, task.ConcurrencyTag);
+
+            await Task.Delay(ConcurrencyPollInterval, ct).ConfigureAwait(false);
+        }
+
+        Log.Warning("Task {TaskId} exceeded concurrency wait timeout ({Timeout}), proceeding anyway", serverTaskId, ConcurrencyMaxWait);
     }
 }

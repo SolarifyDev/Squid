@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
@@ -124,6 +125,85 @@ public class ReleaseServiceCreateReleaseExceptionTests
         ex.ChannelId.ShouldBe(command.ChannelId);
         ex.ProjectSpaceId.ShouldBe(1);
         ex.ChannelSpaceId.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_IgnoreChannelRules_ProjectDisallows_ThrowsChannelRulesCannotBeIgnoredException()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.IgnoreChannelRules = true;
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1, AllowIgnoreChannelRules = false });
+
+        var ex = await Should.ThrowAsync<ChannelRulesCannotBeIgnoredException>(
+            () => sut.CreateReleaseAsync(command, CancellationToken.None));
+
+        ex.ProjectId.ShouldBe(command.ProjectId);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_IgnoreChannelRules_ProjectAllows_SkipsValidation()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.IgnoreChannelRules = true;
+        command.SelectedPackages = new List<CreateReleaseSelectedPackageDto>
+        {
+            new() { ActionName = "Deploy", Version = "999.0.0-rc1" }
+        };
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1, AllowIgnoreChannelRules = true });
+        SetupRulesWithViolations();
+
+        // Pipeline continues past validation (may fail downstream — that's fine, we only verify validation is skipped)
+        try { await sut.CreateReleaseAsync(command, CancellationToken.None); } catch { }
+
+        _channelVersionRuleDataProvider.Verify(x => x.GetRulesByChannelIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_IgnoreChannelRulesFalse_StillValidates()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.IgnoreChannelRules = false;
+        command.SelectedPackages = new List<CreateReleaseSelectedPackageDto>
+        {
+            new() { ActionName = "Deploy", Version = "999.0.0-rc1" }
+        };
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1, AllowIgnoreChannelRules = true });
+        SetupRulesWithViolations();
+
+        await Should.ThrowAsync<ReleaseVersionRuleViolationException>(
+            () => sut.CreateReleaseAsync(command, CancellationToken.None));
+    }
+
+    private void SetupValidProjectAndChannel(Project project)
+    {
+        _projectDataProvider.Setup(x => x.GetProjectByIdAsync(project.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        _channelDataProvider.Setup(x => x.GetChannelByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Channel { Id = 2, ProjectId = project.Id, SpaceId = project.SpaceId });
+    }
+
+    private void SetupRulesWithViolations()
+    {
+        var rules = new List<ChannelVersionRule>
+        {
+            new() { Id = 1, ChannelId = 2, ActionNames = "Deploy", VersionRange = "[1.0,2.0)", PreReleaseTag = "" }
+        };
+
+        _channelVersionRuleDataProvider.Setup(x => x.GetRulesByChannelIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(rules);
+
+        _channelVersionRuleValidator.Setup(x => x.Validate(It.IsAny<List<ChannelVersionRule>>(), It.IsAny<List<SelectedPackageInfo>>()))
+            .Returns(new List<ChannelVersionRuleViolation>
+            {
+                new("Deploy", "999.0.0-rc1", "version range [1.0,2.0)")
+            });
     }
 
     private static CreateReleaseCommand ValidCommand() => new()

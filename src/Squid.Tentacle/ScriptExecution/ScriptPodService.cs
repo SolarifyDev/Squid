@@ -63,7 +63,29 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
         _scripts[ticketId] = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken);
 
+        WriteStateFile(workDir, ticketId, podName, eosMarkerToken, command);
+
         Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
+    }
+
+    private static void WriteStateFile(string workDir, string ticketId, string podName, string eosMarkerToken, StartScriptCommand command)
+    {
+        try
+        {
+            ScriptStateFile.Write(workDir, new ScriptStateFile
+            {
+                TicketId = ticketId,
+                PodName = podName,
+                EosMarkerToken = eosMarkerToken,
+                Isolation = command.Isolation.ToString(),
+                IsolationMutexName = command.IsolationMutexName,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to write state file for ticket {TicketId}", ticketId);
+        }
     }
 
     private static StartScriptCommand WrapCommandWithEosMarker(StartScriptCommand command, string eosMarkerToken)
@@ -165,6 +187,20 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
     public ConcurrentDictionary<string, StartScriptCommand> PendingScripts => _pendingScripts;
 
+    public ConcurrentDictionary<string, IDisposable> MutexLocks => _mutexLocks;
+
+    public ScriptIsolationMutex IsolationMutex => _isolationMutex;
+
+    public void RestoreActiveScript(ScriptPodContext ctx, IDisposable? mutexHandle)
+    {
+        _scripts[ctx.TicketId] = ctx;
+
+        if (mutexHandle != null)
+            _mutexLocks[ctx.TicketId] = mutexHandle;
+
+        Log.Information("Restored active script {TicketId} (pod: {PodName})", ctx.TicketId, ctx.PodName);
+    }
+
     public void InjectTerminalResult(string ticketId, int exitCode, List<ProcessOutput> logs)
     {
         var response = new ScriptStatusResponse(new ScriptTicket(ticketId), ProcessState.Complete, exitCode, logs, 0);
@@ -183,8 +219,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
     private void ProcessPendingScripts()
     {
+        var launchedWriter = false;
+
         foreach (var kvp in _pendingScripts)
         {
+            if (launchedWriter) break;
+
             if (!_isolationMutex.TryAcquire(kvp.Value, out var handle))
                 continue;
 
@@ -211,7 +251,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
                 continue;
             }
 
-            return;
+            if (command.Isolation == ScriptIsolationLevel.FullIsolation)
+                launchedWriter = true;
         }
     }
 

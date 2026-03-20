@@ -110,7 +110,8 @@ public partial class DeploymentService : IDeploymentService
             BusinessProcessState = "Queued",
             StateOrder = 1,
             Weight = 1,
-            BatchId = 0
+            BatchId = 0,
+            ConcurrencyTag = $"deploy:env-{command.EnvironmentId}"
         };
 
         await _serverTaskDataProvider.AddServerTaskAsync(serverTask, cancellationToken: cancellationToken).ConfigureAwait(false);

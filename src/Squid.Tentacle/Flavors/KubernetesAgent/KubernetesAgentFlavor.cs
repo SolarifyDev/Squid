@@ -45,14 +45,26 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr);
             var podMonitor = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings);
 
+            var recoveryService = new ScriptRecoveryService();
+            recoveryService.RecoverScripts(tentacleSettings.WorkspacePath, scriptPodService, podMgr, scriptPodService.IsolationMutex);
+
             backend = scriptPodService;
             backgroundTasks.Add(new KubernetesPodMonitorBackgroundTask(podMonitor));
             backgroundTasks.Add(new KubernetesEventMonitor(podOps, kubernetesSettings));
             startupHooks.Add(new ClusterVersionDetector(k8sClient));
 
-            var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath);
-            backgroundTasks.Add(nfsWatchdog);
-            readinessChecks.Add(() => nfsWatchdog.IsHealthy);
+            var watchdogEnabled = string.Equals(Environment.GetEnvironmentVariable("WATCHDOG_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
+
+            if (!watchdogEnabled)
+            {
+                var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath);
+                backgroundTasks.Add(nfsWatchdog);
+                readinessChecks.Add(() => nfsWatchdog.IsHealthy);
+            }
+            else
+            {
+                Log.Information("External watchdog sidecar is enabled, skipping in-process NFS watchdog");
+            }
         }
 
         Func<bool> CombinedReadiness()

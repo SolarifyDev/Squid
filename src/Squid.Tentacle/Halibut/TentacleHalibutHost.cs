@@ -40,20 +40,32 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         _runtime.Trust(serverThumbprint);
 
         var pollUri = ResolvePollUri(subscriptionId, subscriptionUri);
-        var pollingEndpointUri = new Uri(_settings.ServerCommsUrl);
+        var serverUrls = _settings.GetServerCommsUrls();
 
-        WarnIfCommsUrlMatchesApiUrl(pollingEndpointUri);
+        if (serverUrls.Count == 0)
+            throw new InvalidOperationException("No server comms URLs configured. Set ServerCommsUrl or ServerCommsAddresses.");
 
-        var serverEndpoint = new ServiceEndPoint(
-            pollingEndpointUri,
-            serverThumbprint,
-            HalibutTimeoutsAndLimits.RecommendedValues());
+        var connectionCount = Math.Max(1, _settings.PollingConnectionCount);
+        var totalConnections = 0;
 
-        _runtime.Poll(pollUri, serverEndpoint, CancellationToken.None);
+        foreach (var serverUrl in serverUrls)
+        {
+            var pollingEndpointUri = new Uri(serverUrl);
+
+            WarnIfCommsUrlMatchesApiUrl(pollingEndpointUri);
+
+            var serverEndpoint = new ServiceEndPoint(pollingEndpointUri, serverThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+
+            for (var i = 0; i < connectionCount; i++)
+            {
+                _runtime.Poll(pollUri, serverEndpoint, CancellationToken.None);
+                totalConnections++;
+            }
+        }
 
         Log.Information(
-            "Halibut polling started. SubscriptionId={SubscriptionId}, SubscriptionUri={SubscriptionUri}, ServerEndpoint={ServerEndpoint}, ServerThumbprint={ServerThumbprint}",
-            subscriptionId, pollUri, pollingEndpointUri, serverThumbprint);
+            "Halibut polling started. SubscriptionId={SubscriptionId}, ServerUrls={ServerUrlCount}, ConnectionsPerServer={ConnectionCount}, TotalConnections={TotalConnections}",
+            subscriptionId, serverUrls.Count, connectionCount, totalConnections);
     }
 
     private void WarnIfCommsUrlMatchesApiUrl(Uri commsUri)

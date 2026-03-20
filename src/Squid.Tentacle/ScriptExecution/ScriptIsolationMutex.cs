@@ -6,58 +6,112 @@ namespace Squid.Tentacle.ScriptExecution;
 
 public class ScriptIsolationMutex
 {
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutexes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ReaderWriterLockState> _mutexes = new(StringComparer.OrdinalIgnoreCase);
 
-    public bool TryAcquire(StartScriptCommand command, out IDisposable? handle)
+    public bool TryAcquire(ScriptIsolationLevel isolation, string? isolationMutexName, out IDisposable? handle)
     {
-        if (command.Isolation != ScriptIsolationLevel.FullIsolation)
-        {
-            handle = NoOpDisposable.Instance;
-            return true;
-        }
+        var mutexName = isolationMutexName ?? "default";
+        var state = _mutexes.GetOrAdd(mutexName, _ => new ReaderWriterLockState());
 
-        var mutexName = command.IsolationMutexName ?? "default";
-        var semaphore = _mutexes.GetOrAdd(mutexName, _ => new SemaphoreSlim(1, 1));
+        if (isolation == ScriptIsolationLevel.FullIsolation)
+            return state.TryAcquireWriter(mutexName, out handle);
 
-        if (!semaphore.Wait(TimeSpan.Zero))
-        {
-            Log.Information("Isolation mutex {MutexName} is held, deferring script", mutexName);
-            handle = null;
-            return false;
-        }
-
-        Log.Information("Acquired isolation mutex {MutexName}", mutexName);
-
-        handle = new MutexRelease(semaphore, mutexName);
-        return true;
+        return state.TryAcquireReader(mutexName, out handle);
     }
 
-    private sealed class MutexRelease : IDisposable
+    public bool TryAcquire(StartScriptCommand command, out IDisposable? handle)
+        => TryAcquire(command.Isolation, command.IsolationMutexName, out handle);
+
+    private sealed class ReaderWriterLockState
     {
-        private readonly SemaphoreSlim _semaphore;
+        private readonly object _gate = new();
+        private int _activeReaders;
+        private bool _writerActive;
+
+        public bool TryAcquireReader(string mutexName, out IDisposable? handle)
+        {
+            lock (_gate)
+            {
+                if (_writerActive)
+                {
+                    Log.Information("Isolation mutex {MutexName} has active writer, deferring reader", mutexName);
+                    handle = null;
+                    return false;
+                }
+
+                _activeReaders++;
+
+                Log.Information("Acquired reader lock on isolation mutex {MutexName} (readers: {Count})", mutexName, _activeReaders);
+
+                handle = new LockRelease(this, mutexName, isWriter: false);
+                return true;
+            }
+        }
+
+        public bool TryAcquireWriter(string mutexName, out IDisposable? handle)
+        {
+            lock (_gate)
+            {
+                if (_writerActive || _activeReaders > 0)
+                {
+                    Log.Information("Isolation mutex {MutexName} is held (writer: {Writer}, readers: {Readers}), deferring writer", mutexName, _writerActive, _activeReaders);
+                    handle = null;
+                    return false;
+                }
+
+                _writerActive = true;
+
+                Log.Information("Acquired writer lock on isolation mutex {MutexName}", mutexName);
+
+                handle = new LockRelease(this, mutexName, isWriter: true);
+                return true;
+            }
+        }
+
+        public void ReleaseReader(string mutexName)
+        {
+            lock (_gate)
+            {
+                _activeReaders--;
+
+                Log.Information("Released reader lock on isolation mutex {MutexName} (readers: {Count})", mutexName, _activeReaders);
+            }
+        }
+
+        public void ReleaseWriter(string mutexName)
+        {
+            lock (_gate)
+            {
+                _writerActive = false;
+
+                Log.Information("Released writer lock on isolation mutex {MutexName}", mutexName);
+            }
+        }
+    }
+
+    private sealed class LockRelease : IDisposable
+    {
+        private readonly ReaderWriterLockState _state;
         private readonly string _mutexName;
+        private readonly bool _isWriter;
         private int _disposed;
 
-        public MutexRelease(SemaphoreSlim semaphore, string mutexName)
+        public LockRelease(ReaderWriterLockState state, string mutexName, bool isWriter)
         {
-            _semaphore = semaphore;
+            _state = state;
             _mutexName = mutexName;
+            _isWriter = isWriter;
         }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                _semaphore.Release();
-
-                Log.Information("Released isolation mutex {MutexName}", _mutexName);
+                if (_isWriter)
+                    _state.ReleaseWriter(_mutexName);
+                else
+                    _state.ReleaseReader(_mutexName);
             }
         }
-    }
-
-    private sealed class NoOpDisposable : IDisposable
-    {
-        public static readonly NoOpDisposable Instance = new();
-        public void Dispose() { }
     }
 }

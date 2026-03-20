@@ -23,4 +23,17 @@ public class TentacleSettings
     public string ReleaseName { get; set; } = string.Empty;
     public string HelmNamespace { get; set; } = string.Empty;
     public string ChartRef { get; set; } = DefaultKubernetesAgentChartRef;
+    public int PollingConnectionCount { get; set; } = 5;
+    public string ServerCommsAddresses { get; set; } = string.Empty;
+
+    public List<string> GetServerCommsUrls()
+    {
+        if (!string.IsNullOrWhiteSpace(ServerCommsAddresses))
+            return ServerCommsAddresses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        if (!string.IsNullOrWhiteSpace(ServerCommsUrl))
+            return new List<string> { ServerCommsUrl };
+
+        return new List<string>();
+    }
 }

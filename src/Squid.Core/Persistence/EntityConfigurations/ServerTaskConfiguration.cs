@@ -14,5 +14,9 @@ public class ServerTaskConfiguration: IEntityTypeConfiguration<ServerTask>
         builder.Property(p => p.DataVersion).IsConcurrencyToken();
         builder.Property(p => p.State).HasMaxLength(50).IsRequired();
         builder.Property(p => p.HasPendingInterruptions);
+
+        builder.HasIndex(p => new { p.ConcurrencyTag, p.State })
+            .HasFilter("concurrency_tag IS NOT NULL")
+            .HasDatabaseName("ix_server_task_concurrency_tag_state");
     }
 }
