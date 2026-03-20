@@ -6,6 +6,7 @@ public static class CurrentUsers
     {
         public static int Id = 8888;
         public static string Name = "internal_user";
+        public const string DisplayName = "System";
     }
 
     public static class AdminUser

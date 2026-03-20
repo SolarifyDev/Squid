@@ -16,6 +16,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     private readonly ConcurrentDictionary<string, ScriptPodContext> _scripts = new();
     private readonly ConcurrentDictionary<string, ScriptStatusResponse> _terminalResults = new();
     private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
+    private readonly ConcurrentDictionary<string, StartScriptCommand> _pendingScripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
 
     public ScriptPodService(
@@ -38,9 +39,22 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
             return new ScriptTicket(ticketId);
         }
 
-        var mutexLock = _isolationMutex.Acquire(command);
-        _mutexLocks[ticketId] = mutexLock;
+        if (_isolationMutex.TryAcquire(command, out var mutexLock))
+        {
+            _mutexLocks[ticketId] = mutexLock!;
+            LaunchScript(ticketId, command);
+        }
+        else
+        {
+            _pendingScripts[ticketId] = command;
+            Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+        }
 
+        return new ScriptTicket(ticketId);
+    }
+
+    private void LaunchScript(string ticketId, StartScriptCommand command)
+    {
         var eosMarkerToken = EosMarker.GenerateMarkerToken();
         var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
 
@@ -50,8 +64,6 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         _scripts[ticketId] = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken);
 
         Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
-
-        return new ScriptTicket(ticketId);
     }
 
     private static StartScriptCommand WrapCommandWithEosMarker(StartScriptCommand command, string eosMarkerToken)
@@ -72,6 +84,17 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     {
         if (_terminalResults.TryGetValue(request.Ticket.TaskId, out var terminal))
             return terminal;
+
+        if (_pendingScripts.ContainsKey(request.Ticket.TaskId))
+        {
+            var pendingLogs = request.LastLogSequence == 0
+                ? new List<ProcessOutput> { new(ProcessOutputSource.StdOut, "Waiting for isolation mutex...") }
+                : new List<ProcessOutput>();
+
+            var nextSequence = request.LastLogSequence == 0 ? 1 : request.LastLogSequence;
+
+            return new ScriptStatusResponse(request.Ticket, ProcessState.Running, 0, pendingLogs, nextSequence);
+        }
 
         if (!_scripts.TryGetValue(request.Ticket.TaskId, out var ctx))
             return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
@@ -111,12 +134,15 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         }
         finally
         {
-            ReleaseMutexLock(command.Ticket.TaskId);
+            ReleaseMutexAndProcessPending(command.Ticket.TaskId);
         }
     }
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
+        if (_pendingScripts.TryRemove(command.Ticket.TaskId, out _))
+            return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
+
         try
         {
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
@@ -129,13 +155,15 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         }
         finally
         {
-            ReleaseMutexLock(command.Ticket.TaskId);
+            ReleaseMutexAndProcessPending(command.Ticket.TaskId);
         }
     }
 
     public string WorkspaceBasePath => _tentacleSettings.WorkspacePath;
 
     public ConcurrentDictionary<string, ScriptPodContext> ActiveScripts => _scripts;
+
+    public ConcurrentDictionary<string, StartScriptCommand> PendingScripts => _pendingScripts;
 
     public void InjectTerminalResult(string ticketId, int exitCode, List<ProcessOutput> logs)
     {
@@ -144,10 +172,47 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         _terminalResults[ticketId] = response;
     }
 
-    private void ReleaseMutexLock(string ticketId)
+    private void ReleaseMutexAndProcessPending(string ticketId)
     {
         if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
+        {
             lockHandle.Dispose();
+            ProcessPendingScripts();
+        }
+    }
+
+    private void ProcessPendingScripts()
+    {
+        foreach (var kvp in _pendingScripts)
+        {
+            if (!_isolationMutex.TryAcquire(kvp.Value, out var handle))
+                continue;
+
+            if (!_pendingScripts.TryRemove(kvp.Key, out var command))
+            {
+                handle!.Dispose();
+                continue;
+            }
+
+            _mutexLocks[kvp.Key] = handle!;
+
+            try
+            {
+                LaunchScript(kvp.Key, command);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to launch pending script {TicketId}", kvp.Key);
+                InjectTerminalResult(kvp.Key, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, ex.Message) });
+
+                if (_mutexLocks.TryRemove(kvp.Key, out var failedLock))
+                    failedLock.Dispose();
+
+                continue;
+            }
+
+            return;
+        }
     }
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)

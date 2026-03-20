@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Constants;
 using Squid.Message.Enums.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -9,6 +10,8 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle.Handlers;
 
 public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 {
+    private const string SystemSource = CurrentUsers.InternalUser.DisplayName;
+
     private long? _taskNodeId;
     private readonly IDeploymentLogWriter _logWriter;
     private readonly ConcurrentDictionary<int, long?> _stepNodes = new();
@@ -34,7 +37,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var node = await CreateActivityNodeAsync(null, nodeName, DeploymentActivityLogNodeType.Task, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
         _taskNodeId = node?.Id;
 
-        await LogInfoAsync($"Deploying {projectName} release {releaseVersion} to {environmentName}", "System", ct).ConfigureAwait(false);
+        await LogInfoAsync($"Deploying {projectName} release {releaseVersion} to {environmentName}", SystemSource, ct).ConfigureAwait(false);
     }
 
     protected override async Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -63,7 +66,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
             _taskNodeId = node?.Id;
         }
 
-        await LogInfoAsync("Resuming deployment after interruption", "System", ct).ConfigureAwait(false);
+        await LogInfoAsync("Resuming deployment after interruption", SystemSource, ct).ConfigureAwait(false);
     }
 
     private void RestoreTaskNode(List<ActivityLog> nodes)
@@ -82,7 +85,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
-        await LogInfoAsync("Deployment completed successfully", "System", ct).ConfigureAwait(false);
+        await LogInfoAsync("Deployment completed successfully", SystemSource, ct).ConfigureAwait(false);
         await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
@@ -90,7 +93,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     protected override async Task OnDeploymentFailedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
-        await LogErrorAsync(ctx.Exception?.Message ?? ctx.Error ?? "Unknown error", "System", ct).ConfigureAwait(false);
+        await LogErrorAsync(ctx.Exception?.Message ?? ctx.Error ?? "Unknown error", SystemSource, ct).ConfigureAwait(false);
         await FlushLogWriterAsync(ct).ConfigureAwait(false);
     }
 
@@ -100,21 +103,21 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var names = string.Join(", ", ctx.Targets.Select(t => t.Name));
 
-        return LogInfoAsync($"Found {ctx.Targets.Count} targets: {names}", "System", ct);
+        return LogInfoAsync($"Found {ctx.Targets.Count} targets: {names}", SystemSource, ct);
     }
 
     protected override Task OnUnhealthyTargetsExcludedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var names = string.Join(", ", ctx.Targets.Select(t => $"{t.Name} ({t.HealthStatus})"));
 
-        return LogWarningAsync($"Excluded {ctx.Targets.Count} unhealthy target(s) from deployment: {names}", "System", ct);
+        return LogWarningAsync($"Excluded {ctx.Targets.Count} unhealthy target(s) from deployment: {names}", SystemSource, ct);
     }
 
     protected override Task OnTargetPreparingAsync(DeploymentEventContext ctx, CancellationToken ct)
-        => LogInfoAsync($"Preparing target: {ctx.MachineName} ({ctx.CommunicationStyle})", "System", ct);
+        => LogInfoAsync($"Preparing target: {ctx.MachineName} ({ctx.CommunicationStyle})", SystemSource, ct);
 
     protected override Task OnTargetTransportMissingAsync(DeploymentEventContext ctx, CancellationToken ct)
-        => LogWarningAsync($"No transport resolved for target {ctx.MachineName} with style {ctx.CommunicationStyle}", "System", ct);
+        => LogWarningAsync($"No transport resolved for target {ctx.MachineName} with style {ctx.CommunicationStyle}", SystemSource, ct);
 
     protected override async Task OnMachineConstraintsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
@@ -127,21 +130,21 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         if (selection.SpecificMachineIds.Count > 0)
         {
             var names = string.Join(", ", selection.SpecificMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
-            await LogInfoAsync($"Deploying only to these specifically included machines: {names}", "System", ct).ConfigureAwait(false);
+            await LogInfoAsync($"Deploying only to these specifically included machines: {names}", SystemSource, ct).ConfigureAwait(false);
 
             var disabledMachines = Ctx.AllTargets.Where(m => selection.SpecificMachineIds.Contains(m.Id) && m.IsDisabled).ToList();
 
             if (disabledMachines.Count > 0)
             {
                 var disabledNames = string.Join(", ", disabledMachines.Select(m => m.Name));
-                await LogWarningAsync($"The following specifically included machine{(disabledMachines.Count > 1 ? "s are" : " is")} disabled and will not receive the deployment: {disabledNames}", "System", ct).ConfigureAwait(false);
+                await LogWarningAsync($"The following specifically included machine{(disabledMachines.Count > 1 ? "s are" : " is")} disabled and will not receive the deployment: {disabledNames}", SystemSource, ct).ConfigureAwait(false);
             }
         }
 
         if (selection.ExcludedMachineIds.Count > 0)
         {
             var names = string.Join(", ", selection.ExcludedMachineIds.Select(id => machineNameById.GetValueOrDefault(id, $"#{id}")).OrderBy(n => n));
-            await LogInfoAsync($"These machines were specifically excluded from the deployment: {names}", "System", ct).ConfigureAwait(false);
+            await LogInfoAsync($"These machines were specifically excluded from the deployment: {names}", SystemSource, ct).ConfigureAwait(false);
         }
     }
 
@@ -152,20 +155,20 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var node = await CreateActivityNodeAsync(_taskNodeId, "Acquire packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
         var nodeId = node?.Id;
 
-        await LogInfoAsync("Acquiring packages", "System", ct, nodeId).ConfigureAwait(false);
+        await LogInfoAsync("Acquiring packages", SystemSource, ct, nodeId).ConfigureAwait(false);
 
         var packages = ctx.SelectedPackages;
 
         if (packages?.Count > 0)
         {
             foreach (var pkg in packages)
-                await LogInfoAsync($"Package {pkg.ActionName} version {pkg.Version}", "System", ct, nodeId).ConfigureAwait(false);
+                await LogInfoAsync($"Package {pkg.ActionName} version {pkg.Version}", SystemSource, ct, nodeId).ConfigureAwait(false);
 
-            await LogInfoAsync("All packages have been acquired", "System", ct, nodeId).ConfigureAwait(false);
+            await LogInfoAsync("All packages have been acquired", SystemSource, ct, nodeId).ConfigureAwait(false);
         }
         else
         {
-            await LogInfoAsync("No packages to acquire", "System", ct, nodeId).ConfigureAwait(false);
+            await LogInfoAsync("No packages to acquire", SystemSource, ct, nodeId).ConfigureAwait(false);
         }
 
         await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
@@ -177,7 +180,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var node = await CreateActivityNodeAsync(_taskNodeId, "Release packages", DeploymentActivityLogNodeType.Phase, DeploymentActivityLogNodeStatus.Running, releaseSortOrder, ct).ConfigureAwait(false);
         var nodeId = node?.Id;
 
-        await LogInfoAsync("There are no packages to be released.", "System", ct, nodeId).ConfigureAwait(false);
+        await LogInfoAsync("There are no packages to be released.", SystemSource, ct, nodeId).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(nodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
@@ -202,7 +205,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var rolesText = ctx.Roles?.Count > 0 ? string.Join(", ", ctx.Roles) : "unknown";
         var plural = ctx.Roles?.Count > 1;
 
-        await LogWarningAsync($"Skipping this step as no machines were found in the role{(plural ? "s" : "")}: {rolesText}", "System", ct, stepNodeId).ConfigureAwait(false);
+        await LogWarningAsync($"Skipping this step as no machines were found in the role{(plural ? "s" : "")}: {rolesText}", SystemSource, ct, stepNodeId).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(stepNodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
@@ -217,7 +220,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync(ctx.Message, "System", ct, stepNodeId);
+        return LogInfoAsync(ctx.Message, SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnStepExecutingOnTargetAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -233,13 +236,13 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         if (ctx.Skipped)
         {
-            await LogInfoAsync($"Step \"{ctx.StepName}\" was skipped", "System", ct, stepNodeId).ConfigureAwait(false);
+            await LogInfoAsync($"Step \"{ctx.StepName}\" was skipped", SystemSource, ct, stepNodeId).ConfigureAwait(false);
             await UpdateActivityNodeStatusAsync(stepNodeId, DeploymentActivityLogNodeStatus.Skipped, ct).ConfigureAwait(false);
             return;
         }
 
         if (!ctx.Failed)
-            await LogInfoAsync($"Step \"{ctx.StepName}\" completed successfully", "System", ct, stepNodeId).ConfigureAwait(false);
+            await LogInfoAsync($"Step \"{ctx.StepName}\" completed successfully", SystemSource, ct, stepNodeId).ConfigureAwait(false);
 
         await UpdateActivityNodeStatusAsync(stepNodeId, ctx.Failed ? DeploymentActivityLogNodeStatus.Failed : DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
@@ -250,7 +253,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync("Running health check", "System", ct, stepNodeId);
+        return LogInfoAsync("Running health check", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnHealthCheckTargetResultAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -270,9 +273,9 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var unhealthy = ctx.HealthCheckUnhealthyCount;
 
         if (unhealthy == 0)
-            return LogInfoAsync($"Health check completed: all {healthy} target(s) healthy", "System", ct, stepNodeId);
+            return LogInfoAsync($"Health check completed: all {healthy} target(s) healthy", SystemSource, ct, stepNodeId);
 
-        return LogWarningAsync($"Health check completed: {healthy} healthy, {unhealthy} unhealthy", "System", ct, stepNodeId);
+        return LogWarningAsync($"Health check completed: {healthy} healthy, {unhealthy} unhealthy", SystemSource, ct, stepNodeId);
     }
 
     // === Actions (pre-execution) ===
@@ -281,21 +284,21 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync($"Action \"{ctx.ActionName}\" was manually excluded from this deployment", "System", ct, stepNodeId);
+        return LogInfoAsync($"Action \"{ctx.ActionName}\" was manually excluded from this deployment", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnActionSkippedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogWarningAsync(ctx.ActionEligibility?.Message ?? $"Action \"{ctx.ActionName}\" skipped", "System", ct, stepNodeId);
+        return LogWarningAsync(ctx.ActionEligibility?.Message ?? $"Action \"{ctx.ActionName}\" skipped", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnActionNoHandlerAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogWarningAsync($"No handler found for action type \"{ctx.ActionType}\", skipping", "System", ct, stepNodeId);
+        return LogWarningAsync($"No handler found for action type \"{ctx.ActionType}\", skipping", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnActionRunningAsync(DeploymentEventContext ctx, CancellationToken ct)
@@ -303,7 +306,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
         var suffix = string.IsNullOrWhiteSpace(ctx.MachineName) ? "" : $" on {ctx.MachineName}";
 
-        return LogInfoAsync($"Running action \"{ctx.ActionName}\"{suffix}", "System", ct, stepNodeId);
+        return LogInfoAsync($"Running action \"{ctx.ActionName}\"{suffix}", SystemSource, ct, stepNodeId);
     }
 
     // === Actions (execution) ===
@@ -347,14 +350,14 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogWarningAsync($"Guided failure: action \"{ctx.ActionName}\" failed on {ctx.MachineName}. Waiting for manual intervention — {ctx.Error}", "System", ct, stepNodeId);
+        return LogWarningAsync($"Guided failure: action \"{ctx.ActionName}\" failed on {ctx.MachineName}. Waiting for manual intervention — {ctx.Error}", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnGuidedFailureResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync($"Guided failure resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
+        return LogInfoAsync($"Guided failure resolved: {ctx.GuidedFailureResolution}", SystemSource, ct, stepNodeId);
     }
 
     // === Manual Intervention ===
@@ -363,28 +366,28 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync($"Manual intervention required for action \"{ctx.ActionName}\". Waiting for user response", "System", ct, stepNodeId);
+        return LogInfoAsync($"Manual intervention required for action \"{ctx.ActionName}\". Waiting for user response", SystemSource, ct, stepNodeId);
     }
 
     protected override Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", "System", ct, stepNodeId);
+        return LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", SystemSource, ct, stepNodeId);
     }
 
     // === Cancellation / Pause ===
 
     protected override async Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
-        await LogWarningAsync("Deployment was cancelled", "System", ct).ConfigureAwait(false);
+        await LogWarningAsync("Deployment was cancelled", SystemSource, ct).ConfigureAwait(false);
         await FlushLogWriterAsync(ct).ConfigureAwait(false);
         await UpdateActivityNodeStatusAsync(_taskNodeId, DeploymentActivityLogNodeStatus.Failed, ct).ConfigureAwait(false);
     }
 
     protected override async Task OnDeploymentPausedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
-        await LogInfoAsync("Deployment paused — waiting for interruption to be resolved", "System", ct).ConfigureAwait(false);
+        await LogInfoAsync("Deployment paused — waiting for interruption to be resolved", SystemSource, ct).ConfigureAwait(false);
     }
 
     // === Node Lookup ===
