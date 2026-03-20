@@ -1,18 +1,14 @@
-using System;
 using System.Net;
 using Squid.Core.Services.Account;
-using Squid.Core.Services.Authentication;
-using Squid.Core.Services.Identity;
 using Squid.Core.Services.Machines;
+using Squid.Message.Commands.Account;
 using Squid.Message.Commands.Machine;
-using Squid.Message.Models.Account;
+using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Machines;
 
 public class MachineInstallScriptServiceTests
 {
-    private readonly Mock<ICurrentUser> _currentUser = new();
-    private readonly Mock<IUserTokenService> _userTokenService = new();
     private readonly Mock<IAccountService> _accountService = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
@@ -20,19 +16,11 @@ public class MachineInstallScriptServiceTests
 
     public MachineInstallScriptServiceTests()
     {
-        _currentUser.Setup(x => x.Id).Returns(1);
-
         _accountService
-            .Setup(x => x.GetByIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserAccountDto { Id = 1, UserName = "admin", DisplayName = "Admin" });
-
-        _userTokenService
-            .Setup(x => x.GenerateToken(It.IsAny<Squid.Core.Persistence.Entities.Account.UserAccount>()))
-            .Returns(("test-bearer-token", DateTime.UtcNow.AddHours(1)));
+            .Setup(x => x.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = "test-api-key" });
 
         _service = new MachineScriptService(
-            _currentUser.Object,
-            _userTokenService.Object,
             _accountService.Object,
             _machineDataProvider.Object,
             _agentVersionProvider.Object);
@@ -157,11 +145,11 @@ public class MachineInstallScriptServiceTests
     }
 
     [Fact]
-    public async Task GenerateScript_AgentInstallScript_ContainsBearerToken()
+    public async Task GenerateScript_AgentInstallScript_ContainsApiKey()
     {
         var result = await GenerateSuccessDataAsync();
 
-        result.AgentInstallScript.ShouldContain("tentacle.bearerToken=\"test-bearer-token\"");
+        result.AgentInstallScript.ShouldContain("tentacle.apiKey=\"test-api-key\"");
     }
 
     [Fact]
@@ -244,28 +232,16 @@ public class MachineInstallScriptServiceTests
     }
 
     [Fact]
-    public async Task GenerateScript_NullUserId_ReturnsUnauthorizedResponse()
-    {
-        _currentUser.Setup(x => x.Id).Returns((int?)null);
-
-        var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
-
-        response.Code.ShouldBe(HttpStatusCode.Unauthorized);
-        response.Msg.ShouldContain("Cannot resolve current user");
-        response.Data.ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task GenerateScript_UserNotFound_ReturnsUnauthorizedResponse()
+    public async Task GenerateScript_ApiKeyCreationFails_ReturnsInternalServerError()
     {
         _accountService
-            .Setup(x => x.GetByIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((UserAccountDto)null);
+            .Setup(x => x.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = "" });
 
         var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
 
-        response.Code.ShouldBe(HttpStatusCode.Unauthorized);
-        response.Msg.ShouldContain("User account 1 not found");
+        response.Code.ShouldBe(HttpStatusCode.InternalServerError);
+        response.Msg.ShouldContain("Failed to create API key");
         response.Data.ShouldBeNull();
     }
 }

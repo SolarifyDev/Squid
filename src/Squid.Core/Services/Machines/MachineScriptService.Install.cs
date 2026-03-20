@@ -1,6 +1,6 @@
 using System.Net;
-using Squid.Core.Persistence.Entities.Account;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.Machines;
 
@@ -16,18 +16,18 @@ public partial class MachineScriptService
         try
         {
             var subscriptionId = Guid.NewGuid().ToString("N");
-            var tokenResult = await TryGenerateBearerTokenAsync(ct).ConfigureAwait(false);
+            var apiKeyResult = await TryCreateApiKeyAsync(subscriptionId, ct).ConfigureAwait(false);
 
-            if (!tokenResult.Success)
+            if (!apiKeyResult.Success)
             {
-                return Fail<GenerateKubernetesAgentInstallScriptResponse, GenerateKubernetesAgentInstallScriptData>(tokenResult.Code, tokenResult.Message);
+                return Fail<GenerateKubernetesAgentInstallScriptResponse, GenerateKubernetesAgentInstallScriptData>(apiKeyResult.Code, apiKeyResult.Message);
             }
 
             var data = new GenerateKubernetesAgentInstallScriptData
             {
                 SubscriptionId = subscriptionId,
                 NfsCsiDriverScript = BuildNfsCsiDriverScript(),
-                AgentInstallScript = BuildAgentInstallScript(command, subscriptionId, tokenResult.Token),
+                AgentInstallScript = BuildAgentInstallScript(command, subscriptionId, apiKeyResult.ApiKey),
             };
 
             return Success<GenerateKubernetesAgentInstallScriptResponse, GenerateKubernetesAgentInstallScriptData>(data);
@@ -38,32 +38,15 @@ public partial class MachineScriptService
         }
     }
 
-    private async Task<(bool Success, string Token, HttpStatusCode Code, string Message)> TryGenerateBearerTokenAsync(CancellationToken ct)
+    private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateApiKeyAsync(string subscriptionId, CancellationToken ct)
     {
-        var userId = _currentUser.Id;
+        var description = $"KubernetesAgent:{subscriptionId}";
+        var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, description, ct).ConfigureAwait(false);
 
-        if (userId == null)
-            return (false, null, HttpStatusCode.Unauthorized, "Cannot resolve current user");
+        if (string.IsNullOrWhiteSpace(result?.ApiKey))
+            return (false, null, HttpStatusCode.InternalServerError, "Failed to create API key");
 
-        var userAccount = await _accountService.GetByIdAsync(userId.Value, ct).ConfigureAwait(false);
-
-        if (userAccount == null)
-            return (false, null, HttpStatusCode.Unauthorized, $"User account {userId} not found");
-
-        var account = new UserAccount
-        {
-            Id = userAccount.Id,
-            UserName = userAccount.UserName,
-            DisplayName = userAccount.DisplayName,
-            IsSystem = false
-        };
-
-        var (token, _) = _userTokenService.GenerateToken(account);
-
-        if (string.IsNullOrWhiteSpace(token))
-            return (false, null, HttpStatusCode.InternalServerError, "Failed to generate bearer token");
-
-        return (true, token, HttpStatusCode.OK, null);
+        return (true, result.ApiKey, HttpStatusCode.OK, null);
     }
 
     private static string BuildNfsCsiDriverScript()
@@ -77,7 +60,7 @@ public partial class MachineScriptService
     }
 
     private static string BuildAgentInstallScript(
-        GenerateKubernetesAgentInstallScriptCommand command, string subscriptionId, string bearerToken)
+        GenerateKubernetesAgentInstallScriptCommand command, string subscriptionId, string apiKey)
     {
         var releaseName = $"squid-agent-{subscriptionId[..8]}";
         var agentName = string.IsNullOrWhiteSpace(command.AgentName) ? releaseName : command.AgentName;
@@ -91,7 +74,7 @@ public partial class MachineScriptService
             "helm upgrade --install --rollback-on-failure",
             $"--set tentacle.serverUrl=\"{command.ServerUrl}\"",
             $"--set tentacle.serverCommsUrl=\"{command.ServerCommsUrl}\"",
-            $"--set tentacle.bearerToken=\"{bearerToken}\"",
+            $"--set tentacle.apiKey=\"{apiKey}\"",
             $"--set tentacle.machineName=\"{agentName}\"",
             $"--set tentacle.roles=\"{roles}\"",
             $"--set tentacle.environments=\"{environments}\"",

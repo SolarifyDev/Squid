@@ -6,6 +6,7 @@ tentacle:
   serverUrl: ""
   serverCommsUrl: ""
   bearerToken: ""
+  apiKey: ""
   serverCertificate: ""
   roles:
     - "k8s"

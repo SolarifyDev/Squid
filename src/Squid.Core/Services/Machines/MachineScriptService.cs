@@ -1,7 +1,5 @@
 using System.Net;
-using Squid.Core.Services.Identity;
 using Squid.Core.Services.Account;
-using Squid.Core.Services.Authentication;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Response;
 
@@ -16,21 +14,15 @@ public interface IMachineScriptService : IScopedDependency
 
 public partial class MachineScriptService : IMachineScriptService
 {
-    private readonly ICurrentUser _currentUser;
-    private readonly IUserTokenService _userTokenService;
     private readonly IAccountService _accountService;
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IAgentVersionProvider _agentVersionProvider;
 
     public MachineScriptService(
-        ICurrentUser currentUser,
-        IUserTokenService userTokenService,
         IAccountService accountService,
         IMachineDataProvider machineDataProvider,
         IAgentVersionProvider agentVersionProvider)
     {
-        _currentUser = currentUser;
-        _userTokenService = userTokenService;
         _accountService = accountService;
         _machineDataProvider = machineDataProvider;
         _agentVersionProvider = agentVersionProvider;

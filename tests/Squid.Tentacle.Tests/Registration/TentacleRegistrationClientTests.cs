@@ -70,6 +70,7 @@ public class TentacleRegistrationClientTests
         settings.ServerUrl.ShouldBe("https://localhost:7078");
         settings.ServerCommsUrl.ShouldBe(string.Empty);
         settings.BearerToken.ShouldBe(string.Empty);
+        settings.ApiKey.ShouldBe(string.Empty);
         settings.Roles.ShouldBe(string.Empty);
         settings.HealthCheckPort.ShouldBe(8080);
         settings.ListeningPort.ShouldBe(10933);

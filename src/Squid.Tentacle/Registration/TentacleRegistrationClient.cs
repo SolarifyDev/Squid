@@ -77,7 +77,10 @@ public class TentacleRegistrationClient
 
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.BearerToken);
+        if (!string.IsNullOrEmpty(_settings.ApiKey))
+            client.DefaultRequestHeaders.Add("X-API-KEY", _settings.ApiKey);
+        else
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.BearerToken);
 
         var machineName = string.IsNullOrEmpty(_settings.MachineName)
             ? $"tentacle-{subscriptionId[..Math.Min(8, subscriptionId.Length)]}"
