@@ -269,40 +269,127 @@ public class ScriptPodServiceTests : IDisposable
     }
 
     [Fact]
-    public void StartScript_FullIsolation_BlocksSecondScript_UntilCompleted()
+    public void StartScript_FullIsolation_QueuesSecondScript()
     {
         var service = CreateService();
-        var command = MakeIsolatedCommand("echo first", "blocking-mutex", TimeSpan.FromMilliseconds(300));
+        var command = MakeIsolatedCommand("echo first", "blocking-mutex");
 
         var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void GetStatus_PendingScript_ReturnsRunningWithWaitMessage()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo first", "status-mutex");
+
+        service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket2, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldContain(l => l.Text.Contains("Waiting for isolation mutex..."));
+        status.NextLogSequence.ShouldBe(1);
+
+        var status2 = service.GetStatus(new ScriptStatusRequest(ticket2, 1));
+
+        status2.State.ShouldBe(ProcessState.Running);
+        status2.Logs.ShouldBeEmpty();
+        status2.NextLogSequence.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReleasingActiveScript_StartsPendingScript(bool viaComplete)
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo test", "release-mutex");
+
+        var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
         SetupPodLogs("");
 
-        Should.Throw<TimeoutException>(() => service.StartScript(command));
+        if (viaComplete)
+            service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+        else
+            service.CancelScript(new CancelScriptCommand(ticket1, 0));
 
-        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+        service.PendingScripts.ShouldBeEmpty();
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Exactly(2));
+    }
 
+    [Fact]
+    public void CancelScript_PendingScript_RemovesFromQueue()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo test", "cancel-pending-mutex");
+
+        service.StartScript(command);
         var ticket2 = service.StartScript(command);
-        ticket2.ShouldNotBeNull();
 
-        service.CompleteScript(new CompleteScriptCommand(ticket2, 0));
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        var status = service.CancelScript(new CancelScriptCommand(ticket2, 0));
+
+        status.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+        service.PendingScripts.ShouldBeEmpty();
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void StartScript_FullIsolation_DifferentMutexNames_BothStartImmediately()
+    {
+        var service = CreateService();
+        var commandA = MakeIsolatedCommand("echo a", "mutex-a");
+        var commandB = MakeIsolatedCommand("echo b", "mutex-b");
+
+        var ticket1 = service.StartScript(commandA);
+        var ticket2 = service.StartScript(commandB);
+
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        service.PendingScripts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void StartScript_NoIsolation_NeverQueues()
+    {
+        var service = CreateService();
+
+        service.StartScript(MakeCommand("echo 1"));
+        service.StartScript(MakeCommand("echo 2"));
+
+        service.PendingScripts.Count.ShouldBe(0);
     }
 
     [Fact]
     public void CancelScript_ReleasesIsolationMutex()
     {
         var service = CreateService();
-        var command = MakeIsolatedCommand("echo cancel", "cancel-mutex", TimeSpan.FromMilliseconds(300));
+        var command = MakeIsolatedCommand("echo cancel", "cancel-mutex");
 
         var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
         service.CancelScript(new CancelScriptCommand(ticket1, 0));
 
-        var ticket2 = service.StartScript(command);
-        ticket2.ShouldNotBeNull();
-
-        service.CancelScript(new CancelScriptCommand(ticket2, 0));
+        service.PendingScripts.ShouldBeEmpty();
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
     }
 
     [Fact]

@@ -8,31 +8,28 @@ public class ScriptIsolationMutex
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutexes = new(StringComparer.OrdinalIgnoreCase);
 
-    public IDisposable Acquire(StartScriptCommand command)
+    public bool TryAcquire(StartScriptCommand command, out IDisposable? handle)
     {
         if (command.Isolation != ScriptIsolationLevel.FullIsolation)
-            return NoOpDisposable.Instance;
+        {
+            handle = NoOpDisposable.Instance;
+            return true;
+        }
 
         var mutexName = command.IsolationMutexName ?? "default";
-        var timeout = command.ScriptIsolationMutexTimeout;
-
-        if (timeout <= TimeSpan.Zero)
-            timeout = TimeSpan.FromMinutes(5);
-
         var semaphore = _mutexes.GetOrAdd(mutexName, _ => new SemaphoreSlim(1, 1));
 
-        Log.Information("Acquiring isolation mutex {MutexName} (timeout {TimeoutSeconds}s)", mutexName, timeout.TotalSeconds);
-
-        if (!semaphore.Wait(timeout))
+        if (!semaphore.Wait(TimeSpan.Zero))
         {
-            throw new TimeoutException(
-                $"Timed out waiting {timeout.TotalSeconds}s for script isolation mutex '{mutexName}'. " +
-                "Another script with FullIsolation is still running.");
+            Log.Information("Isolation mutex {MutexName} is held, deferring script", mutexName);
+            handle = null;
+            return false;
         }
 
         Log.Information("Acquired isolation mutex {MutexName}", mutexName);
 
-        return new MutexRelease(semaphore, mutexName);
+        handle = new MutexRelease(semaphore, mutexName);
+        return true;
     }
 
     private sealed class MutexRelease : IDisposable

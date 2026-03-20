@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Constants;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.IntegrationTests.Deployments.ServerTasks;
@@ -171,7 +172,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ActivityNodeId = activityNode.Id,
                 Category = ServerTaskLogCategory.Info,
                 MessageText = "Deploying to Production",
-                Source = "System",
+                Source = CurrentUsers.InternalUser.DisplayName,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = 1
             };
@@ -248,7 +249,7 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
                 ServerTaskId = taskId,
                 Category = ServerTaskLogCategory.Info,
                 MessageText = "Test log",
-                Source = "System",
+                Source = CurrentUsers.InternalUser.DisplayName,
                 OccurredAt = DateTimeOffset.UtcNow,
                 SequenceNumber = 1
             };
