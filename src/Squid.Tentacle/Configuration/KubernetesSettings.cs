@@ -19,4 +19,7 @@ public class KubernetesSettings
     public string ScriptPodTolerations { get; set; } = "";
     public string TentacleImage { get; set; } = "";
     public string ReleaseName { get; set; } = "";
+    public string NfsWatchdogImage { get; set; } = "";
+    public bool IsolateWorkspaceToEmptyDir { get; set; } = false;
+    public string PersistenceAccessMode { get; set; } = "ReadWriteMany";
 }

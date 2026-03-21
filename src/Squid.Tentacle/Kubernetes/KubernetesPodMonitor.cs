@@ -9,7 +9,7 @@ namespace Squid.Tentacle.Kubernetes;
 
 public class KubernetesPodMonitor
 {
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(300);
     private static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan PendingPodTimeout = TimeSpan.FromMinutes(5);
 

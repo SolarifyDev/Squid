@@ -2,6 +2,7 @@ using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Kubernetes;
 using Serilog;
+using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -9,13 +10,13 @@ public class ScriptRecoveryService
 {
     public int RecoverScripts(string workspacePath, ScriptPodService service, KubernetesPodManager podManager, ScriptIsolationMutex mutex)
     {
-        if (!Directory.Exists(workspacePath))
+        if (!RFS.DirectoryExists(workspacePath))
         {
             Log.Debug("Workspace path {Path} does not exist, skipping recovery", workspacePath);
             return 0;
         }
 
-        var directories = Directory.GetDirectories(workspacePath);
+        var directories = RFS.GetDirectories(workspacePath);
         var recoveredCount = 0;
 
         foreach (var dir in directories)

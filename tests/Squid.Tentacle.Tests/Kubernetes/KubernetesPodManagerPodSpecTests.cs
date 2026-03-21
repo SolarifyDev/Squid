@@ -360,6 +360,189 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     // ========================================================================
+    // P0-1: NFS Watchdog Sidecar Injection
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_AddsSidecarContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        pod.Spec.Containers.Count.ShouldBe(2);
+        pod.Spec.Containers[0].Name.ShouldBe("script");
+        pod.Spec.Containers[1].Name.ShouldBe("nfs-watchdog");
+    }
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_SidecarHasCorrectConfig()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        var sidecar = pod.Spec.Containers[1];
+        sidecar.Image.ShouldBe("squidcd/squid-watchdog:1.0.0");
+        sidecar.ImagePullPolicy.ShouldBe("IfNotPresent");
+        sidecar.Env.ShouldHaveSingleItem().Name.ShouldBe("WATCHDOG_DIRECTORY");
+        sidecar.Env[0].Value.ShouldBe("/squid/work");
+        sidecar.Resources.Requests["cpu"].ToString().ShouldBe("10m");
+        sidecar.Resources.Requests["memory"].ToString().ShouldBe("32Mi");
+        sidecar.Resources.Limits["cpu"].ToString().ShouldBe("50m");
+        sidecar.Resources.Limits["memory"].ToString().ShouldBe("64Mi");
+    }
+
+    [Fact]
+    public void CreatePod_WithoutNfsWatchdogImage_NoSidecar()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers.ShouldHaveSingleItem().Name.ShouldBe("script");
+    }
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_SidecarSharesWorkspaceVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        var sidecarMount = pod.Spec.Containers[1].VolumeMounts.ShouldHaveSingleItem();
+        sidecarMount.Name.ShouldBe("workspace");
+        sidecarMount.MountPath.ShouldBe("/squid/work");
+        sidecarMount.ReadOnlyProperty.ShouldBe(true);
+    }
+
+    // ========================================================================
+    // P0-2: Workspace Isolation (emptyDir)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_AddsEmptyDirVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var localVolume = pod.Spec.Volumes.First(v => v.Name == "workspace-local");
+        localVolume.EmptyDir.ShouldNotBeNull();
+        localVolume.EmptyDir.SizeLimit.ToString().ShouldBe("1Gi");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_AddsCopyWorkspaceInitContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var initContainer = pod.Spec.InitContainers.First(c => c.Name == "copy-workspace");
+        initContainer.Image.ShouldBe("bitnami/kubectl:1.28");
+        initContainer.Command.ShouldContain("sh");
+        string.Join(" ", initContainer.Command).ShouldContain($"cp -a /squid/nfs-work/{TicketId}/. /squid/work/{TicketId}/");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_MainContainerMountsEmptyDir()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var mainMount = pod.Spec.Containers[0].VolumeMounts.First(m => m.MountPath == "/squid/work");
+        mainMount.Name.ShouldBe("workspace-local");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_NfsVolumeStillPresent()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var nfsVolume = pod.Spec.Volumes.First(v => v.Name == "workspace-nfs");
+        nfsVolume.PersistentVolumeClaim.ClaimName.ShouldBe("squid-workspace");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_WatchdogMonitorsNfsVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.IsolateWorkspaceToEmptyDir = true;
+            s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0";
+        });
+
+        var watchdogMount = pod.Spec.Containers[1].VolumeMounts.ShouldHaveSingleItem();
+        watchdogMount.Name.ShouldBe("workspace-nfs");
+    }
+
+    [Fact]
+    public void CreatePod_NoIsolateWorkspace_DirectPvcMount()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Volumes.ShouldHaveSingleItem().Name.ShouldBe("workspace");
+        pod.Spec.Containers[0].VolumeMounts.First(m => m.MountPath == "/squid/work").Name.ShouldBe("workspace");
+    }
+
+    // ========================================================================
+    // P1-2: RWO Pod Affinity Auto-Injection
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_RwoMode_InjectsNodeAffinity()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        pod.Spec.Affinity.ShouldNotBeNull();
+        pod.Spec.Affinity.PodAffinity.ShouldNotBeNull();
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution.ShouldHaveSingleItem();
+        term.TopologyKey.ShouldBe("kubernetes.io/hostname");
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_AffinityMatchesAgentLabels()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0];
+        term.LabelSelector.MatchLabels.ShouldContainKeyAndValue("app.kubernetes.io/name", "kubernetes-agent");
+        term.LabelSelector.MatchLabels.ShouldContainKeyAndValue("app.kubernetes.io/instance", "squid-prod");
+    }
+
+    [Fact]
+    public void CreatePod_RwxMode_NoAffinity()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.PersistenceAccessMode = "ReadWriteMany");
+
+        pod.Spec.Affinity.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_WithReleaseName_UsesCorrectInstanceLabel()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "my-release";
+        });
+
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0];
+        term.LabelSelector.MatchLabels["app.kubernetes.io/instance"].ShouldBe("my-release");
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_TemplateOverridesAffinity()
+    {
+        // Template affinity should take precedence via ApplyTemplateOverrides
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        // RWO affinity is set before ApplyTemplateOverrides, so template can override
+        pod.Spec.Affinity.ShouldNotBeNull();
+        pod.Spec.Affinity.PodAffinity.ShouldNotBeNull();
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 

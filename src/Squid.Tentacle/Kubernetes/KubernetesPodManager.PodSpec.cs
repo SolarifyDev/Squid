@@ -10,12 +10,15 @@ public partial class KubernetesPodManager
     {
         var template = _templateProvider?.TryLoadTemplate();
         var useInitContainer = !string.IsNullOrEmpty(_settings.TentacleImage);
+        var isolateWorkspace = _settings.IsolateWorkspaceToEmptyDir;
+
+        var workspaceVolumeName = isolateWorkspace ? "workspace-local" : "workspace";
 
         var volumes = new List<V1Volume>
         {
             new()
             {
-                Name = "workspace",
+                Name = isolateWorkspace ? "workspace-nfs" : "workspace",
                 PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource
                 {
                     ClaimName = _settings.PvcClaimName
@@ -23,9 +26,12 @@ public partial class KubernetesPodManager
             }
         };
 
+        if (isolateWorkspace)
+            volumes.Add(new V1Volume { Name = "workspace-local", EmptyDir = new V1EmptyDirVolumeSource { SizeLimit = new ResourceQuantity("1Gi") } });
+
         var mainVolumeMounts = new List<V1VolumeMount>
         {
-            new() { Name = "workspace", MountPath = "/squid/work" }
+            new() { Name = workspaceVolumeName, MountPath = "/squid/work" }
         };
 
         if (useInitContainer)
@@ -110,9 +116,89 @@ public partial class KubernetesPodManager
             };
         }
 
+        if (isolateWorkspace)
+        {
+            pod.Spec.InitContainers ??= new List<V1Container>();
+            pod.Spec.InitContainers.Add(BuildCopyWorkspaceInitContainer(ticketId));
+        }
+
+        if (!string.IsNullOrEmpty(_settings.NfsWatchdogImage))
+            pod.Spec.Containers.Add(BuildNfsWatchdogSidecar(isolateWorkspace));
+
+        var rwoAffinity = BuildRwoAffinity();
+        if (rwoAffinity != null)
+            pod.Spec.Affinity = rwoAffinity;
+
         ApplyTemplateOverrides(pod, template);
 
         return pod;
+    }
+
+    private V1Container BuildNfsWatchdogSidecar(bool isolateWorkspace)
+    {
+        var volumeName = isolateWorkspace ? "workspace-nfs" : "workspace";
+
+        return new V1Container
+        {
+            Name = "nfs-watchdog",
+            Image = _settings.NfsWatchdogImage,
+            ImagePullPolicy = "IfNotPresent",
+            Env = new List<V1EnvVar> { new() { Name = "WATCHDOG_DIRECTORY", Value = "/squid/work" } },
+            VolumeMounts = new List<V1VolumeMount> { new() { Name = volumeName, MountPath = "/squid/work", ReadOnlyProperty = true } },
+            Resources = new V1ResourceRequirements
+            {
+                Requests = new Dictionary<string, ResourceQuantity> { ["cpu"] = new("10m"), ["memory"] = new("32Mi") },
+                Limits = new Dictionary<string, ResourceQuantity> { ["cpu"] = new("50m"), ["memory"] = new("64Mi") }
+            }
+        };
+    }
+
+    private V1Container BuildCopyWorkspaceInitContainer(string ticketId)
+    {
+        return new V1Container
+        {
+            Name = "copy-workspace",
+            Image = _settings.ScriptPodImage,
+            Command = new[] { "sh", "-c", $"cp -a /squid/nfs-work/{ticketId}/. /squid/work/{ticketId}/" },
+            VolumeMounts = new List<V1VolumeMount>
+            {
+                new() { Name = "workspace-nfs", MountPath = "/squid/nfs-work", ReadOnlyProperty = true },
+                new() { Name = "workspace-local", MountPath = "/squid/work" }
+            },
+            Resources = new V1ResourceRequirements
+            {
+                Requests = new Dictionary<string, ResourceQuantity> { ["cpu"] = new("10m"), ["memory"] = new("50Mi") },
+                Limits = new Dictionary<string, ResourceQuantity> { ["cpu"] = new("100m"), ["memory"] = new("128Mi") }
+            }
+        };
+    }
+
+    private V1Affinity BuildRwoAffinity()
+    {
+        if (!string.Equals(_settings.PersistenceAccessMode, "ReadWriteOnce", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return new V1Affinity
+        {
+            PodAffinity = new V1PodAffinity
+            {
+                RequiredDuringSchedulingIgnoredDuringExecution = new List<V1PodAffinityTerm>
+                {
+                    new()
+                    {
+                        LabelSelector = new V1LabelSelector
+                        {
+                            MatchLabels = new Dictionary<string, string>
+                            {
+                                ["app.kubernetes.io/name"] = "kubernetes-agent",
+                                ["app.kubernetes.io/instance"] = _settings.ReleaseName
+                            }
+                        },
+                        TopologyKey = "kubernetes.io/hostname"
+                    }
+                }
+            }
+        };
     }
 
     private static void ApplyTemplateOverrides(V1Pod pod, ScriptPodTemplate template)

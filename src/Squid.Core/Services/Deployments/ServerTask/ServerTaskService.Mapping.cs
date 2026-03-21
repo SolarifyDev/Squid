@@ -25,7 +25,8 @@ public partial class ServerTaskService
             SpaceId = task.SpaceId,
             ProjectId = task.ProjectId,
             EnvironmentId = task.EnvironmentId,
-            DurationSeconds = task.DurationSeconds
+            DurationSeconds = task.DurationSeconds,
+            IsCompleted = TaskState.IsTerminal(task.State)
         };
     }
 

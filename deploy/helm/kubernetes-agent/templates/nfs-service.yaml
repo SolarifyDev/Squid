@@ -1,0 +1,19 @@
+{{- if include "kubernetes-agent.useBuiltinNfs" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernetes-agent.nfs.name" . }}
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs-server
+spec:
+  clusterIP: None
+  ports:
+  - name: nfs
+    port: 2049
+    targetPort: nfs
+    protocol: TCP
+  selector:
+    {{- include "kubernetes-agent.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs-server
+{{- end }}

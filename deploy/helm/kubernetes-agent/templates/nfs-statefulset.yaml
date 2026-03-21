@@ -1,0 +1,49 @@
+{{- if include "kubernetes-agent.useBuiltinNfs" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kubernetes-agent.nfs.name" . }}
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs-server
+spec:
+  serviceName: {{ include "kubernetes-agent.nfs.name" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubernetes-agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nfs-server
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nfs-server
+    spec:
+      containers:
+      - name: nfs-server
+        image: "{{ .Values.workspace.nfs.image.repository }}:{{ .Values.workspace.nfs.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.workspace.nfs.image.pullPolicy }}
+        ports:
+        - name: nfs
+          containerPort: 2049
+          protocol: TCP
+        env:
+        - name: SHARED_DIRECTORY
+          value: "/squid-workspace"
+        securityContext:
+          privileged: true
+        resources:
+          {{- toYaml .Values.workspace.nfs.resources | nindent 10 }}
+        volumeMounts:
+        - name: nfs-data
+          mountPath: /squid-workspace
+      volumes:
+      {{- if .Values.workspace.nfs.backingVolume.storageClassName }}
+      - name: nfs-data
+        persistentVolumeClaim:
+          claimName: {{ include "kubernetes-agent.nfs.name" . }}-backing
+      {{- else }}
+      - name: nfs-data
+        emptyDir: {}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,10 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache nfs-utils bash
+
+COPY docker/nfs-server/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 2049
+
+ENTRYPOINT ["/entrypoint.sh"]

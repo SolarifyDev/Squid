@@ -47,6 +47,7 @@ kubernetes:
 scriptPod:
   image: bitnami/kubectl:latest
   serviceAccount: ""
+  isolateWorkspace: false
   cpuRequest: "25m"
   memoryRequest: "100Mi"
   cpuLimit: "500m"
@@ -72,18 +73,32 @@ scriptPod:
 
 workspace:
   storageClassName: ""
+  volumeName: ""
   size: 10Gi
   accessModes:
     - ReadWriteMany
   nfs:
-    enabled: false
     server: ""
     path: "/squid-workspace"
     mountOptions:
+      - nfsvers=4.1
       - soft
       - timeo=50
       - retrans=4
       - lookupcache=none
+    image:
+      repository: squidcd/nfs-server
+      tag: ""
+      pullPolicy: IfNotPresent
+    backingVolume:
+      storageClassName: ""
+    resources:
+      requests:
+        memory: "50Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
 
 watchdog:
   enabled: true

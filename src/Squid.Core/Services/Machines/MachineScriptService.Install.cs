@@ -23,11 +23,14 @@ public partial class MachineScriptService
                 return Fail<GenerateKubernetesAgentInstallScriptResponse, GenerateKubernetesAgentInstallScriptData>(apiKeyResult.Code, apiKeyResult.Message);
             }
 
+            var storageType = command.StorageType ?? "builtin-nfs";
+
             var data = new GenerateKubernetesAgentInstallScriptData
             {
                 SubscriptionId = subscriptionId,
-                NfsCsiDriverScript = BuildNfsCsiDriverScript(),
+                NfsCsiDriverScript = BuildNfsCsiDriverScript(storageType),
                 AgentInstallScript = BuildAgentInstallScript(command, subscriptionId, apiKeyResult.ApiKey),
+                NfsCsiDriverRequired = IsBuiltinNfs(storageType),
             };
 
             return Success<GenerateKubernetesAgentInstallScriptResponse, GenerateKubernetesAgentInstallScriptData>(data);
@@ -49,8 +52,13 @@ public partial class MachineScriptService
         return (true, result.ApiKey, HttpStatusCode.OK, null);
     }
 
-    private static string BuildNfsCsiDriverScript()
+    private static bool IsBuiltinNfs(string storageType)
+        => string.IsNullOrWhiteSpace(storageType) || storageType == "builtin-nfs";
+
+    private static string BuildNfsCsiDriverScript(string storageType)
     {
+        if (!IsBuiltinNfs(storageType)) return null;
+
         return JoinLines(
             "helm upgrade --install --rollback-on-failure",
             "--repo https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts",
@@ -87,12 +95,32 @@ public partial class MachineScriptService
         if (!string.IsNullOrWhiteSpace(command.DefaultNamespace))
             lines.Add($"--set kubernetes.namespace=\"{command.DefaultNamespace}\"");
 
+        AppendStorageValues(lines, command);
+
         lines.Add("--version \"1.*.*\"");
         lines.Add("--create-namespace --namespace squid-agent");
         lines.Add(releaseName);
         lines.Add(chartRef);
 
         return JoinLines(lines.ToArray());
+    }
+
+    private static void AppendStorageValues(List<string> lines, GenerateKubernetesAgentInstallScriptCommand command)
+    {
+        var storageType = command.StorageType ?? "builtin-nfs";
+
+        switch (storageType)
+        {
+            case "external-nfs":
+                lines.Add($"--set workspace.nfs.server=\"{command.NfsServer}\"");
+                if (!string.IsNullOrWhiteSpace(command.NfsPath))
+                    lines.Add($"--set workspace.nfs.path=\"{command.NfsPath}\"");
+                break;
+            case "custom":
+                if (!string.IsNullOrWhiteSpace(command.StorageClassName))
+                    lines.Add($"--set workspace.storageClassName=\"{command.StorageClassName}\"");
+                break;
+        }
     }
 
     private static string FormatHelmArray<T>(IEnumerable<T> items)

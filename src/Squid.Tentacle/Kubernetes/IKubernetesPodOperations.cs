@@ -1,3 +1,4 @@
+using k8s;
 using k8s.Models;
 
 namespace Squid.Tentacle.Kubernetes;
@@ -14,4 +15,5 @@ public interface IKubernetesPodOperations
     V1Secret CreateOrReplaceSecret(V1Secret secret, string namespaceParameter);
     void DeleteConfigMap(string name, string namespaceParameter);
     void DeleteSecret(string name, string namespaceParameter);
+    IAsyncEnumerable<(WatchEventType, V1Pod)> WatchPodsAsync(string namespaceParameter, string labelSelector, CancellationToken ct);
 }

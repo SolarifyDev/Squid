@@ -14,6 +14,15 @@ public class ServerTaskController : ControllerBase
         _mediator = mediator;
     }
 
+    [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetServerTaskListResponse))]
+    public async Task<IActionResult> GetTaskListAsync([FromQuery] GetServerTaskListRequest request)
+    {
+        var response = await _mediator.RequestAsync<GetServerTaskListRequest, GetServerTaskListResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("{taskId:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetServerTaskResponse))]
     public async Task<IActionResult> GetTaskAsync(int taskId)

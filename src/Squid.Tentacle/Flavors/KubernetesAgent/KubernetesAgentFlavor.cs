@@ -49,8 +49,12 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             recoveryService.RecoverScripts(tentacleSettings.WorkspacePath, scriptPodService, podMgr, scriptPodService.IsolationMutex);
 
             backend = scriptPodService;
-            backgroundTasks.Add(new KubernetesPodMonitorBackgroundTask(podMonitor));
-            backgroundTasks.Add(new KubernetesEventMonitor(podOps, kubernetesSettings));
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesPodMonitorBackgroundTask(podMonitor)));
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesEventMonitor(podOps, kubernetesSettings)));
+
+            var podWatcher = new KubernetesPodWatcher(podOps, kubernetesSettings);
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesPodWatcherBackgroundTask(podWatcher)));
+
             startupHooks.Add(new ClusterVersionDetector(k8sClient));
 
             var watchdogEnabled = string.Equals(Environment.GetEnvironmentVariable("WATCHDOG_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
@@ -58,7 +62,7 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             if (!watchdogEnabled)
             {
                 var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath);
-                backgroundTasks.Add(nfsWatchdog);
+                backgroundTasks.Add(new ResilientBackgroundTask(nfsWatchdog));
                 readinessChecks.Add(() => nfsWatchdog.IsHealthy);
             }
             else

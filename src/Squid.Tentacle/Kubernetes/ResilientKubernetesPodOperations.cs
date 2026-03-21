@@ -1,3 +1,4 @@
+using k8s;
 using k8s.Models;
 using Polly;
 using Polly.Retry;
@@ -55,6 +56,9 @@ public class ResilientKubernetesPodOperations : IKubernetesPodOperations
 
     public void DeleteSecret(string name, string namespaceParameter)
         => _retryPolicy.Execute(() => _inner.DeleteSecret(name, namespaceParameter));
+
+    public IAsyncEnumerable<(WatchEventType, V1Pod)> WatchPodsAsync(string namespaceParameter, string labelSelector, CancellationToken ct)
+        => _inner.WatchPodsAsync(namespaceParameter, labelSelector, ct);
 
     private static bool IsTransient(System.Net.HttpStatusCode? statusCode)
     {

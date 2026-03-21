@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using k8s;
 using k8s.Models;
 
@@ -59,4 +60,14 @@ public class KubernetesPodOperations : IKubernetesPodOperations
 
     public void DeleteSecret(string name, string namespaceParameter)
         => _client.CoreV1.DeleteNamespacedSecret(name, namespaceParameter);
+
+    public async IAsyncEnumerable<(WatchEventType, V1Pod)> WatchPodsAsync(string namespaceParameter, string labelSelector, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var response = _client.CoreV1.ListNamespacedPodWithHttpMessagesAsync(namespaceParameter, labelSelector: labelSelector, watch: true, cancellationToken: ct);
+
+        await foreach (var (type, pod) in response.WatchAsync<V1Pod, V1PodList>(cancellationToken: ct).ConfigureAwait(false))
+        {
+            yield return (type, pod);
+        }
+    }
 }

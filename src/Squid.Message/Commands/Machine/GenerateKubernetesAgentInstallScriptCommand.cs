@@ -16,6 +16,10 @@ public class GenerateKubernetesAgentInstallScriptCommand : ICommand, ISpaceScope
     int? ISpaceScoped.SpaceId => SpaceId;
     public string DefaultNamespace { get; set; }
     public string ChartRef { get; set; }
+    public string StorageType { get; set; }
+    public string NfsServer { get; set; }
+    public string NfsPath { get; set; }
+    public string StorageClassName { get; set; }
 }
 
 public class GenerateKubernetesAgentInstallScriptResponse : SquidResponse<GenerateKubernetesAgentInstallScriptData>
@@ -27,4 +31,5 @@ public class GenerateKubernetesAgentInstallScriptData
     public string NfsCsiDriverScript { get; set; }
     public string AgentInstallScript { get; set; }
     public string SubscriptionId { get; set; }
+    public bool NfsCsiDriverRequired { get; set; }
 }
