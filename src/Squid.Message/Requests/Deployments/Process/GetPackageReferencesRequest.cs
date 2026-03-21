@@ -27,4 +27,5 @@ public class PackageReferenceItem
     public string PackageId { get; set; }
     public int FeedId { get; set; }
     public string FeedName { get; set; }
+    public string LastReleaseVersion { get; set; }
 }

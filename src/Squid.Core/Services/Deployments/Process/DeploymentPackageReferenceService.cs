@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 namespace Squid.Core.Services.Deployments.Process;
@@ -19,6 +20,7 @@ public class PackageReferenceDto
     public string PackageId { get; set; }
     public int FeedId { get; set; }
     public string FeedName { get; set; }
+    public string LastReleaseVersion { get; set; }
 }
 
 public class DeploymentPackageReferenceService : IDeploymentPackageReferenceService
@@ -29,6 +31,8 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
     private readonly IDeploymentActionDataProvider _actionDataProvider;
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
     private readonly IExternalFeedDataProvider _externalFeedDataProvider;
+    private readonly IReleaseDataProvider _releaseDataProvider;
+    private readonly IReleaseSelectedPackageDataProvider _selectedPackageDataProvider;
 
     public DeploymentPackageReferenceService(
         IProjectDataProvider projectDataProvider,
@@ -36,7 +40,9 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         IDeploymentStepDataProvider stepDataProvider,
         IDeploymentActionDataProvider actionDataProvider,
         IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
-        IExternalFeedDataProvider externalFeedDataProvider)
+        IExternalFeedDataProvider externalFeedDataProvider,
+        IReleaseDataProvider releaseDataProvider,
+        IReleaseSelectedPackageDataProvider selectedPackageDataProvider)
     {
         _projectDataProvider = projectDataProvider;
         _processDataProvider = processDataProvider;
@@ -44,6 +50,8 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         _actionDataProvider = actionDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
         _externalFeedDataProvider = externalFeedDataProvider;
+        _releaseDataProvider = releaseDataProvider;
+        _selectedPackageDataProvider = selectedPackageDataProvider;
     }
 
     public async Task<List<PackageReferenceDto>> GetPackageReferencesAsync(int projectId, CancellationToken ct = default)
@@ -131,8 +139,33 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         }
 
         await EnrichFeedNamesAsync(references, feedIds, ct).ConfigureAwait(false);
+        await EnrichLastReleaseVersionsAsync(references, projectId, ct).ConfigureAwait(false);
 
         return references;
+    }
+
+    private async Task EnrichLastReleaseVersionsAsync(List<PackageReferenceDto> references, int projectId, CancellationToken ct)
+    {
+        if (references.Count == 0) return;
+
+        var (_, releases) = await _releaseDataProvider.GetReleasesAsync(1, 1, projectId, cancellationToken: ct).ConfigureAwait(false);
+
+        if (releases.Count == 0) return;
+
+        var latestRelease = releases[0];
+        var selectedPackages = await _selectedPackageDataProvider.GetByReleaseIdAsync(latestRelease.Id, ct).ConfigureAwait(false);
+
+        if (selectedPackages.Count == 0) return;
+
+        var versionLookup = selectedPackages.ToDictionary(
+            sp => (sp.ActionName, sp.PackageReferenceName),
+            sp => sp.Version);
+
+        foreach (var reference in references)
+        {
+            if (versionLookup.TryGetValue((reference.ActionName, reference.PackageReferenceName), out var version))
+                reference.LastReleaseVersion = version;
+        }
     }
 
     private async Task EnrichFeedNamesAsync(List<PackageReferenceDto> references, HashSet<int> feedIds, CancellationToken ct)
