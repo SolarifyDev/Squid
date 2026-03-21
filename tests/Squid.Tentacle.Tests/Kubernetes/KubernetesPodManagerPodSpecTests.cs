@@ -543,6 +543,52 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     // ========================================================================
+    // Proxy Environment Variables
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithProxy_InjectsEnvVars()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.HttpProxy = "http://proxy.corp:8080";
+            s.HttpsProxy = "http://proxy.corp:8443";
+            s.NoProxy = "localhost,10.0.0.0/8,.internal";
+        });
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.Count.ShouldBe(6);
+        env.ShouldContain(e => e.Name == "http_proxy" && e.Value == "http://proxy.corp:8080");
+        env.ShouldContain(e => e.Name == "HTTP_PROXY" && e.Value == "http://proxy.corp:8080");
+        env.ShouldContain(e => e.Name == "https_proxy" && e.Value == "http://proxy.corp:8443");
+        env.ShouldContain(e => e.Name == "HTTPS_PROXY" && e.Value == "http://proxy.corp:8443");
+        env.ShouldContain(e => e.Name == "no_proxy" && e.Value == "localhost,10.0.0.0/8,.internal");
+        env.ShouldContain(e => e.Name == "NO_PROXY" && e.Value == "localhost,10.0.0.0/8,.internal");
+    }
+
+    [Fact]
+    public void CreatePod_WithPartialProxy_OnlyInjectsConfigured()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpsProxy = "http://proxy.corp:8443");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.Count.ShouldBe(2);
+        env.ShouldContain(e => e.Name == "https_proxy");
+        env.ShouldContain(e => e.Name == "HTTPS_PROXY");
+        env.ShouldNotContain(e => e.Name == "http_proxy");
+    }
+
+    [Fact]
+    public void CreatePod_NoProxy_NoEnvVars()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].Env.ShouldBeNull();
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 

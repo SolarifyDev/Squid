@@ -20,4 +20,7 @@ public class ScriptPodContext
     // EOS marker detection
     public bool EosDetected { get; set; }
     public int EosExitCode { get; set; }
+
+    // Log rotation detection
+    public bool LogTruncationDetected { get; set; }
 }

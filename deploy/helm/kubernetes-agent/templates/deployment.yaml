@@ -146,6 +146,22 @@ spec:
           value: "{{ .Values.scriptPod.isolateWorkspace }}"
         - name: Kubernetes__PersistenceAccessMode
           value: {{ first .Values.workspace.accessModes | default "ReadWriteMany" | quote }}
+        - name: Kubernetes__PendingPodTimeoutMinutes
+          value: "{{ .Values.scriptPod.pendingTimeoutMinutes }}"
+        - name: Kubernetes__IsolationMutexTimeoutMinutes
+          value: "{{ .Values.scriptPod.isolationMutexTimeoutMinutes }}"
+        {{- if .Values.scriptPod.proxy.httpProxy }}
+        - name: Kubernetes__HttpProxy
+          value: "{{ .Values.scriptPod.proxy.httpProxy }}"
+        {{- end }}
+        {{- if .Values.scriptPod.proxy.httpsProxy }}
+        - name: Kubernetes__HttpsProxy
+          value: "{{ .Values.scriptPod.proxy.httpsProxy }}"
+        {{- end }}
+        {{- if .Values.scriptPod.proxy.noProxy }}
+        - name: Kubernetes__NoProxy
+          value: "{{ .Values.scriptPod.proxy.noProxy }}"
+        {{- end }}
         {{- if and .Values.watchdog.enabled (not (include "kubernetes-agent.useCustomPvc" .)) }}
         - name: WATCHDOG_ENABLED
           value: "true"

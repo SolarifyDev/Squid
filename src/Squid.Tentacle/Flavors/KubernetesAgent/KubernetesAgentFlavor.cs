@@ -43,7 +43,7 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             IKubernetesPodOperations podOps = new ResilientKubernetesPodOperations(new KubernetesPodOperations(k8sClient));
             var podMgr = new KubernetesPodManager(podOps, kubernetesSettings);
             var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr);
-            var podMonitor = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings);
+            var podMonitor = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings, kubernetesSettings);
 
             var recoveryService = new ScriptRecoveryService();
             recoveryService.RecoverScripts(tentacleSettings.WorkspacePath, scriptPodService, podMgr, scriptPodService.IsolationMutex);

@@ -9,6 +9,7 @@ public class DiskSpaceCheckerTests
     [Fact]
     public void EnsureDiskHasEnoughFreeSpace_OnRealDisk_RunsWithoutCrash()
     {
+        DiskSpaceChecker.Enabled = true;
         var tempDir = Path.GetTempPath();
         var (available, total) = DiskSpaceChecker.GetDiskSpace(tempDir);
 

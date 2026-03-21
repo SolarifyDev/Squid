@@ -254,6 +254,70 @@ public class ScriptPodServiceTests : IDisposable
         content.ShouldContain("exit $__squid_exit_code__");
     }
 
+    // ========== Log Rotation Detection ==========
+
+    [Fact]
+    public void GetStatus_LogTruncation_ResetsReadPosition()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodPhase("Running");
+
+        // First read: 100 chars
+        SetupPodLogs(new string('a', 50) + "\nline1\nline2\n");
+        service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        // Simulate truncation: new log shorter than last read
+        SetupPodLogs("new-line-after-rotation\n");
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldContain(l => l.Text.Contains("new-line-after-rotation"));
+    }
+
+    [Fact]
+    public void GetStatus_LogTruncation_TerminalPod_InjectsWarning()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodPhase("Running");
+
+        // First read: establish a log position
+        SetupPodLogs("initial output that is fairly long\n");
+        service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        // Simulate truncation + terminal pod
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("short\n");
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.Logs.ShouldContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Log rotation detected"));
+    }
+
+    [Fact]
+    public void GetStatus_NoTruncation_NormalBehavior()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodPhase("Running");
+
+        SetupPodLogs("line1\n");
+        var status1 = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        // Second read: longer log (no truncation)
+        SetupPodLogs("line1\nline2\n");
+        var status2 = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status2.State.ShouldBe(ProcessState.Running);
+        status2.Logs.ShouldContain(l => l.Text.Contains("line2"));
+        status2.Logs.ShouldNotContain(l => l.Text.Contains("Log rotation detected"));
+    }
+
     // ========== Isolation Mutex ==========
 
     [Fact]
@@ -609,6 +673,59 @@ public class ScriptPodServiceTests : IDisposable
 
         var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
         Directory.Exists(workDir).ShouldBeFalse();
+    }
+
+    // ========== Isolation Mutex Timeout ==========
+
+    [Fact]
+    public void PendingScript_ExceedsTimeout_InjectedAsTimeout()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            IsolationMutexTimeoutMinutes = 0 // Immediate timeout
+        };
+
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "timeout-mutex");
+        var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        // GetStatus should detect timeout and inject terminal result
+        var status = service.GetStatus(new ScriptStatusRequest(ticket2, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Timeout);
+        status.Logs.ShouldContain(l => l.Text.Contains("isolation mutex"));
+    }
+
+    [Fact]
+    public void PendingScript_WithinTimeout_StillPending()
+    {
+        var service = CreateService(); // Default 30min timeout
+
+        var command = MakeIsolatedCommand("echo test", "within-timeout-mutex");
+        service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket2, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldContain(l => l.Text.Contains("Waiting for isolation mutex..."));
     }
 
     // ========== Helpers ==========

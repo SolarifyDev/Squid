@@ -65,6 +65,7 @@ public partial class KubernetesPodManager
                         Args = new[] { "run-script", $"--script=/squid/work/{ticketId}/script.sh", $"--variables=/squid/work/{ticketId}/variables.json" },
                         WorkingDir = $"/squid/work/{ticketId}",
                         VolumeMounts = mainVolumeMounts,
+                        Env = BuildProxyEnvVars(),
                         Resources = new V1ResourceRequirements
                         {
                             Requests = new Dictionary<string, ResourceQuantity>
@@ -294,5 +295,30 @@ public partial class KubernetesPodManager
             Log.Warning(ex, "Failed to parse ScriptPodTolerations JSON");
             return null;
         }
+    }
+
+    private List<V1EnvVar> BuildProxyEnvVars()
+    {
+        var envVars = new List<V1EnvVar>();
+
+        if (!string.IsNullOrEmpty(_settings.HttpProxy))
+        {
+            envVars.Add(new V1EnvVar { Name = "http_proxy", Value = _settings.HttpProxy });
+            envVars.Add(new V1EnvVar { Name = "HTTP_PROXY", Value = _settings.HttpProxy });
+        }
+
+        if (!string.IsNullOrEmpty(_settings.HttpsProxy))
+        {
+            envVars.Add(new V1EnvVar { Name = "https_proxy", Value = _settings.HttpsProxy });
+            envVars.Add(new V1EnvVar { Name = "HTTPS_PROXY", Value = _settings.HttpsProxy });
+        }
+
+        if (!string.IsNullOrEmpty(_settings.NoProxy))
+        {
+            envVars.Add(new V1EnvVar { Name = "no_proxy", Value = _settings.NoProxy });
+            envVars.Add(new V1EnvVar { Name = "NO_PROXY", Value = _settings.NoProxy });
+        }
+
+        return envVars.Count > 0 ? envVars : null;
     }
 }

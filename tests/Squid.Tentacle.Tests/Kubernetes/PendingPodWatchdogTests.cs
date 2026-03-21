@@ -50,7 +50,7 @@ public class PendingPodWatchdogTests : IDisposable
 
         _podManager = new KubernetesPodManager(_ops.Object, kubernetesSettings);
         _scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, _podManager);
-        _monitor = new KubernetesPodMonitor(_podManager, _scriptPodService, tentacleSettings);
+        _monitor = new KubernetesPodMonitor(_podManager, _scriptPodService, tentacleSettings, kubernetesSettings);
     }
 
     [Fact]
@@ -176,6 +176,90 @@ public class PendingPodWatchdogTests : IDisposable
         var resultAfter = _scriptPodService.GetStatus(new ScriptStatusRequest(ticket, 0));
 
         resultAfter.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void FailPendingPods_CustomTimeout_RespectsConfiguredValue()
+    {
+        var customSettings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            PendingPodTimeoutMinutes = 1
+        };
+
+        var tentacleSettings = new TentacleSettings { WorkspacePath = _tempWorkspace };
+        var podManager = new KubernetesPodManager(_ops.Object, customSettings);
+        var service = new ScriptPodService(tentacleSettings, customSettings, podManager);
+        var monitor = new KubernetesPodMonitor(podManager, service, tentacleSettings, customSettings);
+
+        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticketId = ticket.TaskId;
+        var podName = service.ActiveScripts[ticketId].PodName;
+
+        SetupManagedPods(new V1Pod
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = podName,
+                CreationTimestamp = DateTime.UtcNow.AddMinutes(-2),
+                Labels = new Dictionary<string, string> { ["squid.io/ticket-id"] = ticketId }
+            },
+            Status = new V1PodStatus { Phase = "Pending" }
+        });
+
+        monitor.FailPendingPods();
+
+        service.ActiveScripts.ContainsKey(ticketId).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void FailPendingPods_CustomTimeout_PodWithinTimeout_NotAffected()
+    {
+        var customSettings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            PendingPodTimeoutMinutes = 10
+        };
+
+        var tentacleSettings = new TentacleSettings { WorkspacePath = _tempWorkspace };
+        var podManager = new KubernetesPodManager(_ops.Object, customSettings);
+        var service = new ScriptPodService(tentacleSettings, customSettings, podManager);
+        var monitor = new KubernetesPodMonitor(podManager, service, tentacleSettings, customSettings);
+
+        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticketId = ticket.TaskId;
+        var podName = service.ActiveScripts[ticketId].PodName;
+
+        SetupManagedPods(new V1Pod
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = podName,
+                CreationTimestamp = DateTime.UtcNow.AddMinutes(-6),
+                Labels = new Dictionary<string, string> { ["squid.io/ticket-id"] = ticketId }
+            },
+            Status = new V1PodStatus { Phase = "Pending" }
+        });
+
+        monitor.FailPendingPods();
+
+        service.ActiveScripts.ContainsKey(ticketId).ShouldBeTrue();
     }
 
     private void SetupManagedPods(params V1Pod[] pods)

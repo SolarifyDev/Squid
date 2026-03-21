@@ -53,6 +53,12 @@ scriptPod:
   cpuLimit: "500m"
   memoryLimit: "512Mi"
   timeoutSeconds: 1800
+  pendingTimeoutMinutes: 5
+  isolationMutexTimeoutMinutes: 30
+  proxy:
+    httpProxy: ""
+    httpsProxy: ""
+    noProxy: ""
   disruptionBudgetEnabled: true
   tolerations: []
   affinity: {}

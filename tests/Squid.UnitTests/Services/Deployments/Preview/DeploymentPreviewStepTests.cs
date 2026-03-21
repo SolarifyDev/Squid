@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Message.Constants;
 using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -38,6 +39,7 @@ public class DeploymentPreviewStepTests
             new Mock<IDeploymentSnapshotService>().Object,
             new Mock<IServerTaskDataProvider>().Object,
             new Mock<IServerTaskService>().Object,
+            new Mock<IProjectDataProvider>().Object,
             _registryMock.Object,
             new Mock<ISquidBackgroundJobClient>().Object);
     }

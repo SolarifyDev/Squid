@@ -22,4 +22,10 @@ public class KubernetesSettings
     public string NfsWatchdogImage { get; set; } = "";
     public bool IsolateWorkspaceToEmptyDir { get; set; } = false;
     public string PersistenceAccessMode { get; set; } = "ReadWriteMany";
+    public int PendingPodTimeoutMinutes { get; set; } = 5;
+    public int OrphanCleanupMinutes { get; set; } = 10;
+    public int IsolationMutexTimeoutMinutes { get; set; } = 30;
+    public string HttpProxy { get; set; } = "";
+    public string HttpsProxy { get; set; } = "";
+    public string NoProxy { get; set; } = "";
 }

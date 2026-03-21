@@ -24,6 +24,15 @@ public partial class ScriptPodService
         if (string.IsNullOrEmpty(allLogs))
             return new List<ProcessOutput>();
 
+        if (allLogs.Length < ctx.LastReadLogLength)
+        {
+            Log.Warning("Log truncation detected for ticket {TicketId} (expected ≥{Expected}, got {Actual}). Kubelet may have rotated logs.",
+                ctx.TicketId, ctx.LastReadLogLength, allLogs.Length);
+
+            ctx.LogTruncationDetected = true;
+            ctx.LastReadLogLength = 0;
+        }
+
         var newContent = allLogs.Length > ctx.LastReadLogLength
             ? allLogs[((int)ctx.LastReadLogLength)..]
             : string.Empty;

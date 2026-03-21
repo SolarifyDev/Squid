@@ -16,8 +16,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     private readonly ConcurrentDictionary<string, ScriptPodContext> _scripts = new();
     private readonly ConcurrentDictionary<string, ScriptStatusResponse> _terminalResults = new();
     private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
-    private readonly ConcurrentDictionary<string, StartScriptCommand> _pendingScripts = new();
+    private readonly ConcurrentDictionary<string, PendingScript> _pendingScripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
+    private readonly TimeSpan _mutexTimeout;
+
+    public record PendingScript(StartScriptCommand Command, DateTimeOffset EnqueuedAt);
 
     public ScriptPodService(
         TentacleSettings tentacleSettings,
@@ -27,6 +30,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         _tentacleSettings = tentacleSettings;
         _kubernetesSettings = kubernetesSettings;
         _podManager = podManager;
+        _mutexTimeout = TimeSpan.FromMinutes(kubernetesSettings.IsolationMutexTimeoutMinutes);
     }
 
     public ScriptTicket StartScript(StartScriptCommand command)
@@ -46,7 +50,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         }
         else
         {
-            _pendingScripts[ticketId] = command;
+            _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
             Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
         }
 
@@ -107,8 +111,25 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         if (_terminalResults.TryGetValue(request.Ticket.TaskId, out var terminal))
             return terminal;
 
-        if (_pendingScripts.ContainsKey(request.Ticket.TaskId))
+        if (_pendingScripts.TryGetValue(request.Ticket.TaskId, out var pending))
         {
+            var age = DateTimeOffset.UtcNow - pending.EnqueuedAt;
+
+            if (age > _mutexTimeout)
+            {
+                if (_pendingScripts.TryRemove(request.Ticket.TaskId, out _))
+                {
+                    Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex",
+                        request.Ticket.TaskId, age.TotalMinutes);
+
+                    InjectTerminalResult(request.Ticket.TaskId, ScriptExitCodes.Timeout,
+                        new List<ProcessOutput> { new(ProcessOutputSource.StdErr,
+                            $"Script timed out waiting for isolation mutex after {age.TotalMinutes:F0} minutes") });
+
+                    return _terminalResults[request.Ticket.TaskId];
+                }
+            }
+
             var pendingLogs = request.LastLogSequence == 0
                 ? new List<ProcessOutput> { new(ProcessOutputSource.StdOut, "Waiting for isolation mutex...") }
                 : new List<ProcessOutput>();
@@ -130,6 +151,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         var state = MapPhaseToState(phase);
         var exitCode = state == ProcessState.Complete
             ? _podManager.GetPodExitCode(ctx.PodName) : 0;
+
+        if (phase is "Succeeded" or "Failed" && ctx.LogTruncationDetected && !ctx.EosDetected)
+        {
+            logs.Insert(0, new ProcessOutput(ProcessOutputSource.StdErr,
+                "Log rotation detected — script output may be incomplete. Exit code determined from pod phase."));
+        }
 
         return new ScriptStatusResponse(request.Ticket, state, exitCode, logs, ctx.LogSequence);
     }
@@ -162,7 +189,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
-        if (_pendingScripts.TryRemove(command.Ticket.TaskId, out _))
+        if (_pendingScripts.TryRemove(command.Ticket.TaskId, out var _))
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
 
         try
@@ -185,7 +212,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
     public ConcurrentDictionary<string, ScriptPodContext> ActiveScripts => _scripts;
 
-    public ConcurrentDictionary<string, StartScriptCommand> PendingScripts => _pendingScripts;
+    public ConcurrentDictionary<string, PendingScript> PendingScripts => _pendingScripts;
 
     public ConcurrentDictionary<string, IDisposable> MutexLocks => _mutexLocks;
 
@@ -225,10 +252,26 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         {
             if (launchedWriter) break;
 
-            if (!_isolationMutex.TryAcquire(kvp.Value, out var handle))
+            var age = DateTimeOffset.UtcNow - kvp.Value.EnqueuedAt;
+
+            if (age > _mutexTimeout)
+            {
+                if (_pendingScripts.TryRemove(kvp.Key, out _))
+                {
+                    Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex",
+                        kvp.Key, age.TotalMinutes);
+                    InjectTerminalResult(kvp.Key, ScriptExitCodes.Timeout,
+                        new List<ProcessOutput> { new(ProcessOutputSource.StdErr,
+                            $"Script timed out waiting for isolation mutex after {age.TotalMinutes:F0} minutes") });
+                }
+
+                continue;
+            }
+
+            if (!_isolationMutex.TryAcquire(kvp.Value.Command, out var handle))
                 continue;
 
-            if (!_pendingScripts.TryRemove(kvp.Key, out var command))
+            if (!_pendingScripts.TryRemove(kvp.Key, out var pending))
             {
                 handle!.Dispose();
                 continue;
@@ -238,7 +281,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
 
             try
             {
-                LaunchScript(kvp.Key, command);
+                LaunchScript(kvp.Key, pending.Command);
             }
             catch (Exception ex)
             {
@@ -251,7 +294,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
                 continue;
             }
 
-            if (command.Isolation == ScriptIsolationLevel.FullIsolation)
+            if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)
                 launchedWriter = true;
         }
     }

@@ -10,21 +10,24 @@ namespace Squid.Tentacle.Kubernetes;
 public class KubernetesPodMonitor
 {
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(300);
-    private static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan PendingPodTimeout = TimeSpan.FromMinutes(5);
 
     private readonly KubernetesPodManager _podManager;
     private readonly ScriptPodService _scriptPodService;
     private readonly TentacleSettings _tentacleSettings;
+    private readonly TimeSpan _pendingPodTimeout;
+    private readonly TimeSpan _orphanAge;
 
     public KubernetesPodMonitor(
         KubernetesPodManager podManager,
         ScriptPodService scriptPodService,
-        TentacleSettings tentacleSettings)
+        TentacleSettings tentacleSettings,
+        KubernetesSettings kubernetesSettings)
     {
         _podManager = podManager;
         _scriptPodService = scriptPodService;
         _tentacleSettings = tentacleSettings;
+        _pendingPodTimeout = TimeSpan.FromMinutes(kubernetesSettings.PendingPodTimeoutMinutes);
+        _orphanAge = TimeSpan.FromMinutes(kubernetesSettings.OrphanCleanupMinutes);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -64,7 +67,7 @@ public class KubernetesPodMonitor
             if (createdAt == null) continue;
 
             var age = DateTime.UtcNow - createdAt.Value;
-            if (age < PendingPodTimeout) continue;
+            if (age < _pendingPodTimeout) continue;
 
             string ticketId = null;
             pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
@@ -122,7 +125,7 @@ public class KubernetesPodMonitor
 
         var age = DateTime.UtcNow - finishedAt.Value;
 
-        if (age < OrphanAge)
+        if (age < _orphanAge)
             return;
 
         if (ticketId != null && activeTickets.ContainsKey(ticketId))
@@ -145,7 +148,7 @@ public class KubernetesPodMonitor
 
         var age = DateTime.UtcNow - startedAt.Value;
 
-        if (age < OrphanAge)
+        if (age < _orphanAge)
             return;
 
         Log.Information("Cleaning up stale running pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m, no active ticket)",
@@ -170,7 +173,7 @@ public class KubernetesPodMonitor
             var dirInfo = new DirectoryInfo(dir);
             var age = DateTime.UtcNow - dirInfo.LastWriteTimeUtc;
 
-            if (age < OrphanAge)
+            if (age < _orphanAge)
                 continue;
 
             try
