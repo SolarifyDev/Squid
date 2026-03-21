@@ -70,6 +70,11 @@ public partial class KubernetesPodManager
             Log.Warning("Pod {PodName} not found", podName);
             return PhaseNotFound;
         }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read phase for pod {PodName}, treating as Running", podName);
+            return null;
+        }
     }
 
     public int GetPodExitCode(string podName)
@@ -99,9 +104,9 @@ public partial class KubernetesPodManager
     {
         try
         {
-            var stream = _ops.ReadPodLog(podName, _settings.TentacleNamespace, "script");
-
+            using var stream = _ops.ReadPodLog(podName, _settings.TentacleNamespace, "script");
             using var reader = new StreamReader(stream);
+
             return reader.ReadToEnd();
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.BadRequest && ex.Response.Content?.Contains("PodInitializing") == true)

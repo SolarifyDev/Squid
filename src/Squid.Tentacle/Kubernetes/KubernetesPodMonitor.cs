@@ -72,22 +72,22 @@ public class KubernetesPodMonitor
             string ticketId = null;
             pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
 
-            if (ticketId == null || !activeTickets.ContainsKey(ticketId)) continue;
+            if (ticketId == null) continue;
 
             var podName = pod.Metadata.Name;
+
+            // Atomic remove — if another thread already completed this ticket, TryRemove returns false and we skip
+            if (!activeTickets.TryRemove(ticketId, out var ctx)) continue;
 
             Log.Warning("Pod {PodName} stuck in Pending for {AgeMinutes:F0}m, marking as failed (ticket {TicketId})",
                 podName, age.TotalMinutes, ticketId);
 
-            if (activeTickets.TryRemove(ticketId, out var ctx))
-            {
-                _podManager.DeletePod(podName);
+            _podManager.DeletePod(podName);
 
-                var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
-                    $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
+            var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
+                $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
 
-                _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
-            }
+            _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
         }
     }
 

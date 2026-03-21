@@ -26,6 +26,8 @@ public interface IMachineDataProvider : IScopedDependency
     Task<bool> ExistsBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default);
 
     Task<List<Machine>> GetTrustedPollingMachinesAsync(CancellationToken cancellationToken = default);
+
+    Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default);
 }
 
 public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IMachineDataProvider
@@ -106,6 +108,14 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     {
         return await repository
             .QueryNoTracking<Machine>(m => !string.IsNullOrEmpty(m.Thumbprint) && !m.IsDisabled)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default)
+    {
+        return await repository
+            .Query<Machine>(m => m.MachinePolicyId == policyId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

@@ -80,7 +80,7 @@ public class KubernetesAgentHealthCheckStrategyTests
     {
         var machine = new Machine { Id = 1, Name = "agent", Endpoint = """{"communicationStyle":"KubernetesAgent"}""" };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("missing SubscriptionId or Thumbprint");
@@ -107,7 +107,7 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeTrue();
         result.Detail.ShouldContain("Agent connected");
@@ -131,7 +131,7 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("null capabilities");
@@ -154,7 +154,7 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("Connection refused");

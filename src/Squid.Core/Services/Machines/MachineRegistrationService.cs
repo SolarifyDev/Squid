@@ -19,17 +19,20 @@ public interface IMachineRegistrationService : IScopedDependency
 public partial class MachineRegistrationService : IMachineRegistrationService
 {
     private readonly IMachineDataProvider _dataProvider;
+    private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly IEnvironmentDataProvider _environmentDataProvider;
     private readonly HalibutRuntime _halibutRuntime;
     private readonly SelfCertSetting _selfCertSetting;
 
     public MachineRegistrationService(
         IMachineDataProvider dataProvider,
+        IMachinePolicyDataProvider policyDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
         HalibutRuntime halibutRuntime,
         SelfCertSetting selfCertSetting)
     {
         _dataProvider = dataProvider;
+        _policyDataProvider = policyDataProvider;
         _environmentDataProvider = environmentDataProvider;
         _halibutRuntime = halibutRuntime;
         _selfCertSetting = selfCertSetting;
@@ -82,6 +85,17 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         var roles = csvRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
         return JsonSerializer.Serialize(roles);
+    }
+
+    private async Task AssignDefaultPolicyAsync(Machine machine, CancellationToken cancellationToken)
+    {
+        if (machine.MachinePolicyId != null) return;
+
+        var defaultPolicy = await _policyDataProvider.GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+        if (defaultPolicy == null) return;
+
+        machine.MachinePolicyId = defaultPolicy.Id;
     }
 
     private string GetServerThumbprint()

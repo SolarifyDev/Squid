@@ -46,7 +46,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         if (_isolationMutex.TryAcquire(command, out var mutexLock))
         {
             _mutexLocks[ticketId] = mutexLock!;
-            LaunchScript(ticketId, command);
+
+            try
+            {
+                LaunchScript(ticketId, command);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to launch script for ticket {TicketId}", ticketId);
+                InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, ex.Message) });
+
+                if (_mutexLocks.TryRemove(ticketId, out var failedLock))
+                    failedLock.Dispose();
+            }
         }
         else
         {

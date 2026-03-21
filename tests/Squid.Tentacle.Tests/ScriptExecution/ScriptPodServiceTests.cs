@@ -728,6 +728,62 @@ public class ScriptPodServiceTests : IDisposable
         status.Logs.ShouldContain(l => l.Text.Contains("Waiting for isolation mutex..."));
     }
 
+    // ========== LaunchScript Failure Handling ==========
+
+    [Fact]
+    public void StartScript_LaunchFails_InjectsTerminalResultAndReleasesMutex()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Throws(new InvalidOperationException("K8s API unavailable"));
+
+        var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
+        var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
+        var ticket = service.StartScript(MakeCommand("echo fail"));
+
+        // Should not be in active scripts (launch failed)
+        service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeFalse();
+
+        // Should have a terminal result
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("K8s API unavailable"));
+    }
+
+    [Fact]
+    public void StartScript_LaunchFails_MutexReleasedSoNextScriptCanStart()
+    {
+        var callCount = 0;
+        var ops = new Mock<IKubernetesPodOperations>();
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Returns((V1Pod pod, string ns) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("Transient error");
+                return pod;
+            });
+
+        var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
+        var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
+        var command = MakeIsolatedCommand("echo test", "fail-release-mutex");
+
+        // First script fails during launch
+        var ticket1 = service.StartScript(command);
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeFalse();
+
+        // Second script should acquire mutex and launch successfully (mutex was released)
+        var ticket2 = service.StartScript(command);
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        service.PendingScripts.ShouldBeEmpty();
+    }
+
     // ========== Helpers ==========
 
     private ScriptPodService CreateService()

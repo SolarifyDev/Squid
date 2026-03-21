@@ -10,6 +10,8 @@ public interface IMachineService : IScopedDependency
 {
     Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken);
 
+    Task<UpdateMachineResponse> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken);
+
     Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken);
 }
 
@@ -39,6 +41,40 @@ public class MachineService : IMachineService
                 Machines = _mapper.Map<List<MachineDto>>(data)
             }
         };
+    }
+
+    public async Task<UpdateMachineResponse> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken)
+    {
+        var machine = await _machineDataProvider.GetMachinesByIdAsync(command.MachineId, cancellationToken).ConfigureAwait(false);
+
+        if (machine == null)
+            throw new InvalidOperationException($"Machine {command.MachineId} not found");
+
+        ApplyUpdate(machine, command);
+
+        await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Updated machine {MachineName} (Id={MachineId})", machine.Name, machine.Id);
+
+        return new UpdateMachineResponse { Data = _mapper.Map<MachineDto>(machine) };
+    }
+
+    private static void ApplyUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    {
+        if (command.Name != null)
+            machine.Name = command.Name;
+
+        if (command.IsDisabled.HasValue)
+            machine.IsDisabled = command.IsDisabled.Value;
+
+        if (command.Roles != null)
+            machine.Roles = System.Text.Json.JsonSerializer.Serialize(command.Roles);
+
+        if (command.EnvironmentIds != null)
+            machine.EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(command.EnvironmentIds);
+
+        if (command.MachinePolicyId.HasValue)
+            machine.MachinePolicyId = command.MachinePolicyId.Value;
     }
 
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)
