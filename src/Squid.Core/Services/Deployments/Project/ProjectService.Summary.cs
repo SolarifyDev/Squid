@@ -165,6 +165,11 @@ public partial class ProjectService
             .Distinct()
             .ToList();
 
+        var channelIds = deployments
+            .Select(d => d.ChannelId)
+            .Distinct()
+            .ToList();
+
         var tasks = await _repository
             .QueryNoTracking<ServerTaskEntity>(t => taskIds.Contains(t.Id))
             .ToListAsync(ct).ConfigureAwait(false);
@@ -173,23 +178,47 @@ public partial class ProjectService
             .QueryNoTracking<ReleaseEntity>(r => releaseIds.Contains(r.Id))
             .ToListAsync(ct).ConfigureAwait(false);
 
+        var channels = await _channelDataProvider.GetChannelsAsync(channelIds, ct).ConfigureAwait(false);
+
         var taskMap = tasks.ToDictionary(t => t.Id);
         var releaseMap = releases.ToDictionary(r => r.Id);
+        var channelMap = channels.ToDictionary(c => c.Id);
+        var discreteProjectIds = projects.Where(p => p.DiscreteChannelRelease).Select(p => p.Id).ToHashSet();
 
-        return deployments
-            .GroupBy(d => (d.ProjectId, d.EnvironmentId))
-            .Select(g => g.OrderByDescending(d => d.CreatedDate).First())
+        var latestDeployments = SelectLatestDeployments(deployments, discreteProjectIds);
+
+        return latestDeployments
             .Where(d => d.TaskId.HasValue && taskMap.ContainsKey(d.TaskId.Value) && releaseMap.ContainsKey(d.ReleaseId))
-            .Select(d => BuildDashboardItem(d, taskMap[d.TaskId.Value], releaseMap[d.ReleaseId]))
+            .Select(d => BuildDashboardItem(d, taskMap[d.TaskId.Value], releaseMap[d.ReleaseId], channelMap))
             .ToList();
     }
 
-    private static ProjectDashboardItemDto BuildDashboardItem(Deployment deployment, ServerTaskEntity task, ReleaseEntity release)
+    private static List<Deployment> SelectLatestDeployments(List<Deployment> deployments, HashSet<int> discreteProjectIds)
     {
+        var discrete = deployments
+            .Where(d => discreteProjectIds.Contains(d.ProjectId))
+            .GroupBy(d => (d.ProjectId, d.EnvironmentId, d.ChannelId))
+            .Select(g => g.OrderByDescending(d => d.CreatedDate).First());
+
+        var standard = deployments
+            .Where(d => !discreteProjectIds.Contains(d.ProjectId))
+            .GroupBy(d => (d.ProjectId, d.EnvironmentId))
+            .Select(g => g.OrderByDescending(d => d.CreatedDate).First());
+
+        return discrete.Concat(standard).ToList();
+    }
+
+    private static ProjectDashboardItemDto BuildDashboardItem(Deployment deployment, ServerTaskEntity task, ReleaseEntity release, Dictionary<int, Persistence.Entities.Deployments.Channel> channelMap)
+    {
+        channelMap.TryGetValue(deployment.ChannelId, out var channel);
+
         return new ProjectDashboardItemDto
         {
+            DeploymentId = deployment.Id,
             ProjectId = deployment.ProjectId,
             EnvironmentId = deployment.EnvironmentId,
+            ChannelId = deployment.ChannelId,
+            ChannelName = channel?.Name ?? string.Empty,
             ReleaseVersion = release.Version,
             State = task.State,
             CompletedTime = task.CompletedTime,

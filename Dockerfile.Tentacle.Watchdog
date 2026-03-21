@@ -1,0 +1,21 @@
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+ARG TARGETARCH
+WORKDIR /src
+
+COPY NuGet.Config .
+COPY src/Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj Squid.Tentacle.Watchdog/
+RUN dotnet restore Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj
+
+COPY src/Squid.Tentacle.Watchdog/ Squid.Tentacle.Watchdog/
+RUN dotnet publish Squid.Tentacle.Watchdog/Squid.Tentacle.Watchdog.csproj -c Release -o /app --no-restore
+
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/runtime:9.0-alpine
+WORKDIR /app
+COPY --from=build /app .
+
+ENV WATCHDOG_DIRECTORY=/squid/work
+ENV WATCHDOG_LOOP_SECONDS=5
+ENV WATCHDOG_INITIAL_BACKOFF_SECONDS=0.5
+ENV WATCHDOG_TIMEOUT_SECONDS=10
+
+ENTRYPOINT ["dotnet", "Squid.Tentacle.Watchdog.dll"]

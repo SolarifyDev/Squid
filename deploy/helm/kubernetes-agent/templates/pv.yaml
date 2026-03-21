@@ -1,0 +1,23 @@
+{{- if .Values.workspace.nfs.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "kubernetes-agent.fullname" . }}-pv
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.workspace.size }}
+  accessModes:
+    {{- toYaml .Values.workspace.accessModes | nindent 4 }}
+  {{- with .Values.workspace.nfs.mountOptions }}
+  mountOptions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  nfs:
+    server: {{ .Values.workspace.nfs.server }}
+    path: {{ .Values.workspace.nfs.path }}
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ include "kubernetes-agent.pvc-name" . }}
+{{- end }}

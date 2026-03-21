@@ -7,8 +7,13 @@ metadata:
 spec:
   accessModes:
     {{- toYaml .Values.workspace.accessModes | nindent 4 }}
+  {{- if .Values.workspace.nfs.enabled }}
+  volumeName: {{ include "kubernetes-agent.fullname" . }}-pv
+  {{- end }}
   {{- if .Values.workspace.storageClassName }}
   storageClassName: {{ .Values.workspace.storageClassName }}
+  {{- else if .Values.workspace.nfs.enabled }}
+  storageClassName: ""
   {{- end }}
   resources:
     requests:

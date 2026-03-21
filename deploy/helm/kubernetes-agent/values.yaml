@@ -5,6 +5,8 @@ tentacle:
     pullPolicy: IfNotPresent
   serverUrl: ""
   serverCommsUrl: ""
+  serverCommsAddresses: []
+  pollingConnectionCount: 5
   bearerToken: ""
   apiKey: ""
   serverCertificate: ""
@@ -73,3 +75,29 @@ workspace:
   size: 10Gi
   accessModes:
     - ReadWriteMany
+  nfs:
+    enabled: false
+    server: ""
+    path: "/squid-workspace"
+    mountOptions:
+      - soft
+      - timeo=50
+      - retrans=4
+      - lookupcache=none
+
+watchdog:
+  enabled: true
+  image:
+    repository: squidcd/squid-watchdog
+    tag: ""
+    pullPolicy: IfNotPresent
+  loopSeconds: ""
+  initialBackoffSeconds: ""
+  timeoutSeconds: ""
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "50m"

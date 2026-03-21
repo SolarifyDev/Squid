@@ -98,7 +98,15 @@ public partial class ReleaseService : IReleaseService
         if (channel.SpaceId != project.SpaceId)
             throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
 
-        await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
+        if (command.IgnoreChannelRules)
+        {
+            if (!project.AllowIgnoreChannelRules)
+                throw new ChannelRulesCannotBeIgnoredException(project.Id);
+        }
+        else
+        {
+            await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
+        }
 
         var existingRelease = await _releaseDataProvider
             .GetReleaseByVersionAsync(command.ProjectId, command.ChannelId, command.Version, cancellationToken).ConfigureAwait(false);

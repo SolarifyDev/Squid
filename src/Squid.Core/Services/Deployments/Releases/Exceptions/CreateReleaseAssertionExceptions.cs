@@ -66,6 +66,17 @@ public sealed class ReleaseSpaceMismatchException : CreateReleaseAssertionExcept
     }
 }
 
+public sealed class ChannelRulesCannotBeIgnoredException : CreateReleaseAssertionException
+{
+    public int ProjectId { get; }
+
+    public ChannelRulesCannotBeIgnoredException(int projectId)
+        : base($"Project {projectId} does not allow ignoring channel rules")
+    {
+        ProjectId = projectId;
+    }
+}
+
 public sealed class ReleaseDuplicateVersionException : CreateReleaseAssertionException
 {
     public int ProjectId { get; }

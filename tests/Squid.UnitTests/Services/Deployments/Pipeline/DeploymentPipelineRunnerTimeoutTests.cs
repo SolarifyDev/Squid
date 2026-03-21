@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.Deployments.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -12,6 +13,7 @@ public class DeploymentPipelineRunnerTimeoutTests
     private readonly Mock<IDeploymentLifecycle> _lifecycle = new();
     private readonly Mock<IDeploymentCompletionHandler> _completion = new();
     private readonly TaskCancellationRegistry _registry = new();
+    private readonly Mock<IServerTaskDataProvider> _taskDataProvider = new();
 
     [Fact]
     public async Task Timeout_CallsOnFailure_WithDeploymentTimeoutException()
@@ -91,7 +93,7 @@ public class DeploymentPipelineRunnerTimeoutTests
 
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry)
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object)
         {
             DeploymentTimeout = TimeSpan.FromMilliseconds(50)
         };
