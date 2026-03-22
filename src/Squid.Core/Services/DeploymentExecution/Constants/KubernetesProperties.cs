@@ -30,6 +30,7 @@ internal static class KubernetesProperties
     internal const string PodSecuritySeLinuxType = "Squid.Action.KubernetesContainers.PodSecuritySeLinuxType";
     internal const string PodSecuritySeLinuxUser = "Squid.Action.KubernetesContainers.PodSecuritySeLinuxUser";
     internal const string DeploymentStyle = "Squid.Action.KubernetesContainers.DeploymentStyle";
+    internal const string BlueGreenActiveSlot = "Squid.Action.KubernetesContainers.BlueGreenActiveSlot";
     internal const string MaxUnavailable = "Squid.Action.KubernetesContainers.MaxUnavailable";
     internal const string MaxSurge = "Squid.Action.KubernetesContainers.MaxSurge";
     internal const string DeploymentLabels = "Squid.Action.KubernetesContainers.DeploymentLabels";
@@ -363,6 +364,7 @@ internal static class KubernetesImagePullSecretPayloadProperties
 internal static class KubernetesLabelKeys
 {
     internal const string App = "app";
+    internal const string DeploymentSlot = "squid.io/deployment-slot";
 }
 
 internal static class KubernetesBooleanValues
@@ -381,6 +383,7 @@ internal static class KubernetesDeploymentStrategyValues
 {
     internal const string Recreate = "Recreate";
     internal const string RollingUpdate = "RollingUpdate";
+    internal const string BlueGreen = "BlueGreen";
 }
 
 internal static class KubernetesPodDefaultValues

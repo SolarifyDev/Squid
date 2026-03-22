@@ -15,6 +15,7 @@ CLIENT_CERT_PATH=""
 CLIENT_KEY_PATH=""
 GKE_KEY_FILE=""
 AWS_WEB_IDENTITY_FILE=""
+CRED_FILE=""
 
 cleanup() {
     rm -f "$KUBECONFIG_PATH" 2>/dev/null || true
@@ -23,6 +24,7 @@ cleanup() {
     rm -f "$CLIENT_KEY_PATH" 2>/dev/null || true
     rm -f "$GKE_KEY_FILE" 2>/dev/null || true
     rm -f "$AWS_WEB_IDENTITY_FILE" 2>/dev/null || true
+    rm -f "$CRED_FILE" 2>/dev/null || true
     if [ -n "$AZURE_CONFIG_DIR" ] && [ -d "$AZURE_CONFIG_DIR" ]; then
         rm -rf "$AZURE_CONFIG_DIR" 2>/dev/null || true
     fi
@@ -56,13 +58,17 @@ fi
 # Set credentials based on account type
 case "$ACCOUNT_TYPE" in
     "Token")
-        TOKEN="{{Token}}"
+        CRED_FILE="$(mktemp /tmp/cred-token-XXXXXX)"
+        echo -n "{{Token}}" > "$CRED_FILE"
+        TOKEN="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" --token="$TOKEN" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "UsernamePassword")
+        CRED_FILE="$(mktemp /tmp/cred-pass-XXXXXX)"
+        echo -n "{{Password}}" > "$CRED_FILE"
         AUTH_USERNAME="{{Username}}"
-        AUTH_PASSWORD="{{Password}}"
+        AUTH_PASSWORD="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" --username="$AUTH_USERNAME" --password="$AUTH_PASSWORD" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
@@ -79,8 +85,10 @@ case "$ACCOUNT_TYPE" in
     "AmazonWebServicesAccount")
         AWS_CLUSTER_NAME="{{AwsClusterName}}"
         AWS_REGION="{{AwsRegion}}"
+        CRED_FILE="$(mktemp /tmp/cred-aws-XXXXXX)"
+        echo -n "{{SecretKey}}" > "$CRED_FILE"
         export AWS_ACCESS_KEY_ID="{{AccessKey}}"
-        export AWS_SECRET_ACCESS_KEY="{{SecretKey}}"
+        export AWS_SECRET_ACCESS_KEY="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
             --exec-api-version=client.authentication.k8s.io/v1beta1 \
             --exec-command=aws \
@@ -107,8 +115,10 @@ case "$ACCOUNT_TYPE" in
     "AzureServicePrincipal")
         AZURE_CONFIG_DIR="$(mktemp -d /tmp/azure-cli-XXXXXX)"
         export AZURE_CONFIG_DIR
+        CRED_FILE="$(mktemp /tmp/cred-azure-XXXXXX)"
+        echo -n "{{AzureKey}}" > "$CRED_FILE"
         az login --service-principal \
-            -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}" \
+            -u "{{AzureClientId}}" -p "$(cat "$CRED_FILE")" --tenant "{{AzureTenantId}}" \
             || { echo "ERROR: az login failed" >&2; exit 1; }
         az account set --subscription "{{AzureSubscriptionId}}" \
             || { echo "ERROR: az account set failed" >&2; exit 1; }

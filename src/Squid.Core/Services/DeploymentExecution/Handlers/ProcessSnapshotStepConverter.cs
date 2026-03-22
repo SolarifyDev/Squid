@@ -20,7 +20,7 @@ public static class ProcessSnapshotStepConverter
                 StepType = stepSnap.StepType,
                 Condition = stepSnap.Condition,
                 StartTrigger = stepSnap.StartTrigger ?? string.Empty,
-                PackageRequirement = string.Empty,
+                PackageRequirement = stepSnap.PackageRequirement ?? string.Empty,
                 IsDisabled = stepSnap.IsDisabled,
                 IsRequired = stepSnap.IsRequired,
                 CreatedDate = stepSnap.CreatedDate,

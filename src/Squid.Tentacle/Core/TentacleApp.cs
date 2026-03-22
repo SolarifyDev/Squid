@@ -59,8 +59,9 @@ public sealed class TentacleApp
             registration.MachineId, registration.ServerThumbprint);
 
         var scriptService = new BackendScriptServiceAdapter(runtime.ScriptBackend);
+        var capabilitiesService = new CapabilitiesService(runtime.Metadata);
 
-        await using var halibutHost = _dependencies.HalibutHostFactory(tentacleCert, scriptService, tentacleSettings);
+        await using var halibutHost = _dependencies.HalibutHostFactory(tentacleCert, scriptService, tentacleSettings, capabilitiesService);
 
         if (runtime.CommunicationMode == TentacleCommunicationMode.Polling)
         {
@@ -173,8 +174,8 @@ public sealed class TentacleAppDependencies
     public Func<IEnumerable<ITentacleFlavor>, TentacleFlavorResolver> FlavorResolverFactory { get; init; } =
         flavors => new TentacleFlavorResolver(flavors);
 
-    public Func<X509Certificate2, Squid.Message.Contracts.Tentacle.IScriptService, TentacleSettings, ITentacleHalibutHost> HalibutHostFactory { get; init; } =
-        (cert, scriptService, settings) => new TentacleHalibutHost(cert, scriptService, settings);
+    public Func<X509Certificate2, Squid.Message.Contracts.Tentacle.IScriptService, TentacleSettings, Squid.Message.Contracts.Tentacle.ICapabilitiesService, ITentacleHalibutHost> HalibutHostFactory { get; init; } =
+        (cert, scriptService, settings, capabilitiesService) => new TentacleHalibutHost(cert, scriptService, settings, capabilitiesService);
 
     public Func<int, Func<bool>, IHealthCheckServer> HealthCheckServerFactory { get; init; } =
         (port, readiness) => new HealthCheckServer(port, readiness);

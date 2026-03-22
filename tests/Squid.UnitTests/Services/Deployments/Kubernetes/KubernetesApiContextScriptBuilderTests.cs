@@ -975,4 +975,79 @@ public class KubernetesApiContextScriptBuilderTests
 
         result.ShouldContain("KUBECONFIG");
     }
+
+    // === File-Based Credential Passing ===
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Token_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-token-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-token-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Password_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", UsernamePasswordContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-pass-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-pass-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_AwsSecretKey_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-aws-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-aws-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Token_CredFileCleanedUp(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+            result.ShouldContain("rm -f \"$CRED_FILE\"");
+        else
+            result.ShouldContain("$credFile)");
+    }
 }

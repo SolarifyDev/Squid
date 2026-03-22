@@ -47,6 +47,23 @@ public static class DiskSpaceChecker
         }
     }
 
+    public static WorkspaceUsage GetWorkspaceUsage(string path)
+    {
+        var (available, total) = GetDiskSpace(path);
+
+        if (total <= 0)
+            return new WorkspaceUsage(0, 0, 0);
+
+        var used = total - available;
+        return new WorkspaceUsage(used, total, available);
+    }
+
+    public record WorkspaceUsage(long UsedBytes, long TotalBytes, long FreeBytes)
+    {
+        public double FreePercentage => TotalBytes > 0 ? (double)FreeBytes / TotalBytes : 0;
+        public bool IsLowSpace => TotalBytes > 0 && FreePercentage < MinFreePercentage;
+    }
+
     internal static string FormatBytes(long bytes)
     {
         return bytes switch

@@ -1,6 +1,7 @@
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Health;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
 using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
@@ -14,20 +15,25 @@ public class KubernetesPodMonitor
     private readonly KubernetesPodManager _podManager;
     private readonly ScriptPodService _scriptPodService;
     private readonly TentacleSettings _tentacleSettings;
+    private readonly PodDisruptionBudgetManager _pdbManager;
     private readonly TimeSpan _pendingPodTimeout;
     private readonly TimeSpan _orphanAge;
+    private readonly int _orphanGracePeriod;
 
     public KubernetesPodMonitor(
         KubernetesPodManager podManager,
         ScriptPodService scriptPodService,
         TentacleSettings tentacleSettings,
-        KubernetesSettings kubernetesSettings)
+        KubernetesSettings kubernetesSettings,
+        PodDisruptionBudgetManager pdbManager = null)
     {
         _podManager = podManager;
         _scriptPodService = scriptPodService;
         _tentacleSettings = tentacleSettings;
+        _pdbManager = pdbManager;
         _pendingPodTimeout = TimeSpan.FromMinutes(kubernetesSettings.PendingPodTimeoutMinutes);
         _orphanAge = TimeSpan.FromMinutes(kubernetesSettings.OrphanCleanupMinutes);
+        _orphanGracePeriod = kubernetesSettings.OrphanPodGracePeriodSeconds;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -42,6 +48,8 @@ public class KubernetesPodMonitor
                 FailPendingPods();
                 CleanupOrphanedPods();
                 CleanupOrphanedWorkspaces();
+                CheckWorkspaceCapacity();
+                _pdbManager?.ReconcilePdb();
             }
             catch (OperationCanceledException)
             {
@@ -82,7 +90,7 @@ public class KubernetesPodMonitor
             Log.Warning("Pod {PodName} stuck in Pending for {AgeMinutes:F0}m, marking as failed (ticket {TicketId})",
                 podName, age.TotalMinutes, ticketId);
 
-            _podManager.DeletePod(podName);
+            _podManager.DeletePod(podName, 0);
 
             var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
                 $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
@@ -94,6 +102,8 @@ public class KubernetesPodMonitor
     private void CleanupOrphanedPods()
     {
         var pods = _podManager.ListManagedPods();
+        TentacleMetrics.SetManagedPods(pods.Count);
+
         var activeTickets = _scriptPodService.ActiveScripts;
 
         foreach (var pod in pods)
@@ -132,7 +142,8 @@ public class KubernetesPodMonitor
             return;
 
         Log.Information("Cleaning up orphaned pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m)", podName, pod.Status?.Phase, age.TotalMinutes);
-        _podManager.DeletePod(podName);
+        _podManager.DeletePod(podName, 0);
+        TentacleMetrics.OrphanedPodCleaned();
     }
 
     private void CleanupStaleRunningPod(k8s.Models.V1Pod pod, string podName, string ticketId,
@@ -153,7 +164,21 @@ public class KubernetesPodMonitor
 
         Log.Information("Cleaning up stale running pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m, no active ticket)",
             podName, pod.Status?.Phase, age.TotalMinutes);
-        _podManager.DeletePod(podName);
+        _podManager.DeletePod(podName, _orphanGracePeriod);
+        TentacleMetrics.OrphanedPodCleaned();
+    }
+
+    private void CheckWorkspaceCapacity()
+    {
+        var usage = DiskSpaceChecker.GetWorkspaceUsage(_tentacleSettings.WorkspacePath);
+
+        if (usage.TotalBytes <= 0) return;
+
+        if (usage.IsLowSpace)
+        {
+            Log.Warning("Workspace disk space is low: {Free} free of {Total} ({Percentage:P1})",
+                DiskSpaceChecker.FormatBytes(usage.FreeBytes), DiskSpaceChecker.FormatBytes(usage.TotalBytes), usage.FreePercentage);
+        }
     }
 
     private void CleanupOrphanedWorkspaces()

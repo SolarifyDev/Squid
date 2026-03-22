@@ -111,7 +111,7 @@ public class KubernetesPodManagerLifecycleTests
     public void ReadPodLogs_ReturnsContent()
     {
         var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("hello world"));
-        _ops.Setup(o => o.ReadPodLog("pod-1", "test-ns", "script")).Returns(stream);
+        _ops.Setup(o => o.ReadPodLog("pod-1", "test-ns", "script", It.IsAny<DateTime?>())).Returns(stream);
 
         _manager.ReadPodLogs("pod-1").ShouldBe("hello world");
     }
@@ -119,7 +119,7 @@ public class KubernetesPodManagerLifecycleTests
     [Fact]
     public void ReadPodLogs_ExceptionThrown_ReturnsEmpty()
     {
-        _ops.Setup(o => o.ReadPodLog("pod-1", "test-ns", "script"))
+        _ops.Setup(o => o.ReadPodLog("pod-1", "test-ns", "script", It.IsAny<DateTime?>()))
             .Throws(new Exception("timeout"));
 
         _manager.ReadPodLogs("pod-1").ShouldBe(string.Empty);
@@ -132,13 +132,13 @@ public class KubernetesPodManagerLifecycleTests
     {
         _manager.DeletePod("pod-1");
 
-        _ops.Verify(o => o.DeletePod("pod-1", "test-ns"), Times.Once);
+        _ops.Verify(o => o.DeletePod("pod-1", "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
     public void DeletePod_NotFound_DoesNotThrow()
     {
-        _ops.Setup(o => o.DeletePod("missing", "test-ns"))
+        _ops.Setup(o => o.DeletePod("missing", "test-ns", It.IsAny<int?>()))
             .Throws(CreateHttpOperationException(HttpStatusCode.NotFound));
 
         Should.NotThrow(() => _manager.DeletePod("missing"));
@@ -147,7 +147,7 @@ public class KubernetesPodManagerLifecycleTests
     [Fact]
     public void DeletePod_OtherException_DoesNotThrow()
     {
-        _ops.Setup(o => o.DeletePod("pod-1", "test-ns"))
+        _ops.Setup(o => o.DeletePod("pod-1", "test-ns", It.IsAny<int?>()))
             .Throws(new Exception("network error"));
 
         Should.NotThrow(() => _manager.DeletePod("pod-1"));
@@ -229,8 +229,12 @@ public class KubernetesPodManagerLifecycleTests
         _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
     }
 
-    [Fact]
-    public void CreatePod_PodAlreadyExists_SkipsCreate()
+    [Theory]
+    [InlineData("Running", false)]
+    [InlineData("Pending", false)]
+    [InlineData("Succeeded", true)]
+    [InlineData("Failed", true)]
+    public void CreatePod_PodAlreadyExists_ChecksPhaseBeforeReuse(string phase, bool shouldRecreate)
     {
         var ticketId = "abcdef123456extra";
 
@@ -242,6 +246,45 @@ public class KubernetesPodManagerLifecycleTests
                     new() { Metadata = new V1ObjectMeta { Name = "squid-script-existing" } }
                 }
             });
+
+        _ops.Setup(o => o.ReadPodStatus("squid-script-existing", "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = phase } });
+
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var podName = _manager.CreatePod(ticketId);
+
+        if (shouldRecreate)
+        {
+            _ops.Verify(o => o.DeletePod("squid-script-existing", "test-ns", It.IsAny<int?>()), Times.Once);
+            _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
+            podName.ShouldStartWith("squid-script-");
+        }
+        else
+        {
+            podName.ShouldBe("squid-script-existing");
+            _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()), Times.Never);
+            _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        }
+    }
+
+    [Fact]
+    public void CreatePod_ExistingPodPhaseNull_ReusesDefensively()
+    {
+        var ticketId = "abcdef123456extra";
+
+        _ops.Setup(o => o.ListPods("test-ns", $"squid.io/ticket-id={ticketId}"))
+            .Returns(new V1PodList
+            {
+                Items = new List<V1Pod>
+                {
+                    new() { Metadata = new V1ObjectMeta { Name = "squid-script-existing" } }
+                }
+            });
+
+        _ops.Setup(o => o.ReadPodStatus("squid-script-existing", "test-ns"))
+            .Throws(new Exception("api error"));
 
         var podName = _manager.CreatePod(ticketId);
 
@@ -275,6 +318,103 @@ public class KubernetesPodManagerLifecycleTests
         manager.ListManagedPods();
 
         ops.Verify(o => o.ListPods("test-ns", "app.kubernetes.io/managed-by=kubernetes-agent,app.kubernetes.io/instance=squid-prod"), Times.Once);
+    }
+
+    // === Multi-Namespace ===
+
+    [Fact]
+    public void CreatePod_NoOverride_UsesDefault()
+    {
+        SetupNoPodFound();
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        _manager.CreatePod("abcdef123456extra");
+
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void CreatePod_WithOverride_UsesProvided()
+    {
+        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        _manager.CreatePod("abcdef123456extra", "custom-ns");
+
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void GetPodPhase_WithOverride_UsesProvided()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "custom-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Running" } });
+
+        _manager.GetPodPhase("pod-1", "custom-ns").ShouldBe("Running");
+
+        _ops.Verify(o => o.ReadPodStatus("pod-1", "custom-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void DeletePod_WithOverride_UsesProvided()
+    {
+        _manager.DeletePod("pod-1", targetNamespace: "custom-ns");
+
+        _ops.Verify(o => o.DeletePod("pod-1", "custom-ns", It.IsAny<int?>()), Times.Once);
+    }
+
+    [Fact]
+    public void ReadPodLogs_WithOverride_UsesProvided()
+    {
+        var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("hello"));
+        _ops.Setup(o => o.ReadPodLog("pod-1", "custom-ns", "script", It.IsAny<DateTime?>())).Returns(stream);
+
+        _manager.ReadPodLogs("pod-1", targetNamespace: "custom-ns").ShouldBe("hello");
+
+        _ops.Verify(o => o.ReadPodLog("pod-1", "custom-ns", "script", It.IsAny<DateTime?>()), Times.Once);
+    }
+
+    [Fact]
+    public void GetPodExitCode_WithOverride_UsesProvided()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "custom-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Terminated = new V1ContainerStateTerminated { ExitCode = 42 }
+                            }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetPodExitCode("pod-1", "custom-ns").ShouldBe(42);
+    }
+
+    [Fact]
+    public void FindPodByTicket_WithOverride_UsesProvided()
+    {
+        _ops.Setup(o => o.ListPods("custom-ns", "squid.io/ticket-id=abc123"))
+            .Returns(new V1PodList
+            {
+                Items = new List<V1Pod>
+                {
+                    new() { Metadata = new V1ObjectMeta { Name = "squid-script-abc123" } }
+                }
+            });
+
+        _manager.FindPodByTicket("abc123", "custom-ns").ShouldBe("squid-script-abc123");
     }
 
     // === Helpers ===

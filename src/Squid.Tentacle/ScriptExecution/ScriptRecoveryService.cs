@@ -1,5 +1,6 @@
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Serilog;
 using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
@@ -42,6 +43,61 @@ public class ScriptRecoveryService
         return recoveredCount;
     }
 
+    public void RecoverPendingScripts(IKubernetesPodOperations podOps, KubernetesSettings settings, ScriptPodService service)
+    {
+        try
+        {
+            var configMaps = podOps.ListConfigMaps(settings.TentacleNamespace, "squid.io/context-type=pending-script");
+
+            if (configMaps?.Items == null || configMaps.Items.Count == 0)
+                return;
+
+            Log.Information("Found {Count} pending script ConfigMaps to recover", configMaps.Items.Count);
+
+            foreach (var cm in configMaps.Items)
+            {
+                try
+                {
+                    var data = cm.Data;
+                    if (data == null) continue;
+
+                    data.TryGetValue("ticketId", out var ticketId);
+                    data.TryGetValue("scriptBody", out var scriptBody);
+
+                    if (string.IsNullOrEmpty(ticketId) || string.IsNullOrEmpty(scriptBody))
+                        continue;
+
+                    data.TryGetValue("isolation", out var isolationStr);
+                    Enum.TryParse<ScriptIsolationLevel>(isolationStr, out var isolation);
+                    data.TryGetValue("isolationMutexName", out var mutexName);
+                    data.TryGetValue("targetNamespace", out var targetNamespace);
+
+                    var command = new StartScriptCommand(
+                        scriptBody, isolation, TimeSpan.FromMinutes(30),
+                        string.IsNullOrEmpty(mutexName) ? null : mutexName,
+                        Array.Empty<string>(), null)
+                    {
+                        TargetNamespace = string.IsNullOrEmpty(targetNamespace) ? null : targetNamespace
+                    };
+
+                    service.StartScript(command);
+
+                    podOps.DeleteConfigMap(cm.Metadata.Name, settings.TentacleNamespace);
+
+                    Log.Information("Recovered pending script {TicketId} from ConfigMap", ticketId);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to recover pending script from ConfigMap {Name}", cm.Metadata?.Name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to list pending script ConfigMaps for recovery");
+        }
+    }
+
     private static void RecoverScript(ScriptStateFile state, string workDir, ScriptPodService service, KubernetesPodManager podManager, ScriptIsolationMutex mutex)
     {
         var phase = podManager.GetPodPhase(state.PodName);
@@ -62,7 +118,7 @@ public class ScriptRecoveryService
 
         Log.Information("Recovered script {TicketId}: pod {PodName} still running ({Phase}), rebuilding context", state.TicketId, state.PodName, phase);
 
-        var ctx = new ScriptPodContext(state.TicketId, state.PodName, workDir, state.EosMarkerToken);
+        var ctx = new ScriptPodContext(state.TicketId, state.PodName, workDir, state.EosMarkerToken, state.Namespace);
         var mutexHandle = TryReacquireMutex(state, mutex);
 
         service.RestoreActiveScript(ctx, mutexHandle);

@@ -12,40 +12,59 @@ public partial class KubernetesPodManager
     private readonly IKubernetesPodOperations _ops;
     private readonly KubernetesSettings _settings;
     private readonly ScriptPodTemplateProvider _templateProvider;
+    private readonly PodStateCache _cache;
 
-    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null)
+    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null, PodStateCache cache = null)
     {
         _ops = ops;
         _settings = settings;
         _templateProvider = templateProvider;
+        _cache = cache;
     }
 
-    public string CreatePod(string ticketId)
+    private string ResolveNamespace(string? targetNamespace) => targetNamespace ?? _settings.TentacleNamespace;
+
+    public string CreatePod(string ticketId, string? targetNamespace = null)
     {
+        var ns = ResolveNamespace(targetNamespace);
         var podName = $"squid-script-{ticketId[..12]}";
 
-        var existingPod = FindPodByTicket(ticketId);
+        var existingPod = FindPodByTicket(ticketId, targetNamespace);
 
         if (existingPod != null)
         {
-            Log.Information("Reusing existing pod {PodName} for ticket {TicketId}", existingPod, ticketId);
-            return existingPod;
+            var phase = GetPodPhase(existingPod, targetNamespace);
+
+            if (phase is "Succeeded" or "Failed")
+            {
+                Log.Information("Pod {PodName} is terminal ({Phase}), recreating for ticket {TicketId}", existingPod, phase, ticketId);
+                DeletePod(existingPod, targetNamespace: targetNamespace);
+            }
+            else
+            {
+                Log.Information("Reusing existing pod {PodName} (phase: {Phase}) for ticket {TicketId}", existingPod, phase, ticketId);
+                return existingPod;
+            }
         }
 
         var pod = BuildPodSpec(podName, ticketId);
-        _ops.CreatePod(pod, _settings.TentacleNamespace);
+        _ops.CreatePod(pod, ns);
 
-        Log.Information("Created script pod {PodName} for ticket {TicketId}", podName, ticketId);
+        Log.Information("Created script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, ns);
 
         return podName;
     }
 
-    public string? FindPodByTicket(string ticketId)
+    public string? FindPodByTicket(string ticketId, string? targetNamespace = null)
     {
+        if (_cache != null && _cache.TryGetPodByTicket(ticketId, out var cached))
+            return cached.Metadata?.Name;
+
         try
         {
+            var ns = ResolveNamespace(targetNamespace);
             var labelSelector = $"squid.io/ticket-id={ticketId}";
-            var pods = _ops.ListPods(_settings.TentacleNamespace, labelSelector);
+            var pods = _ops.ListPods(ns, labelSelector);
 
             var existing = pods?.Items?.FirstOrDefault();
 
@@ -58,11 +77,15 @@ public partial class KubernetesPodManager
         }
     }
 
-    public string? GetPodPhase(string podName)
+    public string? GetPodPhase(string podName, string? targetNamespace = null)
     {
+        if (_cache != null && _cache.TryGetPod(podName, out var cached))
+            return cached.Status?.Phase;
+
         try
         {
-            var pod = _ops.ReadPodStatus(podName, _settings.TentacleNamespace);
+            var ns = ResolveNamespace(targetNamespace);
+            var pod = _ops.ReadPodStatus(podName, ns);
             return pod?.Status?.Phase;
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -77,11 +100,12 @@ public partial class KubernetesPodManager
         }
     }
 
-    public int GetPodExitCode(string podName)
+    public int GetPodExitCode(string podName, string? targetNamespace = null)
     {
         try
         {
-            var pod = _ops.ReadPodStatus(podName, _settings.TentacleNamespace);
+            var ns = ResolveNamespace(targetNamespace);
+            var pod = _ops.ReadPodStatus(podName, ns);
 
             var containerStatus = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
 
@@ -100,11 +124,12 @@ public partial class KubernetesPodManager
         }
     }
 
-    public string ReadPodLogs(string podName)
+    public string ReadPodLogs(string podName, DateTime? sinceTime = null, string? targetNamespace = null)
     {
         try
         {
-            using var stream = _ops.ReadPodLog(podName, _settings.TentacleNamespace, "script");
+            var ns = ResolveNamespace(targetNamespace);
+            using var stream = _ops.ReadPodLog(podName, ns, "script", sinceTime);
             using var reader = new StreamReader(stream);
 
             return reader.ReadToEnd();
@@ -121,13 +146,14 @@ public partial class KubernetesPodManager
         }
     }
 
-    public void DeletePod(string podName)
+    public void DeletePod(string podName, int? gracePeriodSeconds = null, string? targetNamespace = null)
     {
         try
         {
-            _ops.DeletePod(podName, _settings.TentacleNamespace);
+            var ns = ResolveNamespace(targetNamespace);
+            _ops.DeletePod(podName, ns, gracePeriodSeconds);
 
-            Log.Information("Deleted script pod {PodName}", podName);
+            Log.Information("Deleted script pod {PodName} (gracePeriod={GracePeriod})", podName, gracePeriodSeconds?.ToString() ?? "default");
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -139,13 +165,13 @@ public partial class KubernetesPodManager
         }
     }
 
-    public void WaitForPodTermination(string podName, TimeSpan timeout)
+    public void WaitForPodTermination(string podName, TimeSpan timeout, string? targetNamespace = null)
     {
         var deadline = DateTime.UtcNow + timeout;
 
         while (DateTime.UtcNow < deadline)
         {
-            var phase = GetPodPhase(podName);
+            var phase = GetPodPhase(podName, targetNamespace);
 
             if (phase is "Succeeded" or "Failed" or PhaseNotFound)
                 return;

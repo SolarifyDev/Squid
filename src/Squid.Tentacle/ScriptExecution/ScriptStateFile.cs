@@ -11,6 +11,7 @@ public class ScriptStateFile
     public string EosMarkerToken { get; set; } = string.Empty;
     public string Isolation { get; set; } = string.Empty;
     public string? IsolationMutexName { get; set; }
+    public string? Namespace { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
     private const string FileName = ".squid-state.json";

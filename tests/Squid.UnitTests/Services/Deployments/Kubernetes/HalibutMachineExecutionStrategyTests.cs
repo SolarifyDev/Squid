@@ -10,6 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -187,7 +188,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -206,7 +208,8 @@ public class HalibutMachineExecutionStrategyTests
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
     }
 
     [Fact]
@@ -227,7 +230,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -245,7 +249,30 @@ public class HalibutMachineExecutionStrategyTests
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
+    }
+
+    // === Request Timeout Override ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_WithRequestTimeout_UsesRequestTimeoutOverDefault()
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient(machine.Uri);
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("timeout-override"));
+
+        var request = CreateRequest(machine);
+        request.Timeout = TimeSpan.FromMinutes(10);
+
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(10));
     }
 
     // === Helpers ===

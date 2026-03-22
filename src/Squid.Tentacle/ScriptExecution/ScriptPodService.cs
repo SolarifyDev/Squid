@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using k8s.Models;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.Health;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -13,6 +15,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     private readonly TentacleSettings _tentacleSettings;
     private readonly KubernetesSettings _kubernetesSettings;
     private readonly KubernetesPodManager _podManager;
+    private readonly IKubernetesPodOperations? _podOps;
     private readonly ConcurrentDictionary<string, ScriptPodContext> _scripts = new();
     private readonly ConcurrentDictionary<string, ScriptStatusResponse> _terminalResults = new();
     private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
@@ -25,11 +28,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     public ScriptPodService(
         TentacleSettings tentacleSettings,
         KubernetesSettings kubernetesSettings,
-        KubernetesPodManager podManager)
+        KubernetesPodManager podManager,
+        IKubernetesPodOperations? podOps = null)
     {
         _tentacleSettings = tentacleSettings;
         _kubernetesSettings = kubernetesSettings;
         _podManager = podManager;
+        _podOps = podOps;
         _mutexTimeout = TimeSpan.FromMinutes(kubernetesSettings.IsolationMutexTimeoutMinutes);
     }
 
@@ -63,6 +68,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         else
         {
             _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
+            PersistPendingConfigMap(ticketId, command);
             Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
         }
 
@@ -73,15 +79,20 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     {
         var eosMarkerToken = EosMarker.GenerateMarkerToken();
         var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
+        var targetNamespace = command.TargetNamespace;
 
         var workDir = PrepareWorkspace(ticketId, wrappedCommand);
-        var podName = _podManager.CreatePod(ticketId);
+        var podName = _podManager.CreatePod(ticketId, targetNamespace);
+        RemovePendingConfigMap(ticketId);
 
-        _scripts[ticketId] = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken);
+        var ctx = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken, targetNamespace);
+        ctx.SensitiveValues = SensitiveVariableDecryptor.ExtractSensitiveValues(workDir);
+        _scripts[ticketId] = ctx;
+        TentacleMetrics.ScriptStarted();
 
         WriteStateFile(workDir, ticketId, podName, eosMarkerToken, command);
 
-        Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
+        Log.Information("Started script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, targetNamespace ?? "default");
     }
 
     private static void WriteStateFile(string workDir, string ticketId, string podName, string eosMarkerToken, StartScriptCommand command)
@@ -95,6 +106,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
                 EosMarkerToken = eosMarkerToken,
                 Isolation = command.Isolation.ToString(),
                 IsolationMutexName = command.IsolationMutexName,
+                Namespace = command.TargetNamespace,
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }
@@ -159,10 +171,10 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
         if (ctx.EosDetected)
             return new ScriptStatusResponse(request.Ticket, ProcessState.Complete, ctx.EosExitCode, logs, ctx.LogSequence);
 
-        var phase = _podManager.GetPodPhase(ctx.PodName);
+        var phase = _podManager.GetPodPhase(ctx.PodName, ctx.Namespace);
         var state = MapPhaseToState(phase);
         var exitCode = state == ProcessState.Complete
-            ? _podManager.GetPodExitCode(ctx.PodName) : 0;
+            ? _podManager.GetPodExitCode(ctx.PodName, ctx.Namespace) : 0;
 
         if (phase is "Succeeded" or "Failed" && ctx.LogTruncationDetected && !ctx.EosDetected)
         {
@@ -183,13 +195,18 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
 
-            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
+            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30), ctx.Namespace);
 
             var logs = DrainFinalLogs(ctx);
-            var exitCode = _podManager.GetPodExitCode(ctx.PodName);
+            var exitCode = _podManager.GetPodExitCode(ctx.PodName, ctx.Namespace);
 
-            _podManager.DeletePod(ctx.PodName);
+            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds, ctx.Namespace);
             CleanupWorkspace(ctx.WorkDir);
+
+            if (exitCode == 0)
+                TentacleMetrics.ScriptCompleted();
+            else
+                TentacleMetrics.ScriptFailed();
 
             return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
         }
@@ -202,15 +219,21 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
         if (_pendingScripts.TryRemove(command.Ticket.TaskId, out var _))
+        {
+            RemovePendingConfigMap(command.Ticket.TaskId);
+            TentacleMetrics.ScriptCanceled();
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
+        }
 
         try
         {
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
 
-            _podManager.DeletePod(ctx.PodName);
+            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds, ctx.Namespace);
             CleanupWorkspace(ctx.WorkDir);
+
+            TentacleMetrics.ScriptCanceled();
 
             return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), ctx.LogSequence);
         }
@@ -323,5 +346,56 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend
             KubernetesPodManager.PhaseNotFound => ProcessState.Complete,
             _ => ProcessState.Running
         };
+    }
+
+    private void PersistPendingConfigMap(string ticketId, StartScriptCommand command)
+    {
+        if (_podOps == null) return;
+
+        try
+        {
+            var configMap = new V1ConfigMap
+            {
+                Metadata = new V1ObjectMeta
+                {
+                    Name = $"squid-pending-{ticketId[..12]}",
+                    NamespaceProperty = _kubernetesSettings.TentacleNamespace,
+                    Labels = new Dictionary<string, string>
+                    {
+                        ["squid.io/context-type"] = "pending-script",
+                        ["squid.io/ticket-id"] = ticketId
+                    }
+                },
+                Data = new Dictionary<string, string>
+                {
+                    ["ticketId"] = ticketId,
+                    ["scriptBody"] = command.ScriptBody,
+                    ["isolation"] = command.Isolation.ToString(),
+                    ["isolationMutexName"] = command.IsolationMutexName ?? "",
+                    ["targetNamespace"] = command.TargetNamespace ?? "",
+                    ["enqueuedAt"] = DateTimeOffset.UtcNow.ToString("O")
+                }
+            };
+
+            _podOps.CreateOrReplaceConfigMap(configMap, _kubernetesSettings.TentacleNamespace);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to persist pending script ConfigMap for ticket {TicketId}", ticketId);
+        }
+    }
+
+    private void RemovePendingConfigMap(string ticketId)
+    {
+        if (_podOps == null) return;
+
+        try
+        {
+            _podOps.DeleteConfigMap($"squid-pending-{ticketId[..12]}", _kubernetesSettings.TentacleNamespace);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to remove pending ConfigMap for ticket {TicketId}", ticketId);
+        }
     }
 }

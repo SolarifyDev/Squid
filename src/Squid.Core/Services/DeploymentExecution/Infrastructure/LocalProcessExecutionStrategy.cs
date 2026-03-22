@@ -69,7 +69,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
         Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct).ConfigureAwait(false);
+        return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, request.Timeout, request.Masker).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
@@ -83,7 +83,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
         Log.Information("Executing script locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct)
+        return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, plan.Request.Timeout, plan.Request.Masker)
             .ConfigureAwait(false);
     }
 

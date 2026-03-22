@@ -8,11 +8,13 @@ public sealed class KubernetesPodWatcher
 {
     private readonly IKubernetesPodOperations _podOps;
     private readonly KubernetesSettings _settings;
+    private readonly PodStateCache _cache;
 
-    public KubernetesPodWatcher(IKubernetesPodOperations podOps, KubernetesSettings settings)
+    public KubernetesPodWatcher(IKubernetesPodOperations podOps, KubernetesSettings settings, PodStateCache cache = null)
     {
         _podOps = podOps;
         _settings = settings;
+        _cache = cache;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -28,8 +30,12 @@ public sealed class KubernetesPodWatcher
         {
             try
             {
+                PopulateCache(labelSelector);
+
                 await foreach (var (eventType, pod) in _podOps.WatchPodsAsync(_settings.TentacleNamespace, labelSelector, ct).ConfigureAwait(false))
                 {
+                    _cache?.HandleWatchEvent(eventType, pod);
+
                     if (eventType is WatchEventType.Modified or WatchEventType.Deleted)
                         HandlePodEvent(eventType, pod);
                 }
@@ -41,6 +47,7 @@ public sealed class KubernetesPodWatcher
             catch (Exception ex)
             {
                 Log.Warning(ex, "Pod watch stream disconnected, reconnecting...");
+                _cache?.Invalidate();
 
                 try
                 {
@@ -51,6 +58,23 @@ public sealed class KubernetesPodWatcher
                     break;
                 }
             }
+        }
+    }
+
+    private void PopulateCache(string labelSelector)
+    {
+        if (_cache == null) return;
+
+        try
+        {
+            var pods = _podOps.ListPods(_settings.TentacleNamespace, labelSelector);
+            _cache.Populate(pods.Items);
+
+            Log.Debug("Cache populated with {Count} pods", pods.Items.Count);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to populate pod cache");
         }
     }
 

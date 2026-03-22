@@ -97,9 +97,10 @@ public sealed partial class ExecuteStepsPhase
         await lifecycle.EmitAsync(new StepExecutingOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
         var actionResults = await PrepareStepActionsAsync(step, eligibleActions, baseScopeContext, tc, stepSortOrder, ct).ConfigureAwait(false);
+        var stepTimeout = StepTimeoutParser.ParseTimeout(step);
 
         var result = new StepExecutionResult { Executed = true };
-        await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, ct).ConfigureAwait(false);
+        await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, stepTimeout, ct).ConfigureAwait(false);
 
         return result;
     }
@@ -125,6 +126,7 @@ public sealed partial class ExecuteStepsPhase
         int stepDisplayOrder,
         StepExecutionResult result,
         DeploymentTargetContext tc,
+        TimeSpan? stepTimeout,
         CancellationToken ct)
     {
         var actionSortOrder = 0;
@@ -144,11 +146,11 @@ public sealed partial class ExecuteStepsPhase
                 continue;
             }
 
-            await ExecuteSingleActionAsync(prepared, step, stepDisplayOrder, actionSortOrder, result, tc, ct).ConfigureAwait(false);
+            await ExecuteSingleActionAsync(prepared, step, stepDisplayOrder, actionSortOrder, result, tc, stepTimeout, ct).ConfigureAwait(false);
         }
     }
 
-    private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, CancellationToken ct)
+    private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, TimeSpan? stepTimeout, CancellationToken ct)
     {
         var actionResult = prepared.Result;
         var effectiveVariables = prepared.EffectiveVariables;
@@ -162,7 +164,7 @@ public sealed partial class ExecuteStepsPhase
             if (strategy == null)
                 throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
 
-            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables);
+            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, stepTimeout);
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
             CaptureOutputVariables(actionResult, execResult.LogLines);

@@ -589,6 +589,42 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     // ========================================================================
+    // Raw Script Mode
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_RawScriptMode_UsesBashCommand()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.RawScriptMode = true);
+
+        var container = pod.Spec.Containers[0];
+        container.Command.ShouldBe(new[] { "bash" });
+        container.Args.ShouldBe(new[] { $"/squid/work/{TicketId}/script.sh" });
+    }
+
+    [Fact]
+    public void CreatePod_RawScriptMode_NoInitContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.RawScriptMode = true;
+            s.TentacleImage = "squidcd/squid-tentacle:1.0.0";
+        });
+
+        pod.Spec.InitContainers.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_DefaultMode_UsesCalamariCommand()
+    {
+        var pod = CaptureCreatedPod();
+
+        var container = pod.Spec.Containers[0];
+        container.Command.ShouldBe(new[] { "/squid/bin/squid-calamari" });
+        container.Args[0].ShouldBe("run-script");
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 

@@ -27,6 +27,7 @@ public sealed class PrepareDeploymentPhase(
         await FindTargetsAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
+        InjectPackageAcquisitionSteps(ctx);
         PreFilterTargetsByRoles(ctx);
     }
 
@@ -95,6 +96,11 @@ public sealed class PrepareDeploymentPhase(
     private static void ConvertSnapshotToSteps(DeploymentTaskContext ctx)
     {
         ctx.Steps = ProcessSnapshotStepConverter.Convert(ctx.ProcessSnapshot);
+    }
+
+    private static void InjectPackageAcquisitionSteps(DeploymentTaskContext ctx)
+    {
+        ctx.Steps = PackageAcquisitionInjector.InjectAcquisitionSteps(ctx.Steps, ctx.SelectedPackages);
     }
 
     private void PreFilterTargetsByRoles(DeploymentTaskContext ctx)

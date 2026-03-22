@@ -9,7 +9,8 @@ public partial class KubernetesPodManager
     private V1Pod BuildPodSpec(string podName, string ticketId)
     {
         var template = _templateProvider?.TryLoadTemplate();
-        var useInitContainer = !string.IsNullOrEmpty(_settings.TentacleImage);
+        var rawScriptMode = _settings.RawScriptMode;
+        var useInitContainer = !rawScriptMode && !string.IsNullOrEmpty(_settings.TentacleImage);
         var isolateWorkspace = _settings.IsolateWorkspaceToEmptyDir;
 
         var workspaceVolumeName = isolateWorkspace ? "workspace-local" : "workspace";
@@ -46,7 +47,8 @@ public partial class KubernetesPodManager
             {
                 Name = podName,
                 NamespaceProperty = _settings.TentacleNamespace,
-                Labels = BuildLabels(ticketId)
+                Labels = BuildLabels(ticketId),
+                Annotations = BuildAnnotations()
             },
             Spec = new V1PodSpec
             {
@@ -61,8 +63,10 @@ public partial class KubernetesPodManager
                         Name = "script",
                         Image = _settings.ScriptPodImage,
                         ImagePullPolicy = "IfNotPresent",
-                        Command = new[] { "/squid/bin/squid-calamari" },
-                        Args = new[] { "run-script", $"--script=/squid/work/{ticketId}/script.sh", $"--variables=/squid/work/{ticketId}/variables.json" },
+                        Command = rawScriptMode ? new[] { "bash" } : new[] { "/squid/bin/squid-calamari" },
+                        Args = rawScriptMode
+                            ? new[] { $"/squid/work/{ticketId}/script.sh" }
+                            : new[] { "run-script", $"--script=/squid/work/{ticketId}/script.sh", $"--variables=/squid/work/{ticketId}/variables.json" },
                         WorkingDir = $"/squid/work/{ticketId}",
                         VolumeMounts = mainVolumeMounts,
                         Env = BuildProxyEnvVars(),
@@ -125,6 +129,10 @@ public partial class KubernetesPodManager
 
         if (!string.IsNullOrEmpty(_settings.NfsWatchdogImage))
             pod.Spec.Containers.Add(BuildNfsWatchdogSidecar(isolateWorkspace));
+
+        var nodeSelector = BuildNodeSelector();
+        if (nodeSelector != null)
+            pod.Spec.NodeSelector = nodeSelector;
 
         var rwoAffinity = BuildRwoAffinity();
         if (rwoAffinity != null)
@@ -253,7 +261,97 @@ public partial class KubernetesPodManager
         if (!string.IsNullOrEmpty(_settings.ReleaseName))
             labels["app.kubernetes.io/instance"] = _settings.ReleaseName;
 
+        MergeCustomLabels(labels);
+
         return labels;
+    }
+
+    private void MergeCustomLabels(Dictionary<string, string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.ScriptPodLabels)) return;
+
+        try
+        {
+            var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(_settings.ScriptPodLabels);
+            if (custom == null) return;
+
+            foreach (var kvp in custom)
+            {
+                if (!ValidateLabelKey(kvp.Key))
+                {
+                    Log.Warning("Rejected reserved label key {Key}", kvp.Key);
+                    continue;
+                }
+
+                labels[kvp.Key] = kvp.Value;
+            }
+        }
+        catch (JsonException ex)
+        {
+            Log.Warning(ex, "Failed to parse ScriptPodLabels JSON");
+        }
+    }
+
+    private Dictionary<string, string> BuildAnnotations()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.ScriptPodAnnotations)) return null;
+
+        try
+        {
+            var annotations = JsonSerializer.Deserialize<Dictionary<string, string>>(_settings.ScriptPodAnnotations);
+
+            return annotations is { Count: > 0 } ? annotations : null;
+        }
+        catch (JsonException ex)
+        {
+            Log.Warning(ex, "Failed to parse ScriptPodAnnotations JSON");
+            return null;
+        }
+    }
+
+    internal static bool ValidateLabelKey(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+
+        var prefix = key.Contains('/') ? key[..key.IndexOf('/')] : "";
+
+        return !prefix.EndsWith("kubernetes.io", StringComparison.OrdinalIgnoreCase)
+            && !prefix.EndsWith("k8s.io", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, string> BuildNodeSelector()
+    {
+        Dictionary<string, string> selector = null;
+
+        if (!string.IsNullOrWhiteSpace(_settings.ScriptPodNodeArchitecture))
+        {
+            selector = new Dictionary<string, string>
+            {
+                ["kubernetes.io/arch"] = _settings.ScriptPodNodeArchitecture
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(_settings.ScriptPodNodeSelector))
+        {
+            try
+            {
+                var explicit_ = JsonSerializer.Deserialize<Dictionary<string, string>>(_settings.ScriptPodNodeSelector);
+
+                if (explicit_ is { Count: > 0 })
+                {
+                    selector ??= new Dictionary<string, string>();
+
+                    foreach (var kvp in explicit_)
+                        selector[kvp.Key] = kvp.Value;
+                }
+            }
+            catch (JsonException ex)
+            {
+                Log.Warning(ex, "Failed to parse ScriptPodNodeSelector JSON");
+            }
+        }
+
+        return selector;
     }
 
     private V1PodSecurityContext BuildPodSecurityContext()

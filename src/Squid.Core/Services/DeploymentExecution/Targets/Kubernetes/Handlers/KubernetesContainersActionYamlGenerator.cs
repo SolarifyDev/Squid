@@ -13,6 +13,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     private readonly ConfigMapResourceGenerator _configMap = new();
     private readonly IngressResourceGenerator _ingress = new();
     private readonly SecretResourceGenerator _secret = new();
+    private readonly BlueGreenResourceGenerator _blueGreen = new();
 
     public bool CanHandle(DeploymentActionDto action)
     {
@@ -35,7 +36,16 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        AddResource(result, "deployment.yaml", _deployment, properties);
+        if (_blueGreen.CanGenerate(properties))
+        {
+            foreach (var kvp in _blueGreen.GenerateAll(properties))
+                result[kvp.Key] = Encoding.UTF8.GetBytes(kvp.Value);
+        }
+        else
+        {
+            AddResource(result, "deployment.yaml", _deployment, properties);
+        }
+
         AddResource(result, "service.yaml", _service, properties);
         AddResource(result, "configmap.yaml", _configMap, properties);
         AddResource(result, "ingress.yaml", _ingress, properties);

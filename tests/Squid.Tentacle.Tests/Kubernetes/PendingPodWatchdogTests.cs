@@ -145,7 +145,7 @@ public class PendingPodWatchdogTests : IDisposable
 
         _monitor.FailPendingPods();
 
-        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
     [Fact]

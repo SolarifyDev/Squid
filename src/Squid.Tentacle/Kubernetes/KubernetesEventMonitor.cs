@@ -1,6 +1,8 @@
-using Serilog;
+using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.ScriptExecution;
+using Serilog;
 
 namespace Squid.Tentacle.Kubernetes;
 
@@ -23,12 +25,14 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
 
     private readonly IKubernetesPodOperations _podOps;
     private readonly KubernetesSettings _settings;
+    private readonly ScriptPodService _scriptPodService;
     private DateTime _lastEventTime = DateTime.UtcNow;
 
-    public KubernetesEventMonitor(IKubernetesPodOperations podOps, KubernetesSettings settings)
+    public KubernetesEventMonitor(IKubernetesPodOperations podOps, KubernetesSettings settings, ScriptPodService scriptPodService = null)
     {
         _podOps = podOps;
         _settings = settings;
+        _scriptPodService = scriptPodService;
     }
 
     public string Name => "KubernetesEventMonitor";
@@ -55,7 +59,7 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
         }
     }
 
-    private void PollEvents()
+    internal void PollEvents()
     {
         var events = _podOps.ListEvents(
             _settings.TentacleNamespace,
@@ -74,6 +78,8 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
             if (WarningReasons.Contains(evt.Reason ?? ""))
             {
                 Log.Warning("K8s event: {Reason} on pod {PodName} — {Message}", evt.Reason, evt.InvolvedObject?.Name, evt.Message);
+
+                InjectEventIntoScript(evt.InvolvedObject.Name, evt.Reason, evt.Message);
             }
         }
 
@@ -85,6 +91,19 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
             .Max();
 
         _lastEventTime = latestTime;
+    }
+
+    private void InjectEventIntoScript(string podName, string reason, string message)
+    {
+        if (_scriptPodService == null) return;
+
+        foreach (var kvp in _scriptPodService.ActiveScripts)
+        {
+            if (!string.Equals(kvp.Value.PodName, podName, StringComparison.Ordinal)) continue;
+
+            kvp.Value.InjectedEvents.Enqueue(new ProcessOutput(ProcessOutputSource.StdErr, $"[K8s Event] {reason}: {message}"));
+            return;
+        }
     }
 
     private static bool IsManagedPod(string podName)

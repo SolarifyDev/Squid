@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
@@ -6,7 +7,6 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
-using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -108,10 +108,11 @@ public sealed partial class ExecuteStepsPhase
         prepared.ScriptBody = wrapper.WrapScript(prepared.ScriptBody, scriptContext);
     }
 
-    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)
+    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables, TimeSpan? stepTimeout = null)
     {
         var resolvedMode = actionResult.ResolveExecutionMode();
         var resolvedContextPreparationPolicy = ResolveContextPreparationPolicy(actionResult, tc);
+        var masker = BuildSensitiveMasker(effectiveVariables);
 
         return new ScriptExecutionRequest
         {
@@ -130,8 +131,18 @@ public sealed partial class ExecuteStepsPhase
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version,
-            ContextWrapper = resolvedContextPreparationPolicy == ContextPreparationPolicy.Apply ? tc.Transport?.ScriptWrapper : null
+            ContextWrapper = resolvedContextPreparationPolicy == ContextPreparationPolicy.Apply ? tc.Transport?.ScriptWrapper : null,
+            Timeout = stepTimeout,
+            Masker = masker
         };
+    }
+
+    private static SensitiveValueMasker BuildSensitiveMasker(List<VariableDto> variables)
+    {
+        var sensitiveValues = variables.Where(v => v.IsSensitive && !string.IsNullOrEmpty(v.Value)).Select(v => v.Value);
+        var masker = new SensitiveValueMasker(sensitiveValues);
+
+        return masker.ValueCount > 0 ? masker : null;
     }
 
     private static Dictionary<string, string> BuildActionPropertyDictionary(DeploymentActionDto action)

@@ -8,7 +8,7 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
-    private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DefaultScriptTimeout = TimeSpan.FromMinutes(30);
 
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
@@ -57,7 +57,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
 
         var command = new StartScriptCommand(
             scriptBody,
@@ -66,14 +66,17 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             null,
             Array.Empty<string>(),
             null,
-            scriptFiles);
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -84,7 +87,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
 
         var command = new StartScriptCommand(
             request.ScriptBody,
@@ -93,14 +96,17 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             null,
             Array.Empty<string>(),
             null,
-            scriptFiles);
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(

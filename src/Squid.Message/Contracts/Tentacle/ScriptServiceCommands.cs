@@ -81,6 +81,7 @@ public class StartScriptCommand
 
     public TimeSpan ScriptIsolationMutexTimeout { get; }
     public string? IsolationMutexName { get; }
+    public string? TargetNamespace { get; set; }
 }
 
 public enum ScriptType

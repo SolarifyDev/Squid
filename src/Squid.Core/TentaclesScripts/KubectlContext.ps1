@@ -15,6 +15,7 @@ try {
     $clientKeyPath = $null
     $gkeKeyFile = $null
     $awsWebIdentityFile = $null
+    $credFile = $null
 
     $clusterUrl = "{{ClusterUrl}}"
     $accountType = "{{AccountType}}"
@@ -44,13 +45,17 @@ try {
     # Set credentials based on account type
     switch ($accountType) {
         "Token" {
-            $token = "{{Token}}"
+            $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-token-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($credFile, "{{Token}}")
+            $token = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName --token="$token"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "UsernamePassword" {
+            $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-pass-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($credFile, "{{Password}}")
             $authUsername = "{{Username}}"
-            $authPassword = "{{Password}}"
+            $authPassword = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName --username="$authUsername" --password="$authPassword"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
@@ -67,8 +72,10 @@ try {
         "AmazonWebServicesAccount" {
             $awsClusterName = "{{AwsClusterName}}"
             $awsRegion = "{{AwsRegion}}"
+            $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-aws-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($credFile, "{{SecretKey}}")
             $env:AWS_ACCESS_KEY_ID = "{{AccessKey}}"
-            $env:AWS_SECRET_ACCESS_KEY = "{{SecretKey}}"
+            $env:AWS_SECRET_ACCESS_KEY = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName `
                 --exec-api-version=client.authentication.k8s.io/v1beta1 `
                 --exec-command=aws `
@@ -96,7 +103,10 @@ try {
             $azureConfigDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "azure-cli-$([Guid]::NewGuid().ToString('N'))")
             [System.IO.Directory]::CreateDirectory($azureConfigDir) | Out-Null
             $env:AZURE_CONFIG_DIR = $azureConfigDir
-            & az login --service-principal -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}"
+            $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-azure-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($credFile, "{{AzureKey}}")
+            $azureKey = [System.IO.File]::ReadAllText($credFile).Trim()
+            & az login --service-principal -u "{{AzureClientId}}" -p "$azureKey" --tenant "{{AzureTenantId}}"
             if ($LASTEXITCODE -ne 0) { throw "az login failed" }
             & az account set --subscription "{{AzureSubscriptionId}}"
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
@@ -185,7 +195,7 @@ try {
 }
 finally {
     # Cleanup temp files (kubeconfig + certificates)
-    foreach ($tempFile in @($kubeconfigPath, $certPath, $clientCertPath, $clientKeyPath, $gkeKeyFile, $awsWebIdentityFile)) {
+    foreach ($tempFile in @($kubeconfigPath, $certPath, $clientCertPath, $clientKeyPath, $gkeKeyFile, $awsWebIdentityFile, $credFile)) {
         if ($tempFile -and (Test-Path $tempFile -ErrorAction SilentlyContinue)) {
             Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         }

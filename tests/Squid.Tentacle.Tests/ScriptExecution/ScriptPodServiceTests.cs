@@ -6,6 +6,7 @@ using k8s.Models;
 using Squid.Message.Constants;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
+using Squid.Tentacle.Health;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Message.Contracts.Tentacle;
 
@@ -160,7 +161,7 @@ public class ScriptPodServiceTests : IDisposable
 
         service.CompleteScript(new CompleteScriptCommand(ticket, 0));
 
-        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns"), Times.Once);
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
@@ -192,7 +193,7 @@ public class ScriptPodServiceTests : IDisposable
         status.State.ShouldBe(ProcessState.Complete);
         status.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
 
-        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns"), Times.Once);
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
@@ -318,6 +319,74 @@ public class ScriptPodServiceTests : IDisposable
         status2.Logs.ShouldNotContain(l => l.Text.Contains("Log rotation detected"));
     }
 
+    // ========== Log Output Size Limits ==========
+
+    [Fact]
+    public void ExtractNewLogLines_ExceedsMaxBuffer_InjectsTruncationWarning()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+        var logs = new string('x', 100) + "\n";
+
+        var result = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 50);
+
+        result.ShouldContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Log output truncated"));
+        ctx.LogOutputTruncated.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_ExceedsMaxBuffer_StopsEmittingLines()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+        var logs = new string('x', 100) + "\nline2\nline3\n";
+
+        var result = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 50);
+
+        result.ShouldNotContain(l => l.Text == "line2");
+        result.ShouldNotContain(l => l.Text == "line3");
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_ExceedsMaxBuffer_StillDetectsEos()
+    {
+        var eosToken = "abcdef1234567890abcdef1234567890";
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", eosToken);
+        var eosLine = $"EOS-{eosToken}<<>>42";
+        var logs = new string('x', 100) + $"\n{eosLine}\n";
+
+        ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 50);
+
+        ctx.EosDetected.ShouldBeTrue();
+        ctx.EosExitCode.ShouldBe(42);
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_WithinLimit_NoTruncation()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+        var logs = "line1\nline2\n";
+
+        var result = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 10 * 1024 * 1024);
+
+        result.Count.ShouldBe(2);
+        ctx.LogOutputTruncated.ShouldBeFalse();
+    }
+
+    // ========== Sensitive Output Masking ==========
+
+    [Fact]
+    public void ExtractNewLogLines_SensitiveValueInOutput_Masked()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+        ctx.SensitiveValues = new HashSet<string>(StringComparer.Ordinal) { "my-secret-token" };
+
+        var logs = "deploying with token: my-secret-token\n";
+
+        var result = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 10 * 1024 * 1024);
+
+        result.Count.ShouldBe(1);
+        result[0].Text.ShouldBe("deploying with token: ***");
+    }
+
     // ========== Isolation Mutex ==========
 
     [Fact]
@@ -410,7 +479,7 @@ public class ScriptPodServiceTests : IDisposable
 
         status.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
         service.PendingScripts.ShouldBeEmpty();
-        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
     [Fact]
@@ -784,7 +853,200 @@ public class ScriptPodServiceTests : IDisposable
         service.PendingScripts.ShouldBeEmpty();
     }
 
+    // ========== Metrics ==========
+
+    [Fact]
+    public void StartScript_IncrementsMetricsGauge()
+    {
+        TentacleMetrics.Reset();
+        var service = CreateService();
+        var command = MakeCommand("echo metrics");
+
+        service.StartScript(command);
+
+        TentacleMetrics.ActiveScripts.ShouldBe(1);
+        TentacleMetrics.ScriptsStartedTotal.ShouldBe(1);
+
+        TentacleMetrics.Reset();
+    }
+
+    [Fact]
+    public void CompleteScript_DecrementsMetricsGauge()
+    {
+        TentacleMetrics.Reset();
+        var service = CreateService();
+        var command = MakeCommand("echo metrics");
+
+        var ticket = service.StartScript(command);
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        SetupPodLogs("");
+
+        service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        TentacleMetrics.ActiveScripts.ShouldBe(0);
+        TentacleMetrics.ScriptsCompletedTotal.ShouldBe(1);
+
+        TentacleMetrics.Reset();
+    }
+
+    [Fact]
+    public void CancelScript_IncrementsCancel()
+    {
+        TentacleMetrics.Reset();
+        var service = CreateService();
+        var command = MakeCommand("echo cancel");
+
+        var ticket = service.StartScript(command);
+        service.CancelScript(new CancelScriptCommand(ticket, 0));
+
+        TentacleMetrics.ScriptsCanceledTotal.ShouldBe(1);
+
+        TentacleMetrics.Reset();
+    }
+
+    // ========== sinceTime Deduplication ==========
+
+    [Fact]
+    public void ExtractNewLogLines_SinceTime_OnlyNewLines()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+
+        var firstBatch = "line one\nline two\n";
+        ScriptPodService.ExtractNewLogLines(ctx, firstBatch, maxLogBufferBytes: 10 * 1024 * 1024);
+
+        var secondBatch = "line one\nline two\nline three\n";
+        var result = ScriptPodService.ExtractNewLogLines(ctx, secondBatch, maxLogBufferBytes: 10 * 1024 * 1024);
+
+        result.Count.ShouldBe(1);
+        result[0].Text.ShouldBe("line three");
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_MultipleCallsSameContent_NoDuplicates()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+
+        var logs = "alpha\nbeta\n";
+        var result1 = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 10 * 1024 * 1024);
+        var result2 = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 10 * 1024 * 1024);
+
+        result1.Count.ShouldBe(2);
+        result2.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_SetsLastLogTimestamp()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+        ctx.LastLogTimestamp.ShouldBeNull();
+
+        ScriptPodService.ExtractNewLogLines(ctx, "line\n", maxLogBufferBytes: 10 * 1024 * 1024);
+
+        ctx.LastLogTimestamp.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void ExtractNewLogLines_EmptyInput_ReturnsEmpty()
+    {
+        var ctx = new ScriptPodContext("test-ticket", "pod-1", "/tmp/work", "marker123");
+
+        var result = ScriptPodService.ExtractNewLogLines(ctx, "", maxLogBufferBytes: 10 * 1024 * 1024);
+
+        result.ShouldBeEmpty();
+    }
+
     // ========== Helpers ==========
+
+    // === Multi-Namespace ===
+
+    [Fact]
+    public void StartScript_WithTargetNamespace_CreatesPodInNamespace()
+    {
+        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+        command.TargetNamespace = "custom-ns";
+
+        service.StartScript(command);
+
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void StartScript_WithTargetNamespace_ContextCarriesNamespace()
+    {
+        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+        command.TargetNamespace = "custom-ns";
+
+        var ticket = service.StartScript(command);
+
+        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
+        ctx.Namespace.ShouldBe("custom-ns");
+    }
+
+    [Fact]
+    public void StartScript_NoTargetNamespace_ContextNamespaceIsNull()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+
+        var ticket = service.StartScript(command);
+
+        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
+        ctx.Namespace.ShouldBeNull();
+    }
+
+    [Fact]
+    public void StateFile_RoundTripsNamespace()
+    {
+        var dir = Path.Combine(_tempWorkspace, "ns-test");
+        Directory.CreateDirectory(dir);
+
+        ScriptStateFile.Write(dir, new ScriptStateFile
+        {
+            TicketId = "abc",
+            PodName = "pod-1",
+            EosMarkerToken = "eos",
+            Isolation = "NoIsolation",
+            Namespace = "tenant-ns",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var state = ScriptStateFile.TryRead(dir);
+        state.ShouldNotBeNull();
+        state.Namespace.ShouldBe("tenant-ns");
+    }
+
+    [Fact]
+    public void StateFile_NullNamespace_RoundTrips()
+    {
+        var dir = Path.Combine(_tempWorkspace, "ns-test-null");
+        Directory.CreateDirectory(dir);
+
+        ScriptStateFile.Write(dir, new ScriptStateFile
+        {
+            TicketId = "abc",
+            PodName = "pod-1",
+            EosMarkerToken = "eos",
+            Isolation = "NoIsolation",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var state = ScriptStateFile.TryRead(dir);
+        state.ShouldNotBeNull();
+        state.Namespace.ShouldBeNull();
+    }
 
     private ScriptPodService CreateService()
     {
@@ -850,7 +1112,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(logs));
 
-        _ops.Setup(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+        _ops.Setup(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()))
             .Returns(stream);
     }
 

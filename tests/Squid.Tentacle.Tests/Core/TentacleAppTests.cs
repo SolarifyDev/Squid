@@ -42,7 +42,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -91,7 +91,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -128,7 +128,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -161,7 +161,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -204,7 +204,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 

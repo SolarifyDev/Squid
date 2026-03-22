@@ -63,7 +63,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         InvokeCleanup();
 
-        _ops.Verify(o => o.DeletePod("orphan-pod", "test-ns"), Times.Once);
+        _ops.Verify(o => o.DeletePod("orphan-pod", "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         InvokeCleanup();
 
-        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _ops.Verify(o => o.DeletePod(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         InvokeCleanup();
 
-        _ops.Verify(o => o.DeletePod("active-pod", It.IsAny<string>()), Times.Never);
+        _ops.Verify(o => o.DeletePod("active-pod", It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
     // ========== CleanupOrphanedPods — Stale Running ==========
@@ -98,7 +98,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         InvokeCleanup();
 
-        _ops.Verify(o => o.DeletePod("stale-running", "test-ns"), Times.Once);
+        _ops.Verify(o => o.DeletePod("stale-running", "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         InvokeCleanup();
 
-        _ops.Verify(o => o.DeletePod("active-running", It.IsAny<string>()), Times.Never);
+        _ops.Verify(o => o.DeletePod("active-running", It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
     // ========== CleanupOrphanedWorkspaces ==========

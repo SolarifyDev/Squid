@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Message.Constants;
 
@@ -14,7 +15,8 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         IAsyncScriptService scriptClient,
         ScriptTicket ticket,
         TimeSpan scriptTimeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        SensitiveValueMasker masker = null)
     {
         var startTime = DateTime.UtcNow;
         var pollInterval = TimeSpan.FromSeconds(1);
@@ -44,7 +46,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
             allLogs.AddRange(statusResponse.Logs);
-            LogOutput(statusResponse.Logs, machine.Name);
+            LogOutput(statusResponse.Logs, machine.Name, masker);
 
             if (statusResponse.State != ProcessState.Complete)
             {
@@ -87,11 +89,11 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         };
     }
 
-    private static void LogOutput(List<ProcessOutput> logs, string machineName)
+    private static void LogOutput(List<ProcessOutput> logs, string machineName, SensitiveValueMasker masker)
     {
         foreach (var log in logs)
             Log.Information("[Agent Script] Machine={MachineName}, Source={Source}, Message={Message}",
-                machineName, log.Source, log.Text);
+                machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
     }
 
     private static async Task TryCancelScriptAsync(

@@ -41,6 +41,37 @@ public class DiskSpaceCheckerTests
         (available == 0 || total == 0 || available > 0).ShouldBeTrue();
     }
 
+    [Fact]
+    public void GetWorkspaceUsage_ReturnsValidValues()
+    {
+        var usage = DiskSpaceChecker.GetWorkspaceUsage(Path.GetTempPath());
+
+        usage.TotalBytes.ShouldBeGreaterThan(0);
+        usage.FreeBytes.ShouldBeGreaterThan(0);
+        usage.UsedBytes.ShouldBeGreaterThanOrEqualTo(0);
+        (usage.UsedBytes + usage.FreeBytes).ShouldBe(usage.TotalBytes);
+    }
+
+    [Fact]
+    public void WorkspaceUsage_FreePercentage_CalculatedCorrectly()
+    {
+        var usage = new DiskSpaceChecker.WorkspaceUsage(800, 1000, 200);
+
+        usage.FreePercentage.ShouldBe(0.2);
+    }
+
+    [Theory]
+    [InlineData(950, 1000, 50, true)]
+    [InlineData(500, 1000, 500, false)]
+    [InlineData(850, 1000, 150, false)]
+    [InlineData(910, 1000, 90, true)]
+    public void WorkspaceUsage_IsLowSpace_DetectsCorrectly(long used, long total, long free, bool expectedLow)
+    {
+        var usage = new DiskSpaceChecker.WorkspaceUsage(used, total, free);
+
+        usage.IsLowSpace.ShouldBe(expectedLow);
+    }
+
     [Theory]
     [InlineData(0, "0 B")]
     [InlineData(512, "512 B")]
