@@ -1,3 +1,4 @@
+using Squid.Core.Extensions;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -20,7 +21,7 @@ public class KubernetesDeployIngressActionHandler : IActionHandler
 
         var result = new ActionExecutionResult
         {
-            ScriptBody = "kubectl apply -f \"./ingress.yaml\"",
+            ScriptBody = KubernetesApplyCommandBuilder.Build("./ingress.yaml", ctx.Action, ScriptSyntax.Bash),
             Files = files,
             CalamariCommand = null,
             ExecutionMode = ExecutionMode.DirectScript,

@@ -26,6 +26,9 @@ public static class DeploymentAccountCredentialsConverter
             AccountType.AmazonWebServicesRoleAccount => JsonSerializer.Deserialize<AwsCredentials>(json),
             AccountType.SshKeyPair => JsonSerializer.Deserialize<SshKeyPairCredentials>(json),
             AccountType.AzureServicePrincipal => JsonSerializer.Deserialize<AzureServicePrincipalCredentials>(json),
+            AccountType.AzureOidc => JsonSerializer.Deserialize<AzureOidcCredentials>(json),
+            AccountType.GoogleCloudAccount => JsonSerializer.Deserialize<GcpCredentials>(json),
+            AccountType.AmazonWebServicesOidcAccount => JsonSerializer.Deserialize<AwsOidcCredentials>(json),
             _ => null
         };
     }

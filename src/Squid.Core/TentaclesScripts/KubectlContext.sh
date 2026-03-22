@@ -13,12 +13,16 @@ fi
 CERT_PATH=""
 CLIENT_CERT_PATH=""
 CLIENT_KEY_PATH=""
+GKE_KEY_FILE=""
+AWS_WEB_IDENTITY_FILE=""
 
 cleanup() {
     rm -f "$KUBECONFIG_PATH" 2>/dev/null || true
     rm -f "$CERT_PATH" 2>/dev/null || true
     rm -f "$CLIENT_CERT_PATH" 2>/dev/null || true
     rm -f "$CLIENT_KEY_PATH" 2>/dev/null || true
+    rm -f "$GKE_KEY_FILE" 2>/dev/null || true
+    rm -f "$AWS_WEB_IDENTITY_FILE" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -80,7 +84,80 @@ case "$ACCOUNT_TYPE" in
             --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" --exec-arg="--region" --exec-arg="$AWS_REGION" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
+    "AmazonWebServicesOidcAccount")
+        AWS_CLUSTER_NAME="{{AwsClusterName}}"
+        AWS_REGION="{{AwsRegion}}"
+        AWS_ROLE_ARN="{{AwsRoleArn}}"
+        AWS_WEB_IDENTITY_FILE="$(mktemp /tmp/aws-token-XXXXXX)"
+        echo "{{AwsWebIdentityToken}}" > "$AWS_WEB_IDENTITY_FILE"
+        export AWS_WEB_IDENTITY_TOKEN_FILE="$AWS_WEB_IDENTITY_FILE"
+        export AWS_ROLE_ARN="$AWS_ROLE_ARN"
+        "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
+            --exec-api-version=client.authentication.k8s.io/v1beta1 \
+            --exec-command=aws \
+            --exec-arg=eks --exec-arg=get-token \
+            --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" \
+            --exec-arg="--region" --exec-arg="$AWS_REGION" \
+            --exec-arg="--role-arn" --exec-arg="$AWS_ROLE_ARN" \
+            || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
+        ;;
+    "AzureServicePrincipal")
+        az login --service-principal \
+            -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}" \
+            || { echo "ERROR: az login failed" >&2; exit 1; }
+        az account set --subscription "{{AzureSubscriptionId}}" \
+            || { echo "ERROR: az account set failed" >&2; exit 1; }
+        az aks get-credentials \
+            --resource-group "{{AksClusterResourceGroup}}" \
+            --name "{{AksClusterName}}" \
+            --file "$KUBECONFIG_PATH" --overwrite-existing \
+            || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
+        ;;
+    "AzureOidc")
+        AZURE_OIDC_TOKEN="{{AzureOidcToken}}"
+        az login --service-principal --federated-token "$AZURE_OIDC_TOKEN" \
+            -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}" \
+            || { echo "ERROR: az login (OIDC) failed" >&2; exit 1; }
+        az account set --subscription "{{AzureSubscriptionId}}" \
+            || { echo "ERROR: az account set failed" >&2; exit 1; }
+        az aks get-credentials \
+            --resource-group "{{AksClusterResourceGroup}}" \
+            --name "{{AksClusterName}}" \
+            --file "$KUBECONFIG_PATH" --overwrite-existing \
+            || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
+        ;;
+    "GoogleCloudAccount")
+        GKE_KEY_FILE="$(mktemp /tmp/gcp-key-XXXXXX.json)"
+        echo "{{GcpJsonKey}}" > "$GKE_KEY_FILE"
+        gcloud auth activate-service-account --key-file="$GKE_KEY_FILE" \
+            || { echo "ERROR: gcloud auth failed" >&2; exit 1; }
+        GKE_ZONE="{{GkeZone}}"
+        GKE_REGION="{{GkeRegion}}"
+        GKE_LOC_FLAG=""
+        if [ -n "$GKE_ZONE" ]; then GKE_LOC_FLAG="--zone=$GKE_ZONE"; fi
+        if [ -n "$GKE_REGION" ]; then GKE_LOC_FLAG="--region=$GKE_REGION"; fi
+        GKE_INTERNAL="{{GkeUseClusterInternalIp}}"
+        GKE_CMD=(gcloud container clusters get-credentials "{{GkeClusterName}}" $GKE_LOC_FLAG --project="{{GkeProject}}")
+        if [ "$GKE_INTERNAL" = "True" ]; then GKE_CMD+=("--internal-ip"); fi
+        export KUBECONFIG="$KUBECONFIG_PATH"
+        "${GKE_CMD[@]}" || { echo "ERROR: gcloud get-credentials failed" >&2; exit 1; }
+        ;;
 esac
+
+# --- Proxy configuration ---
+PROXY_HOST="{{ProxyHost}}"
+PROXY_PORT="{{ProxyPort}}"
+PROXY_USER="{{ProxyUsername}}"
+PROXY_PASS="{{ProxyPassword}}"
+if [ -n "$PROXY_HOST" ]; then
+    if [ -n "$PROXY_USER" ]; then
+        export HTTPS_PROXY="http://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
+    else
+        export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+    fi
+    export HTTP_PROXY="$HTTPS_PROXY"
+    export NO_PROXY="localhost,127.0.0.1"
+fi
 
 # Set context and use it
 "$KUBECTL_EXE" config set-context "$CONTEXT_NAME" --cluster="$CLUSTER_NAME" --user="$USER_NAME" --namespace="$NAMESPACE" \

@@ -24,6 +24,16 @@ if [ "$HELM_WAIT" = "True" ]; then
     HELM_CMD+=("--wait")
 fi
 
+HELM_WAIT_FOR_JOBS="{{WaitForJobs}}"
+if [ "$HELM_WAIT_FOR_JOBS" = "True" ]; then
+    HELM_CMD+=("--wait-for-jobs")
+fi
+
+HELM_TIMEOUT="{{Timeout}}"
+if [ -n "$HELM_TIMEOUT" ]; then
+    HELM_CMD+=("--timeout" "$HELM_TIMEOUT")
+fi
+
 # Values files
 {{ValuesFilesBlock}}
 

@@ -75,6 +75,14 @@ internal static class KubernetesProperties
     internal const string PodSecuritySysctls = "Squid.Action.KubernetesContainers.PodSecuritySysctls";
     internal const string DnsConfigOptions = "Squid.Action.KubernetesContainers.DnsConfigOptions";
 
+    // Server-side apply
+    internal const string ServerSideApplyEnabled = "Squid.Action.Kubernetes.ServerSideApply.Enabled";
+    internal const string ServerSideApplyFieldManager = "Squid.Action.Kubernetes.ServerSideApply.FieldManager";
+    internal const string ServerSideApplyForceConflicts = "Squid.Action.Kubernetes.ServerSideApply.ForceConflicts";
+
+    // Resource status check
+    internal const string ObjectStatusCheckTimeout = "Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout";
+
     // Legacy fallback
     internal const string LegacyNamespace = "Squid.Action.Kubernetes.Namespace";
 }
@@ -456,4 +464,15 @@ internal static class KubernetesHelmProperties
     internal const string AdditionalArgs = "Squid.Action.Helm.AdditionalArgs";
     internal const string YamlValues = "Squid.Action.Helm.YamlValues";
     internal const string KeyValues = "Squid.Action.Helm.KeyValues";
+    internal const string HelmWait = "Squid.Action.Helm.Wait";
+    internal const string WaitForJobs = "Squid.Action.Helm.WaitForJobs";
+    internal const string Timeout = "Squid.Action.Helm.Timeout";
+    internal const string ValueSources = "Squid.Action.Helm.ValueSources";
+}
+
+internal static class KubernetesKustomizeProperties
+{
+    internal const string OverlayPath = "Squid.Action.KubernetesKustomize.OverlayPath";
+    internal const string CustomKustomizePath = "Squid.Action.KubernetesKustomize.CustomKustomizePath";
+    internal const string AdditionalArgs = "Squid.Action.KubernetesKustomize.AdditionalArgs";
 }

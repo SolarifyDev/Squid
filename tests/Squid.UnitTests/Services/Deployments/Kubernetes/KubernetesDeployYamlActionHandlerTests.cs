@@ -144,7 +144,7 @@ public class KubernetesDeployYamlActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("kubectl apply -f ./content/");
+        result.ScriptBody.ShouldContain("kubectl apply -f \"./content/\"");
         result.Files.ShouldBeEmpty();
     }
 
@@ -156,7 +156,7 @@ public class KubernetesDeployYamlActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("kubectl apply -f .\\content\\");
+        result.ScriptBody.ShouldContain("kubectl apply -f \".\\content\\\"");
         result.Files.ShouldBeEmpty();
     }
 
@@ -236,5 +236,35 @@ public class KubernetesDeployYamlActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.Syntax.ShouldBe(ScriptSyntax.Bash);
+    }
+
+    // === Server-Side Apply Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_ServerSideApplyEnabled_GeneratedScriptContainsServerSideFlag()
+    {
+        var action = CreateAction(inlineYaml: "apiVersion: v1\nkind: Pod", syntax: "Bash");
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.Enabled",
+            PropertyValue = "True"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("--server-side");
+        result.ScriptBody.ShouldContain("--field-manager=squid-deploy");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_ServerSideApplyDisabled_NoServerSideFlag()
+    {
+        var action = CreateAction(inlineYaml: "apiVersion: v1\nkind: Pod", syntax: "Bash");
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldNotContain("--server-side");
     }
 }

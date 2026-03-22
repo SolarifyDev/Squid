@@ -27,16 +27,17 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
             var yamlFileName = "inline-deployment.yaml";
             files[yamlFileName] = Encoding.UTF8.GetBytes(inlineYaml);
 
-            scriptBody = syntax == ScriptSyntax.Bash
-                ? $"kubectl apply -f \"./{yamlFileName}\""
-                : $"kubectl apply -f \".\\{yamlFileName}\"";
+            var targetPath = syntax == ScriptSyntax.Bash ? $"./{yamlFileName}" : $".\\{yamlFileName}";
+            scriptBody = KubernetesApplyCommandBuilder.Build(targetPath, ctx.Action, syntax);
         }
         else
         {
-            scriptBody = syntax == ScriptSyntax.Bash
-                ? "kubectl apply -f ./content/"
-                : "kubectl apply -f .\\content\\";
+            var targetPath = syntax == ScriptSyntax.Bash ? "./content/" : ".\\content\\";
+            scriptBody = KubernetesApplyCommandBuilder.Build(targetPath, ctx.Action, syntax);
         }
+
+        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
+        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(files, ctx.Action, namespace_, syntax);
 
         var result = new ActionExecutionResult
         {

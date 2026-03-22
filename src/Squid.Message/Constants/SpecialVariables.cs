@@ -19,6 +19,7 @@ public static class SpecialVariables
         public const string HealthCheck = "Squid.HealthCheck";
         public const string DeployRelease = "Squid.DeployRelease";
         public const string DeployIngress = "Squid.DeployIngress";
+        public const string KubernetesKustomize = "Squid.KubernetesKustomize";
     }
 
     public static class StepTypes

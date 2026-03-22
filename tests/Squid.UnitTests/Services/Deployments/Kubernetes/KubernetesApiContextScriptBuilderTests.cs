@@ -9,6 +9,8 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
+// ReSharper disable InconsistentNaming
+
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 public class KubernetesApiContextScriptBuilderTests
@@ -475,8 +477,8 @@ public class KubernetesApiContextScriptBuilderTests
                 ClusterUrl = "https://eks.example.com",
                 Namespace = "default",
                 SkipTlsVerification = "False",
-                AwsClusterName = "my-eks-cluster",
-                AwsRegion = "us-west-2"
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-eks-cluster", Region = "us-west-2" })
             })
         };
         endpoint.SetAccountData(AccountType.AmazonWebServicesAccount,
@@ -548,6 +550,348 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldContain("kubectl config set-credentials failed");
         result.ShouldContain("kubectl config set-context failed");
         result.ShouldContain("kubectl config use-context failed");
+    }
+
+    // === Azure Service Principal Auth Tests ===
+
+    private static ScriptContext AzureServicePrincipalContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Key = "sp-secret-key" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_ContainsAzLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az login --service-principal");
+        result.ShouldContain("client-id-456");
+        result.ShouldContain("sp-secret-key");
+        result.ShouldContain("tenant-id-789");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_ContainsAksGetCredentials()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az aks get-credentials");
+        result.ShouldContain("my-aks-cluster");
+        result.ShouldContain("my-rg");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_PowerShell_ContainsAzLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("az login --service-principal");
+        result.ShouldContain("client-id-456");
+        result.ShouldContain("tenant-id-789");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_SetsSubscription()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az account set --subscription");
+        result.ShouldContain("sub-123");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_EscapesSpecialCharsInKey()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com", Namespace = "default", SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "cluster", ResourceGroup = "rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub", ClientId = "cid", TenantId = "tid", Key = "key$with`special" }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash });
+
+        result.ShouldContain("key\\$with");
+        result.ShouldContain("\\`special");
+    }
+
+    // === Azure OIDC Auth Tests ===
+
+    private static ScriptContext AzureOidcContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks-oidc.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-oidc-cluster", ResourceGroup = "my-oidc-rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureOidc,
+            JsonSerializer.Serialize(new AzureOidcCredentials { SubscriptionNumber = "oidc-sub-123", ClientId = "oidc-client-456", TenantId = "oidc-tenant-789", Audience = "api://AzureADTokenExchange" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureOidc_Bash_ContainsFederatedTokenLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureOidcContext());
+
+        result.ShouldContain("--federated-token");
+        result.ShouldContain("oidc-client-456");
+        result.ShouldContain("oidc-tenant-789");
+        result.ShouldContain("api://AzureADTokenExchange");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureOidc_PowerShell_ContainsFederatedTokenLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureOidcContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("--federated-token");
+        result.ShouldContain("oidc-client-456");
+        result.ShouldContain("oidc-tenant-789");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_NoUnreplacedPlaceholders(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === GCP Auth Tests ===
+
+    private static ScriptContext GcpContext(ScriptSyntax syntax = ScriptSyntax.Bash, string zone = "", string region = "", string useInternalIp = "False")
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://gke.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.GcpGke,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiGcpGkeConfig { ClusterName = "my-gke-cluster", Project = "my-gcp-project", Zone = zone, Region = region, UseClusterInternalIp = useInternalIp })
+            })
+        };
+        endpoint.SetAccountData(AccountType.GoogleCloudAccount,
+            JsonSerializer.Serialize(new GcpCredentials { JsonKey = "{\"type\":\"service_account\",\"project_id\":\"test\"}" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_ContainsGcloudActivateServiceAccount()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud auth activate-service-account");
+        result.ShouldContain("{\\\"type\\\":\\\"service_account\\\"");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_ContainsGetCredentials()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud container clusters get-credentials");
+        result.ShouldContain("my-gke-cluster");
+        result.ShouldContain("my-gcp-project");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_PowerShell_ContainsGcloudAuth()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(ScriptSyntax.PowerShell, zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud auth activate-service-account");
+        result.ShouldContain("my-gke-cluster");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_ZoneBasedCluster_UsesZoneFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain("us-central1-a");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_RegionBasedCluster_UsesRegionFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(region: "us-central1"));
+
+        result.ShouldContain("us-central1");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_InternalIp_ContainsInternalIpFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a", useInternalIp: "True"));
+
+        result.ShouldContain("--internal-ip");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_JsonKeyWithSpecialChars_EscapedProperly()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldNotContain("{{GcpJsonKey}}");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === AWS OIDC Auth Tests ===
+
+    private static ScriptContext AwsOidcContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks-oidc.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-oidc-eks-cluster", Region = "us-east-1" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AmazonWebServicesOidcAccount,
+            JsonSerializer.Serialize(new AwsOidcCredentials { RoleArn = "arn:aws:iam::123456789:role/my-role", WebIdentityToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_ContainsRoleArn()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldContain("arn:aws:iam::123456789:role/my-role");
+        result.ShouldContain("--role-arn");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_SetsWebIdentityTokenFile()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldContain("AWS_WEB_IDENTITY_TOKEN_FILE");
+        result.ShouldContain("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_PowerShell_ContainsRoleArn()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("arn:aws:iam::123456789:role/my-role");
+        result.ShouldContain("--role-arn");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === Proxy Tests ===
+
+    private static ScriptContext ProxyContext(ScriptSyntax syntax = ScriptSyntax.Bash, string proxyUser = null, string proxyPass = null)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://k8s.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                Proxy = new KubernetesApiEndpointProxyConfig { Host = "proxy.example.com", Port = "8080", Username = proxyUser, Password = proxyPass }
+            })
+        };
+        endpoint.SetAccountData(AccountType.Token,
+            JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyConfigured_Bash_SetsHttpsProxy()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext());
+
+        result.ShouldContain("HTTPS_PROXY");
+        result.ShouldContain("proxy.example.com");
+        result.ShouldContain("8080");
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyWithAuth_Bash_IncludesCredentialsInUrl()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext(proxyUser: "puser", proxyPass: "ppass"));
+
+        result.ShouldContain("puser");
+        result.ShouldContain("ppass");
+    }
+
+    [Fact]
+    public void WrapWithContext_NoProxy_Bash_ProxyHostEmpty()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
+
+        result.ShouldContain("PROXY_HOST=\"\"");
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyConfigured_PowerShell_SetsEnvVar()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("HTTPS_PROXY");
+        result.ShouldContain("proxy.example.com");
     }
 
     // === Kubeconfig Isolation Tests ===

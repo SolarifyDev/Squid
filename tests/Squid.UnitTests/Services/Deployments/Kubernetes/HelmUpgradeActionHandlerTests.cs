@@ -463,7 +463,6 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldNotContain("--timeout");
         result.ScriptBody.ShouldNotContain("--debug");
     }
 
@@ -693,5 +692,176 @@ public class HelmUpgradeActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ScriptBody.ShouldContain("#!/usr/bin/env bash");
+    }
+
+    // === Wait/Timeout Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_WaitEnabled_ContainsWaitFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.Wait"] = "True"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("\"--wait\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WaitForJobsEnabled_ContainsWaitForJobsFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.WaitForJobs"] = "True"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_WAIT_FOR_JOBS=\"True\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_TimeoutSet_ContainsTimeoutFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.Timeout"] = "10m"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_TIMEOUT=\"10m\"");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task PrepareAsync_WaitAndWaitForJobsCombinations(bool wait, bool waitForJobs)
+    {
+        var props = new Dictionary<string, string> { ["Squid.Action.Script.Syntax"] = "Bash" };
+        if (wait) props["Squid.Action.Helm.Wait"] = "True";
+        if (waitForJobs) props["Squid.Action.Helm.WaitForJobs"] = "True";
+        var action = CreateAction(properties: props);
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        if (wait)
+            result.ScriptBody.ShouldContain("HELM_WAIT=\"True\"");
+        else
+            result.ScriptBody.ShouldContain("HELM_WAIT=\"False\"");
+
+        if (waitForJobs)
+            result.ScriptBody.ShouldContain("HELM_WAIT_FOR_JOBS=\"True\"");
+        else
+            result.ScriptBody.ShouldContain("HELM_WAIT_FOR_JOBS=\"False\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_LegacyHelmWait_BackwardsCompatible()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ClientVersion"] = "3"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("HELM_WAIT=\"True\"");
+    }
+
+    // === Multi-Source Values Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_InlineYaml_WritesValuesFile()
+    {
+        var valueSources = "[{\"Type\":\"InlineYaml\",\"Value\":\"replicas: 3\\nimage: nginx\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("values-0.yaml");
+        result.ScriptBody.ShouldContain("values-0.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_KeyValues_EmitsSetFlags()
+    {
+        var valueSources = "[{\"Type\":\"KeyValues\",\"Value\":\"{\\\"app.name\\\":\\\"myapp\\\"}\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("--set");
+        result.ScriptBody.ShouldContain("app.name");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_MultipleInlineYaml_WritesMultipleFilesInOrder()
+    {
+        var valueSources = "[{\"Type\":\"InlineYaml\",\"Value\":\"a: 1\"},{\"Type\":\"InlineYaml\",\"Value\":\"b: 2\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("values-0.yaml");
+        result.Files.ShouldContainKey("values-1.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoValueSources_FallsBackToLegacyProperties()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.YamlValues"] = "legacy: true"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("rawYamlValues.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_EmptyValueSources_NoValuesFlags()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = "[]"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldNotContainKey("rawYamlValues.yaml");
     }
 }

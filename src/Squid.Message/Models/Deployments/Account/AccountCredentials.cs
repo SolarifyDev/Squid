@@ -37,3 +37,22 @@ public class AzureServicePrincipalCredentials
     public string TenantId { get; set; }
     public string Key { get; set; }
 }
+
+public class AzureOidcCredentials
+{
+    public string SubscriptionNumber { get; set; }
+    public string ClientId { get; set; }
+    public string TenantId { get; set; }
+    public string Audience { get; set; }
+}
+
+public class GcpCredentials
+{
+    public string JsonKey { get; set; }
+}
+
+public class AwsOidcCredentials
+{
+    public string RoleArn { get; set; }
+    public string WebIdentityToken { get; set; }
+}

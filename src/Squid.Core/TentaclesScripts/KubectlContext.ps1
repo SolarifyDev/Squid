@@ -13,6 +13,8 @@ try {
     $certPath = $null
     $clientCertPath = $null
     $clientKeyPath = $null
+    $gkeKeyFile = $null
+    $awsWebIdentityFile = $null
 
     $clusterUrl = "{{ClusterUrl}}"
     $accountType = "{{AccountType}}"
@@ -73,6 +75,71 @@ try {
                 --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$awsClusterName" --exec-arg="--region" --exec-arg="$awsRegion"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
+        "AmazonWebServicesOidcAccount" {
+            $awsClusterName = "{{AwsClusterName}}"
+            $awsRegion = "{{AwsRegion}}"
+            $awsRoleArn = "{{AwsRoleArn}}"
+            $awsWebIdentityFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "aws-token-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($awsWebIdentityFile, "{{AwsWebIdentityToken}}")
+            $env:AWS_WEB_IDENTITY_TOKEN_FILE = $awsWebIdentityFile
+            $env:AWS_ROLE_ARN = $awsRoleArn
+            & $kubectlExe config set-credentials $userName `
+                --exec-api-version=client.authentication.k8s.io/v1beta1 `
+                --exec-command=aws `
+                --exec-arg=eks --exec-arg=get-token `
+                --exec-arg="--cluster-name" --exec-arg="$awsClusterName" `
+                --exec-arg="--region" --exec-arg="$awsRegion" `
+                --exec-arg="--role-arn" --exec-arg="$awsRoleArn"
+            if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
+        }
+        "AzureServicePrincipal" {
+            & az login --service-principal -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}"
+            if ($LASTEXITCODE -ne 0) { throw "az login failed" }
+            & az account set --subscription "{{AzureSubscriptionId}}"
+            if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
+            & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
+            if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
+        }
+        "AzureOidc" {
+            $azureOidcToken = "{{AzureOidcToken}}"
+            & az login --service-principal --federated-token $azureOidcToken -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}"
+            if ($LASTEXITCODE -ne 0) { throw "az login (OIDC) failed" }
+            & az account set --subscription "{{AzureSubscriptionId}}"
+            if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
+            & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
+            if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
+        }
+        "GoogleCloudAccount" {
+            $gkeKeyFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "gcp-key-$([Guid]::NewGuid().ToString('N')).json")
+            [System.IO.File]::WriteAllText($gkeKeyFile, "{{GcpJsonKey}}")
+            & gcloud auth activate-service-account --key-file="$gkeKeyFile"
+            if ($LASTEXITCODE -ne 0) { throw "gcloud auth failed" }
+            $gkeZone = "{{GkeZone}}"
+            $gkeRegion = "{{GkeRegion}}"
+            $gkeArgs = @("container", "clusters", "get-credentials", "{{GkeClusterName}}", "--project={{GkeProject}}")
+            if ($gkeZone -ne "") { $gkeArgs += "--zone=$gkeZone" }
+            if ($gkeRegion -ne "") { $gkeArgs += "--region=$gkeRegion" }
+            $gkeInternal = "{{GkeUseClusterInternalIp}}"
+            if ($gkeInternal -eq "True") { $gkeArgs += "--internal-ip" }
+            $env:KUBECONFIG = $kubeconfigPath
+            & gcloud @gkeArgs
+            if ($LASTEXITCODE -ne 0) { throw "gcloud get-credentials failed" }
+        }
+    }
+
+    # --- Proxy configuration ---
+    $proxyHost = "{{ProxyHost}}"
+    $proxyPort = "{{ProxyPort}}"
+    $proxyUser = "{{ProxyUsername}}"
+    $proxyPass = "{{ProxyPassword}}"
+    if ($proxyHost -ne "") {
+        if ($proxyUser -ne "") {
+            $env:HTTPS_PROXY = "http://${proxyUser}:${proxyPass}@${proxyHost}:${proxyPort}"
+        } else {
+            $env:HTTPS_PROXY = "http://${proxyHost}:${proxyPort}"
+        }
+        $env:HTTP_PROXY = $env:HTTPS_PROXY
+        $env:NO_PROXY = "localhost,127.0.0.1"
     }
 
     # Set context and use it
@@ -98,7 +165,7 @@ try {
 }
 finally {
     # Cleanup temp files (kubeconfig + certificates)
-    foreach ($tempFile in @($kubeconfigPath, $certPath, $clientCertPath, $clientKeyPath)) {
+    foreach ($tempFile in @($kubeconfigPath, $certPath, $clientCertPath, $clientKeyPath, $gkeKeyFile, $awsWebIdentityFile)) {
         if ($tempFile -and (Test-Path $tempFile -ErrorAction SilentlyContinue)) {
             Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         }
