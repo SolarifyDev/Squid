@@ -93,14 +93,27 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "AzureServicePrincipal" {
+            $azureConfigDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "azure-cli-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.Directory]::CreateDirectory($azureConfigDir) | Out-Null
+            $env:AZURE_CONFIG_DIR = $azureConfigDir
             & az login --service-principal -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}"
             if ($LASTEXITCODE -ne 0) { throw "az login failed" }
             & az account set --subscription "{{AzureSubscriptionId}}"
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
             & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
+            $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
+            if ($kubeloginPath) {
+                & kubelogin convert-kubeconfig -l azurecli --kubeconfig $kubeconfigPath
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "kubelogin convert failed, continuing without it"
+                }
+            }
         }
         "AzureOidc" {
+            $azureConfigDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "azure-cli-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.Directory]::CreateDirectory($azureConfigDir) | Out-Null
+            $env:AZURE_CONFIG_DIR = $azureConfigDir
             $azureOidcToken = "{{AzureOidcToken}}"
             & az login --service-principal --federated-token $azureOidcToken -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}"
             if ($LASTEXITCODE -ne 0) { throw "az login (OIDC) failed" }
@@ -108,6 +121,13 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
             & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
+            $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
+            if ($kubeloginPath) {
+                & kubelogin convert-kubeconfig -l azurecli --kubeconfig $kubeconfigPath
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "kubelogin convert failed, continuing without it"
+                }
+            }
         }
         "GoogleCloudAccount" {
             $gkeKeyFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "gcp-key-$([Guid]::NewGuid().ToString('N')).json")
@@ -169,5 +189,8 @@ finally {
         if ($tempFile -and (Test-Path $tempFile -ErrorAction SilentlyContinue)) {
             Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         }
+    }
+    if ($azureConfigDir -and (Test-Path $azureConfigDir -ErrorAction SilentlyContinue)) {
+        Remove-Item $azureConfigDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

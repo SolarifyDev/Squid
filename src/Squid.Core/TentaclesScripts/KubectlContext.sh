@@ -23,6 +23,9 @@ cleanup() {
     rm -f "$CLIENT_KEY_PATH" 2>/dev/null || true
     rm -f "$GKE_KEY_FILE" 2>/dev/null || true
     rm -f "$AWS_WEB_IDENTITY_FILE" 2>/dev/null || true
+    if [ -n "$AZURE_CONFIG_DIR" ] && [ -d "$AZURE_CONFIG_DIR" ]; then
+        rm -rf "$AZURE_CONFIG_DIR" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
@@ -102,6 +105,8 @@ case "$ACCOUNT_TYPE" in
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "AzureServicePrincipal")
+        AZURE_CONFIG_DIR="$(mktemp -d /tmp/azure-cli-XXXXXX)"
+        export AZURE_CONFIG_DIR
         az login --service-principal \
             -u "{{AzureClientId}}" -p "{{AzureKey}}" --tenant "{{AzureTenantId}}" \
             || { echo "ERROR: az login failed" >&2; exit 1; }
@@ -112,8 +117,14 @@ case "$ACCOUNT_TYPE" in
             --name "{{AksClusterName}}" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
+        if command -v kubelogin &>/dev/null; then
+            kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG_PATH" \
+                || echo "Warning: kubelogin convert failed, continuing without it"
+        fi
         ;;
     "AzureOidc")
+        AZURE_CONFIG_DIR="$(mktemp -d /tmp/azure-cli-XXXXXX)"
+        export AZURE_CONFIG_DIR
         AZURE_OIDC_TOKEN="{{AzureOidcToken}}"
         az login --service-principal --federated-token "$AZURE_OIDC_TOKEN" \
             -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}" \
@@ -125,6 +136,10 @@ case "$ACCOUNT_TYPE" in
             --name "{{AksClusterName}}" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
+        if command -v kubelogin &>/dev/null; then
+            kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG_PATH" \
+                || echo "Warning: kubelogin convert failed, continuing without it"
+        fi
         ;;
     "GoogleCloudAccount")
         GKE_KEY_FILE="$(mktemp /tmp/gcp-key-XXXXXX.json)"

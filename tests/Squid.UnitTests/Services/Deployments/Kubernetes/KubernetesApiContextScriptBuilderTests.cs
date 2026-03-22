@@ -676,6 +676,70 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldContain("oidc-tenant-789");
     }
 
+    // === Azure Config Dir Isolation Tests ===
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_SetsAzureConfigDir(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("AZURE_CONFIG_DIR");
+        result.ShouldContain("mktemp -d /tmp/azure-cli-");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_PowerShell_SetsAzureConfigDir(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext(ScriptSyntax.PowerShell)
+            : AzureOidcContext(ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("AZURE_CONFIG_DIR");
+        result.ShouldContain("azure-cli-");
+    }
+
+    // === kubelogin Integration Tests ===
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_ContainsKubeloginConvert(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("kubelogin convert-kubeconfig");
+        result.ShouldContain("-l azurecli");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_PowerShell_ContainsKubeloginConvert(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext(ScriptSyntax.PowerShell)
+            : AzureOidcContext(ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("kubelogin convert-kubeconfig");
+        result.ShouldContain("-l azurecli");
+    }
+
     [Theory]
     [InlineData("AzureServicePrincipal")]
     [InlineData("AzureOidc")]
