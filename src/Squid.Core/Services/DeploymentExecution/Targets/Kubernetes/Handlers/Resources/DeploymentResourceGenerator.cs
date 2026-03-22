@@ -536,6 +536,9 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine($"      - name: {container.Name}");
         sb.AppendLine($"        image: {container.Image}");
 
+        if (!string.IsNullOrWhiteSpace(container.ImagePullPolicy))
+            sb.AppendLine($"        imagePullPolicy: {container.ImagePullPolicy}");
+
         if (container.Ports.Count > 0)
         {
             sb.AppendLine("        ports:");
@@ -585,14 +588,96 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
         }
 
-        if (container.ConfigMapEnvFromSource.Count > 0)
+        if (container.Command.Count > 0)
+        {
+            sb.AppendLine("        command:");
+
+            foreach (var cmd in container.Command)
+                sb.AppendLine($"        - {cmd}");
+        }
+
+        if (container.Args.Count > 0)
+        {
+            sb.AppendLine("        args:");
+
+            foreach (var arg in container.Args)
+                sb.AppendLine($"        - {arg}");
+        }
+
+        if (container.ConfigMapEnvFromSource.Count > 0 || container.SecretEnvFromSource.Count > 0)
         {
             sb.AppendLine("        envFrom:");
 
             foreach (var envFrom in container.ConfigMapEnvFromSource)
             {
                 sb.AppendLine("        - configMapRef:");
-                sb.AppendLine($"            name: {envFrom}");
+                sb.AppendLine($"            name: {envFrom.Name}");
+
+                if (envFrom.Optional.HasValue)
+                    sb.AppendLine($"            optional: {(envFrom.Optional.Value ? "true" : "false")}");
+
+                if (!string.IsNullOrWhiteSpace(envFrom.Prefix))
+                    sb.AppendLine($"          prefix: {envFrom.Prefix}");
+            }
+
+            foreach (var envFrom in container.SecretEnvFromSource)
+            {
+                sb.AppendLine("        - secretRef:");
+                sb.AppendLine($"            name: {envFrom.Name}");
+
+                if (envFrom.Optional.HasValue)
+                    sb.AppendLine($"            optional: {(envFrom.Optional.Value ? "true" : "false")}");
+
+                if (!string.IsNullOrWhiteSpace(envFrom.Prefix))
+                    sb.AppendLine($"          prefix: {envFrom.Prefix}");
+            }
+        }
+
+        var hasEnv = container.EnvironmentVariables.Count > 0
+            || container.ConfigMapEnvVariables.Count > 0
+            || container.SecretEnvVariables.Count > 0
+            || container.FieldRefEnvVariables.Count > 0;
+
+        if (hasEnv)
+        {
+            sb.AppendLine("        env:");
+
+            foreach (var env in container.EnvironmentVariables)
+            {
+                sb.AppendLine($"        - name: {env.Name}");
+                KubernetesPropertyParser.AppendDataValue(sb, "          ", "value", env.Value);
+            }
+
+            foreach (var env in container.ConfigMapEnvVariables)
+            {
+                sb.AppendLine($"        - name: {env.EnvVarName}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            configMapKeyRef:");
+                sb.AppendLine($"              name: {env.SourceName}");
+                sb.AppendLine($"              key: {env.SourceKey}");
+
+                if (env.Optional.HasValue)
+                    sb.AppendLine($"              optional: {(env.Optional.Value ? "true" : "false")}");
+            }
+
+            foreach (var env in container.SecretEnvVariables)
+            {
+                sb.AppendLine($"        - name: {env.EnvVarName}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            secretKeyRef:");
+                sb.AppendLine($"              name: {env.SourceName}");
+                sb.AppendLine($"              key: {env.SourceKey}");
+
+                if (env.Optional.HasValue)
+                    sb.AppendLine($"              optional: {(env.Optional.Value ? "true" : "false")}");
+            }
+
+            foreach (var env in container.FieldRefEnvVariables)
+            {
+                sb.AppendLine($"        - name: {env.EnvVarName}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            fieldRef:");
+                sb.AppendLine($"              fieldPath: {env.FieldPath}");
             }
         }
 
@@ -615,6 +700,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             if (container.Lifecycle.PostStart != null)
                 KubernetesPropertyParser.AppendLifecycleHandlerYaml(sb, "          ", "postStart", container.Lifecycle.PostStart);
         }
+
+        if (!string.IsNullOrWhiteSpace(container.TerminationMessagePath))
+            sb.AppendLine($"        terminationMessagePath: {container.TerminationMessagePath}");
+
+        if (!string.IsNullOrWhiteSpace(container.TerminationMessagePolicy))
+            sb.AppendLine($"        terminationMessagePolicy: {container.TerminationMessagePolicy}");
 
         if (container.SecurityContext != null)
         {

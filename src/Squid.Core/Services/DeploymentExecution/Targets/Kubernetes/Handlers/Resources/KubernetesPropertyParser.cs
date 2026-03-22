@@ -176,6 +176,12 @@ internal static class KubernetesPropertyParser
                 FillContainerProbes(element, container);
                 FillContainerSecurityContext(element, container);
                 FillContainerLifecycle(element, container);
+                FillContainerEnvironmentVariables(element, container);
+                FillContainerConfigMapEnvVariables(element, container);
+                FillContainerSecretEnvVariables(element, container);
+                FillContainerFieldRefEnvVariables(element, container);
+                FillContainerSecretEnvFromSource(element, container);
+                FillContainerSimpleProperties(element, container);
 
                 container.IsInitContainer = element.TryGetProperty(KubernetesContainerPayloadProperties.IsInitContainer, out var initProp)
                     && string.Equals(initProp.GetString(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
@@ -340,10 +346,135 @@ internal static class KubernetesPropertyParser
 
         foreach (var itemElement in envFromElement.EnumerateArray())
         {
-            var name = itemElement.TryGetProperty(KubernetesContainerEnvFromPayloadProperties.ConfigMapName, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var name = itemElement.TryGetProperty(KubernetesContainerEnvFromPayloadProperties.Name, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(name))
-                container.ConfigMapEnvFromSource.Add(name);
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var spec = new EnvFromSpec { Name = name };
+            spec.Prefix = GetOptionalString(itemElement, KubernetesContainerEnvFromPayloadProperties.Prefix);
+            spec.Optional = ParseOptionalBool(itemElement, KubernetesContainerEnvFromPayloadProperties.Optional);
+            container.ConfigMapEnvFromSource.Add(spec);
+        }
+    }
+
+    private static void FillContainerEnvironmentVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.EnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var key = itemElement.TryGetProperty(KubernetesContainerEnvVarPayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var value = itemElement.TryGetProperty(KubernetesContainerEnvVarPayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(key))
+                container.EnvironmentVariables.Add(new EnvVarSpec { Name = key, Value = value });
+        }
+    }
+
+    private static void FillContainerConfigMapEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.ConfigMapEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var sourceName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+            var sourceKey = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Option, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var optional = ParseOptionalBool(itemElement, KubernetesContainerEnvVarSourcePayloadProperties.Optional);
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.ConfigMapEnvVariables.Add(new EnvVarSourceSpec { EnvVarName = envVarName, SourceName = sourceName, SourceKey = sourceKey, Optional = optional });
+        }
+    }
+
+    private static void FillContainerSecretEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecretEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var sourceName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+            var sourceKey = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Option, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var optional = ParseOptionalBool(itemElement, KubernetesContainerEnvVarSourcePayloadProperties.Optional);
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.SecretEnvVariables.Add(new EnvVarSourceSpec { EnvVarName = envVarName, SourceName = sourceName, SourceKey = sourceKey, Optional = optional });
+        }
+    }
+
+    private static void FillContainerFieldRefEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.FieldRefEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerFieldRefPayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var fieldPath = itemElement.TryGetProperty(KubernetesContainerFieldRefPayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.FieldRefEnvVariables.Add(new FieldRefEnvVarSpec { EnvVarName = envVarName, FieldPath = fieldPath });
+        }
+    }
+
+    private static void FillContainerSecretEnvFromSource(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecretEnvFromSource, out var envFromElement) || envFromElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envFromElement.EnumerateArray())
+        {
+            var name = itemElement.TryGetProperty(KubernetesContainerSecretEnvFromPayloadProperties.Name, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var spec = new EnvFromSpec { Name = name };
+            spec.Prefix = GetOptionalString(itemElement, KubernetesContainerSecretEnvFromPayloadProperties.Prefix);
+            spec.Optional = ParseOptionalBool(itemElement, KubernetesContainerSecretEnvFromPayloadProperties.Optional);
+            container.SecretEnvFromSource.Add(spec);
+        }
+    }
+
+    private static void FillContainerSimpleProperties(JsonElement element, ContainerSpec container)
+    {
+        container.ImagePullPolicy = GetOptionalString(element, KubernetesContainerPayloadProperties.ImagePullPolicy);
+        container.TerminationMessagePath = GetOptionalString(element, KubernetesContainerPayloadProperties.TerminationMessagePath);
+        container.TerminationMessagePolicy = GetOptionalString(element, KubernetesContainerPayloadProperties.TerminationMessagePolicy);
+
+        ParseStringList(element, KubernetesContainerPayloadProperties.Command, container.Command);
+        ParseStringList(element, KubernetesContainerPayloadProperties.Args, container.Args);
+    }
+
+    private static void ParseStringList(JsonElement element, string propertyName, List<string> target)
+    {
+        if (!element.TryGetProperty(propertyName, out var prop))
+            return;
+
+        if (prop.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in prop.EnumerateArray())
+            {
+                var value = item.GetString();
+
+                if (!string.IsNullOrWhiteSpace(value))
+                    target.Add(value);
+            }
+        }
+        else if (prop.ValueKind == JsonValueKind.String)
+        {
+            foreach (var line in (prop.GetString() ?? string.Empty).Split('\n'))
+            {
+                var trimmed = line.TrimEnd('\r');
+
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    target.Add(trimmed);
+            }
         }
     }
 
@@ -513,6 +644,16 @@ internal static class KubernetesPropertyParser
             return null;
 
         return element.TryGetProperty(propertyName, out var property) ? property.GetString() : null;
+    }
+
+    private static bool? ParseOptionalBool(JsonElement element, string propertyName)
+    {
+        var raw = GetOptionalString(element, propertyName);
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return string.Equals(raw, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void FillContainerSecurityContext(JsonElement element, ContainerSpec container)
@@ -1021,13 +1162,27 @@ internal sealed class ContainerSpec
     public Dictionary<string, string> ResourcesRequests { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ResourcesLimits { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<VolumeMountSpec> VolumeMounts { get; } = new();
-    public List<string> ConfigMapEnvFromSource { get; } = new();
+    public List<EnvFromSpec> ConfigMapEnvFromSource { get; } = new();
     public ProbeSpec? LivenessProbe { get; set; }
     public ProbeSpec? ReadinessProbe { get; set; }
     public ProbeSpec? StartupProbe { get; set; }
     public SecurityContextSpec? SecurityContext { get; set; }
     public LifecycleSpec? Lifecycle { get; set; }
     public bool IsInitContainer { get; set; }
+
+    // Environment variables
+    public List<EnvVarSpec> EnvironmentVariables { get; } = new();
+    public List<EnvVarSourceSpec> ConfigMapEnvVariables { get; } = new();
+    public List<EnvVarSourceSpec> SecretEnvVariables { get; } = new();
+    public List<FieldRefEnvVarSpec> FieldRefEnvVariables { get; } = new();
+    public List<EnvFromSpec> SecretEnvFromSource { get; } = new();
+
+    // Container settings
+    public string? ImagePullPolicy { get; set; }
+    public string? TerminationMessagePath { get; set; }
+    public string? TerminationMessagePolicy { get; set; }
+    public List<string> Command { get; } = new();
+    public List<string> Args { get; } = new();
 }
 
 internal sealed class ContainerPortSpec
@@ -1129,4 +1284,31 @@ internal sealed class VolumeMountSpec
     public string Name { get; set; } = string.Empty;
     public string MountPath { get; set; } = string.Empty;
     public string? SubPath { get; set; }
+}
+
+internal sealed class EnvVarSpec
+{
+    public string Name { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+}
+
+internal sealed class EnvVarSourceSpec
+{
+    public string EnvVarName { get; set; } = string.Empty;
+    public string SourceName { get; set; } = string.Empty;
+    public string SourceKey { get; set; } = string.Empty;
+    public bool? Optional { get; set; }
+}
+
+internal sealed class EnvFromSpec
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Prefix { get; set; }
+    public bool? Optional { get; set; }
+}
+
+internal sealed class FieldRefEnvVarSpec
+{
+    public string EnvVarName { get; set; } = string.Empty;
+    public string FieldPath { get; set; } = string.Empty;
 }

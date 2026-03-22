@@ -933,6 +933,427 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldNotContain("envFrom:");
     }
 
+    // === Container: env (literal) ===
+
+    [Fact]
+    public async Task Generate_EnvironmentVariables_GeneratesEnvBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","EnvironmentVariables":[{"key":"DB_HOST","value":"localhost"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: DB_HOST");
+        yaml.ShouldContain("value: localhost");
+    }
+
+    [Fact]
+    public async Task Generate_EnvironmentVariables_Multiple_AllGenerated()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","EnvironmentVariables":[{"key":"DB_HOST","value":"localhost"},{"key":"DB_PORT","value":"5432"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- name: DB_HOST");
+        yaml.ShouldContain("value: localhost");
+        yaml.ShouldContain("- name: DB_PORT");
+    }
+
+    [Fact]
+    public async Task Generate_EnvironmentVariables_NumericValue_IsQuoted()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","EnvironmentVariables":[{"key":"PORT","value":"8080"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("value: '8080'");
+    }
+
+    [Fact]
+    public async Task Generate_NoEnvironmentVariables_EnvBlockOmitted()
+    {
+        var (step, action) = CreateMinimal();
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("env:");
+    }
+
+    // === Container: env (configMapKeyRef) ===
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvVariables_GeneratesConfigMapKeyRef()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvironmentVariables":[{"key":"CONFIG_VAR","value":"my-config","option":"my-key"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: CONFIG_VAR");
+        yaml.ShouldContain("configMapKeyRef:");
+        yaml.ShouldContain("name: my-config");
+        yaml.ShouldContain("key: my-key");
+    }
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvVariables_Multiple_AllGenerated()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvironmentVariables":[{"key":"VAR_A","value":"cm-a","option":"key-a"},{"key":"VAR_B","value":"cm-b","option":"key-b"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- name: VAR_A");
+        yaml.ShouldContain("- name: VAR_B");
+    }
+
+    // === Container: env (secretKeyRef) ===
+
+    [Fact]
+    public async Task Generate_SecretEnvVariables_GeneratesSecretKeyRef()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","SecretEnvironmentVariables":[{"key":"SECRET_VAR","value":"my-secret","option":"secret-key"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: SECRET_VAR");
+        yaml.ShouldContain("secretKeyRef:");
+        yaml.ShouldContain("name: my-secret");
+        yaml.ShouldContain("key: secret-key");
+    }
+
+    // === Container: env (fieldRef) ===
+
+    [Fact]
+    public async Task Generate_FieldRefEnvVariables_GeneratesFieldRef()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","FieldRefEnvironmentVariables":[{"key":"POD_NAME","value":"metadata.name"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: POD_NAME");
+        yaml.ShouldContain("fieldRef:");
+        yaml.ShouldContain("fieldPath: metadata.name");
+    }
+
+    [Fact]
+    public async Task Generate_FieldRefEnvVariables_PodIP()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","FieldRefEnvironmentVariables":[{"key":"POD_IP","value":"status.podIP"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("fieldPath: status.podIP");
+    }
+
+    // === Container: envFrom (secretRef) ===
+
+    [Fact]
+    public async Task Generate_SecretEnvFromSource_GeneratesSecretRef()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","SecretEnvFromSource":[{"key":"my-secret"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("envFrom:");
+        yaml.ShouldContain("- secretRef:");
+        yaml.ShouldContain("name: my-secret");
+    }
+
+    [Fact]
+    public async Task Generate_BothEnvFromSources_CombinedUnderSingleBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvFromSource":[{"key":"app-config"}],"SecretEnvFromSource":[{"key":"app-secret"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("envFrom:");
+        yaml.ShouldContain("configMapRef:");
+        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("secretRef:");
+        yaml.ShouldContain("name: app-secret");
+
+        var envFromIndex = yaml.IndexOf("envFrom:", StringComparison.Ordinal);
+        yaml.IndexOf("envFrom:", envFromIndex + 1, StringComparison.Ordinal)
+            .ShouldBe(-1, "envFrom: should appear only once");
+    }
+
+    // === Container: envFrom prefix and optional ===
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvFromSource_WithPrefixAndOptional_GeneratesBothFields()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvFromSource":[{"key":"app-config","value":"CFG_","option":"True"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("envFrom:");
+        yaml.ShouldContain("configMapRef:");
+        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("optional: true");
+        yaml.ShouldContain("prefix: CFG_");
+    }
+
+    [Fact]
+    public async Task Generate_SecretEnvFromSource_WithPrefixAndOptional_GeneratesBothFields()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","SecretEnvFromSource":[{"key":"my-secret","value":"SEC_","option":"False"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("secretRef:");
+        yaml.ShouldContain("name: my-secret");
+        yaml.ShouldContain("optional: false");
+        yaml.ShouldContain("prefix: SEC_");
+    }
+
+    [Fact]
+    public async Task Generate_EnvFromSource_NoPrefixNoOptional_OmitsBothFields()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvFromSource":[{"key":"app-config"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("configMapRef:");
+        yaml.ShouldContain("name: app-config");
+        yaml.ShouldNotContain("optional:");
+        yaml.ShouldNotContain("prefix:");
+    }
+
+    // === Container: env optional (configMapKeyRef / secretKeyRef) ===
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvVariable_WithOptionalTrue_IncludesOptional()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvironmentVariables":[{"key":"VAR","value":"cm","option":"k","optional":"True"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("configMapKeyRef:");
+        yaml.ShouldContain("optional: true");
+    }
+
+    [Fact]
+    public async Task Generate_SecretEnvVariable_WithOptionalFalse_IncludesOptional()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","SecretEnvironmentVariables":[{"key":"VAR","value":"sec","option":"k","optional":"False"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("secretKeyRef:");
+        yaml.ShouldContain("optional: false");
+    }
+
+    [Fact]
+    public async Task Generate_ConfigMapEnvVariable_NoOptional_OmitsOptional()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ConfigMapEnvironmentVariables":[{"key":"VAR","value":"cm","option":"k"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("configMapKeyRef:");
+        yaml.ShouldNotContain("optional:");
+    }
+
+    // === Container: imagePullPolicy ===
+
+    [Fact]
+    public async Task Generate_ImagePullPolicy_IsIncluded()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","ImagePullPolicy":"Always"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("imagePullPolicy: Always");
+    }
+
+    [Fact]
+    public async Task Generate_ImagePullPolicy_Empty_Omitted()
+    {
+        var (step, action) = CreateMinimal();
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("imagePullPolicy");
+    }
+
+    // === Container: command / args ===
+
+    [Fact]
+    public async Task Generate_Command_GeneratesCommandList()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"node:latest","Command":["node","server.js"]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("command:");
+        yaml.ShouldContain("- node");
+        yaml.ShouldContain("- server.js");
+    }
+
+    [Fact]
+    public async Task Generate_Args_GeneratesArgsList()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"node:latest","Args":["--port","3000"]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("args:");
+        yaml.ShouldContain("- --port");
+        yaml.ShouldContain("- 3000");
+    }
+
+    [Fact]
+    public async Task Generate_EmptyCommand_Omitted()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","Command":[]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("command:");
+    }
+
+    // === Container: terminationMessage ===
+
+    [Fact]
+    public async Task Generate_TerminationMessagePath_IsIncluded()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","TerminationMessagePath":"/dev/termination-log"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("terminationMessagePath: /dev/termination-log");
+    }
+
+    [Fact]
+    public async Task Generate_TerminationMessagePolicy_IsIncluded()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","TerminationMessagePolicy":"FallbackToLogsOnError"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("terminationMessagePolicy: FallbackToLogsOnError");
+    }
+
+    [Fact]
+    public async Task Generate_TerminationMessage_Empty_Omitted()
+    {
+        var (step, action) = CreateMinimal();
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("terminationMessagePath");
+        yaml.ShouldNotContain("terminationMessagePolicy");
+    }
+
+    // === Combined env scenario ===
+
+    [Fact]
+    public async Task Generate_AllEnvTypes_CombinedInSingleEnvBlock()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"nginx:latest","EnvironmentVariables":[{"key":"PLAIN","value":"val"}],"ConfigMapEnvironmentVariables":[{"key":"CM_VAR","value":"cm","option":"k"}],"SecretEnvironmentVariables":[{"key":"SEC_VAR","value":"sec","option":"sk"}],"FieldRefEnvironmentVariables":[{"key":"POD","value":"metadata.name"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: PLAIN");
+        yaml.ShouldContain("configMapKeyRef:");
+        yaml.ShouldContain("secretKeyRef:");
+        yaml.ShouldContain("fieldRef:");
+
+        var envIndex = yaml.IndexOf("        env:", StringComparison.Ordinal);
+        yaml.IndexOf("        env:", envIndex + 1, StringComparison.Ordinal)
+            .ShouldBe(-1, "env: should appear only once");
+    }
+
+    // === Command with newline-separated string ===
+
+    [Fact]
+    public async Task Generate_Command_NewlineSeparatedString_SplitsIntoList()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            """[{"Name":"app","Image":"node:latest","Command":"/bin/sh\n-c\necho hello"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("command:");
+        yaml.ShouldContain("- /bin/sh");
+        yaml.ShouldContain("- -c");
+        yaml.ShouldContain("- echo hello");
+    }
+
     // === Helpers ===
 
     private async Task<string> GetDeploymentYaml(DeploymentStepDto step, DeploymentActionDto action)

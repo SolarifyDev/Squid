@@ -103,6 +103,20 @@ internal static class KubernetesContainerPayloadProperties
     internal const string StartupProbe = "StartupProbe";
     internal const string SecurityContext = "SecurityContext";
     internal const string Lifecycle = "Lifecycle";
+
+    // Environment variables
+    internal const string EnvironmentVariables = "EnvironmentVariables";
+    internal const string SecretEnvironmentVariables = "SecretEnvironmentVariables";
+    internal const string ConfigMapEnvironmentVariables = "ConfigMapEnvironmentVariables";
+    internal const string FieldRefEnvironmentVariables = "FieldRefEnvironmentVariables";
+    internal const string SecretEnvFromSource = "SecretEnvFromSource";
+
+    // Container settings
+    internal const string ImagePullPolicy = "ImagePullPolicy";
+    internal const string TerminationMessagePath = "TerminationMessagePath";
+    internal const string TerminationMessagePolicy = "TerminationMessagePolicy";
+    internal const string Command = "Command";
+    internal const string Args = "Args";
 }
 
 /// <summary>
@@ -141,7 +155,48 @@ internal static class KubernetesContainerVolumeMountPayloadProperties
 /// </summary>
 internal static class KubernetesContainerEnvFromPayloadProperties
 {
-    internal const string ConfigMapName = "key";
+    internal const string Name = "key";
+    internal const string Prefix = "value";
+    internal const string Optional = "option";
+}
+
+/// <summary>
+/// Keys for Containers[].EnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerEnvVarPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for Containers[].ConfigMapEnvironmentVariables / SecretEnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerEnvVarSourcePayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+    internal const string Option = "option";
+    internal const string Optional = "optional";
+}
+
+/// <summary>
+/// Keys for Containers[].FieldRefEnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerFieldRefPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for Containers[].SecretEnvFromSource items.
+/// </summary>
+internal static class KubernetesContainerSecretEnvFromPayloadProperties
+{
+    internal const string Name = "key";
+    internal const string Prefix = "value";
+    internal const string Optional = "option";
 }
 
 /// <summary>
