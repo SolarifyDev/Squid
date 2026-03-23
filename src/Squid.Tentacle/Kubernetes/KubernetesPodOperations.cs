@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using k8s;
 using k8s.Models;
+using Serilog;
 
 namespace Squid.Tentacle.Kubernetes;
 
@@ -115,6 +116,11 @@ public class KubernetesPodOperations : IKubernetesPodOperations
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             return false;
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            Log.Warning("Insufficient permissions to check namespace '{Namespace}', assuming it exists", name);
+            return true;
         }
     }
 

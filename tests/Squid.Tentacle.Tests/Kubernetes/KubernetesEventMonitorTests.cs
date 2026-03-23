@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Runtime.CompilerServices;
 using k8s;
 using k8s.Models;
@@ -337,6 +338,71 @@ public class KubernetesEventMonitorTests : IDisposable
         injected.Text.ShouldContain("NodeNotReady");
     }
 
+    // ========== Forbidden (403) — Stop Retrying ==========
+
+    [Fact]
+    public async Task RunAsync_WatchForbidden_ExitsWithoutRetry()
+    {
+        _podOps.Setup(o => o.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns<string, string, CancellationToken, string>((ns, fs, ct, rv) => ThrowAfterEmpty<(WatchEventType, Corev1Event)>(CreateForbiddenException()));
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, _settings);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await monitor.RunAsync(cts.Token);
+        sw.Stop();
+
+        // Should exit immediately, not retry for 5 seconds
+        sw.ElapsedMilliseconds.ShouldBeLessThan(2000);
+
+        // Watch was called once (no retry)
+        _podOps.Verify(o => o.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_PollForbidden_ExitsWithoutRetry()
+    {
+        // Watch throws generic error → falls back to poll → poll throws 403
+        _podOps.Setup(o => o.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns<string, string, CancellationToken, string>((ns, fs, ct, rv) => ThrowAfterEmpty<(WatchEventType, Corev1Event)>(new IOException("Watch stream broken")));
+
+        _podOps.Setup(o => o.ListEvents(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Throws(CreateForbiddenException());
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, _settings);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await monitor.RunAsync(cts.Token);
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.ShouldBeLessThan(2000);
+    }
+
+    [Fact]
+    public async Task RunAsync_TransientFailure_StillRetries()
+    {
+        var callCount = 0;
+        _podOps.Setup(o => o.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns<string, string, CancellationToken, string>((ns, fs, ct, rv) =>
+            {
+                Interlocked.Increment(ref callCount);
+                return ThrowAfterEmpty<(WatchEventType, Corev1Event)>(new IOException("Network error"));
+            });
+
+        _podOps.Setup(o => o.ListEvents(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new Corev1EventList { Items = new List<Corev1Event>() });
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, _settings);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+
+        await monitor.RunAsync(cts.Token);
+
+        // Transient errors should cause retries (5s delay between), not immediate exit
+        callCount.ShouldBeGreaterThan(1);
+    }
+
     // ========== ResourceVersion Dedup ==========
 
     [Fact]
@@ -439,6 +505,15 @@ public class KubernetesEventMonitorTests : IDisposable
             Reason = reason,
             Message = message ?? $"Test event: {reason}",
             LastTimestamp = timestamp
+        };
+    }
+
+    private static k8s.Autorest.HttpOperationException CreateForbiddenException()
+    {
+        return new k8s.Autorest.HttpOperationException
+        {
+            Response = new k8s.Autorest.HttpResponseMessageWrapper(
+                new System.Net.Http.HttpResponseMessage(HttpStatusCode.Forbidden), string.Empty)
         };
     }
 
