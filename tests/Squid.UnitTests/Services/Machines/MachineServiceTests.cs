@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Text.Json;
-using Autofac;
-using Halibut;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Machines;
@@ -11,41 +7,23 @@ using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Machines;
 
-public class MachineServiceTests : IDisposable
+public class MachineServiceTests
 {
     private readonly Mock<IMapper> _mapper = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
-    private readonly HalibutRuntime _halibutRuntime;
-    private readonly HalibutTrustInitializer _trustInitializer;
-    private readonly IContainer _container;
+    private readonly Mock<IPollingTrustDistributor> _trustDistributor = new();
     private readonly MachineService _service;
 
     public MachineServiceTests()
     {
-        var (pfxBytes, password) = TestCertHelper.GenerateSelfSignedPfx();
-        var cert = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(pfxBytes, password);
-        _halibutRuntime = new HalibutRuntimeBuilder().WithServerCertificate(cert).Build();
-
-        var builder = new ContainerBuilder();
-        builder.RegisterInstance(_halibutRuntime).As<HalibutRuntime>();
-        _container = builder.Build();
-
-        _trustInitializer = new HalibutTrustInitializer(_container);
-
         _mapper.Setup(m => m.Map<MachineDto>(It.IsAny<Machine>()))
             .Returns<Machine>(m => new MachineDto { Id = m.Id, Name = m.Name, MachinePolicyId = m.MachinePolicyId });
 
-        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustInitializer);
-    }
-
-    public void Dispose()
-    {
-        _halibutRuntime?.Dispose();
-        _container?.Dispose();
+        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object);
     }
 
     // ========================================================================
-    // UpdateMachineAsync — MachinePolicyId
+    // UpdateMachineAsync — ApplyUpdate
     // ========================================================================
 
     [Fact]
@@ -132,69 +110,6 @@ public class MachineServiceTests : IDisposable
         await Should.ThrowAsync<InvalidOperationException>(() => _service.UpdateMachineAsync(command, CancellationToken.None));
     }
 
-    // ========================================================================
-    // UpdateMachineAsync — Thumbprint Trust Lifecycle
-    // ========================================================================
-
-    [Fact]
-    public async Task UpdateMachine_ThumbprintChanged_PollingMachine_TrustsNewThumbprint()
-    {
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "OLD-THUMB", PollingSubscriptionId = "poll://sub-1/" };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
-
-        await _service.UpdateMachineAsync(command, CancellationToken.None);
-
-        machine.Thumbprint.ShouldBe("NEW-THUMB");
-        _halibutRuntime.IsTrusted("NEW-THUMB").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task UpdateMachine_ThumbprintChanged_PollingMachine_RemovesOldTrust()
-    {
-        _halibutRuntime.Trust("OLD-THUMB");
-
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "OLD-THUMB", PollingSubscriptionId = "poll://sub-1/" };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
-
-        await _service.UpdateMachineAsync(command, CancellationToken.None);
-
-        _halibutRuntime.IsTrusted("OLD-THUMB").ShouldBeFalse();
-        _halibutRuntime.IsTrusted("NEW-THUMB").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task UpdateMachine_ThumbprintChanged_NonPollingMachine_DoesNotTrust()
-    {
-        var machine = new Machine { Id = 1, Name = "api-target", Thumbprint = "OLD-THUMB", PollingSubscriptionId = null };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
-
-        await _service.UpdateMachineAsync(command, CancellationToken.None);
-
-        machine.Thumbprint.ShouldBe("NEW-THUMB");
-        _halibutRuntime.IsTrusted("NEW-THUMB").ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task UpdateMachine_ThumbprintUnchanged_DoesNotRetrustSameThumbprint()
-    {
-        _halibutRuntime.Trust("SAME-THUMB");
-
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "SAME-THUMB", PollingSubscriptionId = "poll://sub-1/" };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "SAME-THUMB" };
-
-        await _service.UpdateMachineAsync(command, CancellationToken.None);
-
-        _halibutRuntime.IsTrusted("SAME-THUMB").ShouldBeTrue();
-    }
-
     [Fact]
     public async Task UpdateMachine_NullThumbprint_DoesNotChangeExisting()
     {
@@ -206,6 +121,84 @@ public class MachineServiceTests : IDisposable
         await _service.UpdateMachineAsync(command, CancellationToken.None);
 
         machine.Thumbprint.ShouldBe("EXISTING-THUMB");
+    }
+
+    // ========================================================================
+    // UpdateMachineAsync — Trust Reconfiguration
+    // ========================================================================
+
+    [Fact]
+    public async Task UpdateMachine_PersistsThenReconfiguresTrust()
+    {
+        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "OLD-THUMB", PollingSubscriptionId = "poll://sub-1/" };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var callOrder = new List<string>();
+        _machineDataProvider
+            .Setup(p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("persist"))
+            .Returns(Task.CompletedTask);
+        _trustDistributor
+            .Setup(t => t.Reconfigure())
+            .Callback(() => callOrder.Add("reconfigure"));
+
+        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        callOrder.ShouldBe(new[] { "persist", "reconfigure" });
+    }
+
+    [Fact]
+    public async Task UpdateMachine_NonPollingMachine_StillReconfigures()
+    {
+        var machine = new Machine { Id = 1, Name = "api-target", Thumbprint = "OLD-THUMB", PollingSubscriptionId = null };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        _trustDistributor.Verify(t => t.Reconfigure(), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateMachine_DisablingMachine_ReconfiguresTrust()
+    {
+        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "THUMB", PollingSubscriptionId = "poll://sub-1/", IsDisabled = false };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 1, IsDisabled = true };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        _trustDistributor.Verify(t => t.Reconfigure(), Times.Once);
+    }
+
+    // ========================================================================
+    // DeleteMachinesAsync — Trust Reconfiguration
+    // ========================================================================
+
+    [Fact]
+    public async Task DeleteMachines_PersistsThenReconfiguresTrust()
+    {
+        var machines = new List<Machine> { new() { Id = 1, Name = "agent-1", Thumbprint = "THUMB-A" } };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(machines);
+
+        var callOrder = new List<string>();
+        _machineDataProvider
+            .Setup(p => p.DeleteMachinesAsync(It.IsAny<List<Machine>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("persist"))
+            .Returns(Task.CompletedTask);
+        _trustDistributor
+            .Setup(t => t.Reconfigure())
+            .Callback(() => callOrder.Add("reconfigure"));
+
+        var command = new DeleteMachinesCommand { Ids = new List<int> { 1 } };
+
+        await _service.DeleteMachinesAsync(command, CancellationToken.None);
+
+        callOrder.ShouldBe(new[] { "persist", "reconfigure" });
     }
 }
 

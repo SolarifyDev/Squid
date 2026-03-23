@@ -10,8 +10,6 @@ public partial class MachineRegistrationService
 {
     public async Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default)
     {
-        _halibutRuntime.Trust(command.Thumbprint);
-
         var resolvedEnvironmentIds = await ResolveEnvironmentIdsAsync(command.Environments, cancellationToken).ConfigureAwait(false);
 
         var existing = await _dataProvider.GetMachineBySubscriptionIdAsync(command.SubscriptionId, cancellationToken).ConfigureAwait(false);
@@ -43,6 +41,8 @@ public partial class MachineRegistrationService
 
             Log.Information("Registered new machine {MachineName} ({SubscriptionId})", machine.Name, machine.PollingSubscriptionId);
         }
+
+        _trustDistributor.Reconfigure();
 
         return new RegisterMachineResponseData
         {

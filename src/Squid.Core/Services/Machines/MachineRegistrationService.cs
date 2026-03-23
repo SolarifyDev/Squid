@@ -1,6 +1,6 @@
-using Halibut;
 using System.Text.Json;
 using System.Security.Cryptography.X509Certificates;
+using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Settings.SelfCert;
@@ -12,7 +12,7 @@ namespace Squid.Core.Services.Machines;
 public interface IMachineRegistrationService : IScopedDependency
 {
     Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default);
-    
+
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
 }
 
@@ -21,20 +21,20 @@ public partial class MachineRegistrationService : IMachineRegistrationService
     private readonly IMachineDataProvider _dataProvider;
     private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly IEnvironmentDataProvider _environmentDataProvider;
-    private readonly HalibutRuntime _halibutRuntime;
+    private readonly IPollingTrustDistributor _trustDistributor;
     private readonly SelfCertSetting _selfCertSetting;
 
     public MachineRegistrationService(
         IMachineDataProvider dataProvider,
         IMachinePolicyDataProvider policyDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
-        HalibutRuntime halibutRuntime,
+        IPollingTrustDistributor trustDistributor,
         SelfCertSetting selfCertSetting)
     {
         _dataProvider = dataProvider;
         _policyDataProvider = policyDataProvider;
         _environmentDataProvider = environmentDataProvider;
-        _halibutRuntime = halibutRuntime;
+        _trustDistributor = trustDistributor;
         _selfCertSetting = selfCertSetting;
     }
 

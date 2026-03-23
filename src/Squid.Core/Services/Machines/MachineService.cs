@@ -19,13 +19,13 @@ public class MachineService : IMachineService
 {
     private readonly IMapper _mapper;
     private readonly IMachineDataProvider _machineDataProvider;
-    private readonly HalibutTrustInitializer _trustInitializer;
+    private readonly IPollingTrustDistributor _trustDistributor;
 
-    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, HalibutTrustInitializer trustInitializer)
+    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor)
     {
         _mapper = mapper;
         _machineDataProvider = machineDataProvider;
-        _trustInitializer = trustInitializer;
+        _trustDistributor = trustDistributor;
     }
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
@@ -50,12 +50,11 @@ public class MachineService : IMachineService
         if (machine == null)
             throw new InvalidOperationException($"Machine {command.MachineId} not found");
 
-        var oldThumbprint = machine.Thumbprint;
-
         ApplyUpdate(machine, command);
-        TrustNewThumbprintIfChanged(machine, oldThumbprint);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        _trustDistributor.Reconfigure();
 
         Log.Information("Updated machine {MachineName} (Id={MachineId})", machine.Name, machine.Id);
 
@@ -83,26 +82,13 @@ public class MachineService : IMachineService
             machine.Thumbprint = command.Thumbprint;
     }
 
-    private void TrustNewThumbprintIfChanged(Persistence.Entities.Deployments.Machine machine, string oldThumbprint)
-    {
-        if (string.IsNullOrEmpty(machine.PollingSubscriptionId)) return;
-        if (string.Equals(machine.Thumbprint, oldThumbprint, StringComparison.Ordinal)) return;
-
-        if (!string.IsNullOrEmpty(oldThumbprint))
-            _trustInitializer.RemoveTrust(oldThumbprint);
-
-        _trustInitializer.TrustThumbprint(machine.Thumbprint);
-
-        Log.Information("Rotated Halibut trust for machine {MachineName}: {OldThumbprint} → {NewThumbprint}", machine.Name, oldThumbprint, machine.Thumbprint);
-    }
-
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)
     {
         var machines = await _machineDataProvider.GetMachinesByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
 
-        RemoveHalibutTrust(machines);
-
         await _machineDataProvider.DeleteMachinesAsync(machines, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        _trustDistributor.Reconfigure();
 
         var deletedIds = machines.Select(m => m.Id).ToList();
         var failIds = command.Ids.Except(deletedIds).ToList();
@@ -116,15 +102,5 @@ public class MachineService : IMachineService
                 FailIds = failIds
             }
         };
-    }
-
-    private void RemoveHalibutTrust(List<Persistence.Entities.Deployments.Machine> machines)
-    {
-        foreach (var machine in machines)
-        {
-            if (string.IsNullOrEmpty(machine.Thumbprint)) continue;
-
-            _trustInitializer.RemoveTrust(machine.Thumbprint);
-        }
     }
 }

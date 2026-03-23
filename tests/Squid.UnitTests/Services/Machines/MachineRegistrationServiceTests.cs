@@ -1,10 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
-using Halibut;
+using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Machines;
@@ -15,12 +13,12 @@ using DeploymentEnvironment = Squid.Core.Persistence.Entities.Deployments.Enviro
 
 namespace Squid.UnitTests.Services.Machines;
 
-public class MachineRegistrationServiceTests : IDisposable
+public class MachineRegistrationServiceTests
 {
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IMachinePolicyDataProvider> _policyDataProvider = new();
     private readonly Mock<IEnvironmentDataProvider> _environmentDataProvider = new();
-    private readonly HalibutRuntime _halibutRuntime;
+    private readonly Mock<IPollingTrustDistributor> _trustDistributor = new();
     private readonly SelfCertSetting _selfCertSetting;
     private readonly MachineRegistrationService _service;
 
@@ -34,18 +32,8 @@ public class MachineRegistrationServiceTests : IDisposable
             Password = password
         };
 
-        var cert = X509CertificateLoader.LoadPkcs12(pfxBytes, password);
-        _halibutRuntime = new HalibutRuntimeBuilder()
-            .WithServerCertificate(cert)
-            .Build();
-
         _service = new MachineRegistrationService(
-            _machineDataProvider.Object, _policyDataProvider.Object, _environmentDataProvider.Object, _halibutRuntime, _selfCertSetting);
-    }
-
-    public void Dispose()
-    {
-        _halibutRuntime?.Dispose();
+            _machineDataProvider.Object, _policyDataProvider.Object, _environmentDataProvider.Object, _trustDistributor.Object, _selfCertSetting);
     }
 
     [Theory]
@@ -398,6 +386,66 @@ public class MachineRegistrationServiceTests : IDisposable
 
         captured.ShouldNotBeNull();
         captured.MachinePolicyId.ShouldBe(42);
+    }
+
+    // ========================================================================
+    // Trust Reconfiguration — Agent Registration
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterAgent_NewRegistration_ReconfiguresTrustAfterPersist()
+    {
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        var callOrder = new List<string>();
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("persist"))
+            .Returns(Task.CompletedTask);
+        _trustDistributor
+            .Setup(t => t.Reconfigure())
+            .Callback(() => callOrder.Add("reconfigure"));
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(), CancellationToken.None);
+
+        callOrder.ShouldBe(new[] { "persist", "reconfigure" });
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ReRegistration_ReconfiguresTrustAfterPersist()
+    {
+        var existing = new Machine
+        {
+            Id = 42, Name = "existing-agent", EnvironmentIds = "[1]", Roles = "[\"k8s\"]",
+            Thumbprint = "old-thumb", Endpoint = "{}", PollingSubscriptionId = "sub-123"
+        };
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync("sub-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        var callOrder = new List<string>();
+        _machineDataProvider
+            .Setup(x => x.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("persist"))
+            .Returns(Task.CompletedTask);
+        _trustDistributor
+            .Setup(t => t.Reconfigure())
+            .Callback(() => callOrder.Add("reconfigure"));
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(subscriptionId: "sub-123"), CancellationToken.None);
+
+        callOrder.ShouldBe(new[] { "persist", "reconfigure" });
     }
 
     private static RegisterKubernetesAgentCommand CreateCommand(
