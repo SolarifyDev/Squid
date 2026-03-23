@@ -70,11 +70,23 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
             {
                 break;
             }
+            catch (Exception ex) when (IsForbidden(ex))
+            {
+                Log.Warning("Event monitoring disabled — insufficient RBAC permissions (events: list/watch). " +
+                    "Script execution is unaffected. To enable K8s event injection into script logs, " +
+                    "grant events list/watch to the tentacle service account.");
+                return;
+            }
             catch (Exception ex)
             {
                 Log.Warning(ex, "Event watch stream disconnected, falling back to poll then reconnecting");
 
                 try { PollEvents(); }
+                catch (Exception pollEx) when (IsForbidden(pollEx))
+                {
+                    Log.Warning("Event monitoring disabled — insufficient RBAC permissions (events: list/watch)");
+                    return;
+                }
                 catch (Exception pollEx) { Log.Debug(pollEx, "Fallback poll also failed"); }
 
                 try
@@ -87,6 +99,12 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
                 }
             }
         }
+    }
+
+    private static bool IsForbidden(Exception ex)
+    {
+        return ex is k8s.Autorest.HttpOperationException httpEx &&
+            httpEx.Response.StatusCode == System.Net.HttpStatusCode.Forbidden;
     }
 
     internal async Task WatchEventsAsync(CancellationToken ct)

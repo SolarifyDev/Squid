@@ -58,7 +58,7 @@ public partial class KubernetesPodManager
                 }
             }
 
-            var pod = BuildPodSpec(podName, ticketId, additionalLabels);
+            var pod = BuildPodSpec(podName, ticketId, ns, additionalLabels);
             _ops.CreatePod(pod, ns);
 
             Log.Information("Created script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, ns);
