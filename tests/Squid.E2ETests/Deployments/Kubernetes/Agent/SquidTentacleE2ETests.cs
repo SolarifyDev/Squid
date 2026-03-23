@@ -48,13 +48,11 @@ public class SquidTentacleE2ETests
 
             machine.ShouldNotBeNull();
             machine.Id.ShouldBe(_fixture.TentacleMachineId);
-            machine.PollingSubscriptionId.ShouldBe(_fixture.TentacleSubscriptionId);
-            machine.Thumbprint.ShouldBe(_fixture.TentacleThumbprint);
+            EndpointJsonHelper.GetField(machine.Endpoint, "SubscriptionId").ShouldBe(_fixture.TentacleSubscriptionId);
+            EndpointJsonHelper.GetField(machine.Endpoint, "Thumbprint").ShouldBe(_fixture.TentacleThumbprint);
             machine.Roles.ShouldBe("[\"k8s\"]");
             machine.Endpoint.ShouldContain("KubernetesAgent");
             machine.Endpoint.ShouldContain(_fixture.TentacleSubscriptionId);
-            machine.OperatingSystem.ShouldBe(OperatingSystemType.Linux);
-            machine.ShellName.ShouldBe("Bash");
         }).ConfigureAwait(false);
     }
 
@@ -426,18 +424,9 @@ public class SquidTentacleE2ETests
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = string.Empty,
-            Json = string.Empty,
-            Thumbprint = _fixture.TentacleThumbprint,
-            Uri = string.Empty,
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            PollingSubscriptionId = _fixture.TentacleSubscriptionId,
-            LicenseHash = string.Empty,
             Slug = $"real-tentacle-ns-{Guid.NewGuid():N}"
         };
     }

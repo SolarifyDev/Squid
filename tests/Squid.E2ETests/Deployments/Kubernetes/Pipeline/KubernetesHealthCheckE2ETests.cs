@@ -114,18 +114,10 @@ public class KubernetesHealthCheckE2ETests
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
-                Json = "{}",
-                Thumbprint = "E2E-THUMBPRINT",
-                Uri = "https://localhost:10933",
-                HasLatestCalamari = false,
                 Endpoint = endpointJson,
                 HealthStatus = MachineHealthStatus.Healthy,
                 DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
-                OperatingSystem = OperatingSystemType.Linux,
-                ShellName = "Bash",
-                ShellVersion = "",
-                LicenseHash = string.Empty,
                 Slug = "e2e-healthy-target"
             };
 

@@ -39,9 +39,9 @@ public class HalibutMachineExecutionStrategyTests
     // === Endpoint Parsing — invalid machine ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_MissingUriAndPollingId_ThrowsDeploymentEndpointException()
+    public async Task ExecuteScriptAsync_MissingSubscriptionIdAndThumbprint_ThrowsDeploymentEndpointException()
     {
-        var machine = new Machine { Name = "bad-machine", Uri = null, PollingSubscriptionId = null, Thumbprint = "ABC" };
+        var machine = new Machine { Name = "bad-machine", Endpoint = """{"CommunicationStyle":"KubernetesAgent"}""" };
 
         await Should.ThrowAsync<DeploymentEndpointException>(
             () => _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None));
@@ -50,7 +50,7 @@ public class HalibutMachineExecutionStrategyTests
     [Fact]
     public async Task ExecuteScriptAsync_MissingThumbprint_ThrowsDeploymentEndpointException()
     {
-        var machine = new Machine { Name = "no-thumb", Uri = "https://agent:10933/", Thumbprint = null };
+        var machine = new Machine { Name = "no-thumb", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123"}""" };
 
         await Should.ThrowAsync<DeploymentEndpointException>(
             () => _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None));
@@ -59,10 +59,10 @@ public class HalibutMachineExecutionStrategyTests
     // === Endpoint Parsing — valid URI + polling mode ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_ValidUri_CreatesClientWithEndpoint()
+    public async Task ExecuteScriptAsync_ValidEndpoint_CreatesClientWithEndpoint()
     {
-        var machine = new Machine { Name = "agent-1", Uri = "https://agent:10933/", Thumbprint = "AABBCCDD" };
-        SetupScriptClient(machine.Uri);
+        var machine = new Machine { Name = "agent-1", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABBCCDD"}""" };
+        SetupScriptClient("poll://sub-123/");
 
         var result = await _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None);
 
@@ -76,9 +76,7 @@ public class HalibutMachineExecutionStrategyTests
         var machine = new Machine
         {
             Name = "polling-agent",
-            Uri = null,
-            PollingSubscriptionId = "poll-sub-123",
-            Thumbprint = "AABBCCDD"
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"poll-sub-123","Thumbprint":"AABBCCDD"}"""
         };
 
         SetupScriptClient("poll://poll-sub-123/");
@@ -97,7 +95,7 @@ public class HalibutMachineExecutionStrategyTests
     public async Task ExecuteScriptAsync_WithCalamariCommand_RoutesToCalamariPath()
     {
         var machine = CreateValidMachine();
-        SetupScriptClient(machine.Uri);
+        SetupScriptClient("poll://sub-test/");
 
         var result = await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: "calamari-run-script"), CancellationToken.None);
@@ -109,7 +107,7 @@ public class HalibutMachineExecutionStrategyTests
     public async Task ExecuteScriptAsync_WithoutCalamariCommand_RoutesToDirectPath()
     {
         var machine = CreateValidMachine();
-        SetupScriptClient(machine.Uri);
+        SetupScriptClient("poll://sub-test/");
 
         var result = await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, scriptBody: "kubectl apply -f manifest.yaml"), CancellationToken.None);
@@ -124,7 +122,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -147,7 +145,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -265,7 +263,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -289,7 +287,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -337,8 +335,7 @@ public class HalibutMachineExecutionStrategyTests
     private static Machine CreateValidMachine() => new()
     {
         Name = "test-agent",
-        Uri = "https://agent:10933/",
-        Thumbprint = "AABBCCDD"
+        Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-test","Thumbprint":"AABBCCDD"}"""
     };
 
     private Mock<IAsyncScriptService> SetupScriptClient(string expectedUri)

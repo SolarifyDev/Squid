@@ -34,9 +34,9 @@ public class KubernetesAgentHealthCheckStrategyTests
     // ========================================================================
 
     [Fact]
-    public void ParseAgentEndpoint_PollingSubscriptionId_ReturnsEndpoint()
+    public void ParseAgentEndpoint_SubscriptionIdAndThumbprint_ReturnsEndpoint()
     {
-        var machine = new Machine { PollingSubscriptionId = "sub-123", Thumbprint = "AABB" };
+        var machine = new Machine { Endpoint = """{"SubscriptionId":"sub-123","Thumbprint":"AABB"}""" };
 
         var endpoint = KubernetesAgentHealthCheckStrategy.ParseAgentEndpoint(machine);
 
@@ -45,20 +45,9 @@ public class KubernetesAgentHealthCheckStrategyTests
     }
 
     [Fact]
-    public void ParseAgentEndpoint_ExplicitUri_UsesUri()
+    public void ParseAgentEndpoint_MissingSubscriptionId_ReturnsNull()
     {
-        var machine = new Machine { Uri = "poll://explicit/", Thumbprint = "AABB" };
-
-        var endpoint = KubernetesAgentHealthCheckStrategy.ParseAgentEndpoint(machine);
-
-        endpoint.ShouldNotBeNull();
-        endpoint.BaseUri.ToString().ShouldBe("poll://explicit/");
-    }
-
-    [Fact]
-    public void ParseAgentEndpoint_MissingBothUriAndSubscription_ReturnsNull()
-    {
-        var machine = new Machine { Thumbprint = "AABB" };
+        var machine = new Machine { Endpoint = """{"Thumbprint":"AABB"}""" };
 
         KubernetesAgentHealthCheckStrategy.ParseAgentEndpoint(machine).ShouldBeNull();
     }
@@ -66,7 +55,15 @@ public class KubernetesAgentHealthCheckStrategyTests
     [Fact]
     public void ParseAgentEndpoint_MissingThumbprint_ReturnsNull()
     {
-        var machine = new Machine { PollingSubscriptionId = "sub-123" };
+        var machine = new Machine { Endpoint = """{"SubscriptionId":"sub-123"}""" };
+
+        KubernetesAgentHealthCheckStrategy.ParseAgentEndpoint(machine).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_EmptyEndpoint_ReturnsNull()
+    {
+        var machine = new Machine { Endpoint = "{}" };
 
         KubernetesAgentHealthCheckStrategy.ParseAgentEndpoint(machine).ShouldBeNull();
     }
@@ -78,7 +75,7 @@ public class KubernetesAgentHealthCheckStrategyTests
     [Fact]
     public async Task CheckConnectivity_MissingSubscriptionAndThumbprint_ReturnsUnhealthy()
     {
-        var machine = new Machine { Id = 1, Name = "agent", Endpoint = """{"communicationStyle":"KubernetesAgent"}""" };
+        var machine = new Machine { Id = 1, Name = "agent", Endpoint = """{"CommunicationStyle":"KubernetesAgent"}""" };
 
         var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
@@ -103,8 +100,7 @@ public class KubernetesAgentHealthCheckStrategyTests
         var machine = new Machine
         {
             Id = 1, Name = "agent",
-            PollingSubscriptionId = "sub-123", Thumbprint = "AABB",
-            Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
         var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
@@ -127,8 +123,7 @@ public class KubernetesAgentHealthCheckStrategyTests
         var machine = new Machine
         {
             Id = 1, Name = "agent",
-            PollingSubscriptionId = "sub-123", Thumbprint = "AABB",
-            Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
         var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
@@ -150,8 +145,7 @@ public class KubernetesAgentHealthCheckStrategyTests
         var machine = new Machine
         {
             Id = 1, Name = "agent",
-            PollingSubscriptionId = "sub-123", Thumbprint = "AABB",
-            Endpoint = """{"communicationStyle":"KubernetesAgent"}"""
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
         var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);

@@ -390,18 +390,9 @@ data:
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
-            Json = string.Empty,
-            Thumbprint = "TEST-THUMBPRINT",
-            Uri = communicationStyle == "KubernetesAgent" ? string.Empty : "https://localhost:10933",
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            PollingSubscriptionId = communicationStyle == "KubernetesAgent" ? Guid.NewGuid().ToString("N") : null,
-            LicenseHash = string.Empty,
             Slug = $"ns-wrap-test-{Guid.NewGuid():N}"
         };
     }

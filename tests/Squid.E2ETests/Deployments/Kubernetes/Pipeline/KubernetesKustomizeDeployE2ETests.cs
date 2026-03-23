@@ -110,18 +110,9 @@ public class KubernetesKustomizeDeployE2ETests
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
-                Json = "{}",
-                Thumbprint = "E2E-THUMBPRINT",
-                Uri = communicationStyle == "KubernetesAgent" ? "" : "https://localhost:10933",
-                HasLatestCalamari = false,
                 Endpoint = endpointJson,
                 DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
-                OperatingSystem = OperatingSystemType.Linux,
-                ShellName = "Bash",
-                ShellVersion = "",
-                PollingSubscriptionId = communicationStyle == "KubernetesAgent" ? "poll-kustomize" : null,
-                LicenseHash = string.Empty,
                 Slug = $"e2e-kustomize-{communicationStyle.ToLowerInvariant()}"
             };
 

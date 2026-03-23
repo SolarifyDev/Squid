@@ -196,17 +196,9 @@ public class K8sTestDataSeeder
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
-            Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
-            Thumbprint = "E2E-THUMBPRINT",
-            Uri = "https://localhost:10933",
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Windows,
-            ShellName = "PowerShell",
-            ShellVersion = "7.0",
-            LicenseHash = string.Empty,
             Slug = "e2e-k8s-target"
         };
     }
@@ -233,18 +225,9 @@ public class K8sTestDataSeeder
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
-            Json = string.Empty,
-            Thumbprint = thumbprint,
-            Uri = string.Empty,
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            PollingSubscriptionId = subscriptionId,
-            LicenseHash = string.Empty,
             Slug = $"e2e-k8s-agent-{subscriptionId[..8]}"
         };
     }

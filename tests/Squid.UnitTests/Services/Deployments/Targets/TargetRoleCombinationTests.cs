@@ -470,9 +470,6 @@ public class TargetRoleCombinationTests
         Roles = JsonSerializer.Serialize(roles),
         SpaceId = 1,
         Endpoint = "{}",
-        Uri = $"https://machine{id}:10933",
-        Thumbprint = $"THUMB-{id}",
-        OperatingSystem = Squid.Message.Enums.OperatingSystemType.Linux,
         Slug = $"machine-{id}"
     };
 

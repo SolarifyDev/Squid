@@ -341,8 +341,7 @@ public class MachineRegistrationServiceTests
         var existing = new Machine
         {
             Id = 42, Name = "existing-agent", EnvironmentIds = "[1]", Roles = "[\"k8s\"]",
-            Thumbprint = "old-thumb", Endpoint = "{}", PollingSubscriptionId = "sub-123",
-            MachinePolicyId = 99
+            Endpoint = "{}", MachinePolicyId = 99
         };
 
         _machineDataProvider
@@ -417,7 +416,7 @@ public class MachineRegistrationServiceTests
         var existing = new Machine
         {
             Id = 42, Name = "existing-agent", EnvironmentIds = "[1]", Roles = "[\"k8s\"]",
-            Thumbprint = "old-thumb", Endpoint = "{}", PollingSubscriptionId = "sub-123"
+            Endpoint = "{}"
         };
 
         _machineDataProvider

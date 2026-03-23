@@ -216,8 +216,7 @@ public class MachineUpgradeScriptServiceTests
         var machine = new Machine
         {
             Id = 9,
-            Endpoint = "{ invalid-json",
-            AgentVersion = "1.0.1"
+            Endpoint = "{ invalid-json"
         };
 
         _machineDataProvider
@@ -249,15 +248,14 @@ public class MachineUpgradeScriptServiceTests
             Namespace = "default",
             ReleaseName = releaseName,
             HelmNamespace = helmNamespace,
-            ChartRef = chartRef
+            ChartRef = chartRef,
+            AgentVersion = currentVersion
         });
 
         return new Machine
         {
             Id = machineId,
-            Endpoint = endpoint,
-            AgentVersion = currentVersion,
-            PollingSubscriptionId = subscriptionId
+            Endpoint = endpoint
         };
     }
 }

@@ -52,7 +52,7 @@ public partial class MachineRegistrationService
         };
     }
 
-    private static string BuildKubernetesAgentEndpointJson(RegisterKubernetesAgentCommand command, string agentVersion = null)
+    private static string BuildKubernetesAgentEndpointJson(RegisterKubernetesAgentCommand command, string agentVersion)
     {
         return JsonSerializer.Serialize(new KubernetesAgentEndpointDto
         {
@@ -63,7 +63,7 @@ public partial class MachineRegistrationService
             HelmNamespace = command.HelmNamespace,
             ChartRef = command.ChartRef,
             CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesAgent),
-            AgentVersion = agentVersion ?? command.AgentVersion
+            AgentVersion = agentVersion
         });
     }
 

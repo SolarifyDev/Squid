@@ -172,18 +172,9 @@ public class KubernetesCalamariE2ETests
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),
-            Json = string.Empty,
-            Thumbprint = thumbprint,
-            Uri = string.Empty,
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            PollingSubscriptionId = subscriptionId,
-            LicenseHash = string.Empty,
             Slug = $"e2e-calamari-agent-{subscriptionId[..8]}"
         };
     }
