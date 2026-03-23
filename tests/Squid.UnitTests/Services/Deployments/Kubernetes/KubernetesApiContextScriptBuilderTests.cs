@@ -2,12 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
+
+// ReSharper disable InconsistentNaming
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -73,8 +76,8 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", TokenContext());
 
-        result.ShouldContain("test-token-123");
-        result.ShouldContain("Token");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("test-token-123"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("Token"));
         result.ShouldContain("kubectl get pods");
     }
 
@@ -83,8 +86,8 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", TokenContext(ScriptSyntax.PowerShell));
 
-        result.ShouldContain("test-token-123");
-        result.ShouldContain("Token");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("test-token-123"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("Token"));
         result.ShouldContain("kubectl get pods");
     }
 
@@ -95,9 +98,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get nodes", UsernamePasswordContext());
 
-        result.ShouldContain("admin");
-        result.ShouldContain("s3cret");
-        result.ShouldContain("UsernamePassword");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("admin"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("s3cret"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("UsernamePassword"));
     }
 
     [Fact]
@@ -105,9 +108,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get nodes", UsernamePasswordContext(ScriptSyntax.PowerShell));
 
-        result.ShouldContain("admin");
-        result.ShouldContain("s3cret");
-        result.ShouldContain("UsernamePassword");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("admin"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("s3cret"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("UsernamePassword"));
     }
 
     // === ClientCertificate Auth Tests ===
@@ -117,9 +120,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", ClientCertContext());
 
-        result.ShouldContain("LS0tLS1CRUdJTi...");
-        result.ShouldContain("LS0tLS1CRUdJTi...KEY");
-        result.ShouldContain("ClientCertificate");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("LS0tLS1CRUdJTi..."));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("LS0tLS1CRUdJTi...KEY"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("ClientCertificate"));
     }
 
     [Fact]
@@ -127,9 +130,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", ClientCertContext(ScriptSyntax.PowerShell));
 
-        result.ShouldContain("LS0tLS1CRUdJTi...");
-        result.ShouldContain("LS0tLS1CRUdJTi...KEY");
-        result.ShouldContain("ClientCertificate");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("LS0tLS1CRUdJTi..."));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("LS0tLS1CRUdJTi...KEY"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("ClientCertificate"));
     }
 
     // === AWS Auth Tests ===
@@ -139,9 +142,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", AwsContext());
 
-        result.ShouldContain("AKIAIOSFODNN7EXAMPLE");
-        result.ShouldContain("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
-        result.ShouldContain("AmazonWebServicesAccount");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("AKIAIOSFODNN7EXAMPLE"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("AmazonWebServicesAccount"));
     }
 
     [Fact]
@@ -149,9 +152,9 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("kubectl get pods", AwsContext(ScriptSyntax.PowerShell));
 
-        result.ShouldContain("AKIAIOSFODNN7EXAMPLE");
-        result.ShouldContain("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
-        result.ShouldContain("AmazonWebServicesAccount");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("AKIAIOSFODNN7EXAMPLE"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("AmazonWebServicesAccount"));
     }
 
     // === Cluster URL Tests ===
@@ -165,7 +168,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("https://my-cluster.example.com:8443");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("https://my-cluster.example.com:8443"));
     }
 
     [Fact]
@@ -177,7 +180,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("https://my-cluster.example.com:8443");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("https://my-cluster.example.com:8443"));
     }
 
     // === Namespace Tests ===
@@ -195,7 +198,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("production");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("production"));
     }
 
     [Fact]
@@ -212,7 +215,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("production");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("production"));
     }
 
     [Fact]
@@ -223,7 +226,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("endpoint-ns");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
     }
 
     [Fact]
@@ -239,8 +242,8 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("action-ns");
-        result.ShouldNotContain("endpoint-ns");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("action-ns"));
+        result.ShouldNotContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
     }
 
     // === TLS Skip Tests ===
@@ -253,7 +256,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("True");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("True"));
     }
 
     [Fact]
@@ -265,7 +268,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("True");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("True"));
     }
 
     // === Cluster Certificate Tests ===
@@ -278,7 +281,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg..."));
     }
 
     [Fact]
@@ -290,7 +293,7 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg...");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("MIICpDCCAYwCCQDU+pQ4pHgSpDANBg..."));
     }
 
     // === User Script Embedding Tests ===
@@ -335,7 +338,7 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("echo hi", TokenContext(), "/usr/local/bin/kubectl-1.28");
 
-        result.ShouldContain("/usr/local/bin/kubectl-1.28");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("/usr/local/bin/kubectl-1.28"));
     }
 
     [Fact]
@@ -343,7 +346,7 @@ public class KubernetesApiContextScriptBuilderTests
     {
         var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell), "C:\\tools\\kubectl.exe");
 
-        result.ShouldContain("C:\\tools\\kubectl.exe");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("C:\\tools\\kubectl.exe"));
     }
 
     [Fact]
@@ -436,21 +439,19 @@ public class KubernetesApiContextScriptBuilderTests
     // === Security — Credential Escaping ===
 
     [Fact]
-    public void WrapWithContext_TokenWithDollarSign_Bash_IsEscaped()
+    public void WrapWithContext_TokenWithDollarSign_Bash_IsBase64Encoded()
     {
         var ctx = CreateContext(accountType: AccountType.Token,
             credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "token$with`special\"chars" }));
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldNotContain("token$with");
-        result.ShouldContain("token\\$with");
-        result.ShouldContain("\\`special");
-        result.ShouldContain("\\\"chars");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("token$with`special\"chars"));
+        result.ShouldNotContain("token$with");  // raw value should never appear
     }
 
     [Fact]
-    public void WrapWithContext_PasswordWithSpecialChars_PowerShell_IsEscaped()
+    public void WrapWithContext_PasswordWithSpecialChars_PowerShell_IsBase64Encoded()
     {
         var ctx = CreateContext(accountType: AccountType.UsernamePassword,
             credentialsJson: JsonSerializer.Serialize(new UsernamePasswordCredentials { Username = "admin", Password = "p@ss$word`test\"quote" }),
@@ -458,9 +459,8 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("`$word");
-        result.ShouldContain("``test");
-        result.ShouldContain("`\"quote");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("p@ss$word`test\"quote"));
+        result.ShouldNotContain("p@ss$word");  // raw value should never appear
     }
 
     // === EKS Auth — AwsClusterName/AwsRegion ===
@@ -475,8 +475,8 @@ public class KubernetesApiContextScriptBuilderTests
                 ClusterUrl = "https://eks.example.com",
                 Namespace = "default",
                 SkipTlsVerification = "False",
-                AwsClusterName = "my-eks-cluster",
-                AwsRegion = "us-west-2"
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-eks-cluster", Region = "us-west-2" })
             })
         };
         endpoint.SetAccountData(AccountType.AmazonWebServicesAccount,
@@ -486,8 +486,8 @@ public class KubernetesApiContextScriptBuilderTests
 
         var result = _builder.WrapWithContext("echo hi", ctx);
 
-        result.ShouldContain("my-eks-cluster");
-        result.ShouldContain("us-west-2");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-eks-cluster"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("us-west-2"));
     }
 
     // === Security — No eval in Bash Template ===
@@ -550,6 +550,412 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldContain("kubectl config use-context failed");
     }
 
+    // === Azure Service Principal Auth Tests ===
+
+    private static ScriptContext AzureServicePrincipalContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Key = "sp-secret-key" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_ContainsAzLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az login --service-principal");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("client-id-456"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("sp-secret-key"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("tenant-id-789"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_ContainsAksGetCredentials()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az aks get-credentials");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-aks-cluster"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-rg"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_PowerShell_ContainsAzLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("az login --service-principal");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("client-id-456"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("tenant-id-789"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_SetsSubscription()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureServicePrincipalContext());
+
+        result.ShouldContain("az account set --subscription");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("sub-123"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_Base64EncodesSpecialCharsInKey()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com", Namespace = "default", SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "cluster", ResourceGroup = "rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub", ClientId = "cid", TenantId = "tid", Key = "key$with`special" }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash });
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("key$with`special"));
+        result.ShouldNotContain("key$with");  // raw value should never appear
+    }
+
+    // === Azure OIDC Auth Tests ===
+
+    private static ScriptContext AzureOidcContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks-oidc.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-oidc-cluster", ResourceGroup = "my-oidc-rg" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureOidc,
+            JsonSerializer.Serialize(new AzureOidcCredentials { SubscriptionNumber = "oidc-sub-123", ClientId = "oidc-client-456", TenantId = "oidc-tenant-789", Jwt = "api://AzureADTokenExchange" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureOidc_Bash_ContainsFederatedTokenLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureOidcContext());
+
+        result.ShouldContain("--federated-token");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("oidc-client-456"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("oidc-tenant-789"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("api://AzureADTokenExchange"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureOidc_PowerShell_ContainsFederatedTokenLogin()
+    {
+        var result = _builder.WrapWithContext("echo hi", AzureOidcContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("--federated-token");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("oidc-client-456"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("oidc-tenant-789"));
+    }
+
+    // === Azure Config Dir Isolation Tests ===
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_SetsAzureConfigDir(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("AZURE_CONFIG_DIR");
+        result.ShouldContain("mktemp -d /tmp/azure-cli-");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_PowerShell_SetsAzureConfigDir(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext(ScriptSyntax.PowerShell)
+            : AzureOidcContext(ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("AZURE_CONFIG_DIR");
+        result.ShouldContain("azure-cli-");
+    }
+
+    // === kubelogin Integration Tests ===
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_ContainsKubeloginConvert(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("kubelogin convert-kubeconfig");
+        result.ShouldContain("-l azurecli");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_PowerShell_ContainsKubeloginConvert(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext(ScriptSyntax.PowerShell)
+            : AzureOidcContext(ScriptSyntax.PowerShell);
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain("kubelogin convert-kubeconfig");
+        result.ShouldContain("-l azurecli");
+    }
+
+    [Theory]
+    [InlineData("AzureServicePrincipal")]
+    [InlineData("AzureOidc")]
+    public void WrapWithContext_AzureAuth_Bash_NoUnreplacedPlaceholders(string authType)
+    {
+        var ctx = authType == "AzureServicePrincipal"
+            ? AzureServicePrincipalContext()
+            : AzureOidcContext();
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === GCP Auth Tests ===
+
+    private static ScriptContext GcpContext(ScriptSyntax syntax = ScriptSyntax.Bash, string zone = "", string region = "", string useInternalIp = "False")
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://gke.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.GcpGke,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiGcpGkeConfig { ClusterName = "my-gke-cluster", Project = "my-gcp-project", Zone = zone, Region = region, UseClusterInternalIp = useInternalIp })
+            })
+        };
+        endpoint.SetAccountData(AccountType.GoogleCloudAccount,
+            JsonSerializer.Serialize(new GcpCredentials { JsonKey = "{\"type\":\"service_account\",\"project_id\":\"test\"}" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_ContainsGcloudActivateServiceAccount()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud auth activate-service-account");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("{\"type\":\"service_account\",\"project_id\":\"test\"}"));
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_ContainsGetCredentials()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud container clusters get-credentials");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-gke-cluster"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-gcp-project"));
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_PowerShell_ContainsGcloudAuth()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(ScriptSyntax.PowerShell, zone: "us-central1-a"));
+
+        result.ShouldContain("gcloud auth activate-service-account");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-gke-cluster"));
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_ZoneBasedCluster_UsesZoneFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("us-central1-a"));
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_RegionBasedCluster_UsesRegionFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(region: "us-central1"));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("us-central1"));
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_InternalIp_ContainsInternalIpFlag()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a", useInternalIp: "True"));
+
+        result.ShouldContain("--internal-ip");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_JsonKeyWithSpecialChars_EscapedProperly()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldNotContain("{{GcpJsonKey}}");
+    }
+
+    [Fact]
+    public void WrapWithContext_Gcp_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", GcpContext(zone: "us-central1-a"));
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === AWS OIDC Auth Tests ===
+
+    private static ScriptContext AwsOidcContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks-oidc.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-oidc-eks-cluster", Region = "us-east-1" })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AmazonWebServicesOidcAccount,
+            JsonSerializer.Serialize(new AwsOidcCredentials { RoleArn = "arn:aws:iam::123456789:role/my-role", WebIdentityToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_ContainsRoleArn()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("arn:aws:iam::123456789:role/my-role"));
+        result.ShouldContain("--role-arn");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_SetsWebIdentityTokenFile()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldContain("AWS_WEB_IDENTITY_TOKEN_FILE");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_PowerShell_ContainsRoleArn()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("arn:aws:iam::123456789:role/my-role"));
+        result.ShouldContain("--role-arn");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsOidc_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === Proxy Tests ===
+
+    private static ScriptContext ProxyContext(ScriptSyntax syntax = ScriptSyntax.Bash, string proxyUser = null, string proxyPass = null)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://k8s.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                Proxy = new KubernetesApiEndpointProxyConfig { Host = "proxy.example.com", Port = "8080", Username = proxyUser, Password = proxyPass }
+            })
+        };
+        endpoint.SetAccountData(AccountType.Token,
+            JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyConfigured_Bash_SetsHttpsProxy()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext());
+
+        result.ShouldContain("HTTPS_PROXY");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("proxy.example.com"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("8080"));
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyWithAuth_Bash_IncludesCredentialsInUrl()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext(proxyUser: "puser", proxyPass: "ppass"));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("puser"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("ppass"));
+    }
+
+    [Fact]
+    public void WrapWithContext_NoProxy_Bash_ProxyHostEmpty()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
+
+        result.ShouldContain("b64d ''");
+    }
+
+    [Fact]
+    public void WrapWithContext_ProxyConfigured_PowerShell_SetsEnvVar()
+    {
+        var result = _builder.WrapWithContext("echo hi", ProxyContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("HTTPS_PROXY");
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("proxy.example.com"));
+    }
+
     // === Kubeconfig Isolation Tests ===
 
     [Fact]
@@ -566,5 +972,119 @@ public class KubernetesApiContextScriptBuilderTests
         var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell));
 
         result.ShouldContain("KUBECONFIG");
+    }
+
+    // === File-Based Credential Passing ===
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Token_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-token-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-token-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Password_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", UsernamePasswordContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-pass-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-pass-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_AwsSecretKey_WritesToTempFileAndReadsBack(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+        {
+            result.ShouldContain("mktemp /tmp/cred-aws-");
+            result.ShouldContain("cat \"$CRED_FILE\"");
+        }
+        else
+        {
+            result.ShouldContain("cred-aws-");
+            result.ShouldContain("WriteAllText($credFile");
+            result.ShouldContain("ReadAllText($credFile)");
+        }
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_Token_CredFileCleanedUp(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext(syntax));
+
+        if (syntax == ScriptSyntax.Bash)
+            result.ShouldContain("rm -f \"$CRED_FILE\"");
+        else
+            result.ShouldContain("$credFile)");
+    }
+
+    // === Base64 Decode Function Presence ===
+
+    [Fact]
+    public void WrapWithContext_Bash_ContainsBase64DecodeFunction()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
+
+        result.ShouldContain("b64d()");
+        result.ShouldContain("base64 --decode");
+    }
+
+    [Fact]
+    public void WrapWithContext_Bash_ContainsUmask077()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
+
+        result.ShouldContain("umask 077");
+    }
+
+    [Fact]
+    public void WrapWithContext_PowerShell_ContainsBase64DecodeFunction()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext(ScriptSyntax.PowerShell));
+
+        result.ShouldContain("function B64D");
+        result.ShouldContain("FromBase64String");
+    }
+
+    [Fact]
+    public void WrapWithContext_AllPlaceholders_Base64Encoded()
+    {
+        var result = _builder.WrapWithContext("echo hi", TokenContext());
+
+        // Token should be base64 encoded
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("test-token-123"));
+        // The raw token should NOT appear in the script
+        result.ShouldNotContain("'test-token-123'");
     }
 }

@@ -10,5 +10,8 @@ public enum AccountType
     AzureServicePrincipal = 5,
     AmazonWebServicesAccount = 6,
     AmazonWebServicesRoleAccount = 7,
-    ClientCertificate = 8
+    ClientCertificate = 8,
+    AzureOidc = 9,
+    GoogleCloudAccount = 10,
+    AmazonWebServicesOidcAccount = 11
 }

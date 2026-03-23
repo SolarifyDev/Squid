@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -31,6 +32,7 @@ public partial class DeploymentService : IDeploymentService
     private readonly IDeploymentSnapshotService _deploymentSnapshotService;
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IServerTaskService _serverTaskService;
+    private readonly IProjectDataProvider _projectDataProvider;
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
@@ -47,6 +49,7 @@ public partial class DeploymentService : IDeploymentService
         IDeploymentSnapshotService deploymentSnapshotService,
         IServerTaskDataProvider serverTaskDataProvider,
         IServerTaskService serverTaskService,
+        IProjectDataProvider projectDataProvider,
         IActionHandlerRegistry actionHandlerRegistry,
         ISquidBackgroundJobClient backgroundJobClient)
     {
@@ -62,6 +65,7 @@ public partial class DeploymentService : IDeploymentService
         _deploymentSnapshotService = deploymentSnapshotService;
         _serverTaskDataProvider = serverTaskDataProvider;
         _serverTaskService = serverTaskService;
+        _projectDataProvider = projectDataProvider;
         _actionHandlerRegistry = actionHandlerRegistry;
         _backgroundJobClient = backgroundJobClient;
     }
@@ -89,17 +93,23 @@ public partial class DeploymentService : IDeploymentService
         }
 
         var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
-        
-        if (release == null) 
+
+        if (release == null)
             throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
+
+        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
+        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(command.EnvironmentId, cancellationToken).ConfigureAwait(false);
+
+        var projectName = project?.Name ?? $"Project-{release.ProjectId}";
+        var environmentName = environment?.Name ?? $"Environment-{command.EnvironmentId}";
 
         var effectiveQueueTime = queueTime ?? DateTimeOffset.UtcNow;
         var deployedBy = _currentUser.Id ?? throw new InvalidOperationException("Current user id is required when creating deployment.");
-        
+
         var serverTask = new Persistence.Entities.Deployments.ServerTask
         {
-            Name = command.Name ?? $"Deploy {release.Version} to Environment",
-            Description = $"Deploy release {release.Version} to environment {command.EnvironmentId}",
+            Name = command.Name ?? "Deploy",
+            Description = $"Deploy {projectName} release {release.Version} to {environmentName}",
             QueueTime = effectiveQueueTime,
             State = TaskState.Pending,
             ServerTaskType = "Deploy",

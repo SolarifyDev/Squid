@@ -198,7 +198,7 @@ public class ScriptPodTemplateMergeTests
             .Callback<V1Pod, string>((pod, ns) => captured = pod)
             .Returns((V1Pod pod, string ns) => pod);
 
-        var templateProvider = new Mock<ScriptPodTemplateProvider>(null, null) { CallBase = false };
+        var templateProvider = new Mock<ScriptPodTemplateProvider>(null, null, null) { CallBase = false };
         templateProvider.Setup(p => p.TryLoadTemplate(It.IsAny<string>())).Returns(template);
 
         var manager = new KubernetesPodManager(ops.Object, _settings, templateProvider.Object);

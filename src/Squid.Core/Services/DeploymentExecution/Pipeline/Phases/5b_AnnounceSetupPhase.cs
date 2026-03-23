@@ -30,7 +30,6 @@ public sealed class AnnounceSetupPhase(IDeploymentLifecycle lifecycle) : IDeploy
                 await lifecycle.EmitAsync(new TargetTransportMissingEvent(new DeploymentEventContext { MachineName = tc.Machine.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
         }
 
-        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { SelectedPackages = ctx.SelectedPackages }), ct).ConfigureAwait(false);
     }
 
     private async Task AnnounceResumeAsync(DeploymentTaskContext ctx, CancellationToken ct)

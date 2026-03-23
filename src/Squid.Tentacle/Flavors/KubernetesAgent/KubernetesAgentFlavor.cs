@@ -2,6 +2,7 @@ using k8s;
 using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Health;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
@@ -11,6 +12,32 @@ namespace Squid.Tentacle.Flavors.KubernetesAgent;
 public sealed class KubernetesAgentFlavor : ITentacleFlavor
 {
     public string Id => "KubernetesAgent";
+
+    private static Dictionary<string, string> BuildMetadata(KubernetesSettings settings, TentacleSettings tentacleSettings)
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["flavor"] = "KubernetesAgent",
+            ["scriptPodMode"] = settings.UseScriptPods ? "ScriptPod" : "Local",
+            ["scriptPodImage"] = settings.ScriptPodImage,
+            ["namespace"] = settings.TentacleNamespace,
+            ["workspaceIsolation"] = settings.IsolateWorkspaceToEmptyDir ? "EmptyDir" : "SharedPVC",
+            ["nfsWatchdogEnabled"] = (!string.IsNullOrEmpty(settings.NfsWatchdogImage)).ToString().ToLowerInvariant(),
+            ["scriptPodCpuLimit"] = settings.ScriptPodCpuLimit,
+            ["scriptPodMemoryLimit"] = settings.ScriptPodMemoryLimit
+        };
+
+        var usage = DiskSpaceChecker.GetWorkspaceUsage(tentacleSettings.WorkspacePath);
+
+        if (usage.TotalBytes > 0)
+        {
+            metadata["workspaceTotalBytes"] = usage.TotalBytes.ToString();
+            metadata["workspaceFreeBytes"] = usage.FreeBytes.ToString();
+            metadata["workspaceUsedBytes"] = usage.UsedBytes.ToString();
+        }
+
+        return metadata;
+    }
 
     public TentacleFlavorRuntime CreateRuntime(TentacleFlavorContext context)
     {
@@ -41,24 +68,40 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
 
             var k8sClient = new k8s.Kubernetes(k8sConfig);
             IKubernetesPodOperations podOps = new ResilientKubernetesPodOperations(new KubernetesPodOperations(k8sClient));
-            var podMgr = new KubernetesPodManager(podOps, kubernetesSettings);
-            var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr);
-            var podMonitor = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings);
+            var podStateCache = new PodStateCache();
+            var templateProvider = new ScriptPodTemplateProvider(k8sClient, kubernetesSettings, podOps);
+            var pullSecretManager = new ImagePullSecretManager(podOps, kubernetesSettings);
+            var podMgr = new KubernetesPodManager(podOps, kubernetesSettings, templateProvider, pullSecretManager, podStateCache);
+            var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr, podOps);
+
+            var pdbManager = new PodDisruptionBudgetManager(podOps, kubernetesSettings);
+            pdbManager.EnsurePdbExists();
+
+            var apiProbe = new KubernetesApiHealthProbe(podOps, kubernetesSettings);
+            var podMonitorWithPdb = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings, kubernetesSettings, pdbManager, apiProbe);
 
             var recoveryService = new ScriptRecoveryService();
             recoveryService.RecoverScripts(tentacleSettings.WorkspacePath, scriptPodService, podMgr, scriptPodService.IsolationMutex);
+            recoveryService.RecoverPendingScripts(podOps, kubernetesSettings, scriptPodService);
 
             backend = scriptPodService;
-            backgroundTasks.Add(new KubernetesPodMonitorBackgroundTask(podMonitor));
-            backgroundTasks.Add(new KubernetesEventMonitor(podOps, kubernetesSettings));
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesPodMonitorBackgroundTask(podMonitorWithPdb)));
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesEventMonitor(podOps, kubernetesSettings, scriptPodService)));
+
+            var podWatcher = new KubernetesPodWatcher(podOps, kubernetesSettings, podStateCache);
+            backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesPodWatcherBackgroundTask(podWatcher)));
+
             startupHooks.Add(new ClusterVersionDetector(k8sClient));
+
+            readinessChecks.Add(() => apiProbe.IsHealthy);
+            readinessChecks.Add(() => DiskSpaceChecker.HasSufficientSpace(tentacleSettings.WorkspacePath));
 
             var watchdogEnabled = string.Equals(Environment.GetEnvironmentVariable("WATCHDOG_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
 
             if (!watchdogEnabled)
             {
-                var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath);
-                backgroundTasks.Add(nfsWatchdog);
+                var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath, podOps, kubernetesSettings);
+                backgroundTasks.Add(new ResilientBackgroundTask(nfsWatchdog));
                 readinessChecks.Add(() => nfsWatchdog.IsHealthy);
             }
             else
@@ -74,13 +117,16 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             return () => readinessChecks.All(check => check());
         }
 
+        var metadata = BuildMetadata(kubernetesSettings, tentacleSettings);
+
         return new TentacleFlavorRuntime
         {
             Registrar = registrar,
             ScriptBackend = backend,
             BackgroundTasks = backgroundTasks,
             StartupHooks = startupHooks,
-            ReadinessCheck = CombinedReadiness()
+            ReadinessCheck = CombinedReadiness(),
+            Metadata = metadata
         };
     }
 }

@@ -52,6 +52,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
     
+    [HttpPost("update")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpdateMachineResponse))]
+    public async Task<IActionResult> UpdateMachineAsync([FromBody] UpdateMachineCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<UpdateMachineCommand, UpdateMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("list")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachinesResponse))]
     public async Task<IActionResult> GetMachinesAsync([FromQuery] GetMachinesRequest request, CancellationToken ct)

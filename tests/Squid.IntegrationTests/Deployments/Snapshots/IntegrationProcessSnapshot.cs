@@ -17,8 +17,8 @@ public class IntegrationProcessSnapshot : SnapshotFixtureBase
 
             var process = await builder.CreateDeploymentProcessAsync();
             var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step", "Action", "Success");
-            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", "Octopus.Script");
-            await builder.CreateActionPropertiesAsync(action.Id, ("Octopus.Action.Script.ScriptBody", "echo hello"));
+            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", SpecialVariables.ActionTypes.Script);
+            await builder.CreateActionPropertiesAsync(action.Id, (SpecialVariables.Action.ScriptBody, "echo hello"));
             await builder.CreateStepPropertiesAsync(step.Id, (SpecialVariables.Step.TargetRoles, "web"));
             await builder.CreateActionEnvironmentsAsync(action.Id, 10, 20);
             await builder.CreateActionChannelsAsync(action.Id, 5);
@@ -41,9 +41,9 @@ public class IntegrationProcessSnapshot : SnapshotFixtureBase
             stepSnap.ActionSnapshots.Count.ShouldBe(1);
             var actionSnap = stepSnap.ActionSnapshots[0];
             actionSnap.Name.ShouldBe("Run Script");
-            actionSnap.ActionType.ShouldBe("Octopus.Script");
-            actionSnap.Properties.ShouldContainKey("Octopus.Action.Script.ScriptBody");
-            actionSnap.Properties["Octopus.Action.Script.ScriptBody"].ShouldBe("echo hello");
+            actionSnap.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
+            actionSnap.Properties.ShouldContainKey(SpecialVariables.Action.ScriptBody);
+            actionSnap.Properties[SpecialVariables.Action.ScriptBody].ShouldBe("echo hello");
             actionSnap.Environments.OrderBy(x => x).ShouldBe(new List<int> { 10, 20 });
             actionSnap.Channels.ShouldBe(new List<int> { 5 });
             actionSnap.MachineRoles.OrderBy(x => x).ShouldBe(new List<string> { "api-server", "web-server" });

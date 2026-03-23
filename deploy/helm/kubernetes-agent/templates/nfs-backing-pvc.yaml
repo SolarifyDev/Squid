@@ -1,0 +1,16 @@
+{{- if and (include "kubernetes-agent.useBuiltinNfs" .) .Values.workspace.nfs.backingVolume.storageClassName }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kubernetes-agent.nfs.name" . }}-backing
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs-server
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.workspace.nfs.backingVolume.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.workspace.size }}
+{{- end }}

@@ -398,7 +398,7 @@ public class TargetRoleCombinationTests
         var action = new DeploymentActionDto
         {
             Id = 1, StepId = 1, ActionOrder = 1, Name = "Deploy",
-            ActionType = "Octopus.Script", IsDisabled = false,
+            ActionType = SpecialVariables.ActionTypes.Script, IsDisabled = false,
             Environments = new List<int> { 1, 2 },
             ExcludedEnvironments = new List<int> { 3 },
             Channels = new List<int> { 10, 20 }
@@ -470,9 +470,6 @@ public class TargetRoleCombinationTests
         Roles = JsonSerializer.Serialize(roles),
         SpaceId = 1,
         Endpoint = "{}",
-        Uri = $"https://machine{id}:10933",
-        Thumbprint = $"THUMB-{id}",
-        OperatingSystem = Squid.Message.Enums.OperatingSystemType.Linux,
         Slug = $"machine-{id}"
     };
 

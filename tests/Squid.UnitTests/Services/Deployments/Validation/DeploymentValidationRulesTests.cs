@@ -7,6 +7,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Core.Services.Deployments.Validation;
 using Squid.Core.Services.Deployments.Validation.Rules;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.UnitTests.Services.Deployments.Validation;
@@ -257,7 +258,7 @@ public class DeploymentValidationRulesTests
                             {
                                 Id = 10,
                                 Name = "Run Script",
-                                ActionType = "Octopus.Script",
+                                ActionType = SpecialVariables.ActionTypes.Script,
                                 ActionOrder = 1,
                                 IsDisabled = false,
                                 IsRequired = true

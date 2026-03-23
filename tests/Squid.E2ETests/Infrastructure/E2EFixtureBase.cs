@@ -1,3 +1,4 @@
+using System.IO;
 using Autofac;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -19,14 +20,11 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        var basePath = Path.GetDirectoryName(typeof(E2EFixtureBase<>).Assembly.Location)!;
+
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string>
-            {
-                ["SquidStore:ConnectionString"] = GetBaseConnectionString(),
-                ["SelfCert:Base64"] = "",
-                ["SelfCert:Password"] = "",
-                ["Security:VariableEncryption:MasterKey"] = Convert.ToBase64String(new byte[32])
-            })
+            .SetBasePath(basePath)
+            .AddJsonFile("appsettings.json")
             .Build();
 
         var logger = new LoggerConfiguration()
@@ -37,7 +35,7 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
 
         Log.Logger = logger;
 
-        _connectionString = CreateIsolatedConnectionString(GetBaseConnectionString());
+        _connectionString = CreateIsolatedConnectionString(configuration["SquidStore:ConnectionString"]!);
         new DbUpRunner(_connectionString).Run();
 
         configuration["SquidStore:ConnectionString"] = _connectionString;
@@ -46,12 +44,7 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         containerBuilder.RegisterInstance(configuration).As<IConfiguration>().SingleInstance();
         containerBuilder.RegisterModule(new SquidModule(logger, configuration));
 
-        containerBuilder.RegisterInstance(new SelfCertSetting
-        {
-            Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64")
-                     ?? Convert.ToBase64String(CreateSelfSignedCertBytes()),
-            Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
-        }).AsSelf().SingleInstance();
+        containerBuilder.RegisterInstance(ResolveSelfCertSetting(configuration)).AsSelf().SingleInstance();
 
         containerBuilder.RegisterType<NoOpBackgroundJobClient>()
             .As<ISquidBackgroundJobClient>()
@@ -98,14 +91,6 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         return await action(scope.Resolve<T>()).ConfigureAwait(false);
     }
 
-    private static string GetBaseConnectionString()
-    {
-        var envCs = Environment.GetEnvironmentVariable("SQUID_TEST_CONNECTION_STRING");
-        if (!string.IsNullOrEmpty(envCs)) return envCs;
-
-        return "Host=localhost;Port=5432;Database=squid;Username=squid;Password=squid";
-    }
-
     private string CreateIsolatedConnectionString(string baseConnectionString)
     {
         _databaseName = $"squid_e2e_{typeof(TTestClass).Name.ToLowerInvariant()}";
@@ -144,6 +129,20 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         await using var dropCmd = conn.CreateCommand();
         dropCmd.CommandText = $"DROP DATABASE IF EXISTS \"{_databaseName}\"";
         await dropCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private static SelfCertSetting ResolveSelfCertSetting(IConfiguration configuration)
+    {
+        var base64 = configuration["SelfCert:Base64"];
+
+        if (!string.IsNullOrEmpty(base64))
+            return new SelfCertSetting { Base64 = base64, Password = configuration["SelfCert:Password"] ?? string.Empty };
+
+        return new SelfCertSetting
+        {
+            Base64 = Convert.ToBase64String(CreateSelfSignedCertBytes()),
+            Password = string.Empty
+        };
     }
 
     private static byte[] CreateSelfSignedCertBytes()

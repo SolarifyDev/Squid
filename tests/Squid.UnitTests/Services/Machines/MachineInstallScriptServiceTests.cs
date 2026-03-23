@@ -29,7 +29,11 @@ public class MachineInstallScriptServiceTests
     private static GenerateKubernetesAgentInstallScriptCommand CreateCommand(
         string agentName = "my-agent",
         string serverUrl = "https://squid.example.com",
-        string serverCommsUrl = "https://squid.example.com:10943")
+        string serverCommsUrl = "https://squid.example.com:10943",
+        string storageType = null,
+        string nfsServer = null,
+        string nfsPath = null,
+        string storageClassName = null)
     {
         return new GenerateKubernetesAgentInstallScriptCommand
         {
@@ -38,7 +42,11 @@ public class MachineInstallScriptServiceTests
             ServerCommsUrl = serverCommsUrl,
             Environments = ["Test", "Production"],
             Tags = ["k8s", "web"],
-            SpaceId = 1
+            SpaceId = 1,
+            StorageType = storageType,
+            NfsServer = nfsServer,
+            NfsPath = nfsPath,
+            StorageClassName = storageClassName
         };
     }
 
@@ -213,13 +221,78 @@ public class MachineInstallScriptServiceTests
         result.AgentInstallScript.ShouldContain($"tentacle.machineName=\"{releaseName}\"");
     }
 
-    [Fact]
-    public async Task GenerateScript_NfsCsiDriverScript_ContainsHelmCommands()
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("builtin-nfs", true)]
+    [InlineData("external-nfs", false)]
+    [InlineData("custom", false)]
+    public async Task GenerateScript_NfsCsiDriverScript_ConditionalOnStorageType(string storageType, bool shouldHaveCsiScript)
     {
-        var result = await GenerateSuccessDataAsync();
+        var command = CreateCommand(storageType: storageType);
+        var result = await GenerateSuccessDataAsync(command);
 
-        result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --rollback-on-failure");
-        result.NfsCsiDriverScript.ShouldContain("csi-driver-nfs");
+        if (shouldHaveCsiScript)
+        {
+            result.NfsCsiDriverScript.ShouldNotBeNull();
+            result.NfsCsiDriverScript.ShouldContain("helm upgrade --install --rollback-on-failure");
+            result.NfsCsiDriverScript.ShouldContain("csi-driver-nfs");
+        }
+        else
+        {
+            result.NfsCsiDriverScript.ShouldBeNull();
+        }
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("builtin-nfs", true)]
+    [InlineData("external-nfs", false)]
+    [InlineData("custom", false)]
+    public async Task GenerateScript_NfsCsiDriverRequired_MatchesStorageType(string storageType, bool expectedRequired)
+    {
+        var command = CreateCommand(storageType: storageType);
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.NfsCsiDriverRequired.ShouldBe(expectedRequired);
+    }
+
+    [Fact]
+    public async Task GenerateScript_ExternalNfs_IncludesNfsServerAndPath()
+    {
+        var command = CreateCommand(storageType: "external-nfs", nfsServer: "10.0.0.5", nfsPath: "/exports/data");
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.AgentInstallScript.ShouldContain("workspace.nfs.server=\"10.0.0.5\"");
+        result.AgentInstallScript.ShouldContain("workspace.nfs.path=\"/exports/data\"");
+    }
+
+    [Fact]
+    public async Task GenerateScript_ExternalNfs_OmitsPathWhenNotProvided()
+    {
+        var command = CreateCommand(storageType: "external-nfs", nfsServer: "10.0.0.5");
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.AgentInstallScript.ShouldContain("workspace.nfs.server=\"10.0.0.5\"");
+        result.AgentInstallScript.ShouldNotContain("workspace.nfs.path");
+    }
+
+    [Fact]
+    public async Task GenerateScript_CustomPvc_IncludesStorageClassName()
+    {
+        var command = CreateCommand(storageType: "custom", storageClassName: "gp3");
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.AgentInstallScript.ShouldContain("workspace.storageClassName=\"gp3\"");
+    }
+
+    [Fact]
+    public async Task GenerateScript_BuiltinNfs_NoExtraStorageValues()
+    {
+        var command = CreateCommand(storageType: "builtin-nfs");
+        var result = await GenerateSuccessDataAsync(command);
+
+        result.AgentInstallScript.ShouldNotContain("workspace.nfs.server");
+        result.AgentInstallScript.ShouldNotContain("workspace.storageClassName");
     }
 
     [Fact]

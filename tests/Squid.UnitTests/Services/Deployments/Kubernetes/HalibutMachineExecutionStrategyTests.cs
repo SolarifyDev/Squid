@@ -10,7 +10,9 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Settings.Halibut;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -20,6 +22,7 @@ public class HalibutMachineExecutionStrategyTests
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly CalamariPayloadBuilder _payloadBuilder;
     private readonly HalibutScriptObserver _observer;
+    private readonly HalibutSetting _halibutSetting = new();
     private readonly HalibutMachineExecutionStrategy _strategy;
 
     public HalibutMachineExecutionStrategyTests()
@@ -29,15 +32,16 @@ public class HalibutMachineExecutionStrategyTests
         _strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             _payloadBuilder,
-            _observer);
+            _observer,
+            _halibutSetting);
     }
 
     // === Endpoint Parsing — invalid machine ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_MissingUriAndPollingId_ThrowsDeploymentEndpointException()
+    public async Task ExecuteScriptAsync_MissingSubscriptionIdAndThumbprint_ThrowsDeploymentEndpointException()
     {
-        var machine = new Machine { Name = "bad-machine", Uri = null, PollingSubscriptionId = null, Thumbprint = "ABC" };
+        var machine = new Machine { Name = "bad-machine", Endpoint = """{"CommunicationStyle":"KubernetesAgent"}""" };
 
         await Should.ThrowAsync<DeploymentEndpointException>(
             () => _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None));
@@ -46,7 +50,7 @@ public class HalibutMachineExecutionStrategyTests
     [Fact]
     public async Task ExecuteScriptAsync_MissingThumbprint_ThrowsDeploymentEndpointException()
     {
-        var machine = new Machine { Name = "no-thumb", Uri = "https://agent:10933/", Thumbprint = null };
+        var machine = new Machine { Name = "no-thumb", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123"}""" };
 
         await Should.ThrowAsync<DeploymentEndpointException>(
             () => _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None));
@@ -55,10 +59,10 @@ public class HalibutMachineExecutionStrategyTests
     // === Endpoint Parsing — valid URI + polling mode ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_ValidUri_CreatesClientWithEndpoint()
+    public async Task ExecuteScriptAsync_ValidEndpoint_CreatesClientWithEndpoint()
     {
-        var machine = new Machine { Name = "agent-1", Uri = "https://agent:10933/", Thumbprint = "AABBCCDD" };
-        SetupScriptClient(machine.Uri);
+        var machine = new Machine { Name = "agent-1", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABBCCDD"}""" };
+        SetupScriptClient("poll://sub-123/");
 
         var result = await _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None);
 
@@ -72,9 +76,7 @@ public class HalibutMachineExecutionStrategyTests
         var machine = new Machine
         {
             Name = "polling-agent",
-            Uri = null,
-            PollingSubscriptionId = "poll-sub-123",
-            Thumbprint = "AABBCCDD"
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"poll-sub-123","Thumbprint":"AABBCCDD"}"""
         };
 
         SetupScriptClient("poll://poll-sub-123/");
@@ -93,7 +95,7 @@ public class HalibutMachineExecutionStrategyTests
     public async Task ExecuteScriptAsync_WithCalamariCommand_RoutesToCalamariPath()
     {
         var machine = CreateValidMachine();
-        SetupScriptClient(machine.Uri);
+        SetupScriptClient("poll://sub-test/");
 
         var result = await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: "calamari-run-script"), CancellationToken.None);
@@ -105,7 +107,7 @@ public class HalibutMachineExecutionStrategyTests
     public async Task ExecuteScriptAsync_WithoutCalamariCommand_RoutesToDirectPath()
     {
         var machine = CreateValidMachine();
-        SetupScriptClient(machine.Uri);
+        SetupScriptClient("poll://sub-test/");
 
         var result = await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, scriptBody: "kubectl apply -f manifest.yaml"), CancellationToken.None);
@@ -120,7 +122,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -143,7 +145,7 @@ public class HalibutMachineExecutionStrategyTests
     {
         var machine = CreateValidMachine();
         StartScriptCommand capturedCommand = null;
-        var scriptClient = SetupScriptClient(machine.Uri);
+        var scriptClient = SetupScriptClient("poll://sub-test/");
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
@@ -187,26 +189,29 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
-            observer.Object);
+            observer.Object,
+            _halibutSetting);
 
         var result = await strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: "calamari-run-script"),
             CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.Bash), Times.Once);
+        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.PowerShell), Times.Once);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
     }
 
     [Fact]
@@ -227,13 +232,15 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
-            observer.Object);
+            observer.Object,
+            _halibutSetting);
 
         var result = await strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None);
 
@@ -245,7 +252,82 @@ public class HalibutMachineExecutionStrategyTests
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
+    }
+
+    // === Request Timeout Override ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_WithRequestTimeout_UsesRequestTimeoutOverDefault()
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient("poll://sub-test/");
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("timeout-override"));
+
+        var request = CreateRequest(machine);
+        request.Timeout = TimeSpan.FromMinutes(10);
+
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(10));
+    }
+
+    // === Ticket ID Generation ===
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("calamari-run-script")]
+    public async Task ExecuteScriptAsync_GeneratesTicketId_PassedToCommand(string calamariCommand)
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient("poll://sub-test/");
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("ticket-id-check"));
+
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.TaskId.ShouldNotBeNullOrEmpty();
+        capturedCommand.TaskId.Length.ShouldBe(32); // Guid without hyphens
+    }
+
+    // === Deterministic Ticket ID ===
+
+    [Fact]
+    public void GenerateTicketId_SameInputs_ProducesSameResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+
+        id1.ShouldBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentMachineId_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 43);
+
+        id1.ShouldNotBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentStepName_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Rollback", "RunScript", 42);
+
+        id1.ShouldNotBe(id2);
     }
 
     // === Helpers ===
@@ -253,8 +335,7 @@ public class HalibutMachineExecutionStrategyTests
     private static Machine CreateValidMachine() => new()
     {
         Name = "test-agent",
-        Uri = "https://agent:10933/",
-        Thumbprint = "AABBCCDD"
+        Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-test","Thumbprint":"AABBCCDD"}"""
     };
 
     private Mock<IAsyncScriptService> SetupScriptClient(string expectedUri)

@@ -115,7 +115,7 @@ public class ExtractedPipelineComponentsTests
                 {
                     Id = order * 10,
                     Name = $"Action-{order}",
-                    ActionType = "Octopus.Script",
+                    ActionType = SpecialVariables.ActionTypes.Script,
                     ActionOrder = 1,
                     Properties = new Dictionary<string, string>()
                 }

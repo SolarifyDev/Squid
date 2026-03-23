@@ -68,4 +68,29 @@ public class CapabilitiesServiceTests
 
         response2.Metadata.ShouldNotContainKey("injected");
     }
+
+    [Fact]
+    public void GetCapabilities_WithFlavorMetadata_ReturnsAllKeys()
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["flavor"] = "KubernetesAgent",
+            ["scriptPodMode"] = "ScriptPod",
+            ["scriptPodImage"] = "bitnami/kubectl:latest",
+            ["namespace"] = "squid-ns",
+            ["workspaceIsolation"] = "SharedPVC",
+            ["nfsWatchdogEnabled"] = "false",
+            ["scriptPodCpuLimit"] = "500m",
+            ["scriptPodMemoryLimit"] = "512Mi"
+        };
+
+        var service = new CapabilitiesService(metadata);
+        var response = service.GetCapabilities(new CapabilitiesRequest());
+
+        response.Metadata.ShouldContainKeyAndValue("flavor", "KubernetesAgent");
+        response.Metadata.ShouldContainKeyAndValue("scriptPodMode", "ScriptPod");
+        response.Metadata.ShouldContainKeyAndValue("namespace", "squid-ns");
+        response.Metadata.ShouldContainKeyAndValue("workspaceIsolation", "SharedPVC");
+        response.Metadata.Count.ShouldBe(8);
+    }
 }

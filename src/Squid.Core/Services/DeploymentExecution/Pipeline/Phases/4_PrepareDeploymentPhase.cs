@@ -27,6 +27,7 @@ public sealed class PrepareDeploymentPhase(
         await FindTargetsAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
+        InjectPackageAcquisitionSteps(ctx);
         PreFilterTargetsByRoles(ctx);
     }
 
@@ -54,7 +55,10 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables = await variableResolver.ResolveVariablesAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
 
-        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = ctx.Deployment.Id.ToString() });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
+
+        if (ctx.RestoredOutputVariables.Count > 0)
+            ctx.Variables.AddRange(ctx.RestoredOutputVariables);
     }
 
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)
@@ -95,6 +99,11 @@ public sealed class PrepareDeploymentPhase(
     private static void ConvertSnapshotToSteps(DeploymentTaskContext ctx)
     {
         ctx.Steps = ProcessSnapshotStepConverter.Convert(ctx.ProcessSnapshot);
+    }
+
+    private static void InjectPackageAcquisitionSteps(DeploymentTaskContext ctx)
+    {
+        ctx.Steps = PackageAcquisitionInjector.InjectAcquisitionSteps(ctx.Steps, ctx.SelectedPackages);
     }
 
     private void PreFilterTargetsByRoles(DeploymentTaskContext ctx)

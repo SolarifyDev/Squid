@@ -31,7 +31,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("name: test-service");
+        yaml.ShouldContain("name: \"test-service\"");
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("namespace: prod-ns");
+        yaml.ShouldContain("namespace: \"prod-ns\"");
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public class ServiceResourceGeneratorTests
         var yaml = await GetServiceYaml(step, action);
 
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("service.beta.kubernetes.io/aws-load-balancer-type: external");
+        yaml.ShouldContain("\"service.beta.kubernetes.io/aws-load-balancer-type\": \"external\"");
     }
 
     // === Spec: type ===
@@ -71,7 +71,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain($"type: {serviceType}");
+        yaml.ShouldContain($"type: \"{serviceType}\"");
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("clusterIP: 10.96.0.1");
+        yaml.ShouldContain("clusterIP: \"10.96.0.1\"");
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public class ServiceResourceGeneratorTests
         var yaml = await GetServiceYaml(step, action);
 
         yaml.ShouldContain("selector:");
-        yaml.ShouldContain("app: test-app");
+        yaml.ShouldContain("\"app\": \"test-app\"");
     }
 
     [Fact]
@@ -117,8 +117,8 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("app: my-app");
-        yaml.ShouldContain("tier: frontend");
+        yaml.ShouldContain("\"app\": \"my-app\"");
+        yaml.ShouldContain("\"tier\": \"frontend\"");
     }
 
     // === Ports ===
@@ -141,17 +141,18 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("name: http");
+        yaml.ShouldContain("name: \"http\"");
     }
 
     [Fact]
-    public async Task Generate_TargetPort_IsIncluded()
+    public async Task Generate_NumericTargetPort_IsUnquoted()
     {
         var (step, action) = CreateMinimal();
 
         var yaml = await GetServiceYaml(step, action);
 
         yaml.ShouldContain("targetPort: 8080");
+        yaml.ShouldNotContain("targetPort: \"8080\"");
     }
 
     [Fact]
@@ -197,7 +198,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("protocol: TCP");
+        yaml.ShouldContain("protocol: \"TCP\"");
     }
 
     [Fact]
@@ -212,7 +213,7 @@ public class ServiceResourceGeneratorTests
 
         yaml.ShouldContain("port: 80");
         yaml.ShouldContain("port: 443");
-        yaml.ShouldContain("name: https");
+        yaml.ShouldContain("name: \"https\"");
         yaml.ShouldContain("targetPort: 8443");
     }
 
@@ -240,7 +241,7 @@ public class ServiceResourceGeneratorTests
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("targetPort: http-port");
+        yaml.ShouldContain("targetPort: \"http-port\"");
     }
 
     // === CanGenerate guards ===

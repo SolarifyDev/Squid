@@ -25,6 +25,7 @@ public class TentacleSettings
     public string ChartRef { get; set; } = DefaultKubernetesAgentChartRef;
     public int PollingConnectionCount { get; set; } = 5;
     public string ServerCommsAddresses { get; set; } = string.Empty;
+    public int ShutdownDrainTimeoutSeconds { get; set; } = 30;
 
     public List<string> GetServerCommsUrls()
     {

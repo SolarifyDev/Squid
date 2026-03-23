@@ -194,7 +194,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
             return;
         }
 
-        var stepActivityName = BuildStepActivityName(ctx.StepName, ctx.StepDisplayOrder);
+        var stepActivityName = BuildStepActivityName(ctx.StepName, ctx.StepDisplayOrder, ctx.StepType);
         var node = await CreateActivityNodeAsync(_taskNodeId, stepActivityName, DeploymentActivityLogNodeType.Step, DeploymentActivityLogNodeStatus.Running, ctx.StepDisplayOrder, ct).ConfigureAwait(false);
         _stepNodes[ctx.StepDisplayOrder] = node?.Id;
     }
@@ -400,7 +400,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     // === Formatting ===
 
-    private static string BuildStepActivityName(string stepName, int stepSortOrder)
+    private static string BuildStepActivityName(string stepName, int stepSortOrder, string stepType)
     {
         var name = stepName?.Trim();
 

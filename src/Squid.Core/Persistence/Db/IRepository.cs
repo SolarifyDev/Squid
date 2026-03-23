@@ -42,6 +42,10 @@ public interface IRepository
 
     Task<List<T>> SqlQueryAsync<T>(string sql, params object[] parameters) where T : class, IEntity;
 
+    IQueryable<TEntity> FromSqlRaw<TEntity>(string sql, params object[] parameters) where TEntity : class, IEntity;
+
+    Task<List<TResult>> SqlQueryRawAsync<TResult>(string sql, params object[] parameters);
+
     IQueryable<TEntity> Query<TEntity>(Expression<Func<TEntity, bool>>? predicate = null) where TEntity : class, IEntity;
 
     IQueryable<TEntity> QueryNoTracking<TEntity>(Expression<Func<TEntity, bool>>? predicate = null)

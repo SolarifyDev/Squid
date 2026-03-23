@@ -1,4 +1,29 @@
-{{- if .Values.workspace.nfs.enabled }}
+{{- if include "kubernetes-agent.useBuiltinNfs" . }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "kubernetes-agent.nfs.pv-name" . }}
+  labels:
+    {{- include "kubernetes-agent.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.workspace.size }}
+  accessModes:
+    {{- toYaml .Values.workspace.accessModes | nindent 4 }}
+  {{- with .Values.workspace.nfs.mountOptions }}
+  mountOptions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  csi:
+    driver: nfs.csi.k8s.io
+    volumeHandle: {{ include "kubernetes-agent.nfs.pv-name" . }}
+    volumeAttributes:
+      server: {{ include "kubernetes-agent.nfs.serverAddress" . }}
+      share: {{ .Values.workspace.nfs.path }}
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ include "kubernetes-agent.pvc-name" . }}
+{{- else if include "kubernetes-agent.useExternalNfs" . }}
 apiVersion: v1
 kind: PersistentVolume
 metadata:

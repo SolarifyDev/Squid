@@ -125,7 +125,7 @@ public class ResilientKubernetesPodOperationsTests
     {
         var callCount = 0;
 
-        _inner.Setup(o => o.DeletePod("pod-1", "ns"))
+        _inner.Setup(o => o.DeletePod("pod-1", "ns", null))
             .Callback(() =>
             {
                 callCount++;

@@ -103,7 +103,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
         try
         {
-            return await healthChecker.CheckConnectivityAsync(tc.Machine, ct).ConfigureAwait(false);
+            return await healthChecker.CheckConnectivityAsync(tc.Machine, null, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -125,7 +125,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
             var script = healthChecker.DefaultHealthCheckScript;
 
             if (string.IsNullOrEmpty(script))
-                return await healthChecker.CheckConnectivityAsync(tc.Machine, ct).ConfigureAwait(false);
+                return await healthChecker.CheckConnectivityAsync(tc.Machine, null, ct).ConfigureAwait(false);
 
             var request = new ScriptExecutionRequest
             {

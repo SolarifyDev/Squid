@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.Release;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
+using Squid.Message.Constants;
 
 namespace Squid.IntegrationTests.Deployments.Snapshots;
 
@@ -32,7 +33,7 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                 await builder.UpdateProjectProcessIdAsync(project, process.Id);
 
                 var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step");
-                await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", "Octopus.Script");
+                await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", SpecialVariables.ActionTypes.Script);
 
                 var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id);
 
@@ -95,8 +96,8 @@ public class IntegrationDeploymentSnapshot : SnapshotFixtureBase
                 await builder.UpdateProjectProcessIdAsync(project, process.Id);
 
                 var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Original Step");
-                var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Original Action", "Octopus.Script");
-                await builder.CreateActionPropertiesAsync(action.Id, ("Octopus.Action.Script.ScriptBody", "echo original"));
+                var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Original Action", SpecialVariables.ActionTypes.Script);
+                await builder.CreateActionPropertiesAsync(action.Id, (SpecialVariables.Action.ScriptBody, "echo original"));
 
                 var channel = await builder.CreateChannelAsync(project.Id, lifecycle.Id);
                 await builder.CreateMachineAsync(environment.Id);

@@ -37,10 +37,7 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         var serverThumbprint = GetServerThumbprint();
 
-        var kubeconfigPath = Environment.GetEnvironmentVariable("SQUID_E2E_KUBECONFIG")
-                             ?? KindClusterFixture.DefaultKubeconfigPath;
-
-        Stub = new TentacleStub(serverThumbprint, _pollingPort, kubeconfigPath);
+        Stub = new TentacleStub(serverThumbprint, _pollingPort, KindClusterFixture.DefaultKubeconfigPath);
 
         var halibutRuntime = LifetimeScope.Resolve<HalibutRuntime>();
         halibutRuntime.Trust(Stub.Thumbprint);

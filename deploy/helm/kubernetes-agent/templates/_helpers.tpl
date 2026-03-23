@@ -63,3 +63,24 @@ PVC name
 {{- define "kubernetes-agent.pvc-name" -}}
 {{- printf "%s-workspace" (include "kubernetes-agent.fullname" .) -}}
 {{- end }}
+
+{{/*
+Storage mode detection — Custom PVC (storageClassName or volumeName set)
+*/}}
+{{- define "kubernetes-agent.useCustomPvc" -}}
+{{- if or .Values.workspace.storageClassName .Values.workspace.volumeName -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Storage mode detection — Built-in NFS (default: no custom PVC, no external NFS server)
+*/}}
+{{- define "kubernetes-agent.useBuiltinNfs" -}}
+{{- if and (not (include "kubernetes-agent.useCustomPvc" .)) (not .Values.workspace.nfs.server) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Storage mode detection — External NFS (user-provided NFS server)
+*/}}
+{{- define "kubernetes-agent.useExternalNfs" -}}
+{{- if and (not (include "kubernetes-agent.useCustomPvc" .)) .Values.workspace.nfs.server -}}true{{- end -}}
+{{- end -}}

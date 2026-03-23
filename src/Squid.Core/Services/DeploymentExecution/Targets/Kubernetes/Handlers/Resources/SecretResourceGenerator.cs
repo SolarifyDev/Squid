@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -52,10 +53,10 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("apiVersion: v1");
         sb.AppendLine("kind: Secret");
         sb.AppendLine("metadata:");
-        sb.AppendLine($"  name: {secretName}");
+        sb.AppendLine($"  name: {YamlSafeScalar.Escape(secretName)}");
 
         if (!string.IsNullOrWhiteSpace(namespaceName))
-            sb.AppendLine($"  namespace: {namespaceName}");
+            sb.AppendLine($"  namespace: {YamlSafeScalar.Escape(namespaceName)}");
 
         sb.AppendLine("type: Opaque");
         sb.AppendLine("stringData:");

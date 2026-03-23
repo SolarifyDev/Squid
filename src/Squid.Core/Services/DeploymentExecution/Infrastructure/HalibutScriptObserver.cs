@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Message.Constants;
 
@@ -6,6 +7,8 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class HalibutScriptObserver : IHalibutScriptObserver
 {
+    internal const int MaxLogEntries = 100_000;
+
     // NOTE: Halibut RPC proxy calls (GetStatusAsync, CompleteScriptAsync, CancelScriptAsync)
     // do not accept CancellationToken — cancellation is only checked between polling intervals.
     // This is a known Halibut 8.x limitation.
@@ -14,7 +17,8 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         IAsyncScriptService scriptClient,
         ScriptTicket ticket,
         TimeSpan scriptTimeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        SensitiveValueMasker masker = null)
     {
         var startTime = DateTime.UtcNow;
         var pollInterval = TimeSpan.FromSeconds(1);
@@ -30,25 +34,51 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                     scriptTimeout.TotalMinutes, machine.Name);
                 await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
 
+                var collectedLogLines = allLogs
+                    .OrderBy(l => l.Occurred)
+                    .Where(l => !string.IsNullOrEmpty(l.Text))
+                    .Select(l => masker?.Mask(l.Text) ?? l.Text)
+                    .ToList();
+
+                collectedLogLines.Add($"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout");
+
                 return new ScriptExecutionResult
                 {
                     Success = false,
                     ExitCode = ScriptExitCodes.Timeout,
-                    LogLines = new List<string> { $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout" }
+                    LogLines = collectedLogLines
                 };
             }
 
-            ct.ThrowIfCancellationRequested();
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                throw;
+            }
 
             statusResponse = await scriptClient.GetStatusAsync(
                 new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
             allLogs.AddRange(statusResponse.Logs);
-            LogOutput(statusResponse.Logs, machine.Name);
+            TruncateIfExceeded(allLogs);
+            LogOutput(statusResponse.Logs, machine.Name, masker);
 
             if (statusResponse.State != ProcessState.Complete)
             {
-                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                    throw;
+                }
+
                 pollInterval = TimeSpan.FromSeconds(Math.Min(pollInterval.TotalSeconds * 1.5, maxPollInterval.TotalSeconds));
             }
         }
@@ -57,17 +87,19 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             new CompleteScriptCommand(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
         allLogs.AddRange(completeResponse.Logs);
+        TruncateIfExceeded(allLogs);
+        LogOutput(completeResponse.Logs, machine.Name, masker);
 
         var orderedLogs = allLogs
             .OrderBy(l => l.Occurred)
             .Where(l => !string.IsNullOrEmpty(l.Text))
             .ToList();
 
-        var logLines = orderedLogs.Select(l => l.Text).ToList();
+        var logLines = orderedLogs.Select(l => masker?.Mask(l.Text) ?? l.Text).ToList();
 
         var stderrLines = orderedLogs
             .Where(l => l.Source == ProcessOutputSource.StdErr)
-            .Select(l => l.Text)
+            .Select(l => masker?.Mask(l.Text) ?? l.Text)
             .ToList();
 
         var success = completeResponse.ExitCode == 0;
@@ -87,11 +119,20 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         };
     }
 
-    private static void LogOutput(List<ProcessOutput> logs, string machineName)
+    private static void LogOutput(List<ProcessOutput> logs, string machineName, SensitiveValueMasker masker)
     {
         foreach (var log in logs)
             Log.Information("[Agent Script] Machine={MachineName}, Source={Source}, Message={Message}",
-                machineName, log.Source, log.Text);
+                machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
+    }
+
+    private static void TruncateIfExceeded(List<ProcessOutput> logs)
+    {
+        if (logs.Count <= MaxLogEntries) return;
+
+        var overflow = logs.Count - MaxLogEntries;
+        logs.RemoveRange(0, overflow);
+        Log.Warning("Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", MaxLogEntries, overflow);
     }
 
     private static async Task TryCancelScriptAsync(

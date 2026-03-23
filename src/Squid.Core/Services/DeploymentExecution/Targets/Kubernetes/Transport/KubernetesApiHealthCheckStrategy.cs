@@ -5,6 +5,7 @@ using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Http;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
@@ -13,7 +14,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
 {
-    internal static readonly TimeSpan ConnectivityTimeout = TimeSpan.FromSeconds(15);
+    internal const int DefaultConnectTimeoutSeconds = 15;
 
     private readonly IDeploymentAccountDataProvider _accountDataProvider;
     private readonly ISquidHttpClientFactory _httpClientFactory;
@@ -23,6 +24,8 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
         _accountDataProvider = accountDataProvider;
         _httpClientFactory = httpClientFactory;
     }
+
+    public ScriptSyntax ScriptSyntax => ScriptSyntax.Bash;
 
     public string DefaultHealthCheckScript => """
                                               #!/bin/bash
@@ -35,7 +38,7 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
                                               exit 0
                                               """;
 
-    public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(machine.Endpoint);
 
@@ -47,8 +50,9 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
 
         var authHeader = await BuildAuthHeaderAsync(endpoint, ct).ConfigureAwait(false);
         var skipTls = string.Equals(endpoint.SkipTlsVerification, "True", StringComparison.OrdinalIgnoreCase);
+        var timeout = TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds);
 
-        return await ProbeClusterHealthAsync(endpoint.ClusterUrl, authHeader, skipTls, ct).ConfigureAwait(false);
+        return await ProbeClusterHealthAsync(endpoint.ClusterUrl, authHeader, skipTls, timeout, ct).ConfigureAwait(false);
     }
 
     private async Task<AuthenticationHeaderValue> BuildAuthHeaderAsync(KubernetesApiEndpointDto endpoint, CancellationToken ct)
@@ -72,11 +76,11 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
         };
     }
 
-    internal async Task<HealthCheckResult> ProbeClusterHealthAsync(string clusterUrl, AuthenticationHeaderValue authHeader, bool skipTls, CancellationToken ct)
+    internal async Task<HealthCheckResult> ProbeClusterHealthAsync(string clusterUrl, AuthenticationHeaderValue authHeader, bool skipTls, TimeSpan timeout, CancellationToken ct)
     {
         try
         {
-            using var client = CreateProbeClient(skipTls, authHeader);
+            using var client = CreateProbeClient(skipTls, authHeader, timeout);
 
             var healthUrl = $"{clusterUrl.TrimEnd('/')}/healthz";
             var response = await client.GetAsync(healthUrl, ct).ConfigureAwait(false);
@@ -101,12 +105,12 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
         }
     }
 
-    private HttpClient CreateProbeClient(bool skipTls, AuthenticationHeaderValue authHeader)
+    private HttpClient CreateProbeClient(bool skipTls, AuthenticationHeaderValue authHeader, TimeSpan timeout)
     {
         if (skipTls)
         {
             var handler = new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true };
-            var client = new HttpClient(handler) { Timeout = ConnectivityTimeout };
+            var client = new HttpClient(handler) { Timeout = timeout };
 
             if (authHeader != null)
                 client.DefaultRequestHeaders.Authorization = authHeader;
@@ -118,6 +122,6 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
             ? new Dictionary<string, string> { ["Authorization"] = authHeader.ToString() }
             : null;
 
-        return _httpClientFactory.CreateClient(timeout: ConnectivityTimeout, headers: headers);
+        return _httpClientFactory.CreateClient(timeout: timeout, headers: headers);
     }
 }

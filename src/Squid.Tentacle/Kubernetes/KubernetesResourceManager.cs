@@ -80,9 +80,9 @@ public class KubernetesResourceManager
         }
     }
 
-    private static V1ObjectMeta BuildMetadata(string name)
+    private V1ObjectMeta BuildMetadata(string name)
     {
-        return new V1ObjectMeta
+        var metadata = new V1ObjectMeta
         {
             Name = name,
             Labels = new Dictionary<string, string>
@@ -90,5 +90,9 @@ public class KubernetesResourceManager
                 [ManagedByKey] = ManagedByLabel
             }
         };
+
+        HelmMetadata.ApplyHelmAnnotations(metadata, _settings);
+
+        return metadata;
     }
 }

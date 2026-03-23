@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 
@@ -183,7 +184,7 @@ public class TestDataBuilder
         int stepId,
         int actionOrder,
         string name,
-        string actionType = "Octopus.Script",
+        string actionType = SpecialVariables.ActionTypes.Script,
         bool isDisabled = false,
         bool isRequired = true)
     {
@@ -327,11 +328,7 @@ public class TestDataBuilder
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { environmentId }),
             SpaceId = 1,
             Endpoint = "{}",
-            Json = "{}",
             DataVersion = Array.Empty<byte>(),
-            ShellName = string.Empty,
-            ShellVersion = string.Empty,
-            LicenseHash = string.Empty,
             Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 

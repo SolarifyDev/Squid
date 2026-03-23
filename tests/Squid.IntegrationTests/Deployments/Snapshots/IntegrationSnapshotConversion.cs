@@ -21,16 +21,16 @@ public class IntegrationSnapshotConversion : SnapshotFixtureBase
             // Step 1 with 1 action
             var step1 = await builder.CreateDeploymentStepAsync(process.Id, 1, "Build Step", "Action", "Success");
             await builder.CreateStepPropertiesAsync(step1.Id, (SpecialVariables.Step.TargetRoles, "build-server"));
-            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Run Build", "Octopus.Script", isDisabled: false, isRequired: true);
-            await builder.CreateActionPropertiesAsync(action1.Id, ("Octopus.Action.Script.ScriptBody", "dotnet build"));
+            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Run Build", SpecialVariables.ActionTypes.Script, isDisabled: false, isRequired: true);
+            await builder.CreateActionPropertiesAsync(action1.Id, (SpecialVariables.Action.ScriptBody, "dotnet build"));
 
             // Step 2 with 2 actions (one disabled)
             var step2 = await builder.CreateDeploymentStepAsync(process.Id, 2, "Deploy Step", "Action", "Variable");
             await builder.CreateStepPropertiesAsync(step2.Id, (SpecialVariables.Step.TargetRoles, "web-server"));
-            var action2a = await builder.CreateDeploymentActionAsync(step2.Id, 1, "Deploy App", "Octopus.KubernetesDeployContainers", isDisabled: false, isRequired: true);
-            await builder.CreateActionPropertiesAsync(action2a.Id, ("Octopus.Action.KubernetesContainers.Namespace", "production"));
-            var action2b = await builder.CreateDeploymentActionAsync(step2.Id, 2, "Notify Slack", "Octopus.Script", isDisabled: true, isRequired: false);
-            await builder.CreateActionPropertiesAsync(action2b.Id, ("Octopus.Action.Script.ScriptBody", "echo done"));
+            var action2a = await builder.CreateDeploymentActionAsync(step2.Id, 1, "Deploy App", SpecialVariables.ActionTypes.KubernetesDeployContainers, isDisabled: false, isRequired: true);
+            await builder.CreateActionPropertiesAsync(action2a.Id, (SpecialVariables.Action.KubernetesNamespace, "production"));
+            var action2b = await builder.CreateDeploymentActionAsync(step2.Id, 2, "Notify Slack", SpecialVariables.ActionTypes.Script, isDisabled: true, isRequired: false);
+            await builder.CreateActionPropertiesAsync(action2b.Id, (SpecialVariables.Action.ScriptBody, "echo done"));
 
             // Snapshot → Load → Convert
             var created = await snapshotService.SnapshotProcessFromIdAsync(process.Id);
@@ -51,10 +51,10 @@ public class IntegrationSnapshotConversion : SnapshotFixtureBase
 
             var actionDto1 = stepDto1.Actions[0];
             actionDto1.Name.ShouldBe("Run Build");
-            actionDto1.ActionType.ShouldBe("Octopus.Script");
+            actionDto1.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
             actionDto1.IsDisabled.ShouldBeFalse();
             actionDto1.IsRequired.ShouldBeTrue();
-            actionDto1.Properties.ShouldContain(p => p.PropertyName == "Octopus.Action.Script.ScriptBody" && p.PropertyValue == "dotnet build");
+            actionDto1.Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Action.ScriptBody && p.PropertyValue == "dotnet build");
 
             // Verify Step 2
             var stepDto2 = steps[1];
@@ -66,9 +66,9 @@ public class IntegrationSnapshotConversion : SnapshotFixtureBase
 
             var actionDto2a = stepDto2.Actions[0];
             actionDto2a.Name.ShouldBe("Deploy App");
-            actionDto2a.ActionType.ShouldBe("Octopus.KubernetesDeployContainers");
+            actionDto2a.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployContainers);
             actionDto2a.IsDisabled.ShouldBeFalse();
-            actionDto2a.Properties.ShouldContain(p => p.PropertyName == "Octopus.Action.KubernetesContainers.Namespace" && p.PropertyValue == "production");
+            actionDto2a.Properties.ShouldContain(p => p.PropertyName == SpecialVariables.Action.KubernetesNamespace && p.PropertyValue == "production");
 
             var actionDto2b = stepDto2.Actions[1];
             actionDto2b.Name.ShouldBe("Notify Slack");

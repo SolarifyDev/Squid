@@ -1,10 +1,9 @@
-using Halibut;
 using System.Text.Json;
 using System.Security.Cryptography.X509Certificates;
+using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Settings.SelfCert;
-using Squid.Message.Enums;
 using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Services.Machines;
@@ -12,26 +11,29 @@ namespace Squid.Core.Services.Machines;
 public interface IMachineRegistrationService : IScopedDependency
 {
     Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default);
-    
+
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
 }
 
 public partial class MachineRegistrationService : IMachineRegistrationService
 {
     private readonly IMachineDataProvider _dataProvider;
+    private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly IEnvironmentDataProvider _environmentDataProvider;
-    private readonly HalibutRuntime _halibutRuntime;
+    private readonly IPollingTrustDistributor _trustDistributor;
     private readonly SelfCertSetting _selfCertSetting;
 
     public MachineRegistrationService(
         IMachineDataProvider dataProvider,
+        IMachinePolicyDataProvider policyDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
-        HalibutRuntime halibutRuntime,
+        IPollingTrustDistributor trustDistributor,
         SelfCertSetting selfCertSetting)
     {
         _dataProvider = dataProvider;
+        _policyDataProvider = policyDataProvider;
         _environmentDataProvider = environmentDataProvider;
-        _halibutRuntime = halibutRuntime;
+        _trustDistributor = trustDistributor;
         _selfCertSetting = selfCertSetting;
     }
 
@@ -43,17 +45,9 @@ public partial class MachineRegistrationService : IMachineRegistrationService
             IsDisabled = false,
             Roles = roles ?? "[]",
             EnvironmentIds = environmentIds ?? "[]",
-            Json = string.Empty,
-            Thumbprint = string.Empty,
-            Uri = string.Empty,
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = spaceId,
-            OperatingSystem = OperatingSystemType.Linux,
-            ShellName = "Bash",
-            ShellVersion = string.Empty,
-            LicenseHash = string.Empty,
             Slug = $"machine-{Guid.NewGuid():N}",
         };
     }
@@ -82,6 +76,17 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         var roles = csvRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
         return JsonSerializer.Serialize(roles);
+    }
+
+    private async Task AssignDefaultPolicyAsync(Machine machine, CancellationToken cancellationToken)
+    {
+        if (machine.MachinePolicyId != null) return;
+
+        var defaultPolicy = await _policyDataProvider.GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+        if (defaultPolicy == null) return;
+
+        machine.MachinePolicyId = defaultPolicy.Id;
     }
 
     private string GetServerThumbprint()

@@ -5,7 +5,6 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Machines;
-using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Filtering;
@@ -53,9 +52,6 @@ public class DeploymentTargetFinderTests
         Roles = roles,
         SpaceId = 1,
         Endpoint = endpoint,
-        Uri = $"https://machine{id}:10933",
-        Thumbprint = $"THUMB-{id}",
-        OperatingSystem = OperatingSystemType.Linux,
         Slug = $"machine-{id}"
     };
 

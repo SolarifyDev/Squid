@@ -21,7 +21,7 @@ public class NfsHealthCheckerTests : IDisposable
     [Fact]
     public void CheckFilesystem_NonexistentDirectory_ReturnsTrue()
     {
-        // Non-NFS errors are ignored (aligned with Octopus behavior)
+        // Non-NFS errors are ignored (aligned with Squid behavior)
         var nonExistent = Path.Combine(_tempDir, "nonexistent-subdir", "deep");
 
         NfsHealthChecker.CheckFilesystem(nonExistent).ShouldBeTrue();

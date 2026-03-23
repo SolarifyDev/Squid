@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -44,24 +45,24 @@ internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("apiVersion: v1");
         sb.AppendLine("kind: Service");
         sb.AppendLine("metadata:");
-        sb.AppendLine($"  name: {serviceName}");
+        sb.AppendLine($"  name: {YamlSafeScalar.Escape(serviceName)}");
 
         if (!string.IsNullOrWhiteSpace(namespaceName))
-            sb.AppendLine($"  namespace: {namespaceName}");
+            sb.AppendLine($"  namespace: {YamlSafeScalar.Escape(namespaceName)}");
 
         if (serviceAnnotations.Count > 0)
         {
             sb.AppendLine("  annotations:");
 
             foreach (var kvp in serviceAnnotations)
-                sb.AppendLine($"    {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"    {YamlSafeScalar.Escape(kvp.Key)}: {YamlSafeScalar.Escape(kvp.Value)}");
         }
 
         sb.AppendLine("spec:");
-        sb.AppendLine($"  type: {serviceType}");
+        sb.AppendLine($"  type: {YamlSafeScalar.Escape(serviceType)}");
 
         if (!string.IsNullOrWhiteSpace(serviceClusterIp))
-            sb.AppendLine($"  clusterIP: {serviceClusterIp}");
+            sb.AppendLine($"  clusterIP: {YamlSafeScalar.Escape(serviceClusterIp)}");
         sb.AppendLine("  selector:");
 
         foreach (var kvp in selectorLabels)
@@ -71,19 +72,22 @@ internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
 
         foreach (var port in ports)
         {
-            sb.AppendLine("  - name: " + port.Name);
+            sb.AppendLine("  - name: " + YamlSafeScalar.Escape(port.Name));
             sb.AppendLine($"    port: {port.Port}");
 
             if (!string.IsNullOrWhiteSpace(port.TargetPort))
-                sb.AppendLine($"    targetPort: {port.TargetPort}");
+                sb.AppendLine($"    targetPort: {FormatPortValue(port.TargetPort)}");
 
             if (port.NodePort.HasValue)
                 sb.AppendLine($"    nodePort: {port.NodePort.Value}");
 
             if (!string.IsNullOrWhiteSpace(port.Protocol))
-                sb.AppendLine($"    protocol: {port.Protocol}");
+                sb.AppendLine($"    protocol: {YamlSafeScalar.Escape(port.Protocol)}");
         }
 
         return sb.ToString();
     }
+
+    private static string FormatPortValue(string value)
+        => int.TryParse(value, out var port) ? port.ToString() : YamlSafeScalar.Escape(value);
 }

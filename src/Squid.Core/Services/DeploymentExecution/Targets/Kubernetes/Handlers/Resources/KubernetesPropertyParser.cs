@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Serilog;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -86,8 +88,9 @@ internal static class KubernetesPropertyParser
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse {PropertyName} as string dictionary", propertyName);
         }
 
         return result;
@@ -135,8 +138,9 @@ internal static class KubernetesPropertyParser
                 });
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse service ports JSON");
         }
 
         return result;
@@ -161,7 +165,8 @@ internal static class KubernetesPropertyParser
             foreach (var element in doc.RootElement.EnumerateArray())
             {
                 var name = element.TryGetProperty(KubernetesContainerPayloadProperties.Name, out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var image = GetFirstImagePropertyFromContainer(element) ?? KubernetesDefaultValues.ContainerImage;
+                var image = GetFirstImagePropertyFromContainer(element)
+                    ?? throw new InvalidOperationException($"ContainerImage is required for container '{name}' but was not resolved. Ensure the package feed and version are configured correctly.");
 
                 var container = new ContainerSpec
                 {
@@ -176,6 +181,12 @@ internal static class KubernetesPropertyParser
                 FillContainerProbes(element, container);
                 FillContainerSecurityContext(element, container);
                 FillContainerLifecycle(element, container);
+                FillContainerEnvironmentVariables(element, container);
+                FillContainerConfigMapEnvVariables(element, container);
+                FillContainerSecretEnvVariables(element, container);
+                FillContainerFieldRefEnvVariables(element, container);
+                FillContainerSecretEnvFromSource(element, container);
+                FillContainerSimpleProperties(element, container);
 
                 container.IsInitContainer = element.TryGetProperty(KubernetesContainerPayloadProperties.IsInitContainer, out var initProp)
                     && string.Equals(initProp.GetString(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
@@ -183,8 +194,9 @@ internal static class KubernetesPropertyParser
                 result.Add(container);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse containers JSON");
         }
 
         return result;
@@ -231,8 +243,9 @@ internal static class KubernetesPropertyParser
                 result.Add(volume);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse volumes JSON");
         }
 
         return result;
@@ -340,10 +353,135 @@ internal static class KubernetesPropertyParser
 
         foreach (var itemElement in envFromElement.EnumerateArray())
         {
-            var name = itemElement.TryGetProperty(KubernetesContainerEnvFromPayloadProperties.ConfigMapName, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var name = itemElement.TryGetProperty(KubernetesContainerEnvFromPayloadProperties.Name, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(name))
-                container.ConfigMapEnvFromSource.Add(name);
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var spec = new EnvFromSpec { Name = name };
+            spec.Prefix = GetOptionalString(itemElement, KubernetesContainerEnvFromPayloadProperties.Prefix);
+            spec.Optional = ParseOptionalBool(itemElement, KubernetesContainerEnvFromPayloadProperties.Optional);
+            container.ConfigMapEnvFromSource.Add(spec);
+        }
+    }
+
+    private static void FillContainerEnvironmentVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.EnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var key = itemElement.TryGetProperty(KubernetesContainerEnvVarPayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var value = itemElement.TryGetProperty(KubernetesContainerEnvVarPayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(key))
+                container.EnvironmentVariables.Add(new EnvVarSpec { Name = key, Value = value });
+        }
+    }
+
+    private static void FillContainerConfigMapEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.ConfigMapEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var sourceName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+            var sourceKey = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Option, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var optional = ParseOptionalBool(itemElement, KubernetesContainerEnvVarSourcePayloadProperties.Optional);
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.ConfigMapEnvVariables.Add(new EnvVarSourceSpec { EnvVarName = envVarName, SourceName = sourceName, SourceKey = sourceKey, Optional = optional });
+        }
+    }
+
+    private static void FillContainerSecretEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecretEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var sourceName = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+            var sourceKey = itemElement.TryGetProperty(KubernetesContainerEnvVarSourcePayloadProperties.Option, out var optionProp) ? optionProp.GetString() ?? string.Empty : string.Empty;
+            var optional = ParseOptionalBool(itemElement, KubernetesContainerEnvVarSourcePayloadProperties.Optional);
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.SecretEnvVariables.Add(new EnvVarSourceSpec { EnvVarName = envVarName, SourceName = sourceName, SourceKey = sourceKey, Optional = optional });
+        }
+    }
+
+    private static void FillContainerFieldRefEnvVariables(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.FieldRefEnvironmentVariables, out var envElement) || envElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envElement.EnumerateArray())
+        {
+            var envVarName = itemElement.TryGetProperty(KubernetesContainerFieldRefPayloadProperties.Key, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+            var fieldPath = itemElement.TryGetProperty(KubernetesContainerFieldRefPayloadProperties.Value, out var valueProp) ? valueProp.GetString() ?? string.Empty : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(envVarName))
+                container.FieldRefEnvVariables.Add(new FieldRefEnvVarSpec { EnvVarName = envVarName, FieldPath = fieldPath });
+        }
+    }
+
+    private static void FillContainerSecretEnvFromSource(JsonElement element, ContainerSpec container)
+    {
+        if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecretEnvFromSource, out var envFromElement) || envFromElement.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (var itemElement in envFromElement.EnumerateArray())
+        {
+            var name = itemElement.TryGetProperty(KubernetesContainerSecretEnvFromPayloadProperties.Name, out var keyProp) ? keyProp.GetString() ?? string.Empty : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var spec = new EnvFromSpec { Name = name };
+            spec.Prefix = GetOptionalString(itemElement, KubernetesContainerSecretEnvFromPayloadProperties.Prefix);
+            spec.Optional = ParseOptionalBool(itemElement, KubernetesContainerSecretEnvFromPayloadProperties.Optional);
+            container.SecretEnvFromSource.Add(spec);
+        }
+    }
+
+    private static void FillContainerSimpleProperties(JsonElement element, ContainerSpec container)
+    {
+        container.ImagePullPolicy = GetOptionalString(element, KubernetesContainerPayloadProperties.ImagePullPolicy);
+        container.TerminationMessagePath = GetOptionalString(element, KubernetesContainerPayloadProperties.TerminationMessagePath);
+        container.TerminationMessagePolicy = GetOptionalString(element, KubernetesContainerPayloadProperties.TerminationMessagePolicy);
+
+        ParseStringList(element, KubernetesContainerPayloadProperties.Command, container.Command);
+        ParseStringList(element, KubernetesContainerPayloadProperties.Args, container.Args);
+    }
+
+    private static void ParseStringList(JsonElement element, string propertyName, List<string> target)
+    {
+        if (!element.TryGetProperty(propertyName, out var prop))
+            return;
+
+        if (prop.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in prop.EnumerateArray())
+            {
+                var value = item.GetString();
+
+                if (!string.IsNullOrWhiteSpace(value))
+                    target.Add(value);
+            }
+        }
+        else if (prop.ValueKind == JsonValueKind.String)
+        {
+            foreach (var line in (prop.GetString() ?? string.Empty).Split('\n'))
+            {
+                var trimmed = line.TrimEnd('\r');
+
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    target.Add(trimmed);
+            }
         }
     }
 
@@ -515,6 +653,16 @@ internal static class KubernetesPropertyParser
         return element.TryGetProperty(propertyName, out var property) ? property.GetString() : null;
     }
 
+    private static bool? ParseOptionalBool(JsonElement element, string propertyName)
+    {
+        var raw = GetOptionalString(element, propertyName);
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return string.Equals(raw, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void FillContainerSecurityContext(JsonElement element, ContainerSpec container)
     {
         if (!element.TryGetProperty(KubernetesContainerPayloadProperties.SecurityContext, out var contextElement) || contextElement.ValueKind != JsonValueKind.Object)
@@ -662,24 +810,51 @@ internal static class KubernetesPropertyParser
             return;
 
         sb.Append(indent);
-        sb.Append(key);
+        sb.Append(YamlSafeScalar.Escape(key));
         sb.Append(": ");
-        sb.AppendLine(value);
+        sb.AppendLine(YamlSafeScalar.Escape(value));
+    }
+
+    internal static void AppendBoolValueIfNotNullOrWhiteSpace(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        if (bool.TryParse(value, out var b))
+            sb.AppendLine($"{indent}{key}: {(b ? "true" : "false")}");
+    }
+
+    internal static void AppendIntValueIfNotNullOrWhiteSpace(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        if (int.TryParse(value, out _))
+            sb.AppendLine($"{indent}{key}: {value}");
+    }
+
+    internal static void AppendIntOrStringValue(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        sb.AppendLine(int.TryParse(value, out _)
+            ? $"{indent}{key}: {value}"
+            : $"{indent}{key}: {YamlSafeScalar.Escape(value)}");
     }
 
     internal static void AppendDataValue(StringBuilder sb, string indent, string key, string value)
     {
+        var escapedKey = YamlSafeScalar.Escape(key);
+
         if (value.Contains('\n', StringComparison.Ordinal))
         {
             var innerIndent = indent + "  ";
             var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal);
             var indented = normalized.Replace("\n", "\n" + innerIndent, StringComparison.Ordinal);
-            sb.AppendLine($"{indent}{key}: |");
+            sb.AppendLine($"{indent}{escapedKey}: |");
             sb.AppendLine(innerIndent + indented);
             return;
         }
 
-        sb.Append($"{indent}{key}: ");
+        sb.Append($"{indent}{escapedKey}: ");
         AppendYamlString(sb, value);
         sb.AppendLine();
     }
@@ -691,11 +866,11 @@ internal static class KubernetesPropertyParser
 
         var innerIndent = indent + "  ";
 
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.FailureThreshold, probe.FailureThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.InitialDelaySeconds, probe.InitialDelaySeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.PeriodSeconds, probe.PeriodSeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.SuccessThreshold, probe.SuccessThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.TimeoutSeconds, probe.TimeoutSeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.FailureThreshold, probe.FailureThreshold);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.InitialDelaySeconds, probe.InitialDelaySeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.PeriodSeconds, probe.PeriodSeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.SuccessThreshold, probe.SuccessThreshold);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.TimeoutSeconds, probe.TimeoutSeconds);
 
         if (probe.Exec != null && probe.Exec.Command.Count > 0)
         {
@@ -710,7 +885,7 @@ internal static class KubernetesPropertyParser
                     continue;
 
                 sb.Append(innerIndent);
-                sb.AppendLine($"  - {command}");
+                sb.AppendLine($"  - {YamlSafeScalar.Escape(command)}");
             }
         }
 
@@ -723,7 +898,7 @@ internal static class KubernetesPropertyParser
 
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Host, probe.HttpGet.Host);
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Path, probe.HttpGet.Path);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, probe.HttpGet.Port);
+            AppendIntOrStringValue(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, probe.HttpGet.Port);
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Scheme, probe.HttpGet.Scheme);
 
             if (probe.HttpGet.HttpHeaders.Count > 0)
@@ -737,12 +912,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {YamlSafeScalar.Escape(header.Name)}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {YamlSafeScalar.Escape(header.Value)}");
                     }
                 }
             }
@@ -756,7 +931,7 @@ internal static class KubernetesPropertyParser
             var tcpIndent = innerIndent + "  ";
 
             AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Host, probe.TcpSocket.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, probe.TcpSocket.Port);
+            AppendIntOrStringValue(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, probe.TcpSocket.Port);
         }
     }
 
@@ -780,7 +955,7 @@ internal static class KubernetesPropertyParser
                     continue;
 
                 sb.Append(innerIndent);
-                sb.AppendLine($"  - {command}");
+                sb.AppendLine($"  - {YamlSafeScalar.Escape(command)}");
             }
         }
 
@@ -807,12 +982,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {YamlSafeScalar.Escape(header.Name)}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {YamlSafeScalar.Escape(header.Value)}");
                     }
                 }
             }
@@ -849,8 +1024,9 @@ internal static class KubernetesPropertyParser
 
             AppendJsonElementYaml(sb, indent + "  ", doc.RootElement);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse JSON property {Key}", key);
         }
     }
 
@@ -1021,13 +1197,27 @@ internal sealed class ContainerSpec
     public Dictionary<string, string> ResourcesRequests { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ResourcesLimits { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<VolumeMountSpec> VolumeMounts { get; } = new();
-    public List<string> ConfigMapEnvFromSource { get; } = new();
+    public List<EnvFromSpec> ConfigMapEnvFromSource { get; } = new();
     public ProbeSpec? LivenessProbe { get; set; }
     public ProbeSpec? ReadinessProbe { get; set; }
     public ProbeSpec? StartupProbe { get; set; }
     public SecurityContextSpec? SecurityContext { get; set; }
     public LifecycleSpec? Lifecycle { get; set; }
     public bool IsInitContainer { get; set; }
+
+    // Environment variables
+    public List<EnvVarSpec> EnvironmentVariables { get; } = new();
+    public List<EnvVarSourceSpec> ConfigMapEnvVariables { get; } = new();
+    public List<EnvVarSourceSpec> SecretEnvVariables { get; } = new();
+    public List<FieldRefEnvVarSpec> FieldRefEnvVariables { get; } = new();
+    public List<EnvFromSpec> SecretEnvFromSource { get; } = new();
+
+    // Container settings
+    public string? ImagePullPolicy { get; set; }
+    public string? TerminationMessagePath { get; set; }
+    public string? TerminationMessagePolicy { get; set; }
+    public List<string> Command { get; } = new();
+    public List<string> Args { get; } = new();
 }
 
 internal sealed class ContainerPortSpec
@@ -1129,4 +1319,31 @@ internal sealed class VolumeMountSpec
     public string Name { get; set; } = string.Empty;
     public string MountPath { get; set; } = string.Empty;
     public string? SubPath { get; set; }
+}
+
+internal sealed class EnvVarSpec
+{
+    public string Name { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+}
+
+internal sealed class EnvVarSourceSpec
+{
+    public string EnvVarName { get; set; } = string.Empty;
+    public string SourceName { get; set; } = string.Empty;
+    public string SourceKey { get; set; } = string.Empty;
+    public bool? Optional { get; set; }
+}
+
+internal sealed class EnvFromSpec
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Prefix { get; set; }
+    public bool? Optional { get; set; }
+}
+
+internal sealed class FieldRefEnvVarSpec
+{
+    public string EnvVarName { get; set; } = string.Empty;
+    public string FieldPath { get; set; } = string.Empty;
 }

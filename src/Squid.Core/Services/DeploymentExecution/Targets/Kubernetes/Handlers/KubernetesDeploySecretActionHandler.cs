@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Core.Extensions;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -23,7 +24,7 @@ public class KubernetesDeploySecretActionHandler : IActionHandler
 
         return Task.FromResult(new ActionExecutionResult
         {
-            ScriptBody = "kubectl apply -f \"./secret.yaml\"",
+            ScriptBody = KubernetesApplyCommandBuilder.Build("./secret.yaml", ctx.Action, ScriptSyntax.Bash),
             Files = new Dictionary<string, byte[]> { ["secret.yaml"] = Encoding.UTF8.GetBytes(yaml) },
             CalamariCommand = null,
             ExecutionMode = ExecutionMode.DirectScript,

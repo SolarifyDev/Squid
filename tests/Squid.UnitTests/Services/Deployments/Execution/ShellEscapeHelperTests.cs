@@ -54,4 +54,42 @@ public class ShellEscapeHelperTests
 
         result.ShouldBeNull();
     }
+
+    // === Base64Encode Tests ===
+
+    [Theory]
+    [InlineData("hello world", "aGVsbG8gd29ybGQ=")]
+    [InlineData("", "")]
+    [InlineData("abc", "YWJj")]
+    public void Base64Encode_RoundTrips_AllCharacters(string input, string expected)
+    {
+        var result = ShellEscapeHelper.Base64Encode(input);
+
+        result.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Base64Encode_NullOrEmpty_ReturnsEmpty()
+    {
+        ShellEscapeHelper.Base64Encode(null).ShouldBe(string.Empty);
+        ShellEscapeHelper.Base64Encode("").ShouldBe(string.Empty);
+    }
+
+    [Theory]
+    [InlineData("$(whoami)")]
+    [InlineData("`id`")]
+    [InlineData("test; rm -rf /")]
+    [InlineData("value'with\"quotes")]
+    public void Base64Encode_SpecialChars_SafeForShell(string input)
+    {
+        var result = ShellEscapeHelper.Base64Encode(input);
+
+        // Base64 only contains [A-Za-z0-9+/=] — safe in shell single quotes
+        result.ShouldNotContain("$");
+        result.ShouldNotContain("`");
+        result.ShouldNotContain("'");
+        result.ShouldNotContain("\"");
+        result.ShouldNotContain(";");
+        result.ShouldNotContain(" ");
+    }
 }

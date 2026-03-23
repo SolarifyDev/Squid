@@ -38,9 +38,9 @@ public class KubernetesApiHealthCheckStrategyTests
     // ========================================================================
 
     [Fact]
-    public void ConnectivityTimeout_Is15Seconds()
+    public void DefaultConnectTimeoutSeconds_Is15()
     {
-        KubernetesApiHealthCheckStrategy.ConnectivityTimeout.ShouldBe(TimeSpan.FromSeconds(15));
+        KubernetesApiHealthCheckStrategy.DefaultConnectTimeoutSeconds.ShouldBe(15);
     }
 
     // ========================================================================
@@ -56,7 +56,7 @@ public class KubernetesApiHealthCheckStrategyTests
             Endpoint = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesApi" })
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("ClusterUrl is empty");
@@ -67,7 +67,7 @@ public class KubernetesApiHealthCheckStrategyTests
     {
         var machine = new Machine { Id = 1, Name = "bad-json", Endpoint = "not-json" };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("Failed to parse endpoint JSON");
@@ -94,7 +94,7 @@ public class KubernetesApiHealthCheckStrategyTests
 
         var machine = new Machine { Id = 1, Name = "api-with-token", Endpoint = endpointJson };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         _accountDataProvider.Verify(a => a.GetAccountByIdAsync(10, It.IsAny<CancellationToken>()), Times.Once);
@@ -112,7 +112,7 @@ public class KubernetesApiHealthCheckStrategyTests
 
         var machine = new Machine { Id = 1, Name = "api-no-account", Endpoint = endpointJson };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, CancellationToken.None);
+        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldNotBeNullOrWhiteSpace();
@@ -126,7 +126,7 @@ public class KubernetesApiHealthCheckStrategyTests
     public async Task ProbeClusterHealth_InvalidUrl_ReturnsUnhealthy()
     {
         var result = await _strategy.ProbeClusterHealthAsync(
-            "http://invalid-host-that-does-not-exist.local:9999", null, true, CancellationToken.None);
+            "http://invalid-host-that-does-not-exist.local:9999", null, true, TimeSpan.FromSeconds(5), CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldNotBeNullOrWhiteSpace();
@@ -139,7 +139,7 @@ public class KubernetesApiHealthCheckStrategyTests
         cts.Cancel();
 
         var result = await _strategy.ProbeClusterHealthAsync(
-            "https://localhost:6443", null, true, cts.Token);
+            "https://localhost:6443", null, true, TimeSpan.FromSeconds(5), cts.Token);
 
         result.Healthy.ShouldBeFalse();
     }

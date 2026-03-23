@@ -333,17 +333,9 @@ public class KubernetesMultiTargetE2ETests
             IsDisabled = false,
             Roles = roles,
             EnvironmentIds = environment.Id.ToString(),
-            Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"E2E-THUMBPRINT\"}}",
-            Thumbprint = "E2E-THUMBPRINT",
-            Uri = "https://localhost:10933",
-            HasLatestCalamari = false,
             Endpoint = endpointJson,
             DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
-            OperatingSystem = OperatingSystemType.Windows,
-            ShellName = "PowerShell",
-            ShellVersion = "7.0",
-            LicenseHash = string.Empty,
             Slug = $"e2e-{slugSuffix}"
         };
 

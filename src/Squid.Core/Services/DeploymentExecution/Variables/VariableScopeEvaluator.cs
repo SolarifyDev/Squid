@@ -4,7 +4,7 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 /// <summary>
-/// Filters and resolves scoped variables following Octopus-aligned precedence rules.
+/// Filters and resolves scoped variables following Squid precedence rules.
 ///
 /// Semantics:
 /// - Within a scope type (e.g. multiple Environment scopes): OR — any value match suffices.
@@ -12,7 +12,7 @@ namespace Squid.Core.Services.DeploymentExecution.Variables;
 /// - Unscoped variables apply everywhere but have lowest priority (rank 0).
 /// - When multiple variables share the same name, the highest-ranked (most specific) wins.
 ///
-/// Rank weights (aligned with Octopus ScopeSpecification.Rank()):
+/// Rank weights (aligned with Squid ScopeSpecification.Rank()):
 ///   Action      = 10,000,000
 ///   Machine     =  1,000,000
 ///   Role        =     10,000
@@ -34,11 +34,13 @@ public static class VariableScopeEvaluator
         if (variables == null || variables.Count == 0)
             return new List<VariableDto>();
 
-        return variables
-            .Where(v => IsApplicable(v, scopeContext))
-            .GroupBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderByDescending(ComputeRank).First())
-            .ToList();
+        var applicable = variables.Where(v => IsApplicable(v, scopeContext));
+        var result = new Dictionary<string, VariableDto>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var v in applicable.OrderBy(ComputeRank))
+            result[v.Name] = v;
+
+        return result.Values.ToList();
     }
 
     public static bool IsApplicable(VariableDto variable, VariableScopeContext context)

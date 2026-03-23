@@ -2,23 +2,24 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace Squid.E2ETests.Infrastructure;
 
 /// <summary>
-/// Manages a kind (Kubernetes in Docker) cluster lifecycle for E2E tests.
-/// Creates the cluster once per test collection and tears it down afterward.
+/// Manages a Kubernetes cluster lifecycle for E2E tests.
 ///
-/// Prerequisites:
-///   - Docker running
-///   - kind CLI installed (https://kind.sigs.k8s.io/)
-///   - kubectl CLI installed
+/// Configuration (appsettings.json → E2E section):
+///   - KubeconfigPath: path to an external kubeconfig (K3s, etc.) — skips Kind entirely
+///   - When empty: creates a Kind cluster locally (requires Docker + kind CLI + kubectl CLI)
 /// </summary>
 public class KindClusterFixture : IAsyncLifetime
 {
     public const string ClusterName = "squid-e2e";
     public string Kubeconfig { get; private set; }
+
+    private bool _isExternalCluster;
 
     // Dedicated kubeconfig path for kind — avoids merging into (potentially corrupted) ~/.kube/config
     private static readonly string KindKubeconfigPath =
@@ -26,6 +27,18 @@ public class KindClusterFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        var config = LoadConfiguration();
+        var externalKubeconfig = config["E2E:KubeconfigPath"];
+
+        if (!string.IsNullOrEmpty(externalKubeconfig))
+        {
+            _isExternalCluster = true;
+            Kubeconfig = externalKubeconfig;
+            File.Copy(externalKubeconfig, DefaultKubeconfigPath, overwrite: true);
+            await WaitForClusterReadyAsync();
+            return;
+        }
+
         // Check if cluster already exists
         var existing = await RunProcessAsync("kind", $"get clusters");
         if (existing.Output.Contains(ClusterName))
@@ -52,6 +65,8 @@ public class KindClusterFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_isExternalCluster) return;
+
         // Optionally delete cluster. Keep it if SQUID_KEEP_CLUSTER=true for debugging
         var keep = Environment.GetEnvironmentVariable("SQUID_KEEP_CLUSTER");
         if (string.Equals(keep, "true", StringComparison.OrdinalIgnoreCase))
@@ -133,6 +148,16 @@ public class KindClusterFixture : IAsyncLifetime
         await process.WaitForExitAsync();
 
         return new ProcessResult(process.ExitCode, output.Trim(), error.Trim());
+    }
+
+    private static IConfiguration LoadConfiguration()
+    {
+        var basePath = Path.GetDirectoryName(typeof(KindClusterFixture).Assembly.Location)!;
+
+        return new ConfigurationBuilder()
+            .SetBasePath(basePath)
+            .AddJsonFile("appsettings.json", optional: true)
+            .Build();
     }
 
     private record ProcessResult(int ExitCode, string Output, string Error);

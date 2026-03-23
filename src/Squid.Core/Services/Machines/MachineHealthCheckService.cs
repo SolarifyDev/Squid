@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Cronos;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Enums;
@@ -30,7 +32,11 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
     internal const int DefaultIntervalSeconds = 3600;
 
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachinePolicyDataProvider _policyDataProvider;
@@ -148,7 +154,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
     }
 
-    private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, CancellationToken cancellationToken)
+    private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken cancellationToken)
     {
         Log.Information("Running connectivity check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
@@ -158,7 +164,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
             return;
         }
 
-        var result = await transport.HealthChecker.CheckConnectivityAsync(machine, cancellationToken).ConfigureAwait(false);
+        var result = await transport.HealthChecker.CheckConnectivityAsync(machine, connectivityPolicy, cancellationToken).ConfigureAwait(false);
         var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
@@ -192,27 +198,36 @@ public class MachineHealthCheckService : IMachineHealthCheckService
             return;
         }
 
-        var style = transport.CommunicationStyle;
-        var scriptPolicy = ResolveScriptPolicy(healthCheckPolicy, style);
+        var healthCheckType = healthCheckPolicy?.HealthCheckType ?? PolicyHealthCheckType.RunScript;
 
-        if (string.Equals(scriptPolicy?.RunType, "OnlyConnectivity", StringComparison.OrdinalIgnoreCase))
+        if (healthCheckType == PolicyHealthCheckType.OnlyConnectivity)
         {
-            await ExecuteConnectivityCheckAsync(machine, transport, cancellationToken).ConfigureAwait(false);
+            var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+
+            await ExecuteConnectivityCheckAsync(machine, transport, connectivityPolicy, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var scriptBody = ResolveScriptBody(scriptPolicy, transport);
+        var syntax = transport.HealthChecker?.ScriptSyntax ?? ScriptSyntax.Bash;
+        var scriptPolicy = ResolveScriptPolicy(healthCheckPolicy, syntax);
+        var defaultScriptPolicy = await LoadDefaultScriptPolicyAsync(syntax, cancellationToken).ConfigureAwait(false);
+        var scriptBody = ResolveScriptBody(scriptPolicy, defaultScriptPolicy, transport);
 
         await ExecuteScriptHealthCheckAsync(machine, transport, scriptBody, cancellationToken).ConfigureAwait(false);
     }
 
     internal static bool ShouldRunHealthCheck(Machine machine, MachineHealthCheckPolicyDto healthCheckPolicy)
     {
+        var scheduleType = healthCheckPolicy?.HealthCheckScheduleType ?? HealthCheckScheduleType.Interval;
+
+        if (scheduleType == HealthCheckScheduleType.Never) return false;
         if (machine.HealthLastChecked == null) return true;
 
-        var intervalSeconds = healthCheckPolicy?.HealthCheckIntervalSeconds ?? DefaultIntervalSeconds;
-
-        return IsHealthCheckDue(machine.HealthLastChecked.Value, intervalSeconds);
+        return scheduleType switch
+        {
+            HealthCheckScheduleType.Cron => IsCronDue(machine.HealthLastChecked.Value, healthCheckPolicy.HealthCheckCronExpression),
+            _ => IsHealthCheckDue(machine.HealthLastChecked.Value, healthCheckPolicy?.HealthCheckIntervalSeconds ?? DefaultIntervalSeconds),
+        };
     }
 
     internal static bool IsHealthCheckDue(DateTimeOffset lastCheckedUtc, int intervalSeconds)
@@ -222,19 +237,38 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         return DateTimeOffset.UtcNow >= nextCheckDue;
     }
 
-    internal static MachineScriptPolicyDto ResolveScriptPolicy(MachineHealthCheckPolicyDto healthCheckPolicy, CommunicationStyle style)
+    internal static bool IsCronDue(DateTimeOffset lastChecked, string cronExpression)
+    {
+        if (string.IsNullOrWhiteSpace(cronExpression)) return false;
+
+        try
+        {
+            var cron = CronExpression.Parse(cronExpression);
+            var nextOccurrence = cron.GetNextOccurrence(lastChecked.UtcDateTime, inclusive: false);
+
+            return nextOccurrence.HasValue && DateTime.UtcNow >= nextOccurrence.Value;
+        }
+        catch (CronFormatException)
+        {
+            Log.Warning("Invalid cron expression {CronExpression}, skipping schedule", cronExpression);
+            return false;
+        }
+    }
+
+    internal static MachineScriptPolicyDto ResolveScriptPolicy(MachineHealthCheckPolicyDto healthCheckPolicy, ScriptSyntax syntax)
     {
         if (healthCheckPolicy == null) return null;
 
-        var styleKey = style.ToString();
-
-        return healthCheckPolicy.ScriptPolicies.GetValueOrDefault(styleKey);
+        return healthCheckPolicy.ScriptPolicies.GetValueOrDefault(syntax.ToString());
     }
 
-    private static string ResolveScriptBody(MachineScriptPolicyDto scriptPolicy, IDeploymentTransport transport)
+    internal static string ResolveScriptBody(MachineScriptPolicyDto scriptPolicy, MachineScriptPolicyDto defaultScriptPolicy, IDeploymentTransport transport)
     {
-        if (scriptPolicy != null && scriptPolicy.RunType != "InheritFromDefault" && !string.IsNullOrWhiteSpace(scriptPolicy.ScriptBody))
+        if (scriptPolicy is { RunType: not ScriptPolicyRunType.InheritFromDefault, ScriptBody.Length: > 0 })
             return scriptPolicy.ScriptBody;
+
+        if (defaultScriptPolicy is { RunType: ScriptPolicyRunType.CustomScript, ScriptBody.Length: > 0 })
+            return defaultScriptPolicy.ScriptBody;
 
         return transport.HealthChecker?.DefaultHealthCheckScript ?? FallbackHealthCheckScript;
     }
@@ -247,16 +281,38 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
         if (policy == null) return null;
 
-        return DeserializePolicy(policy.MachineHealthCheckPolicy);
+        return DeserializePolicy<MachineHealthCheckPolicyDto>(policy.MachineHealthCheckPolicy);
     }
 
-    private static MachineHealthCheckPolicyDto DeserializePolicy(string json)
+    private async Task<MachineScriptPolicyDto> LoadDefaultScriptPolicyAsync(ScriptSyntax syntax, CancellationToken cancellationToken)
+    {
+        var defaultPolicy = await _policyDataProvider.GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+        if (defaultPolicy == null) return null;
+
+        var healthCheckPolicy = DeserializePolicy<MachineHealthCheckPolicyDto>(defaultPolicy.MachineHealthCheckPolicy);
+
+        return ResolveScriptPolicy(healthCheckPolicy, syntax);
+    }
+
+    private async Task<MachineConnectivityPolicyDto> LoadConnectivityPolicyAsync(Machine machine, CancellationToken cancellationToken)
+    {
+        if (machine.MachinePolicyId == null) return null;
+
+        var policy = await _policyDataProvider.GetByIdAsync(machine.MachinePolicyId.Value, cancellationToken).ConfigureAwait(false);
+
+        if (policy == null) return null;
+
+        return DeserializePolicy<MachineConnectivityPolicyDto>(policy.MachineConnectivityPolicy);
+    }
+
+    private static T DeserializePolicy<T>(string json) where T : class
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
 
         try
         {
-            return JsonSerializer.Deserialize<MachineHealthCheckPolicyDto>(json, JsonOptions);
+            return JsonSerializer.Deserialize<T>(json, JsonOptions);
         }
         catch (JsonException)
         {

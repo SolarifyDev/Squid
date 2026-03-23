@@ -13,6 +13,7 @@ public partial class MachineRegistrationService
         var endpointJson = BuildKubernetesApiEndpointJson(command);
         var machine = BuildKubernetesApiMachine(command, endpointJson);
 
+        await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
         await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new RegisterMachineResponseData
@@ -41,8 +42,6 @@ public partial class MachineRegistrationService
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"k8s-api-{Guid.NewGuid():N[..8]}",
             serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
-
-        machine.Uri = command.ClusterUrl ?? string.Empty;
 
         return machine;
     }

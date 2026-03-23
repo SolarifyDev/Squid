@@ -322,7 +322,7 @@ public class StepEligibilityResultTests
         return new DeploymentActionDto
         {
             Id = 1, StepId = 1, ActionOrder = 1, Name = "Test Action",
-            ActionType = "Octopus.Script", IsDisabled = isDisabled,
+            ActionType = SpecialVariables.ActionTypes.Script, IsDisabled = isDisabled,
             Environments = environments ?? new List<int>(),
             ExcludedEnvironments = excludedEnvironments ?? new List<int>(),
             Channels = channels ?? new List<int>()

@@ -18,4 +18,5 @@ public class PollingSettings
 {
     public int Port { get; set; } = 10943;
     public bool Enabled { get; set; }
+    public int ScriptTimeoutMinutes { get; set; } = 30;
 }

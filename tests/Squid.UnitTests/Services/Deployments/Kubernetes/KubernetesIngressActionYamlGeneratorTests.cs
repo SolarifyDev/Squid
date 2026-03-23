@@ -131,7 +131,7 @@ public class KubernetesIngressActionYamlGeneratorTests
         var yaml = await GetIngressYaml(step, action);
 
         yaml.ShouldContain("rules:");
-        yaml.ShouldContain("- host: example.com");
+        yaml.ShouldContain("- host: \"example.com\"");
     }
 
     // === GenerateAsync — ingress name ===
@@ -145,7 +145,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: my-ingress");
+        yaml.ShouldContain("name: \"my-ingress\"");
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: ingress");
+        yaml.ShouldContain("name: \"ingress\"");
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: ingress");
+        yaml.ShouldContain("name: \"ingress\"");
     }
 
     // === GenerateAsync — namespace ===
@@ -181,7 +181,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("namespace: production");
+        yaml.ShouldContain("namespace: \"production\"");
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("namespace: default");
+        yaml.ShouldContain("namespace: \"default\"");
     }
 
     // === GenerateAsync — annotations ===
@@ -206,7 +206,7 @@ public class KubernetesIngressActionYamlGeneratorTests
         var yaml = await GetIngressYaml(step, action);
 
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("nginx.ingress.kubernetes.io/rewrite-target: /");
+        yaml.ShouldContain("\"nginx.ingress.kubernetes.io/rewrite-target\": \"/\"");
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("ingressClassName: nginx");
+        yaml.ShouldContain("ingressClassName: \"nginx\"");
     }
 
     [Fact]
@@ -255,8 +255,8 @@ public class KubernetesIngressActionYamlGeneratorTests
         var yaml = await GetIngressYaml(step, action);
 
         yaml.ShouldContain("tls:");
-        yaml.ShouldContain("secretName: my-tls-secret");
-        yaml.ShouldContain("- example.com");
+        yaml.ShouldContain("secretName: \"my-tls-secret\"");
+        yaml.ShouldContain("- \"example.com\"");
     }
 
     [Fact]
@@ -303,18 +303,18 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         yaml.ShouldContain("apiVersion: networking.k8s.io/v1");
         yaml.ShouldContain("kind: Ingress");
-        yaml.ShouldContain("name: web-ingress");
-        yaml.ShouldContain("namespace: staging");
+        yaml.ShouldContain("name: \"web-ingress\"");
+        yaml.ShouldContain("namespace: \"staging\"");
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("cert-manager.io/cluster-issuer: letsencrypt");
-        yaml.ShouldContain("ingressClassName: nginx");
+        yaml.ShouldContain("\"cert-manager.io/cluster-issuer\": \"letsencrypt\"");
+        yaml.ShouldContain("ingressClassName: \"nginx\"");
         yaml.ShouldContain("rules:");
-        yaml.ShouldContain("- host: app.example.com");
+        yaml.ShouldContain("- host: \"app.example.com\"");
         yaml.ShouldContain("service:");
-        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("name: \"web-svc\"");
         yaml.ShouldContain("number: 80");
         yaml.ShouldContain("tls:");
-        yaml.ShouldContain("secretName: app-tls");
+        yaml.ShouldContain("secretName: \"app-tls\"");
     }
 
     // === GenerateAsync — rules with frontend flat format ===
@@ -327,14 +327,14 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("- host: api.example.com");
+        yaml.ShouldContain("- host: \"api.example.com\"");
         yaml.ShouldContain("http:");
         yaml.ShouldContain("paths:");
-        yaml.ShouldContain("- path: /api");
-        yaml.ShouldContain("pathType: Prefix");
+        yaml.ShouldContain("- path: \"/api\"");
+        yaml.ShouldContain("pathType: \"Prefix\"");
         yaml.ShouldContain("backend:");
         yaml.ShouldContain("service:");
-        yaml.ShouldContain("name: api-svc");
+        yaml.ShouldContain("name: \"api-svc\"");
         yaml.ShouldContain("port:");
         yaml.ShouldContain("number: 8080");
     }
@@ -347,8 +347,8 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("- host: app.example.com");
-        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("- host: \"app.example.com\"");
+        yaml.ShouldContain("name: \"web-svc\"");
         yaml.ShouldContain("number: 80");
     }
 
@@ -362,9 +362,9 @@ public class KubernetesIngressActionYamlGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("- host: app.example.com");
+        yaml.ShouldContain("- host: \"app.example.com\"");
         yaml.ShouldContain("service:");
-        yaml.ShouldContain("name: web-svc");
+        yaml.ShouldContain("name: \"web-svc\"");
         yaml.ShouldContain("number: 80");
     }
 

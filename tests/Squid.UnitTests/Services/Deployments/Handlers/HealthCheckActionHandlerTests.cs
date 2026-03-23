@@ -14,6 +14,7 @@ using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -111,7 +112,7 @@ public class HealthCheckActionHandlerTests
     {
         var handler = CreateHandler(out _);
         var throwingChecker = new Mock<IHealthCheckStrategy>();
-        throwingChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+        throwingChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("network error"));
 
         var ctx = CreateContextWithChecker("node-1", throwingChecker.Object);
@@ -234,7 +235,7 @@ public class HealthCheckActionHandlerTests
 
         var checker = new Mock<IHealthCheckStrategy>();
         checker.Setup(h => h.DefaultHealthCheckScript).Returns("echo health");
-        checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+        checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HealthCheckResult(true, "ok"));
 
         var transport = new Mock<IDeploymentTransport>();
@@ -305,7 +306,7 @@ public class HealthCheckActionHandlerTests
         foreach (var (name, result) in targets)
         {
             var checker = new Mock<IHealthCheckStrategy>();
-            checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+            checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(result);
 
             var transport = new Mock<IDeploymentTransport>();

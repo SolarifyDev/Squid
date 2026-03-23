@@ -23,6 +23,17 @@ if ($helmWait -eq "True") {
     $helmArgs += "--wait"
 }
 
+$helmWaitForJobs = "{{WaitForJobs}}"
+if ($helmWaitForJobs -eq "True") {
+    $helmArgs += "--wait-for-jobs"
+}
+
+$helmTimeout = "{{Timeout}}"
+if ($helmTimeout -ne "") {
+    $helmArgs += "--timeout"
+    $helmArgs += $helmTimeout
+}
+
 # Values files
 {{ValuesFilesBlock}}
 

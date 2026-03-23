@@ -24,7 +24,7 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 public class DeploymentTaskExecutorPhase4AcceptanceTests
 {
     [Fact]
-    public async Task CreateTaskActivityNode_UsesOctopusStyleTitle()
+    public async Task CreateTaskActivityNode_UsesSquidStyleTitle()
     {
         var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
         var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
@@ -179,6 +179,44 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 1: Deploy web");
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
+    }
+
+    [Fact]
+    public async Task ExecuteDeploymentSteps_SyntheticAcquirePackagesStep_EmitsPackageEventWithoutScriptExecution()
+    {
+        var strategy = new RecordingStrategy();
+        var handler = new CoordinatedRunScriptHandler(new AsyncBarrier(1));
+        var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
+        var logMessages = new List<string>();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, logWriter) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
+
+        logWriter
+            .Setup(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<ServerTaskLogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, long, ServerTaskLogCategory, string, string, long?, DateTimeOffset?, CancellationToken>((_, _, _, msg, _, _, _, _) => logMessages.Add(msg))
+            .Returns(Task.CompletedTask);
+
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        ctx.SelectedPackages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy Web", Version = "1.2.3" } };
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("SJ-US-AKS", "web", transport, endpointJson: "endpoint-a") };
+
+        var syntheticStep = MakeStep("Acquire Packages", 1, null, "web", MakeAction("AcquireAction"));
+        syntheticStep.StepType = "AcquirePackages";
+
+        ctx.Steps = new List<DeploymentStepDto> { syntheticStep };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Requests.ShouldBeEmpty();
+        createdNodes.ShouldNotContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name.Contains("Acquire"));
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Phase && x.Name == "Acquire packages");
+        logMessages.ShouldContain("Acquiring packages");
+        logMessages.ShouldContain("Package Deploy Web version 1.2.3");
+        logMessages.ShouldContain("All packages have been acquired");
     }
 
     [Theory]

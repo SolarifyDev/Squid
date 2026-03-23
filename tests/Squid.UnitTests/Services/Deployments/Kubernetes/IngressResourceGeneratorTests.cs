@@ -32,7 +32,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: my-ingress");
+        yaml.ShouldContain("name: \"my-ingress\"");
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: ingress");
+        yaml.ShouldContain("name: \"ingress\"");
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("namespace: web-ns");
+        yaml.ShouldContain("namespace: \"web-ns\"");
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class IngressResourceGeneratorTests
         var yaml = await GetIngressYaml(step, action);
 
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("nginx.ingress.kubernetes.io/rewrite-target: /");
+        yaml.ShouldContain("\"nginx.ingress.kubernetes.io/rewrite-target\": \"/\"");
     }
 
     // === Spec: ingressClassName ===
@@ -79,7 +79,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("ingressClassName: nginx");
+        yaml.ShouldContain("ingressClassName: \"nginx\"");
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("host: example.com");
+        yaml.ShouldContain("host: \"example.com\"");
     }
 
     [Fact]
@@ -123,8 +123,8 @@ public class IngressResourceGeneratorTests
 
         yaml.ShouldContain("http:");
         yaml.ShouldContain("paths:");
-        yaml.ShouldContain("path: /");
-        yaml.ShouldContain("pathType: Prefix");
+        yaml.ShouldContain("path: \"/\"");
+        yaml.ShouldContain("pathType: \"Prefix\"");
     }
 
     [Fact]
@@ -137,8 +137,8 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("host: api.example.com");
-        yaml.ShouldContain("host: web.example.com");
+        yaml.ShouldContain("host: \"api.example.com\"");
+        yaml.ShouldContain("host: \"web.example.com\"");
     }
 
     [Fact]
@@ -151,10 +151,10 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("path: /api");
-        yaml.ShouldContain("pathType: Exact");
-        yaml.ShouldContain("path: /web");
-        yaml.ShouldContain("pathType: Prefix");
+        yaml.ShouldContain("path: \"/api\"");
+        yaml.ShouldContain("pathType: \"Exact\"");
+        yaml.ShouldContain("path: \"/web\"");
+        yaml.ShouldContain("pathType: \"Prefix\"");
     }
 
     // === Backend formats ===
@@ -168,7 +168,7 @@ public class IngressResourceGeneratorTests
 
         yaml.ShouldContain("backend:");
         yaml.ShouldContain("service:");
-        yaml.ShouldContain("name: my-service");
+        yaml.ShouldContain("name: \"my-service\"");
         yaml.ShouldContain("number: 80");
     }
 
@@ -195,7 +195,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: http");
+        yaml.ShouldContain("name: \"http\"");
         yaml.ShouldNotContain("number: http");
     }
 
@@ -209,7 +209,7 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("name: k8s-svc");
+        yaml.ShouldContain("name: \"k8s-svc\"");
         yaml.ShouldContain("number: 9090");
     }
 
@@ -226,8 +226,8 @@ public class IngressResourceGeneratorTests
 
         yaml.ShouldContain("tls:");
         yaml.ShouldContain("- hosts:");
-        yaml.ShouldContain("- example.com");
-        yaml.ShouldContain("secretName: tls-secret");
+        yaml.ShouldContain("- \"example.com\"");
+        yaml.ShouldContain("secretName: \"tls-secret\"");
     }
 
     [Fact]
@@ -239,9 +239,9 @@ public class IngressResourceGeneratorTests
 
         var yaml = await GetIngressYaml(step, action);
 
-        yaml.ShouldContain("- api.example.com");
-        yaml.ShouldContain("- web.example.com");
-        yaml.ShouldContain("secretName: wildcard-tls");
+        yaml.ShouldContain("- \"api.example.com\"");
+        yaml.ShouldContain("- \"web.example.com\"");
+        yaml.ShouldContain("secretName: \"wildcard-tls\"");
     }
 
     [Fact]

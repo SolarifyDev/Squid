@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Serilog;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Constants;
@@ -40,6 +41,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             return null;
 
         await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
+        InjectDeploymentIdSuffix(ctx);
 
         var secretYaml = await GenerateFeedSecretAsync(ctx, ct).ConfigureAwait(false);
 
@@ -119,9 +121,9 @@ public class KubernetesYamlActionHandler : IActionHandler
                     feedIds.Add(feedId);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse container feed secrets from action");
         }
 
         return feedIds.ToList();
@@ -148,9 +150,9 @@ public class KubernetesYamlActionHandler : IActionHandler
                     return true;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse containers for feed secrets check");
         }
 
         return false;
@@ -244,6 +246,20 @@ public class KubernetesYamlActionHandler : IActionHandler
         return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
     }
 
+    private static void InjectDeploymentIdSuffix(ActionExecutionContext ctx)
+    {
+        var deploymentId = ctx.Variables?.FirstOrDefault(v => v.Name == SpecialVariables.Deployment.Id)?.Value;
+        if (string.IsNullOrWhiteSpace(deploymentId)) return;
+
+        ctx.Action.Properties ??= new List<DeploymentActionPropertyDto>();
+        ctx.Action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            ActionId = ctx.Action.Id,
+            PropertyName = KubernetesProperties.DeploymentIdSuffix,
+            PropertyValue = deploymentId.ToLowerInvariant()
+        });
+    }
+
     private async Task ResolveContainerImagesAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
         if (_externalFeedDataProvider == null)
@@ -277,9 +293,9 @@ public class KubernetesYamlActionHandler : IActionHandler
             if (modified)
                 containersProp.PropertyValue = JsonSerializer.Serialize(containers);
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse container images for resolution");
         }
     }
 

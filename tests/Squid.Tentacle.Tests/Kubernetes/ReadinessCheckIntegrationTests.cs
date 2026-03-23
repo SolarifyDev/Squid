@@ -1,4 +1,5 @@
 using System.Net;
+using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Health;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.Tests.Support;
@@ -12,6 +13,8 @@ namespace Squid.Tentacle.Tests.Kubernetes;
 public class ReadinessCheckIntegrationTests : TimedTestBase, IDisposable
 {
     private readonly string _tempDir;
+    private readonly Mock<IKubernetesPodOperations> _podOps = new();
+    private readonly KubernetesSettings _settings = new() { TentacleNamespace = "test-ns" };
 
     public ReadinessCheckIntegrationTests()
     {
@@ -22,7 +25,7 @@ public class ReadinessCheckIntegrationTests : TimedTestBase, IDisposable
     [Fact]
     public async Task HealthServer_Readiness_ReflectsNfsWatchdogState()
     {
-        var watchdog = new NfsWatchdog(_tempDir);
+        var watchdog = new NfsWatchdog(_tempDir, _podOps.Object, _settings);
         Func<bool> readiness = () => watchdog.IsHealthy;
 
         var port = TcpPortAllocator.GetEphemeralPort();
@@ -31,7 +34,6 @@ public class ReadinessCheckIntegrationTests : TimedTestBase, IDisposable
 
         using var client = new HttpClient();
 
-        // Initially healthy (watchdog hasn't detected issues)
         var response = await RetryGetAsync(client, port, "/readyz");
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -39,7 +41,7 @@ public class ReadinessCheckIntegrationTests : TimedTestBase, IDisposable
     [Fact]
     public async Task CombinedReadiness_AllChecksHealthy_ReturnsReady()
     {
-        var watchdog = new NfsWatchdog(_tempDir);
+        var watchdog = new NfsWatchdog(_tempDir, _podOps.Object, _settings);
         var checks = new List<Func<bool>> { () => watchdog.IsHealthy, () => true };
 
         Func<bool> combined = () => checks.All(c => c());
@@ -68,11 +70,9 @@ public class ReadinessCheckIntegrationTests : TimedTestBase, IDisposable
 
         using var client = new HttpClient();
 
-        // Verify initially ready
         var readyResponse = await RetryGetAsync(client, port, "/readyz");
         readyResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        // Simulate unhealthy state
         healthy = false;
 
         var notReadyResponse = await RetryGetAsync(client, port, "/readyz");

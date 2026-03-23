@@ -16,6 +16,8 @@ public class DeploymentStepSnapshotDataDto
 
     public string StartTrigger { get; set; }
 
+    public string PackageRequirement { get; set; }
+
     public bool IsDisabled { get; set; }
 
     public bool IsRequired { get; set; } = true;

@@ -55,4 +55,6 @@ public sealed class TentacleFlavorRuntime
         Array.Empty<ITentacleStartupHook>();
 
     public Func<bool> ReadinessCheck { get; init; }
+
+    public Dictionary<string, string> Metadata { get; init; } = new();
 }

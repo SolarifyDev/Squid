@@ -25,6 +25,8 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default);
 
     Task<bool> HasExecutingTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
+
+    Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default);
 }
 
 public class ServerTaskDataProvider : IServerTaskDataProvider
@@ -188,8 +190,26 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     public async Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default)
     {
         await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.Id == taskId, 
-            s => s.SetProperty(t => t.HasPendingInterruptions, hasPending).SetProperty(t => t.LastModifiedDate, DateTimeOffset.UtcNow), 
+            t => t.Id == taskId,
+            s => s.SetProperty(t => t.HasPendingInterruptions, hasPending).SetProperty(t => t.LastModifiedDate, DateTimeOffset.UtcNow),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default)
+    {
+        var query = _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.ProjectId == projectId);
+
+        if (!string.IsNullOrEmpty(state))
+            query = query.Where(t => t.State == state);
+
+        var totalCount = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+
+        var items = await query
+            .OrderByDescending(t => t.QueueTime)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return (totalCount, items);
     }
 }

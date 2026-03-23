@@ -32,7 +32,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("name: my-config");
+        yaml.ShouldContain("name: \"my-config\"");
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("namespace: prod-ns");
+        yaml.ShouldContain("namespace: \"prod-ns\"");
     }
 
     // === Data section ===
@@ -65,7 +65,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("APP_ENV: production");
+        yaml.ShouldContain("\"APP_ENV\": production");
     }
 
     // === Value quoting — booleans / nulls ===
@@ -85,7 +85,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain($"MY_KEY: {expected}");
+        yaml.ShouldContain($"\"MY_KEY\": {expected}");
     }
 
     // === Value quoting — numerics ===
@@ -101,7 +101,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain($"PORT: {expected}");
+        yaml.ShouldContain($"\"PORT\": {expected}");
     }
 
     // === Value quoting — special characters ===
@@ -113,7 +113,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("DB_URL: 'postgres://host: 5432'");
+        yaml.ShouldContain("\"DB_URL\": 'postgres://host: 5432'");
     }
 
     [Fact]
@@ -123,7 +123,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("ARG: '-Xmx512m'");
+        yaml.ShouldContain("\"ARG\": '-Xmx512m'");
     }
 
     // === Empty values ===
@@ -135,7 +135,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("EMPTY_KEY: ''");
+        yaml.ShouldContain("\"EMPTY_KEY\": ''");
     }
 
     // === Multiline values ===
@@ -147,7 +147,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("SCRIPT: |");
+        yaml.ShouldContain("\"SCRIPT\": |");
         yaml.ShouldContain("    line1");
         yaml.ShouldContain("    line2");
         yaml.ShouldContain("    line3");
@@ -160,7 +160,7 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("CONF: |");
+        yaml.ShouldContain("\"CONF\": |");
         yaml.ShouldContain("    key=val1");
         yaml.ShouldContain("    key2=val2");
     }
@@ -174,8 +174,8 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("APP_ENV: production");
-        yaml.ShouldContain("LOG_LEVEL: info");
+        yaml.ShouldContain("\"APP_ENV\": production");
+        yaml.ShouldContain("\"LOG_LEVEL\": info");
     }
 
     // === JSON format ===
@@ -187,8 +187,8 @@ public class ConfigMapResourceGeneratorTests
 
         var yaml = await GetConfigMapYaml(step, action);
 
-        yaml.ShouldContain("KEY_A: val-a");
-        yaml.ShouldContain("KEY_B: val-b");
+        yaml.ShouldContain("\"KEY_A\": val-a");
+        yaml.ShouldContain("\"KEY_B\": val-b");
     }
 
     // === CanGenerate guards ===

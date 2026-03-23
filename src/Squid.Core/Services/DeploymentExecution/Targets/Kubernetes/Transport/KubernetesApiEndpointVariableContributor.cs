@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Serilog;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Enums;
@@ -146,9 +147,9 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
                         return (feedId, packageId);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Continue to next action on parse failure
+                Log.Warning(ex, "Failed to parse container package from action");
             }
         }
 

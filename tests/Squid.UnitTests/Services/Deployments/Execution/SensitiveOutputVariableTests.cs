@@ -185,6 +185,47 @@ public class SensitiveOutputVariableTests
         collected.ShouldAllBe(v => !v.IsSensitive);
     }
 
+    // ========== Output Variable Injection Guard ==========
+
+    [Fact]
+    public void CollectOutput_ReservedPrefix_OnlyQualifiedAdded()
+    {
+        var actionResult = new ActionExecutionResult
+        {
+            ExecutionMode = ExecutionMode.DirectScript,
+            OutputVariables = new Dictionary<string, string>
+            {
+                ["Squid.Action.Kubernetes.Namespace"] = "injected-ns"
+            },
+            SensitiveOutputVariableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        var collected = SimulateCollectOutputVariables("Deploy", actionResult);
+
+        collected.Count.ShouldBe(1);
+        collected[0].Name.ShouldStartWith("Squid.Action[Deploy]");
+    }
+
+    [Fact]
+    public void CollectOutput_NonReserved_BothNamesAdded()
+    {
+        var actionResult = new ActionExecutionResult
+        {
+            ExecutionMode = ExecutionMode.DirectScript,
+            OutputVariables = new Dictionary<string, string>
+            {
+                ["MyCustomVar"] = "custom-value"
+            },
+            SensitiveOutputVariableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        var collected = SimulateCollectOutputVariables("Deploy", actionResult);
+
+        collected.Count.ShouldBe(2);
+        collected.ShouldContain(v => v.Name == "Squid.Action[Deploy].Output.MyCustomVar");
+        collected.ShouldContain(v => v.Name == "MyCustomVar");
+    }
+
     // ========== Mixed Scenario ==========
 
     [Fact]
@@ -230,6 +271,13 @@ public class SensitiveOutputVariableTests
         }
     }
 
+    private static readonly string[] ReservedPrefixes = { "Squid.", "Octopus.", "System." };
+
+    private static bool IsReservedName(string name)
+    {
+        return ReservedPrefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static List<Message.Models.Deployments.Variable.VariableDto> SimulateCollectOutputVariables(
         string stepName, ActionExecutionResult actionResult)
     {
@@ -241,7 +289,9 @@ public class SensitiveOutputVariableTests
             var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             outputVariables.Add(new() { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
-            outputVariables.Add(new() { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
+
+            if (!IsReservedName(kv.Key))
+                outputVariables.Add(new() { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
         }
 
         return outputVariables;

@@ -3,22 +3,23 @@ using Halibut.Diagnostics;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Settings.Halibut;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
-    private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
-
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
+    private readonly TimeSpan _defaultScriptTimeout;
 
-    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer)
+    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer, HalibutSetting halibutSetting)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
+        _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -41,7 +42,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         var request = plan.Request;
-        var payload = _payloadBuilder.Build(request, ScriptSyntax.Bash);
+        var payload = _payloadBuilder.Build(request, request.Syntax);
 
         var scriptBody = payload.FillTemplate(
             $"./{payload.PackageFileName}",
@@ -57,7 +58,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             scriptBody,
@@ -65,15 +67,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
-            scriptFiles);
+            ticketId,
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -84,7 +89,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             request.ScriptBody,
@@ -92,15 +98,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
-            scriptFiles);
+            ticketId,
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(
@@ -137,22 +146,23 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
+    internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
+    {
+        var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
+    }
+
     private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
     {
         try
         {
-            var uri = machine.Uri;
+            var endpoint = Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 
-            if (string.IsNullOrEmpty(uri) && !string.IsNullOrEmpty(machine.PollingSubscriptionId))
-                uri = $"poll://{machine.PollingSubscriptionId}/";
+            if (endpoint == null)
+                Log.Warning("Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
 
-            if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(machine.Thumbprint))
-            {
-                Log.Warning("Machine {MachineName} has missing Uri or Thumbprint", machine.Name);
-                return null;
-            }
-
-            return new ServiceEndPoint(uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return endpoint;
         }
         catch (Exception ex)
         {

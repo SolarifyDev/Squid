@@ -26,11 +26,13 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
-        var workDir = CreateWorkDirectory();
-        var plan = ScriptExecutionPlanFactory.Create(request);
+        string workDir = null;
 
         try
         {
+            workDir = CreateWorkDirectory();
+            var plan = ScriptExecutionPlanFactory.Create(request);
+
             if (plan is PackagedPayloadExecutionPlan packagedPlan)
                 return await ExecuteCalamariLocallyAsync(packagedPlan, workDir, ct).ConfigureAwait(false);
 
@@ -38,7 +40,8 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         }
         finally
         {
-            CleanupWorkDirectory(workDir);
+            if (workDir != null)
+                CleanupWorkDirectory(workDir);
         }
     }
 
@@ -69,7 +72,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
         Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct).ConfigureAwait(false);
+        return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, request.Timeout, request.Masker).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
@@ -83,7 +86,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
         Log.Information("Executing script locally in {WorkDir}", workDir);
 
-        return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct)
+        return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, plan.Request.Timeout, plan.Request.Masker)
             .ConfigureAwait(false);
     }
 

@@ -33,6 +33,18 @@ public static class ResilientFileSystem
     public static string[] GetDirectories(string path)
         => ExecuteWithRetry(() => Directory.GetDirectories(path), path);
 
+    public static byte[] ReadAllBytes(string path)
+        => ExecuteWithRetry(() => File.ReadAllBytes(path), path);
+
+    public static void WriteAllBytes(string path, byte[] bytes)
+        => ExecuteWithRetry(() => File.WriteAllBytes(path, bytes), path);
+
+    public static string[] GetFiles(string path)
+        => ExecuteWithRetry(() => Directory.GetFiles(path), path);
+
+    public static string[] GetFiles(string path, string searchPattern)
+        => ExecuteWithRetry(() => Directory.GetFiles(path, searchPattern), path);
+
     public static void SetUnixFileMode(string path, UnixFileMode mode)
     {
         ExecuteWithRetry(() =>

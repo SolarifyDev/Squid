@@ -139,11 +139,11 @@ public class DeploymentPipelineFilterTests
         var step = MakeStep(targetRoles: "web");
         step.Properties.Add(new DeploymentStepPropertyDto
         {
-            StepId = 1, PropertyName = "Octopus.Action.MaxParallelism", PropertyValue = "5"
+            StepId = 1, PropertyName = SpecialVariables.Step.MaxParallelism, PropertyValue = "5"
         });
         step.Properties.Add(new DeploymentStepPropertyDto
         {
-            StepId = 1, PropertyName = "Octopus.Action.RunOnServer", PropertyValue = "false"
+            StepId = 1, PropertyName = SpecialVariables.Step.RunOnServer, PropertyValue = "false"
         });
 
         var machineRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "web" };
@@ -368,7 +368,7 @@ public class DeploymentPipelineFilterTests
             StepId = 1,
             ActionOrder = 1,
             Name = "Test Action",
-            ActionType = "Octopus.Script",
+            ActionType = SpecialVariables.ActionTypes.Script,
             IsDisabled = isDisabled,
             Environments = environments ?? new List<int>(),
             ExcludedEnvironments = excludedEnvironments ?? new List<int>(),

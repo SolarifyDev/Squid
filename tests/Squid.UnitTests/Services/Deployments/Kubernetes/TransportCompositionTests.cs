@@ -8,6 +8,7 @@ using Squid.Core.Services.Http;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Settings.Halibut;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -49,7 +50,8 @@ public class TransportCompositionTests
         var strategy = new HalibutMachineExecutionStrategy(
             halibutFactory.Object,
             payloadBuilder.Object,
-            observer.Object);
+            observer.Object,
+            new HalibutSetting());
         var healthChecker = new KubernetesAgentHealthCheckStrategy(halibutFactory.Object);
 
         var transport = new KubernetesAgentTransport(variables, wrapper, strategy, healthChecker);

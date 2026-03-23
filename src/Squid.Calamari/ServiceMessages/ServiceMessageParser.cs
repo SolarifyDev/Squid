@@ -3,18 +3,20 @@ using System.Text.RegularExpressions;
 namespace Squid.Calamari.ServiceMessages;
 
 /// <summary>
-/// Parses ##squid[setVariable ...] service messages from script output lines.
+/// Parses ##squid[setVariable ...] (and ##octopus[setVariable ...] for backward compat) service messages from script output lines.
 /// </summary>
 public static partial class ServiceMessageParser
 {
-    [GeneratedRegex(@"^##squid\[setVariable\s+name='(?<name>[^']*)'\s+value='(?<value>[^']*)'(?:\s+sensitive='(?<sensitive>[^']*)')?\]$",
+    [GeneratedRegex(@"^##(?:squid|octopus)\[setVariable\s+name='(?<name>[^']*)'\s+value='(?<value>[^']*)'(?:\s+sensitive='(?<sensitive>[^']*)')?\]$",
         RegexOptions.Compiled)]
     private static partial Regex BuildSetVariableRegex();
 
     private static readonly Regex SetVariableRegex = BuildSetVariableRegex();
 
     public static bool IsServiceMessage(string line)
-        => !string.IsNullOrEmpty(line) && line.StartsWith("##squid[", StringComparison.Ordinal);
+        => !string.IsNullOrEmpty(line) &&
+           (line.StartsWith("##squid[", StringComparison.Ordinal) ||
+            line.StartsWith("##octopus[", StringComparison.Ordinal));
 
     public static OutputVariable? TryParse(string line)
     {

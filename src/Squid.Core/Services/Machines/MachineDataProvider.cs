@@ -25,7 +25,9 @@ public interface IMachineDataProvider : IScopedDependency
 
     Task<bool> ExistsBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default);
 
-    Task<List<Machine>> GetTrustedPollingMachinesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<string>> GetPollingThumbprintsAsync(CancellationToken cancellationToken = default);
+
+    Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default);
 }
 
 public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IMachineDataProvider
@@ -89,7 +91,9 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<Machine?> GetMachineBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)
     {
         return await repository
-            .Query<Machine>(m => m.PollingSubscriptionId == subscriptionId)
+            .FromSqlRaw<Machine>(
+                "SELECT * FROM machine WHERE endpoint::jsonb ->> 'SubscriptionId' = {0}",
+                subscriptionId)
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
@@ -97,15 +101,27 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<bool> ExistsBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)
     {
         return await repository
-            .Query<Machine>(m => m.PollingSubscriptionId == subscriptionId)
+            .FromSqlRaw<Machine>(
+                "SELECT * FROM machine WHERE endpoint::jsonb ->> 'SubscriptionId' = {0}",
+                subscriptionId)
             .AnyAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
-    public async Task<List<Machine>> GetTrustedPollingMachinesAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<string>> GetPollingThumbprintsAsync(CancellationToken cancellationToken = default)
     {
         return await repository
-            .QueryNoTracking<Machine>(m => !string.IsNullOrEmpty(m.Thumbprint) && !m.IsDisabled)
+            .SqlQueryRawAsync<string>(
+                "SELECT endpoint::jsonb ->> 'Thumbprint' FROM machine " +
+                "WHERE endpoint::jsonb ->> 'SubscriptionId' IS NOT NULL " +
+                "AND endpoint::jsonb ->> 'Thumbprint' IS NOT NULL")
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default)
+    {
+        return await repository
+            .Query<Machine>(m => m.MachinePolicyId == policyId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

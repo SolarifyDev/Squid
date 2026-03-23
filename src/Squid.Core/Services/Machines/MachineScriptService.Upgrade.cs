@@ -57,12 +57,14 @@ public partial class MachineScriptService
                 return Fail<GenerateKubernetesAgentUpgradeScriptResponse, GenerateKubernetesAgentUpgradeScriptData>(HttpStatusCode.InternalServerError, $"Latest Kubernetes Agent version '{latestVersion}' is invalid");
             }
 
+            var currentAgentVersion = endpoint.AgentVersion ?? string.Empty;
+
             var data = new GenerateKubernetesAgentUpgradeScriptData
             {
                 MachineId = machine.Id,
-                CurrentVersion = machine.AgentVersion ?? string.Empty,
+                CurrentVersion = currentAgentVersion,
                 LatestVersion = latestVersion,
-                NeedsUpgrade = RequiresUpgrade(machine.AgentVersion, latestVersion),
+                NeedsUpgrade = RequiresUpgrade(currentAgentVersion, latestVersion),
                 ReleaseName = endpoint.ReleaseName,
                 HelmNamespace = endpoint.HelmNamespace,
                 ChartRef = endpoint.ChartRef,

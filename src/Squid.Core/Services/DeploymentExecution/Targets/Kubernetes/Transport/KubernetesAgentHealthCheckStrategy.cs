@@ -1,7 +1,8 @@
 using Halibut;
-using Halibut.Diagnostics;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -14,6 +15,8 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
         _halibutClientFactory = halibutClientFactory;
     }
 
+    public ScriptSyntax ScriptSyntax => ScriptSyntax.Bash;
+
     public string DefaultHealthCheckScript => """
                                               #!/bin/bash
                                               echo "Health check started (KubernetesAgent)"
@@ -24,7 +27,7 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
                                               exit 0
                                               """;
 
-    public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
     {
         var endpoint = ParseAgentEndpoint(machine);
 
@@ -49,14 +52,6 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
 
     internal static ServiceEndPoint ParseAgentEndpoint(Machine machine)
     {
-        var uri = machine.Uri;
-
-        if (string.IsNullOrEmpty(uri) && !string.IsNullOrEmpty(machine.PollingSubscriptionId))
-            uri = $"poll://{machine.PollingSubscriptionId}/";
-
-        if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(machine.Thumbprint))
-            return null;
-
-        return new ServiceEndPoint(uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        return Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
     }
 }

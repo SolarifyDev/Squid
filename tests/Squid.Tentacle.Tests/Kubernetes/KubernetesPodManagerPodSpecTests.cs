@@ -189,11 +189,39 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     [Fact]
-    public void CreatePod_DefaultSettings_NoSecurityContext()
+    public void CreatePod_DefaultSettings_RunAsNonRoot()
     {
         var pod = CaptureCreatedPod();
 
-        pod.Spec.SecurityContext.ShouldBeNull();
+        pod.Spec.SecurityContext.ShouldNotBeNull();
+        pod.Spec.SecurityContext.RunAsNonRoot.ShouldBe(true);
+    }
+
+    [Fact]
+    public void CreatePod_DefaultSettings_DropsAllCapabilities()
+    {
+        var pod = CaptureCreatedPod();
+
+        var sc = pod.Spec.Containers[0].SecurityContext;
+        sc.ShouldNotBeNull();
+        sc.AllowPrivilegeEscalation.ShouldBe(false);
+        sc.Capabilities.Drop.ShouldContain("ALL");
+    }
+
+    [Fact]
+    public void CreatePod_DefaultSettings_NoPrivilegeEscalation()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation.ShouldBe(false);
+    }
+
+    [Fact]
+    public void CreatePod_ExplicitRunAsUser_UsesConfigured()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodRunAsUser = 1000);
+
+        pod.Spec.SecurityContext.RunAsUser.ShouldBe(1000);
     }
 
     [Fact]
@@ -360,8 +388,430 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     // ========================================================================
+    // P0-1: NFS Watchdog Sidecar Injection
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_AddsSidecarContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        pod.Spec.Containers.Count.ShouldBe(2);
+        pod.Spec.Containers[0].Name.ShouldBe("script");
+        pod.Spec.Containers[1].Name.ShouldBe("nfs-watchdog");
+    }
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_SidecarHasCorrectConfig()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        var sidecar = pod.Spec.Containers[1];
+        sidecar.Image.ShouldBe("squidcd/squid-watchdog:1.0.0");
+        sidecar.ImagePullPolicy.ShouldBe("IfNotPresent");
+        sidecar.Env.ShouldHaveSingleItem().Name.ShouldBe("WATCHDOG_DIRECTORY");
+        sidecar.Env[0].Value.ShouldBe("/squid/work");
+        sidecar.Resources.Requests["cpu"].ToString().ShouldBe("10m");
+        sidecar.Resources.Requests["memory"].ToString().ShouldBe("32Mi");
+        sidecar.Resources.Limits["cpu"].ToString().ShouldBe("50m");
+        sidecar.Resources.Limits["memory"].ToString().ShouldBe("64Mi");
+    }
+
+    [Fact]
+    public void CreatePod_WithoutNfsWatchdogImage_NoSidecar()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers.ShouldHaveSingleItem().Name.ShouldBe("script");
+    }
+
+    [Fact]
+    public void CreatePod_WithNfsWatchdogImage_SidecarSharesWorkspaceVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0");
+
+        var sidecarMount = pod.Spec.Containers[1].VolumeMounts.ShouldHaveSingleItem();
+        sidecarMount.Name.ShouldBe("workspace");
+        sidecarMount.MountPath.ShouldBe("/squid/work");
+        sidecarMount.ReadOnlyProperty.ShouldBe(true);
+    }
+
+    // ========================================================================
+    // P0-2: Workspace Isolation (emptyDir)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_AddsEmptyDirVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var localVolume = pod.Spec.Volumes.First(v => v.Name == "workspace-local");
+        localVolume.EmptyDir.ShouldNotBeNull();
+        localVolume.EmptyDir.SizeLimit.ToString().ShouldBe("1Gi");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_AddsCopyWorkspaceInitContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var initContainer = pod.Spec.InitContainers.First(c => c.Name == "copy-workspace");
+        initContainer.Image.ShouldBe("bitnami/kubectl:1.28");
+        initContainer.Command.ShouldContain("sh");
+        string.Join(" ", initContainer.Command).ShouldContain($"cp -a /squid/nfs-work/{TicketId}/. /squid/work/{TicketId}/");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_MainContainerMountsEmptyDir()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var mainMount = pod.Spec.Containers[0].VolumeMounts.First(m => m.MountPath == "/squid/work");
+        mainMount.Name.ShouldBe("workspace-local");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_NfsVolumeStillPresent()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
+
+        var nfsVolume = pod.Spec.Volumes.First(v => v.Name == "workspace-nfs");
+        nfsVolume.PersistentVolumeClaim.ClaimName.ShouldBe("squid-workspace");
+    }
+
+    [Fact]
+    public void CreatePod_IsolateWorkspace_WatchdogMonitorsNfsVolume()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.IsolateWorkspaceToEmptyDir = true;
+            s.NfsWatchdogImage = "squidcd/squid-watchdog:1.0.0";
+        });
+
+        var watchdogMount = pod.Spec.Containers[1].VolumeMounts.ShouldHaveSingleItem();
+        watchdogMount.Name.ShouldBe("workspace-nfs");
+    }
+
+    [Fact]
+    public void CreatePod_NoIsolateWorkspace_DirectPvcMount()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Volumes.ShouldHaveSingleItem().Name.ShouldBe("workspace");
+        pod.Spec.Containers[0].VolumeMounts.First(m => m.MountPath == "/squid/work").Name.ShouldBe("workspace");
+    }
+
+    // ========================================================================
+    // P1-2: RWO Pod Affinity Auto-Injection
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_RwoMode_InjectsNodeAffinity()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        pod.Spec.Affinity.ShouldNotBeNull();
+        pod.Spec.Affinity.PodAffinity.ShouldNotBeNull();
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution.ShouldHaveSingleItem();
+        term.TopologyKey.ShouldBe("kubernetes.io/hostname");
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_AffinityMatchesAgentLabels()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0];
+        term.LabelSelector.MatchLabels.ShouldContainKeyAndValue("app.kubernetes.io/name", "kubernetes-agent");
+        term.LabelSelector.MatchLabels.ShouldContainKeyAndValue("app.kubernetes.io/instance", "squid-prod");
+    }
+
+    [Fact]
+    public void CreatePod_RwxMode_NoAffinity()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.PersistenceAccessMode = "ReadWriteMany");
+
+        pod.Spec.Affinity.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_WithReleaseName_UsesCorrectInstanceLabel()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "my-release";
+        });
+
+        var term = pod.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0];
+        term.LabelSelector.MatchLabels["app.kubernetes.io/instance"].ShouldBe("my-release");
+    }
+
+    [Fact]
+    public void CreatePod_RwoMode_TemplateOverridesAffinity()
+    {
+        // Template affinity should take precedence via ApplyTemplateOverrides
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.PersistenceAccessMode = "ReadWriteOnce";
+            s.ReleaseName = "squid-prod";
+        });
+
+        // RWO affinity is set before ApplyTemplateOverrides, so template can override
+        pod.Spec.Affinity.ShouldNotBeNull();
+        pod.Spec.Affinity.PodAffinity.ShouldNotBeNull();
+    }
+
+    // ========================================================================
+    // Proxy Environment Variables
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithProxy_InjectsEnvVars()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.HttpProxy = "http://proxy.corp:8080";
+            s.HttpsProxy = "http://proxy.corp:8443";
+            s.NoProxy = "localhost,10.0.0.0/8,.internal";
+        });
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldContain(e => e.Name == "http_proxy" && e.Value == "http://proxy.corp:8080");
+        env.ShouldContain(e => e.Name == "HTTP_PROXY" && e.Value == "http://proxy.corp:8080");
+        env.ShouldContain(e => e.Name == "https_proxy" && e.Value == "http://proxy.corp:8443");
+        env.ShouldContain(e => e.Name == "HTTPS_PROXY" && e.Value == "http://proxy.corp:8443");
+        env.ShouldContain(e => e.Name == "no_proxy" && e.Value == "localhost,10.0.0.0/8,.internal");
+        env.ShouldContain(e => e.Name == "NO_PROXY" && e.Value == "localhost,10.0.0.0/8,.internal");
+    }
+
+    [Fact]
+    public void CreatePod_WithPartialProxy_OnlyInjectsConfigured()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpsProxy = "http://proxy.corp:8443");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldContain(e => e.Name == "https_proxy");
+        env.ShouldContain(e => e.Name == "HTTPS_PROXY");
+        env.ShouldNotContain(e => e.Name == "http_proxy");
+    }
+
+    [Fact]
+    public void CreatePod_NoProxy_OnlyStandardEnvVars()
+    {
+        var pod = CaptureCreatedPod();
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldNotContain(e => e.Name == "http_proxy");
+        env.ShouldNotContain(e => e.Name == "https_proxy");
+        env.ShouldNotContain(e => e.Name == "no_proxy");
+    }
+
+    // ========================================================================
+    // Proxy via Secret Reference (Fix 8)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_ProxySecretName_UsesSecretKeyRef()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ProxySecretName = "proxy-creds");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+
+        var httpProxy = env.First(e => e.Name == "http_proxy");
+        httpProxy.Value.ShouldBeNull();
+        httpProxy.ValueFrom.ShouldNotBeNull();
+        httpProxy.ValueFrom.SecretKeyRef.Name.ShouldBe("proxy-creds");
+        httpProxy.ValueFrom.SecretKeyRef.Key.ShouldBe("http-proxy");
+        httpProxy.ValueFrom.SecretKeyRef.Optional.ShouldBe(true);
+    }
+
+    [Fact]
+    public void CreatePod_ProxySecretName_AllSixVarsReferenceSecret()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ProxySecretName = "proxy-creds");
+
+        var env = pod.Spec.Containers[0].Env;
+        var proxyVars = env.Where(e => e.ValueFrom?.SecretKeyRef != null).ToList();
+        proxyVars.Count.ShouldBe(6);
+
+        proxyVars.ShouldContain(e => e.Name == "http_proxy" && e.ValueFrom.SecretKeyRef.Key == "http-proxy");
+        proxyVars.ShouldContain(e => e.Name == "HTTP_PROXY" && e.ValueFrom.SecretKeyRef.Key == "http-proxy");
+        proxyVars.ShouldContain(e => e.Name == "https_proxy" && e.ValueFrom.SecretKeyRef.Key == "https-proxy");
+        proxyVars.ShouldContain(e => e.Name == "HTTPS_PROXY" && e.ValueFrom.SecretKeyRef.Key == "https-proxy");
+        proxyVars.ShouldContain(e => e.Name == "no_proxy" && e.ValueFrom.SecretKeyRef.Key == "no-proxy");
+        proxyVars.ShouldContain(e => e.Name == "NO_PROXY" && e.ValueFrom.SecretKeyRef.Key == "no-proxy");
+
+        proxyVars.All(e => e.ValueFrom.SecretKeyRef.Name == "proxy-creds").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CreatePod_NoProxySecretName_UsesInlineValues()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpProxy = "http://proxy.corp:8080");
+
+        var env = pod.Spec.Containers[0].Env;
+        var httpProxy = env.First(e => e.Name == "http_proxy");
+        httpProxy.Value.ShouldBe("http://proxy.corp:8080");
+        httpProxy.ValueFrom.ShouldBeNull();
+    }
+
+    // ========================================================================
+    // Raw Script Mode
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_RawScriptMode_UsesBashCommand()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.RawScriptMode = true);
+
+        var container = pod.Spec.Containers[0];
+        container.Command.ShouldBe(new[] { "bash" });
+        container.Args.ShouldBe(new[] { $"/squid/work/{TicketId}/script.sh" });
+    }
+
+    [Fact]
+    public void CreatePod_RawScriptMode_NoInitContainer()
+    {
+        var pod = CaptureCreatedPodWithSettings(s =>
+        {
+            s.RawScriptMode = true;
+            s.TentacleImage = "squidcd/squid-tentacle:1.0.0";
+        });
+
+        pod.Spec.InitContainers.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_DefaultMode_UsesCalamariCommand()
+    {
+        var pod = CaptureCreatedPod();
+
+        var container = pod.Spec.Containers[0];
+        container.Command.ShouldBe(new[] { "/squid/bin/squid-calamari" });
+        container.Args[0].ShouldBe("run-script");
+    }
+
+    // ========================================================================
+    // P1-1: Command Labels
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithCommandLabels_MergesIntoLabels()
+    {
+        var labels = new Dictionary<string, string> { ["squid.io/deployment-id"] = "deploy-42", ["squid.io/environment"] = "production" };
+        var pod = CaptureCreatedPodWithLabels(labels);
+
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/deployment-id", "deploy-42");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/environment", "production");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
+    }
+
+    [Fact]
+    public void CreatePod_WithReservedCommandLabel_Rejected()
+    {
+        var labels = new Dictionary<string, string> { ["kubernetes.io/arch"] = "arm64" };
+        var pod = CaptureCreatedPodWithLabels(labels);
+
+        pod.Metadata.Labels.ShouldNotContainKey("kubernetes.io/arch");
+    }
+
+    [Fact]
+    public void CreatePod_NullCommandLabels_NoChange()
+    {
+        var pod = CaptureCreatedPodWithLabels(null);
+
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
+    }
+
+    // ========================================================================
+    // Standard Env Vars (Fix 5)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_HasStandardEnvVars()
+    {
+        var pod = CaptureCreatedPod();
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER" && e.Value == "true");
+        env.ShouldContain(e => e.Name == "SQUID_TICKET_ID" && e.Value == TicketId);
+        env.ShouldContain(e => e.Name == "SQUID_NAMESPACE" && e.Value == "squid-ns");
+        env.ShouldContain(e => e.Name == "SQUID_WORKSPACE" && e.Value == $"/squid/work/{TicketId}");
+    }
+
+    [Fact]
+    public void CreatePod_StandardAndProxyEnvVars_BothPresent()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpProxy = "http://proxy.corp:8080");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldContain(e => e.Name == "http_proxy" && e.Value == "http://proxy.corp:8080");
+    }
+
+    // ========================================================================
+    // Helm Annotations (Fix 2)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithReleaseName_IncludesHelmAnnotations()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ReleaseName = "test-release");
+
+        pod.Metadata.Annotations.ShouldNotBeNull();
+        pod.Metadata.Annotations.ShouldContainKeyAndValue("meta.helm.sh/release-name", "test-release");
+        pod.Metadata.Annotations.ShouldContainKeyAndValue("meta.helm.sh/release-namespace", "squid-ns");
+    }
+
+    [Fact]
+    public void CreatePod_NoReleaseName_NoHelmAnnotations()
+    {
+        var pod = CaptureCreatedPod();
+
+        if (pod.Metadata.Annotations != null)
+        {
+            pod.Metadata.Annotations.ShouldNotContainKey("meta.helm.sh/release-name");
+            pod.Metadata.Annotations.ShouldNotContainKey("meta.helm.sh/release-namespace");
+        }
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
+
+    private V1Pod CaptureCreatedPodWithLabels(Dictionary<string, string>? labels)
+    {
+        V1Pod captured = null;
+        var ops = new Mock<IKubernetesPodOperations>();
+
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Callback<V1Pod, string>((pod, ns) => captured = pod)
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var manager = new KubernetesPodManager(ops.Object, _settings);
+        manager.CreatePod(TicketId, additionalLabels: labels);
+
+        return captured;
+    }
 
     private V1Pod CaptureCreatedPodWithSettings(Action<KubernetesSettings> configure)
     {

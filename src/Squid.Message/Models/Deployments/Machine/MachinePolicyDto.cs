@@ -1,3 +1,5 @@
+using Squid.Message.Enums;
+
 namespace Squid.Message.Models.Deployments.Machine;
 
 public class MachinePolicyDto
@@ -19,38 +21,69 @@ public class MachinePolicyDto
     public MachineCleanupPolicyDto MachineCleanupPolicy { get; set; } = new();
 
     public MachineUpdatePolicyDto MachineUpdatePolicy { get; set; } = new();
+
+    public MachineRpcCallRetryPolicyDto MachineRpcCallRetryPolicy { get; set; } = new();
 }
 
 public class MachineHealthCheckPolicyDto
 {
+    public HealthCheckScheduleType HealthCheckScheduleType { get; set; }
+
     public int HealthCheckIntervalSeconds { get; set; } = 3600;
 
-    // key = CommunicationStyle ("KubernetesAgent", "KubernetesApi", "Ssh", ...)
+    public string HealthCheckCronExpression { get; set; }
+
+    public PolicyHealthCheckType HealthCheckType { get; set; }
+
+    // key = ScriptSyntax.ToString() ("Bash", "PowerShell")
     public Dictionary<string, MachineScriptPolicyDto> ScriptPolicies { get; set; } = new();
 }
 
 public class MachineScriptPolicyDto
 {
-    public string RunType { get; set; } = "InheritFromDefault";
+    public ScriptPolicyRunType RunType { get; set; }
 
     public string ScriptBody { get; set; }
 }
 
 public class MachineConnectivityPolicyDto
 {
-    public string MachineConnectivityBehavior { get; set; } = "ExpectedToBeOnline";
+    public MachineConnectivityBehavior MachineConnectivityBehavior { get; set; }
+
+    public int ConnectTimeoutSeconds { get; set; } = 60;
+
+    public int RetryAttempts { get; set; } = 5;
+
+    public int RetryWaitIntervalSeconds { get; set; } = 1;
+
+    public int RetryTimeLimitSeconds { get; set; } = 300;
+
+    public int PollingRequestQueueTimeoutSeconds { get; set; } = 600;
 }
 
 public class MachineCleanupPolicyDto
 {
-    public string DeleteMachinesBehavior { get; set; } = "DoNotDelete";
+    public DeleteMachinesBehavior DeleteMachinesBehavior { get; set; }
 
     public int DeleteMachinesAfterSeconds { get; set; } = 86400;
 }
 
 public class MachineUpdatePolicyDto
 {
-    public string CalamariUpdateBehavior { get; set; } = "UpdateOnDeployment";
+    public CalamariUpdateBehavior CalamariUpdateBehavior { get; set; }
 
-    public string TentacleUpdateBehavior { get; set; } = "NeverUpdate";
+    public AgentUpdateBehavior TentacleUpdateBehavior { get; set; }
+
+    public AgentUpdateBehavior KubernetesAgentUpdateBehavior { get; set; }
+
+    public int? TentacleUpdateAccountId { get; set; }
+}
+
+public class MachineRpcCallRetryPolicyDto
+{
+    public bool Enabled { get; set; } = true;
+
+    public int DeploymentRetryDurationSeconds { get; set; } = 150;
+
+    public int HealthCheckRetryDurationSeconds { get; set; } = 150;
 }

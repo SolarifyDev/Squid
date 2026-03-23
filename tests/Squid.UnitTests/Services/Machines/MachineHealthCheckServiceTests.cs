@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Machines;
@@ -15,7 +16,11 @@ namespace Squid.UnitTests.Services.Machines;
 
 public class MachineHealthCheckServiceTests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IMachinePolicyDataProvider> _policyDataProvider = new();
@@ -31,6 +36,7 @@ public class MachineHealthCheckServiceTests
         _transport.Setup(t => t.HealthChecker).Returns(_healthChecker.Object);
         _transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
         _healthChecker.Setup(h => h.DefaultHealthCheckScript).Returns("#!/bin/bash\nkubectl cluster-info 2>&1");
+        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.Bash);
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
@@ -216,35 +222,170 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
-    // Recurring job — OnlyConnectivity mode (policy-driven)
+    // ShouldRunHealthCheck — schedule type enum
+    // ========================================================================
+
+    [Fact]
+    public void ShouldRunHealthCheck_NullPolicy_DefaultsToInterval()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-61));
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, null).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_NullPolicy_NeverChecked_ReturnsTrue()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: null);
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, null).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_NullPolicy_RecentlyChecked_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-30));
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, null).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ExplicitInterval_RespectsIntervalSeconds()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-31));
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckScheduleType = HealthCheckScheduleType.Interval,
+            HealthCheckIntervalSeconds = 1800 // 30 minutes
+        };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ExplicitInterval_NotDue_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddMinutes(-10));
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckScheduleType = HealthCheckScheduleType.Interval,
+            HealthCheckIntervalSeconds = 1800
+        };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ScheduleTypeNever_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: null);
+        var policy = new MachineHealthCheckPolicyDto { HealthCheckScheduleType = HealthCheckScheduleType.Never };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ScheduleTypeNever_EvenWhenOverdue_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddDays(-30));
+        var policy = new MachineHealthCheckPolicyDto { HealthCheckScheduleType = HealthCheckScheduleType.Never };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ScheduleTypeCron_Due_ReturnsTrue()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddHours(-2));
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckScheduleType = HealthCheckScheduleType.Cron,
+            HealthCheckCronExpression = "* * * * *" // every minute
+        };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ScheduleTypeCron_NotDue_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow);
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckScheduleType = HealthCheckScheduleType.Cron,
+            HealthCheckCronExpression = "0 0 1 1 *" // once a year
+        };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldRunHealthCheck_ScheduleTypeCron_NullExpression_ReturnsFalse()
+    {
+        var machine = CreateActiveMachine(healthLastChecked: DateTime.UtcNow.AddHours(-2));
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckScheduleType = HealthCheckScheduleType.Cron,
+            HealthCheckCronExpression = null
+        };
+
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, policy).ShouldBeFalse();
+    }
+
+    // ========================================================================
+    // IsCronDue — edge cases
+    // ========================================================================
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IsCronDue_EmptyOrWhitespace_ReturnsFalse(string cronExpr)
+    {
+        MachineHealthCheckService.IsCronDue(DateTime.UtcNow.AddHours(-1), cronExpr).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsCronDue_InvalidCronExpression_ReturnsFalse()
+    {
+        MachineHealthCheckService.IsCronDue(DateTime.UtcNow.AddHours(-1), "not a valid cron").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsCronDue_LastCheckedInFuture_ReturnsFalse()
+    {
+        MachineHealthCheckService.IsCronDue(DateTime.UtcNow.AddDays(1), "* * * * *").ShouldBeFalse();
+    }
+
+    // ========================================================================
+    // Recurring job — OnlyConnectivity mode (policy-driven, top-level enum)
     // ========================================================================
 
     [Fact]
     public async Task RunHealthCheckForAll_OnlyConnectivity_DelegatesToHealthChecker()
     {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HealthCheckResult(true, "Connected"));
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
 
         await _service.AutoHealthCheckForAllAsync();
 
         _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
     }
 
     [Fact]
     public async Task RunHealthCheckForAll_OnlyConnectivity_Unhealthy_RecordsUnavailable()
     {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -259,7 +400,7 @@ public class MachineHealthCheckServiceTests
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "OnlyConnectivity");
+        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -267,18 +408,15 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
-    public async Task RunHealthCheckForAll_OnlyConnectivity_CaseInsensitive()
+    public async Task RunHealthCheckForAll_HealthCheckTypeRunScript_ExecutesScript()
     {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HealthCheckResult(true, "ok"));
-
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "onlyconnectivity");
+        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.RunScript);
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========================================================================
@@ -295,7 +433,7 @@ public class MachineHealthCheckServiceTests
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithRunType(1, "KubernetesApi", "InheritFromDefault");
+        SetupPolicyWithRunType(1, ScriptSyntax.Bash.ToString(), ScriptPolicyRunType.InheritFromDefault);
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -313,7 +451,7 @@ public class MachineHealthCheckServiceTests
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithCustomScript(1, "KubernetesApi", "Inline", "echo custom-check");
+        SetupPolicyWithCustomScript(1, ScriptSyntax.Bash.ToString(), ScriptPolicyRunType.CustomScript, "echo custom-check");
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -322,44 +460,162 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
-    // ResolveScriptPolicy — pure static logic
+    // ResolveScriptPolicy — pure static logic (keyed by ScriptSyntax)
     // ========================================================================
 
     [Fact]
     public void ResolveScriptPolicy_NullPolicy_ReturnsNull()
     {
-        MachineHealthCheckService.ResolveScriptPolicy(null, CommunicationStyle.KubernetesApi).ShouldBeNull();
+        MachineHealthCheckService.ResolveScriptPolicy(null, ScriptSyntax.Bash).ShouldBeNull();
     }
 
     [Fact]
-    public void ResolveScriptPolicy_NoMatchingStyle_ReturnsNull()
+    public void ResolveScriptPolicy_NoMatchingSyntax_ReturnsNull()
     {
         var policy = new MachineHealthCheckPolicyDto
         {
             ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
             {
-                ["KubernetesAgent"] = new() { RunType = "Inline", ScriptBody = "echo test" }
+                ["PowerShell"] = new() { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo test" }
             }
         };
 
-        MachineHealthCheckService.ResolveScriptPolicy(policy, CommunicationStyle.KubernetesApi).ShouldBeNull();
+        MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.Bash).ShouldBeNull();
     }
 
     [Fact]
-    public void ResolveScriptPolicy_MatchingStyle_ReturnsPolicy()
+    public void ResolveScriptPolicy_ByScriptSyntax_Bash()
     {
-        var expected = new MachineScriptPolicyDto { RunType = "Inline", ScriptBody = "echo test" };
+        var expected = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo test" };
         var policy = new MachineHealthCheckPolicyDto
         {
             ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
             {
-                ["KubernetesApi"] = expected
+                ["Bash"] = expected
             }
         };
 
-        var result = MachineHealthCheckService.ResolveScriptPolicy(policy, CommunicationStyle.KubernetesApi);
+        var result = MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.Bash);
 
         result.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ResolveScriptPolicy_ByScriptSyntax_PowerShell()
+    {
+        var expected = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "Write-Host test" };
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
+            {
+                ["PowerShell"] = expected
+            }
+        };
+
+        var result = MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.PowerShell);
+
+        result.ShouldBe(expected);
+    }
+
+    // ========================================================================
+    // ResolveScriptBody — enum-based
+    // ========================================================================
+
+    [Fact]
+    public void ResolveScriptBody_CustomScript_ReturnsCustomBody()
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo custom" };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
+
+        result.ShouldBe("echo custom");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_InheritFromDefault_ReturnsTransportDefault()
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
+
+        result.ShouldContain("kubectl cluster-info");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_NullScriptPolicy_ReturnsTransportDefault()
+    {
+        var result = MachineHealthCheckService.ResolveScriptBody(null, null, _transport.Object);
+
+        result.ShouldContain("kubectl cluster-info");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ResolveScriptBody_CustomScriptButEmptyBody_FallsBackToDefault(string emptyBody)
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = emptyBody };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
+
+        result.ShouldContain("kubectl cluster-info");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_NullScriptPolicy_NullHealthChecker_ReturnsFallback()
+    {
+        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
+
+        var result = MachineHealthCheckService.ResolveScriptBody(null, null, _transport.Object);
+
+        result.ShouldContain("Uptime");
+    }
+
+    // ========================================================================
+    // ResolveScriptBody — InheritFromDefault cross-policy inheritance
+    // ========================================================================
+
+    [Fact]
+    public void ResolveScriptBody_InheritFromDefault_DefaultPolicyHasCustomScript_UsesDefaultPolicyScript()
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
+        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
+
+        result.ShouldBe("echo default-policy-custom");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_NullScriptPolicy_DefaultPolicyHasCustomScript_UsesDefaultPolicyScript()
+    {
+        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(null, defaultScript, _transport.Object);
+
+        result.ShouldBe("echo default-policy-custom");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_InheritFromDefault_DefaultPolicyAlsoInherits_FallsToTransportDefault()
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
+        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
+
+        result.ShouldContain("kubectl cluster-info");
+    }
+
+    [Fact]
+    public void ResolveScriptBody_CustomScript_IgnoresDefaultPolicy()
+    {
+        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo machine-custom" };
+        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
+
+        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
+
+        result.ShouldBe("echo machine-custom");
     }
 
     // ========================================================================
@@ -442,13 +698,22 @@ public class MachineHealthCheckServiceTests
             .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
     }
 
-    private void SetupPolicyWithRunType(int policyId, string styleKey, string runType)
+    private void SetupPolicyWithHealthCheckType(int policyId, PolicyHealthCheckType healthCheckType)
+    {
+        var healthPolicy = new MachineHealthCheckPolicyDto { HealthCheckType = healthCheckType };
+        var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
+
+        _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
+    }
+
+    private void SetupPolicyWithRunType(int policyId, string syntaxKey, ScriptPolicyRunType runType)
     {
         var healthPolicy = new MachineHealthCheckPolicyDto
         {
             ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
             {
-                [styleKey] = new() { RunType = runType }
+                [syntaxKey] = new() { RunType = runType }
             }
         };
         var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
@@ -457,13 +722,13 @@ public class MachineHealthCheckServiceTests
             .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
     }
 
-    private void SetupPolicyWithCustomScript(int policyId, string styleKey, string runType, string scriptBody)
+    private void SetupPolicyWithCustomScript(int policyId, string syntaxKey, ScriptPolicyRunType runType, string scriptBody)
     {
         var healthPolicy = new MachineHealthCheckPolicyDto
         {
             ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
             {
-                [styleKey] = new() { RunType = runType, ScriptBody = scriptBody }
+                [syntaxKey] = new() { RunType = runType, ScriptBody = scriptBody }
             }
         };
         var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);

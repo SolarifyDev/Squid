@@ -22,7 +22,7 @@ public class MachineTimestampTests : TestBase
         {
             var machine = await provider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
-            machine.Thumbprint = "NEW_THUMBPRINT_VALUE";
+            machine.Endpoint = EndpointJsonHelper.UpdateField(machine.Endpoint, "Thumbprint", "NEW_THUMBPRINT_VALUE");
 
             await provider.UpdateMachineAsync(machine, cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -31,7 +31,7 @@ public class MachineTimestampTests : TestBase
         {
             var reloaded = await provider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
-            reloaded.Thumbprint.ShouldBe("NEW_THUMBPRINT_VALUE");
+            EndpointJsonHelper.GetField(reloaded.Endpoint, "Thumbprint").ShouldBe("NEW_THUMBPRINT_VALUE");
             reloaded.HealthLastChecked.ShouldNotBeNull();
         }).ConfigureAwait(false);
     }
@@ -47,8 +47,8 @@ public class MachineTimestampTests : TestBase
             var machine = await provider.GetMachineBySubscriptionIdAsync(subscriptionId, CancellationToken.None).ConfigureAwait(false);
 
             machine.ShouldNotBeNull();
-            machine.Thumbprint = "UPDATED_THUMBPRINT";
-            machine.AgentVersion = "2.0.0";
+            machine.Endpoint = EndpointJsonHelper.UpdateField(machine.Endpoint, "Thumbprint", "UPDATED_THUMBPRINT");
+            machine.Endpoint = EndpointJsonHelper.UpdateField(machine.Endpoint, "AgentVersion", "2.0.0");
             machine.Roles = System.Text.Json.JsonSerializer.Serialize(new[] { "web-server", "db-server" });
 
             await provider.UpdateMachineAsync(machine, cancellationToken: CancellationToken.None).ConfigureAwait(false);
@@ -59,8 +59,8 @@ public class MachineTimestampTests : TestBase
             var reloaded = await provider.GetMachineBySubscriptionIdAsync(subscriptionId, CancellationToken.None).ConfigureAwait(false);
 
             reloaded.ShouldNotBeNull();
-            reloaded.Thumbprint.ShouldBe("UPDATED_THUMBPRINT");
-            reloaded.AgentVersion.ShouldBe("2.0.0");
+            EndpointJsonHelper.GetField(reloaded.Endpoint, "Thumbprint").ShouldBe("UPDATED_THUMBPRINT");
+            EndpointJsonHelper.GetField(reloaded.Endpoint, "AgentVersion").ShouldBe("2.0.0");
             reloaded.HealthLastChecked.ShouldNotBeNull();
         }).ConfigureAwait(false);
     }
@@ -104,7 +104,7 @@ public class MachineTimestampTests : TestBase
             var machine = await provider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
             machine.HealthLastChecked.ShouldNotBeNull();
-            machine.Thumbprint = "CHANGED";
+            machine.Endpoint = EndpointJsonHelper.UpdateField(machine.Endpoint, "Thumbprint", "CHANGED");
 
             await provider.UpdateMachineAsync(machine, cancellationToken: CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -113,7 +113,7 @@ public class MachineTimestampTests : TestBase
         {
             var reloaded = await provider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
-            reloaded.Thumbprint.ShouldBe("CHANGED");
+            EndpointJsonHelper.GetField(reloaded.Endpoint, "Thumbprint").ShouldBe("CHANGED");
             reloaded.HealthStatus.ShouldBe(status);
             reloaded.HealthLastChecked.ShouldNotBeNull();
         }).ConfigureAwait(false);
@@ -162,16 +162,22 @@ public class MachineTimestampTests : TestBase
             Roles = System.Text.Json.JsonSerializer.Serialize(new[] { "web-server" }),
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { 1 }),
             SpaceId = 1,
-            Endpoint = "{}",
-            Json = "{}",
+            Endpoint = BuildEndpointJson(subscriptionId),
             DataVersion = Array.Empty<byte>(),
-            ShellName = string.Empty,
-            ShellVersion = string.Empty,
-            LicenseHash = string.Empty,
-            Slug = "test-agent",
-            Thumbprint = "ORIGINAL_THUMBPRINT",
-            PollingSubscriptionId = subscriptionId,
-            AgentVersion = "1.0.0"
+            Slug = "test-agent"
         };
+    }
+
+    private static string BuildEndpointJson(string subscriptionId)
+    {
+        if (subscriptionId == null) return "{}";
+
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            CommunicationStyle = "KubernetesAgent",
+            SubscriptionId = subscriptionId,
+            Thumbprint = "ORIGINAL_THUMBPRINT",
+            AgentVersion = "1.0.0"
+        });
     }
 }
