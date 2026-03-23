@@ -10,7 +10,7 @@ public static class PodLogEncryptionKeyManager
     {
         var key = PodLogEncryption.DeriveLogEncryptionKey(machineKey, ticketId);
         var keyPath = Path.Combine(workDir, KeyFileName);
-        File.WriteAllBytes(keyPath, key);
+        ResilientFileSystem.WriteAllBytes(keyPath, key);
 
         Log.Debug("Wrote log encryption key to {KeyPath}", keyPath);
     }
@@ -19,9 +19,9 @@ public static class PodLogEncryptionKeyManager
     {
         var keyPath = Path.Combine(workDir, KeyFileName);
 
-        if (!File.Exists(keyPath))
+        if (!ResilientFileSystem.FileExists(keyPath))
             return null;
 
-        return File.ReadAllBytes(keyPath);
+        return ResilientFileSystem.ReadAllBytes(keyPath);
     }
 }

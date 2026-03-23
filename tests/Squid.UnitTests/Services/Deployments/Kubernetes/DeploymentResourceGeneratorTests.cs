@@ -66,8 +66,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("rollingUpdate:");
-        yaml.ShouldContain("\"maxUnavailable\": \"25%\"");
-        yaml.ShouldContain("\"maxSurge\": \"1\"");
+        yaml.ShouldContain("maxUnavailable: \"25%\"");
+        yaml.ShouldContain("maxSurge: 1");
     }
 
     [Fact]
@@ -779,11 +779,11 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("httpGet:");
         yaml.ShouldContain("\"path\": \"/health\"");
-        yaml.ShouldContain("\"port\": \"8080\"");
+        yaml.ShouldContain("port: 8080");
         yaml.ShouldContain("\"scheme\": \"HTTP\"");
-        yaml.ShouldContain("\"initialDelaySeconds\": \"10\"");
-        yaml.ShouldContain("\"periodSeconds\": \"5\"");
-        yaml.ShouldContain("\"failureThreshold\": \"3\"");
+        yaml.ShouldContain("initialDelaySeconds: 10");
+        yaml.ShouldContain("periodSeconds: 5");
+        yaml.ShouldContain("failureThreshold: 3");
         yaml.ShouldNotContain("type: httpGet");
     }
 
@@ -833,7 +833,7 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("tcpSocket:");
-        yaml.ShouldContain("\"port\": \"3306\"");
+        yaml.ShouldContain("port: 3306");
         yaml.ShouldNotContain("type: tcpSocket");
     }
 
@@ -1352,6 +1352,43 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("- \"/bin/sh\"");
         yaml.ShouldContain("- \"-c\"");
         yaml.ShouldContain("- \"echo hello\"");
+    }
+
+    // === Deploy-id annotation (rolling update) ===
+
+    [Fact]
+    public async Task Generate_WithDeploymentIdSuffix_InjectsDeployIdPodAnnotation()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("annotations:");
+        yaml.ShouldContain("\"squid.io/deploy-id\": \"deployments-42\"");
+    }
+
+    [Fact]
+    public async Task Generate_WithoutDeploymentIdSuffix_NoDeployIdAnnotation()
+    {
+        var (step, action) = CreateMinimal();
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldNotContain("deploy-id");
+    }
+
+    [Fact]
+    public async Task Generate_WithDeploymentIdSuffix_MergesWithExistingPodAnnotations()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.PodAnnotations", """[{"key":"prometheus.io/scrape","value":"true"}]""");
+        Add(action, "Squid.Internal.DeploymentIdSuffix", "deployments-99");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("\"prometheus.io/scrape\": \"true\"");
+        yaml.ShouldContain("\"squid.io/deploy-id\": \"deployments-99\"");
     }
 
     // === Helpers ===

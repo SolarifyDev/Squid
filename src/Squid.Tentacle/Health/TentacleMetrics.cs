@@ -86,6 +86,33 @@ public static class TentacleMetrics
         Interlocked.Exchange(ref _apiLatencyMs, ms);
     }
 
+    public static MetricsSnapshot TakeSnapshot()
+    {
+        return new MetricsSnapshot
+        {
+            ScriptsStartedTotal = ScriptsStartedTotal,
+            ScriptsCompletedTotal = ScriptsCompletedTotal,
+            ScriptsFailedTotal = ScriptsFailedTotal,
+            ScriptsCanceledTotal = ScriptsCanceledTotal,
+            OrphanedPodsCleanedTotal = OrphanedPodsCleanedTotal,
+            NfsForceKillsTotal = NfsForceKillsTotal,
+            ScriptsQueuedTotal = ScriptsQueuedTotal,
+            ScriptsRejectedTotal = ScriptsRejectedTotal
+        };
+    }
+
+    public static void RestoreFrom(MetricsSnapshot snapshot)
+    {
+        Interlocked.Exchange(ref _scriptsStartedTotal, snapshot.ScriptsStartedTotal);
+        Interlocked.Exchange(ref _scriptsCompletedTotal, snapshot.ScriptsCompletedTotal);
+        Interlocked.Exchange(ref _scriptsFailedTotal, snapshot.ScriptsFailedTotal);
+        Interlocked.Exchange(ref _scriptsCanceledTotal, snapshot.ScriptsCanceledTotal);
+        Interlocked.Exchange(ref _orphanedPodsCleanedTotal, snapshot.OrphanedPodsCleanedTotal);
+        Interlocked.Exchange(ref _nfsForceKillsTotal, snapshot.NfsForceKillsTotal);
+        Interlocked.Exchange(ref _scriptsQueuedTotal, snapshot.ScriptsQueuedTotal);
+        Interlocked.Exchange(ref _scriptsRejectedTotal, snapshot.ScriptsRejectedTotal);
+    }
+
     internal static void Reset()
     {
         Interlocked.Exchange(ref _activeScripts, 0);

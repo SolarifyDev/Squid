@@ -586,7 +586,7 @@ public class KubernetesPodManagerPodSpecTests
 
         var env = pod.Spec.Containers[0].Env;
         env.ShouldNotBeNull();
-        env.Count.ShouldBe(6);
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
         env.ShouldContain(e => e.Name == "http_proxy" && e.Value == "http://proxy.corp:8080");
         env.ShouldContain(e => e.Name == "HTTP_PROXY" && e.Value == "http://proxy.corp:8080");
         env.ShouldContain(e => e.Name == "https_proxy" && e.Value == "http://proxy.corp:8443");
@@ -602,18 +602,73 @@ public class KubernetesPodManagerPodSpecTests
 
         var env = pod.Spec.Containers[0].Env;
         env.ShouldNotBeNull();
-        env.Count.ShouldBe(2);
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
         env.ShouldContain(e => e.Name == "https_proxy");
         env.ShouldContain(e => e.Name == "HTTPS_PROXY");
         env.ShouldNotContain(e => e.Name == "http_proxy");
     }
 
     [Fact]
-    public void CreatePod_NoProxy_NoEnvVars()
+    public void CreatePod_NoProxy_OnlyStandardEnvVars()
     {
         var pod = CaptureCreatedPod();
 
-        pod.Spec.Containers[0].Env.ShouldBeNull();
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldNotContain(e => e.Name == "http_proxy");
+        env.ShouldNotContain(e => e.Name == "https_proxy");
+        env.ShouldNotContain(e => e.Name == "no_proxy");
+    }
+
+    // ========================================================================
+    // Proxy via Secret Reference (Fix 8)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_ProxySecretName_UsesSecretKeyRef()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ProxySecretName = "proxy-creds");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+
+        var httpProxy = env.First(e => e.Name == "http_proxy");
+        httpProxy.Value.ShouldBeNull();
+        httpProxy.ValueFrom.ShouldNotBeNull();
+        httpProxy.ValueFrom.SecretKeyRef.Name.ShouldBe("proxy-creds");
+        httpProxy.ValueFrom.SecretKeyRef.Key.ShouldBe("http-proxy");
+        httpProxy.ValueFrom.SecretKeyRef.Optional.ShouldBe(true);
+    }
+
+    [Fact]
+    public void CreatePod_ProxySecretName_AllSixVarsReferenceSecret()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ProxySecretName = "proxy-creds");
+
+        var env = pod.Spec.Containers[0].Env;
+        var proxyVars = env.Where(e => e.ValueFrom?.SecretKeyRef != null).ToList();
+        proxyVars.Count.ShouldBe(6);
+
+        proxyVars.ShouldContain(e => e.Name == "http_proxy" && e.ValueFrom.SecretKeyRef.Key == "http-proxy");
+        proxyVars.ShouldContain(e => e.Name == "HTTP_PROXY" && e.ValueFrom.SecretKeyRef.Key == "http-proxy");
+        proxyVars.ShouldContain(e => e.Name == "https_proxy" && e.ValueFrom.SecretKeyRef.Key == "https-proxy");
+        proxyVars.ShouldContain(e => e.Name == "HTTPS_PROXY" && e.ValueFrom.SecretKeyRef.Key == "https-proxy");
+        proxyVars.ShouldContain(e => e.Name == "no_proxy" && e.ValueFrom.SecretKeyRef.Key == "no-proxy");
+        proxyVars.ShouldContain(e => e.Name == "NO_PROXY" && e.ValueFrom.SecretKeyRef.Key == "no-proxy");
+
+        proxyVars.All(e => e.ValueFrom.SecretKeyRef.Name == "proxy-creds").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CreatePod_NoProxySecretName_UsesInlineValues()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpProxy = "http://proxy.corp:8080");
+
+        var env = pod.Spec.Containers[0].Env;
+        var httpProxy = env.First(e => e.Name == "http_proxy");
+        httpProxy.Value.ShouldBe("http://proxy.corp:8080");
+        httpProxy.ValueFrom.ShouldBeNull();
     }
 
     // ========================================================================
@@ -653,8 +708,110 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     // ========================================================================
+    // P1-1: Command Labels
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithCommandLabels_MergesIntoLabels()
+    {
+        var labels = new Dictionary<string, string> { ["squid.io/deployment-id"] = "deploy-42", ["squid.io/environment"] = "production" };
+        var pod = CaptureCreatedPodWithLabels(labels);
+
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/deployment-id", "deploy-42");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/environment", "production");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
+    }
+
+    [Fact]
+    public void CreatePod_WithReservedCommandLabel_Rejected()
+    {
+        var labels = new Dictionary<string, string> { ["kubernetes.io/arch"] = "arm64" };
+        var pod = CaptureCreatedPodWithLabels(labels);
+
+        pod.Metadata.Labels.ShouldNotContainKey("kubernetes.io/arch");
+    }
+
+    [Fact]
+    public void CreatePod_NullCommandLabels_NoChange()
+    {
+        var pod = CaptureCreatedPodWithLabels(null);
+
+        pod.Metadata.Labels.ShouldContainKeyAndValue("app.kubernetes.io/managed-by", "kubernetes-agent");
+        pod.Metadata.Labels.ShouldContainKeyAndValue("squid.io/ticket-id", TicketId);
+    }
+
+    // ========================================================================
+    // Standard Env Vars (Fix 5)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_HasStandardEnvVars()
+    {
+        var pod = CaptureCreatedPod();
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER" && e.Value == "true");
+        env.ShouldContain(e => e.Name == "SQUID_TICKET_ID" && e.Value == TicketId);
+        env.ShouldContain(e => e.Name == "SQUID_NAMESPACE" && e.Value == "squid-ns");
+        env.ShouldContain(e => e.Name == "SQUID_WORKSPACE" && e.Value == $"/squid/work/{TicketId}");
+    }
+
+    [Fact]
+    public void CreatePod_StandardAndProxyEnvVars_BothPresent()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.HttpProxy = "http://proxy.corp:8080");
+
+        var env = pod.Spec.Containers[0].Env;
+        env.ShouldNotBeNull();
+        env.ShouldContain(e => e.Name == "SQUID_RUNNING_IN_CONTAINER");
+        env.ShouldContain(e => e.Name == "http_proxy" && e.Value == "http://proxy.corp:8080");
+    }
+
+    // ========================================================================
+    // Helm Annotations (Fix 2)
+    // ========================================================================
+
+    [Fact]
+    public void CreatePod_WithReleaseName_IncludesHelmAnnotations()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ReleaseName = "test-release");
+
+        pod.Metadata.Annotations.ShouldNotBeNull();
+        pod.Metadata.Annotations.ShouldContainKeyAndValue("meta.helm.sh/release-name", "test-release");
+        pod.Metadata.Annotations.ShouldContainKeyAndValue("meta.helm.sh/release-namespace", "squid-ns");
+    }
+
+    [Fact]
+    public void CreatePod_NoReleaseName_NoHelmAnnotations()
+    {
+        var pod = CaptureCreatedPod();
+
+        if (pod.Metadata.Annotations != null)
+        {
+            pod.Metadata.Annotations.ShouldNotContainKey("meta.helm.sh/release-name");
+            pod.Metadata.Annotations.ShouldNotContainKey("meta.helm.sh/release-namespace");
+        }
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
+
+    private V1Pod CaptureCreatedPodWithLabels(Dictionary<string, string>? labels)
+    {
+        V1Pod captured = null;
+        var ops = new Mock<IKubernetesPodOperations>();
+
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Callback<V1Pod, string>((pod, ns) => captured = pod)
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var manager = new KubernetesPodManager(ops.Object, _settings);
+        manager.CreatePod(TicketId, additionalLabels: labels);
+
+        return captured;
+    }
 
     private V1Pod CaptureCreatedPodWithSettings(Action<KubernetesSettings> configure)
     {

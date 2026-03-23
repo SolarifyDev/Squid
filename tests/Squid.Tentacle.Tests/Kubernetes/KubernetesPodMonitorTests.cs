@@ -316,6 +316,68 @@ public class KubernetesPodMonitorTests : IDisposable
         _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.Is<string>(s => s.Contains("managed-by"))), Times.AtLeastOnce);
     }
 
+    // ========== RunPendingCheck ==========
+
+    [Fact]
+    public void RunPendingCheck_IsLeader_CallsFailPendingPods()
+    {
+        var leaderElection = CreateLeaderElection(isLeader: true);
+        var monitor = CreateMonitorWithLeaderElection(leaderElection);
+
+        SetupManagedPods();
+
+        monitor.RunPendingCheck();
+
+        _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void RunPendingCheck_NotLeader_Skips()
+    {
+        var leaderElection = CreateLeaderElection(isLeader: false);
+        var monitor = CreateMonitorWithLeaderElection(leaderElection);
+
+        monitor.RunPendingCheck();
+
+        _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void RunPendingCheck_NoLeaderElection_Proceeds()
+    {
+        SetupManagedPods();
+
+        _monitor.RunPendingCheck();
+
+        _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()), Times.AtLeastOnce);
+    }
+
+    // ========== RunOrphanCleanup ==========
+
+    [Fact]
+    public void RunOrphanCleanup_IsLeader_CallsCleanupMethods()
+    {
+        var leaderElection = CreateLeaderElection(isLeader: true);
+        var monitor = CreateMonitorWithLeaderElection(leaderElection);
+
+        SetupManagedPods();
+
+        monitor.RunOrphanCleanup();
+
+        _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void RunOrphanCleanup_NotLeader_Skips()
+    {
+        var leaderElection = CreateLeaderElection(isLeader: false);
+        var monitor = CreateMonitorWithLeaderElection(leaderElection);
+
+        monitor.RunOrphanCleanup();
+
+        _ops.Verify(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
     // ========== Helpers ==========
 
     private static KubernetesLeaderElection CreateLeaderElection(bool isLeader)

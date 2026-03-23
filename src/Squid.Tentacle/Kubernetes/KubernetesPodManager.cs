@@ -13,20 +13,22 @@ public partial class KubernetesPodManager
     private readonly IKubernetesPodOperations _ops;
     private readonly KubernetesSettings _settings;
     private readonly ScriptPodTemplateProvider _templateProvider;
+    private readonly ImagePullSecretManager _pullSecretManager;
     private readonly PodStateCache _cache;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _createLocks = new();
 
-    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null, PodStateCache cache = null)
+    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null, ImagePullSecretManager pullSecretManager = null, PodStateCache cache = null)
     {
         _ops = ops;
         _settings = settings;
         _templateProvider = templateProvider;
+        _pullSecretManager = pullSecretManager;
         _cache = cache;
     }
 
     private string ResolveNamespace(string? targetNamespace) => targetNamespace ?? _settings.TentacleNamespace;
 
-    public string CreatePod(string ticketId, string? targetNamespace = null)
+    public string CreatePod(string ticketId, string? targetNamespace = null, Dictionary<string, string>? additionalLabels = null)
     {
         var semaphore = _createLocks.GetOrAdd(ticketId, _ => new SemaphoreSlim(1, 1));
         semaphore.Wait();
@@ -54,7 +56,7 @@ public partial class KubernetesPodManager
                 }
             }
 
-            var pod = BuildPodSpec(podName, ticketId);
+            var pod = BuildPodSpec(podName, ticketId, additionalLabels);
             _ops.CreatePod(pod, ns);
 
             Log.Information("Created script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, ns);
@@ -207,6 +209,65 @@ public partial class KubernetesPodManager
     public void WaitForPodTermination(string podName, TimeSpan timeout, string? targetNamespace = null)
         => WaitForPodTerminationAsync(podName, timeout, targetNamespace).GetAwaiter().GetResult();
 
+    public ContainerTerminationResult? GetScriptContainerTermination(string podName, string? targetNamespace = null)
+    {
+        var ns = ResolveNamespace(targetNamespace);
+        V1Pod pod;
+
+        if (_cache != null && _cache.TryGetPod(podName, out var cached, ns))
+            pod = cached;
+        else
+        {
+            try { pod = _ops.ReadPodStatus(podName, ns); }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to read container state for pod {PodName}", podName);
+                return null;
+            }
+        }
+
+        var status = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
+        if (status?.State?.Terminated == null) return null;
+
+        return new ContainerTerminationResult(status.State.Terminated.ExitCode, status.State.Terminated.Reason, status.State.Terminated.Message, status.State.Terminated.Signal);
+    }
+
+    public string? GetContainerDiagnostics(string podName, string? targetNamespace = null)
+    {
+        try
+        {
+            var ns = ResolveNamespace(targetNamespace);
+            V1Pod pod;
+
+            if (_cache != null && _cache.TryGetPod(podName, out var cached, ns))
+                pod = cached;
+            else
+                pod = _ops.ReadPodStatus(podName, ns);
+
+            var status = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
+            if (status?.State?.Terminated == null) return null;
+
+            var terminated = status.State.Terminated;
+            var parts = new List<string>();
+
+            if (!string.IsNullOrEmpty(terminated.Reason))
+                parts.Add($"Reason: {terminated.Reason}");
+            if (!string.IsNullOrEmpty(terminated.Message))
+                parts.Add($"Message: {terminated.Message}");
+            if (terminated.Signal.HasValue)
+                parts.Add($"Signal: {terminated.Signal}");
+
+            return parts.Count > 0
+                ? $"Container 'script' terminated — {string.Join(", ", parts)}"
+                : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to read container diagnostics for pod {PodName}", podName);
+            return null;
+        }
+    }
+
     public bool NamespaceExists(string ns) => _ops.NamespaceExists(ns);
 
     public List<V1Pod> ListManagedPods()
@@ -221,3 +282,5 @@ public partial class KubernetesPodManager
         return pods.Items.ToList();
     }
 }
+
+public record ContainerTerminationResult(int ExitCode, string? Reason, string? Message = null, long? Signal = null);

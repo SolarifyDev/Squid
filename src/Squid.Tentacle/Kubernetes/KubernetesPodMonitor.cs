@@ -10,7 +10,7 @@ namespace Squid.Tentacle.Kubernetes;
 
 public class KubernetesPodMonitor
 {
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(300);
+    internal static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(300);
 
     private readonly KubernetesPodManager _podManager;
     private readonly ScriptPodService _scriptPodService;
@@ -18,9 +18,12 @@ public class KubernetesPodMonitor
     private readonly PodDisruptionBudgetManager _pdbManager;
     private readonly KubernetesApiHealthProbe _apiHealthProbe;
     private readonly KubernetesLeaderElection _leaderElection;
+    private readonly MetricsPersistence _metricsPersistence;
     private readonly TimeSpan _pendingPodTimeout;
     private readonly TimeSpan _orphanAge;
     private readonly int _orphanGracePeriod;
+    private readonly TimeSpan _pendingCheckInterval;
+    private readonly TimeSpan _orphanCleanupInterval;
 
     public KubernetesPodMonitor(
         KubernetesPodManager podManager,
@@ -29,7 +32,8 @@ public class KubernetesPodMonitor
         KubernetesSettings kubernetesSettings,
         PodDisruptionBudgetManager pdbManager = null,
         KubernetesApiHealthProbe apiHealthProbe = null,
-        KubernetesLeaderElection leaderElection = null)
+        KubernetesLeaderElection leaderElection = null,
+        MetricsPersistence metricsPersistence = null)
     {
         _podManager = podManager;
         _scriptPodService = scriptPodService;
@@ -37,48 +41,85 @@ public class KubernetesPodMonitor
         _pdbManager = pdbManager;
         _apiHealthProbe = apiHealthProbe;
         _leaderElection = leaderElection;
+        _metricsPersistence = metricsPersistence;
         _pendingPodTimeout = TimeSpan.FromMinutes(kubernetesSettings.PendingPodTimeoutMinutes);
         _orphanAge = TimeSpan.FromMinutes(kubernetesSettings.OrphanCleanupMinutes);
         _orphanGracePeriod = kubernetesSettings.OrphanPodGracePeriodSeconds;
+        _pendingCheckInterval = TimeSpan.FromSeconds(kubernetesSettings.PendingCheckIntervalSeconds);
+        _orphanCleanupInterval = TimeSpan.FromSeconds(kubernetesSettings.OrphanCleanupIntervalSeconds);
     }
 
     public async Task RunAsync(CancellationToken ct)
     {
-        Log.Information("Pod monitor started. Cleanup interval={IntervalSeconds}s", CleanupInterval.TotalSeconds);
+        Log.Information("Pod monitor started. Pending check={PendingSeconds}s, Orphan cleanup={OrphanSeconds}s",
+            _pendingCheckInterval.TotalSeconds, _orphanCleanupInterval.TotalSeconds);
+
+        var pendingTimer = Task.Delay(_pendingCheckInterval, ct);
+        var orphanTimer = Task.Delay(_orphanCleanupInterval, ct);
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
-                RunCleanupCycle();
+                var completed = await Task.WhenAny(pendingTimer, orphanTimer).ConfigureAwait(false);
+
+                if (ct.IsCancellationRequested) break;
+
+                if (completed == pendingTimer)
+                {
+                    RunPendingCheck();
+                    pendingTimer = Task.Delay(_pendingCheckInterval, ct);
+                }
+
+                if (completed == orphanTimer)
+                {
+                    RunOrphanCleanup();
+                    orphanTimer = Task.Delay(_orphanCleanupInterval, ct);
+                }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Pod monitor cleanup cycle failed");
+                Log.Warning(ex, "Pod monitor cycle failed");
             }
         }
     }
 
     internal void RunCleanupCycle()
     {
+        RunPendingCheck();
+        RunOrphanCleanup();
+    }
+
+    internal void RunPendingCheck()
+    {
         if (_leaderElection != null && !_leaderElection.IsLeader)
         {
-            Log.Debug("Skipping cleanup cycle — not leader");
+            Log.Debug("Skipping pending check — not leader");
             return;
         }
 
         FailPendingPods();
+        _scriptPodService.EvictStaleTerminalResults(TimeSpan.FromHours(1));
+    }
+
+    internal void RunOrphanCleanup()
+    {
+        if (_leaderElection != null && !_leaderElection.IsLeader)
+        {
+            Log.Debug("Skipping orphan cleanup — not leader");
+            return;
+        }
+
         CleanupOrphanedPods();
         CleanupOrphanedWorkspaces();
         CheckWorkspaceCapacity();
         _pdbManager?.ReconcilePdb();
-        _scriptPodService.EvictStaleTerminalResults(TimeSpan.FromHours(1));
         _apiHealthProbe?.Check();
+        _metricsPersistence?.SaveIfDue();
     }
 
     internal void FailPendingPods()

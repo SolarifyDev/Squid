@@ -36,6 +36,8 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         var deploymentLabels = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.DeploymentLabels);
         var podAnnotations = KubernetesPropertyParser.ParseStringDictionaryProperty(properties, KubernetesProperties.PodAnnotations);
 
+        InjectDeployIdAnnotation(podAnnotations, properties);
+
         var selectorLabels = deploymentLabels.Count > 0
             ? deploymentLabels
             : new Dictionary<string, string> { [KubernetesLabelKeys.App] = deploymentName };
@@ -125,6 +127,14 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         return sb.ToString();
     }
 
+    private static void InjectDeployIdAnnotation(Dictionary<string, string> podAnnotations, Dictionary<string, string> properties)
+    {
+        var suffix = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DeploymentIdSuffix);
+        if (string.IsNullOrWhiteSpace(suffix)) return;
+
+        podAnnotations["squid.io/deploy-id"] = suffix;
+    }
+
     private static void AppendVolumeYaml(StringBuilder sb, VolumeSpec volume)
     {
         sb.AppendLine($"      - name: {YamlSafeScalar.Escape(volume.Name)}");
@@ -192,8 +202,8 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             return;
 
         sb.AppendLine("    rollingUpdate:");
-        KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "      ", "maxUnavailable", maxUnavailable);
-        KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "      ", "maxSurge", maxSurge);
+        KubernetesPropertyParser.AppendIntOrStringValue(sb, "      ", "maxUnavailable", maxUnavailable);
+        KubernetesPropertyParser.AppendIntOrStringValue(sb, "      ", "maxSurge", maxSurge);
     }
 
     private static void AppendRestartPolicyIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
@@ -734,12 +744,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         {
             sb.AppendLine("        securityContext:");
 
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.AllowPrivilegeEscalation, container.SecurityContext.AllowPrivilegeEscalation);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.Privileged, container.SecurityContext.Privileged);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.ReadOnlyRootFilesystem, container.SecurityContext.ReadOnlyRootFilesystem);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsGroup, container.SecurityContext.RunAsGroup);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsNonRoot, container.SecurityContext.RunAsNonRoot);
-            KubernetesPropertyParser.AppendKeyValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsUser, container.SecurityContext.RunAsUser);
+            KubernetesPropertyParser.AppendBoolValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.AllowPrivilegeEscalation, container.SecurityContext.AllowPrivilegeEscalation);
+            KubernetesPropertyParser.AppendBoolValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.Privileged, container.SecurityContext.Privileged);
+            KubernetesPropertyParser.AppendBoolValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.ReadOnlyRootFilesystem, container.SecurityContext.ReadOnlyRootFilesystem);
+            KubernetesPropertyParser.AppendIntValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsGroup, container.SecurityContext.RunAsGroup);
+            KubernetesPropertyParser.AppendBoolValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsNonRoot, container.SecurityContext.RunAsNonRoot);
+            KubernetesPropertyParser.AppendIntValueIfNotNullOrWhiteSpace(sb, "          ", KubernetesContainerSecurityContextPayloadProperties.RunAsUser, container.SecurityContext.RunAsUser);
 
             if (container.SecurityContext.Capabilities != null
                 && (container.SecurityContext.Capabilities.Add.Count > 0 || container.SecurityContext.Capabilities.Drop.Count > 0))

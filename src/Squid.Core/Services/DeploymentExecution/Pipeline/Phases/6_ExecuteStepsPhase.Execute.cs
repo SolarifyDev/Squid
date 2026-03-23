@@ -17,6 +17,9 @@ public sealed partial class ExecuteStepsPhase
     {
         var stepResult = new StepExecutionResult();
 
+        if (IsSyntheticStep(step))
+            return await ExecuteSyntheticStepAsync(step, stepSortOrder, ct).ConfigureAwait(false);
+
         var (eligibleActions, skippedActions) = FilterEligibleActions(step);
 
         if (eligibleActions.Count == 0 && step.Actions.Count > 0)
@@ -263,6 +266,30 @@ public sealed partial class ExecuteStepsPhase
                 result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
         }
     }
+
+    private async Task<StepExecutionResult> ExecuteSyntheticStepAsync(DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
+    {
+        switch (step.StepType)
+        {
+            case "AcquirePackages":
+                await AcquirePackagesAsync(stepSortOrder, ct).ConfigureAwait(false);
+                break;
+
+            default:
+                Log.Warning("Unknown synthetic step type {StepType}, skipping", step.StepType);
+                break;
+        }
+
+        return new StepExecutionResult { Executed = true };
+    }
+
+    private async Task AcquirePackagesAsync(int stepSortOrder, CancellationToken ct)
+    {
+        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, SelectedPackages = _ctx.SelectedPackages }), ct).ConfigureAwait(false);
+    }
+
+    private static bool IsSyntheticStep(DeploymentStepDto step)
+        => step.StepType is "AcquirePackages";
 
     private bool HasTargetLevelActions(List<DeploymentActionDto> eligibleActions)
     {

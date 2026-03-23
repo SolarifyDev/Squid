@@ -254,6 +254,89 @@ public class KubernetesEventMonitorTests : IDisposable
         _podOps.Verify(o => o.ListEvents("squid-ns", It.IsAny<string>(), It.IsAny<string>()), Times.AtLeastOnce);
     }
 
+    // ========== Configurable WarningReasons ==========
+
+    [Fact]
+    public void EventMonitor_DefaultReasons_Include9Hardcoded()
+    {
+        var monitor = new KubernetesEventMonitor(_podOps.Object, _settings);
+
+        monitor.WarningReasonCount.ShouldBe(9);
+    }
+
+    [Fact]
+    public void EventMonitor_AdditionalReasons_MergedWithDefaults()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "squid-ns",
+            AdditionalWarningReasons = "NodeNotReady,FailedCreatePodSandBox"
+        };
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
+
+        monitor.WarningReasonCount.ShouldBe(11);
+    }
+
+    [Fact]
+    public void EventMonitor_EmptyAdditional_DefaultsOnly()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "squid-ns",
+            AdditionalWarningReasons = ""
+        };
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
+
+        monitor.WarningReasonCount.ShouldBe(9);
+    }
+
+    [Fact]
+    public void EventMonitor_DuplicateReason_NoDuplicate()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "squid-ns",
+            AdditionalWarningReasons = "OOMKilled"
+        };
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
+
+        monitor.WarningReasonCount.ShouldBe(9);
+    }
+
+    [Fact]
+    public async Task WatchEventsAsync_CustomReason_Injected()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "squid-ns",
+            AdditionalWarningReasons = "NodeNotReady"
+        };
+
+        var scriptPodService = CreateScriptPodService();
+        var ctx = new ScriptPodContext("ticket-abc", "squid-script-abc123", "/tmp/work", "marker");
+        scriptPodService.ActiveScripts["ticket-abc"] = ctx;
+
+        var evt = CreateEvent("squid-script-abc123", "NodeNotReady", DateTime.UtcNow.AddSeconds(1), "Node is not ready");
+        evt.Metadata = new V1ObjectMeta { ResourceVersion = "rv-1" };
+
+        SetupWatchEvents(evt);
+
+        var monitor = new KubernetesEventMonitor(_podOps.Object, settings, scriptPodService);
+        var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+
+        try
+        {
+            await monitor.WatchEventsAsync(cts.Token);
+        }
+        catch (OperationCanceledException) { }
+
+        ctx.InjectedEvents.TryDequeue(out var injected).ShouldBeTrue();
+        injected.Text.ShouldContain("NodeNotReady");
+    }
+
     // ========== ResourceVersion Dedup ==========
 
     [Fact]

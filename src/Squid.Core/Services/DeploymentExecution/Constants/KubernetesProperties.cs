@@ -84,6 +84,9 @@ internal static class KubernetesProperties
     // Resource status check
     internal const string ObjectStatusCheckTimeout = "Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout";
 
+    // Internal — injected by handler, consumed by generator
+    internal const string DeploymentIdSuffix = "Squid.Internal.DeploymentIdSuffix";
+
     // Legacy fallback
     internal const string LegacyNamespace = "Squid.Action.Kubernetes.Namespace";
 }

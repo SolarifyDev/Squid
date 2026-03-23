@@ -69,7 +69,9 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             var k8sClient = new k8s.Kubernetes(k8sConfig);
             IKubernetesPodOperations podOps = new ResilientKubernetesPodOperations(new KubernetesPodOperations(k8sClient));
             var podStateCache = new PodStateCache();
-            var podMgr = new KubernetesPodManager(podOps, kubernetesSettings, cache: podStateCache);
+            var templateProvider = new ScriptPodTemplateProvider(k8sClient, kubernetesSettings, podOps);
+            var pullSecretManager = new ImagePullSecretManager(podOps, kubernetesSettings);
+            var podMgr = new KubernetesPodManager(podOps, kubernetesSettings, templateProvider, pullSecretManager, podStateCache);
             var scriptPodService = new ScriptPodService(tentacleSettings, kubernetesSettings, podMgr, podOps);
 
             var pdbManager = new PodDisruptionBudgetManager(podOps, kubernetesSettings);

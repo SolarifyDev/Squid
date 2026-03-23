@@ -145,13 +145,14 @@ public class ServiceResourceGeneratorTests
     }
 
     [Fact]
-    public async Task Generate_TargetPort_IsIncluded()
+    public async Task Generate_NumericTargetPort_IsUnquoted()
     {
         var (step, action) = CreateMinimal();
 
         var yaml = await GetServiceYaml(step, action);
 
-        yaml.ShouldContain("targetPort: \"8080\"");
+        yaml.ShouldContain("targetPort: 8080");
+        yaml.ShouldNotContain("targetPort: \"8080\"");
     }
 
     [Fact]
@@ -213,7 +214,7 @@ public class ServiceResourceGeneratorTests
         yaml.ShouldContain("port: 80");
         yaml.ShouldContain("port: 443");
         yaml.ShouldContain("name: \"https\"");
-        yaml.ShouldContain("targetPort: \"8443\"");
+        yaml.ShouldContain("targetPort: 8443");
     }
 
     [Fact]
@@ -227,7 +228,7 @@ public class ServiceResourceGeneratorTests
         var yaml = await GetServiceYaml(step, action);
 
         yaml.ShouldContain("port: 80");
-        yaml.ShouldContain("targetPort: \"8080\"");
+        yaml.ShouldContain("targetPort: 8080");
     }
 
     [Fact]

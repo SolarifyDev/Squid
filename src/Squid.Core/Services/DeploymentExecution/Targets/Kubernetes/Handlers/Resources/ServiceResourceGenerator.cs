@@ -76,7 +76,7 @@ internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
             sb.AppendLine($"    port: {port.Port}");
 
             if (!string.IsNullOrWhiteSpace(port.TargetPort))
-                sb.AppendLine($"    targetPort: {YamlSafeScalar.Escape(port.TargetPort)}");
+                sb.AppendLine($"    targetPort: {FormatPortValue(port.TargetPort)}");
 
             if (port.NodePort.HasValue)
                 sb.AppendLine($"    nodePort: {port.NodePort.Value}");
@@ -87,4 +87,7 @@ internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
 
         return sb.ToString();
     }
+
+    private static string FormatPortValue(string value)
+        => int.TryParse(value, out var port) ? port.ToString() : YamlSafeScalar.Escape(value);
 }

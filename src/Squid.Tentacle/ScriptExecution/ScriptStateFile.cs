@@ -13,6 +13,7 @@ public class ScriptStateFile
     public string? IsolationMutexName { get; set; }
     public string? Namespace { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    public DateTime? LastLogTimestamp { get; set; }
 
     private const string FileName = ".squid-state.json";
 

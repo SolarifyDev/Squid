@@ -13,6 +13,7 @@ public partial class ScriptPodService
         var allLogs = _podManager.ReadPodLogs(ctx.PodName, ctx.LastLogTimestamp, ctx.Namespace);
         var logs = ExtractNewLogLines(ctx, allLogs, _kubernetesSettings.MaxLogBufferBytes);
 
+        PersistLogTimestamp(ctx);
         DrainInjectedEvents(ctx, logs);
 
         return logs;
@@ -94,6 +95,22 @@ public partial class ScriptPodService
         {
             logs.Add(injected);
             ctx.LogSequence++;
+        }
+    }
+
+    private static void PersistLogTimestamp(ScriptPodContext ctx)
+    {
+        try
+        {
+            var state = ScriptStateFile.TryRead(ctx.WorkDir);
+            if (state == null) return;
+
+            state.LastLogTimestamp = ctx.LastLogTimestamp;
+            ScriptStateFile.Write(ctx.WorkDir, state);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to persist log timestamp for ticket {TicketId}", ctx.TicketId);
         }
     }
 

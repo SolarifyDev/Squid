@@ -18,6 +18,7 @@ CLIENT_KEY_PATH=""
 GKE_KEY_FILE=""
 AWS_WEB_IDENTITY_FILE=""
 CRED_FILE=""
+AZURE_CONFIG_DIR=""
 
 cleanup() {
     rm -f "$KUBECONFIG_PATH" 2>/dev/null || true

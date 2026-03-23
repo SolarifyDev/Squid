@@ -41,6 +41,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             return null;
 
         await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
+        InjectDeploymentIdSuffix(ctx);
 
         var secretYaml = await GenerateFeedSecretAsync(ctx, ct).ConfigureAwait(false);
 
@@ -243,6 +244,20 @@ public class KubernetesYamlActionHandler : IActionHandler
                 .FirstOrDefault(p => p.PropertyName == KubernetesProperties.LegacyNamespace)?.PropertyValue;
 
         return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
+    }
+
+    private static void InjectDeploymentIdSuffix(ActionExecutionContext ctx)
+    {
+        var deploymentId = ctx.Variables?.FirstOrDefault(v => v.Name == SpecialVariables.Deployment.Id)?.Value;
+        if (string.IsNullOrWhiteSpace(deploymentId)) return;
+
+        ctx.Action.Properties ??= new List<DeploymentActionPropertyDto>();
+        ctx.Action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            ActionId = ctx.Action.Id,
+            PropertyName = KubernetesProperties.DeploymentIdSuffix,
+            PropertyValue = deploymentId.ToLowerInvariant()
+        });
     }
 
     private async Task ResolveContainerImagesAsync(ActionExecutionContext ctx, CancellationToken ct)

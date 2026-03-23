@@ -6,7 +6,7 @@ namespace Squid.Tentacle.Kubernetes;
 
 public partial class KubernetesPodManager
 {
-    private V1Pod BuildPodSpec(string podName, string ticketId)
+    private V1Pod BuildPodSpec(string podName, string ticketId, Dictionary<string, string>? additionalLabels = null)
     {
         var template = _templateProvider?.TryLoadTemplate();
         var rawScriptMode = _settings.RawScriptMode;
@@ -47,7 +47,7 @@ public partial class KubernetesPodManager
             {
                 Name = podName,
                 NamespaceProperty = _settings.TentacleNamespace,
-                Labels = BuildLabels(ticketId),
+                Labels = BuildLabels(ticketId, additionalLabels),
                 Annotations = BuildAnnotations()
             },
             Spec = new V1PodSpec
@@ -69,7 +69,7 @@ public partial class KubernetesPodManager
                             : new[] { "run-script", $"--script=/squid/work/{ticketId}/script.sh", $"--variables=/squid/work/{ticketId}/variables.json" },
                         WorkingDir = $"/squid/work/{ticketId}",
                         VolumeMounts = mainVolumeMounts,
-                        Env = BuildProxyEnvVars(),
+                        Env = MergeEnvVars(BuildStandardEnvVars(ticketId), BuildProxyEnvVars()),
                         SecurityContext = BuildContainerSecurityContext(),
                         Resources = new V1ResourceRequirements
                         {
@@ -139,6 +139,7 @@ public partial class KubernetesPodManager
         if (rwoAffinity != null)
             pod.Spec.Affinity = rwoAffinity;
 
+        HelmMetadata.ApplyHelmAnnotations(pod.Metadata, _settings);
         ApplyTemplateOverrides(pod, template);
 
         return pod;
@@ -251,7 +252,7 @@ public partial class KubernetesPodManager
         }
     }
 
-    private Dictionary<string, string> BuildLabels(string ticketId)
+    private Dictionary<string, string> BuildLabels(string ticketId, Dictionary<string, string>? additionalLabels = null)
     {
         var labels = new Dictionary<string, string>
         {
@@ -263,8 +264,25 @@ public partial class KubernetesPodManager
             labels["app.kubernetes.io/instance"] = _settings.ReleaseName;
 
         MergeCustomLabels(labels);
+        MergeCommandLabels(labels, additionalLabels);
 
         return labels;
+    }
+
+    private static void MergeCommandLabels(Dictionary<string, string> labels, Dictionary<string, string>? commandLabels)
+    {
+        if (commandLabels == null) return;
+
+        foreach (var kvp in commandLabels)
+        {
+            if (!ValidateLabelKey(kvp.Key))
+            {
+                Log.Warning("Rejected reserved command label key {Key}", kvp.Key);
+                continue;
+            }
+
+            labels[kvp.Key] = kvp.Value;
+        }
     }
 
     private void MergeCustomLabels(Dictionary<string, string> labels)
@@ -382,12 +400,21 @@ public partial class KubernetesPodManager
 
     private List<V1LocalObjectReference> BuildImagePullSecrets()
     {
-        if (string.IsNullOrWhiteSpace(_settings.ScriptPodImagePullSecrets)) return null;
+        var secrets = new List<V1LocalObjectReference>();
 
-        return _settings.ScriptPodImagePullSecrets
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(name => new V1LocalObjectReference(name))
-            .ToList();
+        if (!string.IsNullOrWhiteSpace(_settings.ScriptPodImagePullSecrets))
+        {
+            secrets.AddRange(_settings.ScriptPodImagePullSecrets
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(name => new V1LocalObjectReference(name)));
+        }
+
+        var dynamicSecrets = _pullSecretManager?.EnsureAllPullSecrets();
+
+        if (dynamicSecrets != null)
+            secrets.AddRange(dynamicSecrets.Select(name => new V1LocalObjectReference(name)));
+
+        return secrets.Count > 0 ? secrets : null;
     }
 
     private List<V1Toleration> BuildTolerations()
@@ -405,7 +432,67 @@ public partial class KubernetesPodManager
         }
     }
 
+    private List<V1EnvVar> BuildStandardEnvVars(string ticketId)
+    {
+        return new List<V1EnvVar>
+        {
+            new() { Name = "SQUID_RUNNING_IN_CONTAINER", Value = "true" },
+            new() { Name = "SQUID_TICKET_ID", Value = ticketId },
+            new() { Name = "SQUID_NAMESPACE", Value = _settings.TentacleNamespace },
+            new() { Name = "SQUID_WORKSPACE", Value = $"/squid/work/{ticketId}" }
+        };
+    }
+
+    private static List<V1EnvVar> MergeEnvVars(params List<V1EnvVar>?[] sources)
+    {
+        var merged = new List<V1EnvVar>();
+
+        foreach (var source in sources)
+            if (source != null) merged.AddRange(source);
+
+        return merged.Count > 0 ? merged : null;
+    }
+
     private List<V1EnvVar> BuildProxyEnvVars()
+    {
+        if (!string.IsNullOrEmpty(_settings.ProxySecretName))
+            return BuildProxyEnvVarsFromSecret();
+
+        return BuildProxyEnvVarsInline();
+    }
+
+    private List<V1EnvVar> BuildProxyEnvVarsFromSecret()
+    {
+        var envVars = new List<V1EnvVar>();
+
+        void AddFromSecret(string envName, string key)
+        {
+            envVars.Add(new V1EnvVar
+            {
+                Name = envName,
+                ValueFrom = new V1EnvVarSource
+                {
+                    SecretKeyRef = new V1SecretKeySelector
+                    {
+                        Name = _settings.ProxySecretName,
+                        Key = key,
+                        Optional = true
+                    }
+                }
+            });
+        }
+
+        AddFromSecret("http_proxy", "http-proxy");
+        AddFromSecret("HTTP_PROXY", "http-proxy");
+        AddFromSecret("https_proxy", "https-proxy");
+        AddFromSecret("HTTPS_PROXY", "https-proxy");
+        AddFromSecret("no_proxy", "no-proxy");
+        AddFromSecret("NO_PROXY", "no-proxy");
+
+        return envVars;
+    }
+
+    private List<V1EnvVar> BuildProxyEnvVarsInline()
     {
         var envVars = new List<V1EnvVar>();
 

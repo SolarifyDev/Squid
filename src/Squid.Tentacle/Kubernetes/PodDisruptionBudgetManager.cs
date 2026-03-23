@@ -67,6 +67,7 @@ public class PodDisruptionBudgetManager
             }
         };
 
+        HelmMetadata.ApplyHelmAnnotations(pdb.Metadata, _settings);
         _podOps.CreatePodDisruptionBudget(pdb, _settings.TentacleNamespace);
 
         Log.Information("Created PDB {PdbName} for script pods", pdbName);

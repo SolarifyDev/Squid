@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -182,5 +183,43 @@ public class KubernetesYamlActionHandlerTests
         await handler.PrepareAsync(ctx, CancellationToken.None);
 
         generator.Verify(g => g.GenerateAsync(step, action, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // === InjectDeploymentIdSuffix Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_WithDeploymentIdVariable_InjectsSuffixProperty()
+    {
+        var generator = CreateMockGenerator(canHandle: true);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object });
+
+        var action = CreateAction();
+        action.Id = 1;
+        var ctx = CreateContext(action);
+        ctx.Variables = new List<VariableDto>
+        {
+            new() { Name = SpecialVariables.Deployment.Id, Value = "Deployments-42" }
+        };
+
+        await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        var suffixProp = action.Properties.FirstOrDefault(p => p.PropertyName == "Squid.Internal.DeploymentIdSuffix");
+        suffixProp.ShouldNotBeNull();
+        suffixProp.PropertyValue.ShouldBe("deployments-42");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoDeploymentIdVariable_NothingInjected()
+    {
+        var generator = CreateMockGenerator(canHandle: true);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object });
+
+        var action = CreateAction();
+        var ctx = CreateContext(action);
+        ctx.Variables = new List<VariableDto>();
+
+        await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Internal.DeploymentIdSuffix");
     }
 }

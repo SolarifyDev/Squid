@@ -84,7 +84,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("name: \"postboyweb-service\"");
         yaml.ShouldContain("type: \"ClusterIP\"");
         yaml.ShouldContain("port: 8000");
-        yaml.ShouldContain("targetPort: \"80\"");
+        yaml.ShouldContain("targetPort: 80");
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("name: \"squid-api-service\"");
         yaml.ShouldContain("type: \"ClusterIP\"");
         yaml.ShouldContain("port: 8080");
-        yaml.ShouldContain("targetPort: \"8080\"");
+        yaml.ShouldContain("targetPort: 8080");
     }
 
     [Fact]
@@ -347,9 +347,9 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("httpGet:");
         yaml.ShouldContain("\"path\": \"/health\"");
-        yaml.ShouldContain("\"port\": \"80\"");
-        yaml.ShouldContain("\"initialDelaySeconds\": \"10\"");
-        yaml.ShouldContain("\"periodSeconds\": \"30\"");
+        yaml.ShouldContain("port: 80");
+        yaml.ShouldContain("initialDelaySeconds: 10");
+        yaml.ShouldContain("periodSeconds: 30");
     }
 
     [Fact]
@@ -375,7 +375,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("exec:");
         yaml.ShouldContain("command:");
         yaml.ShouldContain("- \"cat\"");
-        yaml.ShouldContain("\"failureThreshold\": \"3\"");
+        yaml.ShouldContain("failureThreshold: 3");
     }
 
     [Fact]
@@ -399,7 +399,7 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("startupProbe:");
         yaml.ShouldContain("tcpSocket:");
-        yaml.ShouldContain("\"port\": \"8080\"");
+        yaml.ShouldContain("port: 8080");
     }
 
     // === Security Context ===
@@ -428,8 +428,8 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
         yaml.ShouldContain("securityContext:");
-        yaml.ShouldContain("\"runAsNonRoot\": \"true\"");
-        yaml.ShouldContain("\"readOnlyRootFilesystem\": \"true\"");
+        yaml.ShouldContain("runAsNonRoot: true");
+        yaml.ShouldContain("readOnlyRootFilesystem: true");
         yaml.ShouldContain("capabilities:");
         yaml.ShouldContain("drop:");
         yaml.ShouldContain("- \"ALL\"");
@@ -580,7 +580,7 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("kind: Service");
         yaml.ShouldContain("port: 80");
-        yaml.ShouldContain("targetPort: \"80\"");
+        yaml.ShouldContain("targetPort: 80");
     }
 
     // === Service with NodePort ===
@@ -693,6 +693,103 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("imagePullSecrets:");
         yaml.ShouldContain("- name: \"my-registry-secret\"");
+    }
+
+    // === Deployment-ID versioned ConfigMap/Secret names ===
+
+    [Fact]
+    public async Task GenerateAsync_WithDeploymentId_ConfigMapHasVersionedName()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues",
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["KEY"] = "val" }));
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
+
+        yaml.ShouldContain("name: \"my-config-deployments-42\"");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithDeploymentId_SecretHasVersionedName()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretName", "my-secret");
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretValues",
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["PASSWORD"] = "s3cret" }));
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["secret.yaml"]);
+
+        yaml.ShouldContain("name: \"my-secret-deployments-42\"");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithoutDeploymentId_OriginalNames()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues",
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["KEY"] = "val" }));
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
+
+        yaml.ShouldContain("name: \"my-config\"");
+        yaml.ShouldNotContain("deployments-");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithoutConfigMapData_NoVersioning()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldNotContainKey("configmap.yaml");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithDeploymentId_EnvFromConfigMapRefRewritten()
+    {
+        var (step, action) = CreateBackendScenario();
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
+
+        yaml.ShouldContain("\"squid-api-config-variables-deployments-42\"");
+        yaml.ShouldNotContain("configMapRef:\n            name: \"squid-api-config-variables\"");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithDeploymentId_VolumeConfigMapRefRewritten()
+    {
+        var (step, action) = CreateFrontendScenario();
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
+
+        yaml.ShouldContain("name: \"postboyweb-config-deployments-42\"");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithDeploymentId_ConfigMapYamlAndDeploymentEnvFromMatch()
+    {
+        var (step, action) = CreateBackendScenario();
+        AddProperty(action, "Squid.Internal.DeploymentIdSuffix", "deployments-100");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var configMapYaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
+        var deploymentYaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
+
+        configMapYaml.ShouldContain("name: \"squid-api-config-variables-deployments-100\"");
+        deploymentYaml.ShouldContain("\"squid-api-config-variables-deployments-100\"");
     }
 
     // === Helpers ===

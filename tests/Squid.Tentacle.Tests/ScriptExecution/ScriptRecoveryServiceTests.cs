@@ -156,6 +156,50 @@ public class ScriptRecoveryServiceTests : IDisposable
         _service.ActiveScripts.Count.ShouldBe(2);
     }
 
+    [Fact]
+    public void Recovery_PodRunning_RestoresLastLogTimestamp()
+    {
+        var ticketId = "timestamp-ticket";
+        var timestamp = new DateTime(2025, 6, 15, 10, 30, 0, DateTimeKind.Utc);
+        SeedStateFileWithTimestamp(ticketId, "squid-script-ts", "NoIsolation", timestamp);
+        SetupPodPhase("squid-script-ts", "Running");
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        _service.ActiveScripts.TryGetValue(ticketId, out var ctx).ShouldBeTrue();
+        ctx.LastLogTimestamp.ShouldBe(timestamp);
+    }
+
+    [Fact]
+    public void Recovery_NullTimestamp_DefaultsToNull()
+    {
+        var ticketId = "null-ts-ticket";
+        SeedStateFile(ticketId, "squid-script-nullts", "NoIsolation");
+        SetupPodPhase("squid-script-nullts", "Running");
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        _service.ActiveScripts.TryGetValue(ticketId, out var ctx).ShouldBeTrue();
+        ctx.LastLogTimestamp.ShouldBeNull();
+    }
+
+    private void SeedStateFileWithTimestamp(string ticketId, string podName, string isolation, DateTime? lastLogTimestamp, string? mutexName = null)
+    {
+        var workDir = Path.Combine(_tempWorkspace, ticketId);
+        Directory.CreateDirectory(workDir);
+
+        ScriptStateFile.Write(workDir, new ScriptStateFile
+        {
+            TicketId = ticketId,
+            PodName = podName,
+            EosMarkerToken = "test-eos-token",
+            Isolation = isolation,
+            IsolationMutexName = mutexName,
+            CreatedAt = DateTimeOffset.UtcNow,
+            LastLogTimestamp = lastLogTimestamp
+        });
+    }
+
     private void SeedStateFile(string ticketId, string podName, string isolation, string? mutexName = null)
     {
         var workDir = Path.Combine(_tempWorkspace, ticketId);

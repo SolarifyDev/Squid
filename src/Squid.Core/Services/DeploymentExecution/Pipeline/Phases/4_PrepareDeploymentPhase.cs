@@ -55,7 +55,7 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables = await variableResolver.ResolveVariablesAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
 
-        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = ctx.Deployment.Id.ToString() });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
         if (ctx.RestoredOutputVariables.Count > 0)
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);

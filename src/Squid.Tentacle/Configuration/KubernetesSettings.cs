@@ -46,12 +46,34 @@ public class KubernetesSettings
     public string ScriptPodNodeArchitecture { get; set; } = "";
     public string ScriptPodNodeSelector { get; set; } = "";
 
+    // Cleanup cycle intervals
+    public int PendingCheckIntervalSeconds { get; set; } = 60;
+    public int OrphanCleanupIntervalSeconds { get; set; } = 300;
+
     // Pending script queue bound
     public int MaxPendingScripts { get; set; } = 100;
+
+    // Configurable event warning reasons
+    public string AdditionalWarningReasons { get; set; } = "";
 
     // Item 1: Pod log encryption
     public bool EncryptPodLogs { get; set; } = true;
 
     // NFS watchdog force-kill grace period
     public int NfsForceKillGracePeriodSeconds { get; set; } = 30;
+
+    // P2-1: Pod template ConfigMap fallback
+    public string ScriptPodTemplateConfigMap { get; set; } = "";
+
+    // P2-2: Dynamic image pull secret credentials
+    public string ScriptPodRegistryServer { get; set; } = "";
+    public string ScriptPodRegistryUsername { get; set; } = "";
+    public string ScriptPodRegistryPassword { get; set; } = "";
+
+    // R5-4: Multi-registry pull secrets
+    // JSON array: [{"server":"registry.example.com","username":"user","password":"pass"}, ...]
+    public string ScriptPodAdditionalRegistries { get; set; } = "";
+
+    // R5-8: Proxy credentials via Secret reference
+    public string ProxySecretName { get; set; } = "";
 }

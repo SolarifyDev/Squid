@@ -515,6 +515,211 @@ public class KubernetesPodManagerLifecycleTests
         sw.ElapsedMilliseconds.ShouldBeLessThan(5000);
     }
 
+    // === GetScriptContainerTermination ===
+
+    [Fact]
+    public void GetScriptContainerTermination_ContainerTerminated_ReturnsExitCodeAndReason()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Terminated = new V1ContainerStateTerminated { ExitCode = 0, Reason = "Completed" }
+                            }
+                        }
+                    }
+                }
+            });
+
+        var result = _manager.GetScriptContainerTermination("pod-1");
+
+        result.ShouldNotBeNull();
+        result.ExitCode.ShouldBe(0);
+        result.Reason.ShouldBe("Completed");
+    }
+
+    [Fact]
+    public void GetScriptContainerTermination_ContainerStillRunning_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState { Running = new V1ContainerStateRunning() }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetScriptContainerTermination("pod-1").ShouldBeNull();
+    }
+
+    [Fact]
+    public void GetScriptContainerTermination_SidecarCrashedScriptRunning_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState { Running = new V1ContainerStateRunning() }
+                        },
+                        new()
+                        {
+                            Name = "nfs-watchdog",
+                            State = new V1ContainerState
+                            {
+                                Terminated = new V1ContainerStateTerminated { ExitCode = 1, Reason = "Error" }
+                            }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetScriptContainerTermination("pod-1").ShouldBeNull();
+    }
+
+    [Fact]
+    public void GetScriptContainerTermination_UsesCache_WhenAvailable()
+    {
+        var cache = new PodStateCache();
+        cache.Populate(Array.Empty<V1Pod>());
+        var pod = new V1Pod
+        {
+            Metadata = new V1ObjectMeta { Name = "pod-1", NamespaceProperty = "test-ns" },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses = new List<V1ContainerStatus>
+                {
+                    new()
+                    {
+                        Name = "script",
+                        State = new V1ContainerState
+                        {
+                            Terminated = new V1ContainerStateTerminated { ExitCode = 42 }
+                        }
+                    }
+                }
+            }
+        };
+        cache.HandleWatchEvent(k8s.WatchEventType.Added, pod);
+
+        var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
+        var manager = new KubernetesPodManager(_ops.Object, settings, cache: cache);
+
+        var result = manager.GetScriptContainerTermination("pod-1");
+
+        result.ShouldNotBeNull();
+        result.ExitCode.ShouldBe(42);
+        _ops.Verify(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetScriptContainerTermination_PodNotFound_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("missing", "test-ns"))
+            .Throws(new Exception("not found"));
+
+        _manager.GetScriptContainerTermination("missing").ShouldBeNull();
+    }
+
+    // === GetContainerDiagnostics ===
+
+    [Fact]
+    public void GetContainerDiagnostics_OOMKilled_ReturnsReasonAndSignal()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Terminated = new V1ContainerStateTerminated { ExitCode = 137, Reason = "OOMKilled", Signal = 9 }
+                            }
+                        }
+                    }
+                }
+            });
+
+        var result = _manager.GetContainerDiagnostics("pod-1");
+
+        result.ShouldNotBeNull();
+        result.ShouldContain("OOMKilled");
+        result.ShouldContain("Signal: 9");
+    }
+
+    [Fact]
+    public void GetContainerDiagnostics_NoTerminatedState_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState { Running = new V1ContainerStateRunning() }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetContainerDiagnostics("pod-1").ShouldBeNull();
+    }
+
+    [Fact]
+    public void GetContainerDiagnostics_TerminatedNoReasonOrMessage_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Terminated = new V1ContainerStateTerminated { ExitCode = 0 }
+                            }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetContainerDiagnostics("pod-1").ShouldBeNull();
+    }
+
     // === Helpers ===
 
     private void SetupNoPodFound()

@@ -815,6 +815,31 @@ internal static class KubernetesPropertyParser
         sb.AppendLine(YamlSafeScalar.Escape(value));
     }
 
+    internal static void AppendBoolValueIfNotNullOrWhiteSpace(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        if (bool.TryParse(value, out var b))
+            sb.AppendLine($"{indent}{key}: {(b ? "true" : "false")}");
+    }
+
+    internal static void AppendIntValueIfNotNullOrWhiteSpace(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        if (int.TryParse(value, out _))
+            sb.AppendLine($"{indent}{key}: {value}");
+    }
+
+    internal static void AppendIntOrStringValue(StringBuilder sb, string indent, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        sb.AppendLine(int.TryParse(value, out _)
+            ? $"{indent}{key}: {value}"
+            : $"{indent}{key}: {YamlSafeScalar.Escape(value)}");
+    }
+
     internal static void AppendDataValue(StringBuilder sb, string indent, string key, string value)
     {
         var escapedKey = YamlSafeScalar.Escape(key);
@@ -841,11 +866,11 @@ internal static class KubernetesPropertyParser
 
         var innerIndent = indent + "  ";
 
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.FailureThreshold, probe.FailureThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.InitialDelaySeconds, probe.InitialDelaySeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.PeriodSeconds, probe.PeriodSeconds);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.SuccessThreshold, probe.SuccessThreshold);
-        AppendKeyValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.TimeoutSeconds, probe.TimeoutSeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.FailureThreshold, probe.FailureThreshold);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.InitialDelaySeconds, probe.InitialDelaySeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.PeriodSeconds, probe.PeriodSeconds);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.SuccessThreshold, probe.SuccessThreshold);
+        AppendIntValueIfNotNullOrWhiteSpace(sb, innerIndent, KubernetesContainerProbePayloadProperties.TimeoutSeconds, probe.TimeoutSeconds);
 
         if (probe.Exec != null && probe.Exec.Command.Count > 0)
         {
@@ -873,7 +898,7 @@ internal static class KubernetesPropertyParser
 
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Host, probe.HttpGet.Host);
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Path, probe.HttpGet.Path);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, probe.HttpGet.Port);
+            AppendIntOrStringValue(sb, httpIndent, KubernetesProbeActionPayloadProperties.Port, probe.HttpGet.Port);
             AppendKeyValueIfNotNullOrWhiteSpace(sb, httpIndent, KubernetesProbeActionPayloadProperties.Scheme, probe.HttpGet.Scheme);
 
             if (probe.HttpGet.HttpHeaders.Count > 0)
@@ -906,7 +931,7 @@ internal static class KubernetesPropertyParser
             var tcpIndent = innerIndent + "  ";
 
             AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Host, probe.TcpSocket.Host);
-            AppendKeyValueIfNotNullOrWhiteSpace(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, probe.TcpSocket.Port);
+            AppendIntOrStringValue(sb, tcpIndent, KubernetesProbeActionPayloadProperties.Port, probe.TcpSocket.Port);
         }
     }
 

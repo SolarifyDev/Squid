@@ -10,7 +10,7 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
 
-    private static readonly HashSet<string> WarningReasons = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> DefaultWarningReasons = new(StringComparer.OrdinalIgnoreCase)
     {
         "FailedScheduling",
         "BackOff",
@@ -26,6 +26,7 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
     private readonly IKubernetesPodOperations _podOps;
     private readonly KubernetesSettings _settings;
     private readonly ScriptPodService _scriptPodService;
+    private readonly HashSet<string> _warningReasons;
     private DateTime _lastEventTime = DateTime.UtcNow;
     private string _lastResourceVersion;
 
@@ -34,6 +35,23 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
         _podOps = podOps;
         _settings = settings;
         _scriptPodService = scriptPodService;
+        _warningReasons = BuildWarningReasons(settings.AdditionalWarningReasons);
+    }
+
+    internal int WarningReasonCount => _warningReasons.Count;
+
+    private static HashSet<string> BuildWarningReasons(string additionalReasons)
+    {
+        var reasons = new HashSet<string>(DefaultWarningReasons, StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(additionalReasons)) return reasons;
+
+        foreach (var reason in additionalReasons.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            reasons.Add(reason);
+        }
+
+        return reasons;
     }
 
     public string Name => "KubernetesEventMonitor";
@@ -82,7 +100,7 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
                 _lastEventTime = eventTime.Value;
 
             if (!IsManagedPod(evt.InvolvedObject?.Name)) continue;
-            if (!WarningReasons.Contains(evt.Reason ?? "")) continue;
+            if (!_warningReasons.Contains(evt.Reason ?? "")) continue;
 
             Log.Warning("K8s event: {Reason} on pod {PodName} — {Message}", evt.Reason, evt.InvolvedObject?.Name, evt.Message);
             InjectEventIntoScript(evt.InvolvedObject.Name, evt.Reason, evt.Message);
@@ -107,7 +125,7 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
 
             if (!IsManagedPod(evt.InvolvedObject?.Name)) continue;
 
-            if (WarningReasons.Contains(evt.Reason ?? ""))
+            if (_warningReasons.Contains(evt.Reason ?? ""))
             {
                 Log.Warning("K8s event: {Reason} on pod {PodName} — {Message}", evt.Reason, evt.InvolvedObject?.Name, evt.Message);
 

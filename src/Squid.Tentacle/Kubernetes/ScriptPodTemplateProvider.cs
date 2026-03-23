@@ -18,16 +18,42 @@ public class ScriptPodTemplateProvider
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
+
     private readonly IKubernetes _client;
     private readonly KubernetesSettings _settings;
+    private readonly IKubernetesPodOperations _ops;
+    private ScriptPodTemplate? _cachedTemplate;
+    private DateTime _cacheExpiry = DateTime.MinValue;
 
-    public ScriptPodTemplateProvider(IKubernetes client, KubernetesSettings settings)
+    public ScriptPodTemplateProvider(IKubernetes client, KubernetesSettings settings, IKubernetesPodOperations ops = null)
     {
         _client = client;
         _settings = settings;
+        _ops = ops;
     }
 
     public virtual ScriptPodTemplate TryLoadTemplate(string templateName = DefaultTemplateName)
+    {
+        if (_cachedTemplate != null && DateTime.UtcNow < _cacheExpiry)
+            return _cachedTemplate;
+
+        var template = TryLoadFromCrd(templateName);
+        template ??= TryLoadFromConfigMap();
+
+        _cachedTemplate = template;
+        _cacheExpiry = DateTime.UtcNow.Add(CacheTtl);
+
+        return template;
+    }
+
+    public void InvalidateCache()
+    {
+        _cachedTemplate = null;
+        _cacheExpiry = DateTime.MinValue;
+    }
+
+    private ScriptPodTemplate TryLoadFromCrd(string templateName)
     {
         try
         {
@@ -47,6 +73,36 @@ public class ScriptPodTemplateProvider
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load ScriptPodTemplate CRD");
+            return null;
+        }
+    }
+
+    internal ScriptPodTemplate TryLoadFromConfigMap()
+    {
+        if (_ops == null) return null;
+        if (string.IsNullOrWhiteSpace(_settings.ScriptPodTemplateConfigMap)) return null;
+
+        try
+        {
+            var configMaps = _ops.ListConfigMaps(_settings.TentacleNamespace, $"metadata.name={_settings.ScriptPodTemplateConfigMap}");
+            var cm = configMaps?.Items?.FirstOrDefault(c => c.Metadata?.Name == _settings.ScriptPodTemplateConfigMap);
+
+            if (cm?.Data == null || !cm.Data.TryGetValue("template", out var json))
+            {
+                Log.Debug("No pod template ConfigMap '{ConfigMap}' found in {Namespace}", _settings.ScriptPodTemplateConfigMap, _settings.TentacleNamespace);
+                return null;
+            }
+
+            var template = JsonSerializer.Deserialize<ScriptPodTemplate>(json, JsonOptions);
+
+            if (template != null)
+                Log.Information("Loaded pod template from ConfigMap '{ConfigMap}'", _settings.ScriptPodTemplateConfigMap);
+
+            return template;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load pod template from ConfigMap '{ConfigMap}'", _settings.ScriptPodTemplateConfigMap);
             return null;
         }
     }

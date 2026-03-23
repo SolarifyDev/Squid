@@ -407,17 +407,11 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         if (string.IsNullOrWhiteSpace(name))
             return $"Step {stepSortOrder}";
 
-        if (IsSyntheticStepType(stepType))
-            return name;
-
         if (name.StartsWith("Step ", StringComparison.OrdinalIgnoreCase))
             return name;
 
         return $"Step {stepSortOrder}: {name}";
     }
-
-    private static bool IsSyntheticStepType(string stepType)
-        => stepType is "AcquirePackages";
 
     private static string BuildActionActivityName(string machineName)
     {

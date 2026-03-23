@@ -1049,6 +1049,49 @@ public class ScriptPodServiceTests : IDisposable
         state.Namespace.ShouldBeNull();
     }
 
+    [Fact]
+    public void StateFile_RoundTripsLastLogTimestamp()
+    {
+        var dir = Path.Combine(_tempWorkspace, "ts-test");
+        Directory.CreateDirectory(dir);
+
+        var timestamp = new DateTime(2025, 6, 15, 10, 30, 0, DateTimeKind.Utc);
+
+        ScriptStateFile.Write(dir, new ScriptStateFile
+        {
+            TicketId = "abc",
+            PodName = "pod-1",
+            EosMarkerToken = "eos",
+            Isolation = "NoIsolation",
+            LastLogTimestamp = timestamp,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var state = ScriptStateFile.TryRead(dir);
+        state.ShouldNotBeNull();
+        state.LastLogTimestamp.ShouldBe(timestamp);
+    }
+
+    [Fact]
+    public void StateFile_NullTimestamp_RoundTrips()
+    {
+        var dir = Path.Combine(_tempWorkspace, "ts-test-null");
+        Directory.CreateDirectory(dir);
+
+        ScriptStateFile.Write(dir, new ScriptStateFile
+        {
+            TicketId = "abc",
+            PodName = "pod-1",
+            EosMarkerToken = "eos",
+            Isolation = "NoIsolation",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var state = ScriptStateFile.TryRead(dir);
+        state.ShouldNotBeNull();
+        state.LastLogTimestamp.ShouldBeNull();
+    }
+
     // === Secret Persistence ===
 
     [Fact]
@@ -1879,12 +1922,137 @@ public class ScriptPodServiceTests : IDisposable
             });
     }
 
+    private void SetupPodWithContainerStates(string phase, params (string Name, V1ContainerState State)[] containers)
+    {
+        _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    Phase = phase,
+                    ContainerStatuses = containers.Select(c => new V1ContainerStatus
+                    {
+                        Name = c.Name,
+                        State = c.State
+                    }).ToList()
+                }
+            });
+    }
+
     private void SetupPodLogs(string logs)
     {
         var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(logs));
 
         _ops.Setup(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()))
             .Returns(stream);
+    }
+
+    // ========== Container State Awareness (Fix 1) ==========
+
+    [Fact]
+    public void GetStatus_ContainerTerminated_ReturnsCompleteWithContainerExitCode()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Failed",
+            ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 42 } }),
+            ("nfs-watchdog", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } }));
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(42);
+    }
+
+    [Fact]
+    public void GetStatus_SidecarCrashedScriptRunning_ReportsRunning()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Running",
+            ("script", new V1ContainerState { Running = new V1ContainerStateRunning() }),
+            ("nfs-watchdog", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 1 } }));
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+    }
+
+    [Fact]
+    public void GetStatus_EosDetected_TakesPrecedenceOverContainerState()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ctx = service.ActiveScripts[ticket.TaskId];
+
+        SetupPodWithContainerStates("Failed",
+            ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 1 } }));
+
+        var eosLine = $"EOS-{ctx.EosMarkerToken}<<>>0";
+        SetupPodLogs($"output\n{eosLine}\n");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public void CompleteScript_MultiContainerPod_UsesScriptContainerExitCode()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Failed",
+            ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } }),
+            ("nfs-watchdog", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 1 } }));
+        SetupPodLogs("");
+
+        var result = service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        result.State.ShouldBe(ProcessState.Complete);
+        result.ExitCode.ShouldBe(0);
+    }
+
+    // ========== Container Diagnostics (Fix 9) ==========
+
+    [Fact]
+    public void GetStatus_FailedContainer_IncludesDiagnosticsInLogs()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Failed",
+            ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 137, Reason = "OOMKilled", Signal = 9 } }));
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(137);
+        status.Logs.ShouldContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("OOMKilled"));
+        status.Logs.ShouldContain(l => l.Text.Contains("Signal: 9"));
+    }
+
+    [Fact]
+    public void GetStatus_SuccessfulContainer_NoDiagnosticsAdded()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Succeeded",
+            ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } }));
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(0);
+        status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Container 'script' terminated"));
     }
 
     public void Dispose()

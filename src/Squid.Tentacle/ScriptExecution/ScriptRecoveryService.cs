@@ -125,6 +125,8 @@ public class ScriptRecoveryService
         Log.Information("Recovered script {TicketId}: pod {PodName} still running ({Phase}), rebuilding context", state.TicketId, state.PodName, phase);
 
         var ctx = new ScriptPodContext(state.TicketId, state.PodName, workDir, state.EosMarkerToken, state.Namespace);
+        ctx.LastLogTimestamp = state.LastLogTimestamp;
+
         var mutexHandle = TryReacquireMutex(state, mutex);
 
         service.RestoreActiveScript(ctx, mutexHandle);
