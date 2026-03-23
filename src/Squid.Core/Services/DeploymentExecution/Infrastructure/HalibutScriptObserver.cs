@@ -7,6 +7,8 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class HalibutScriptObserver : IHalibutScriptObserver
 {
+    internal const int MaxLogEntries = 100_000;
+
     // NOTE: Halibut RPC proxy calls (GetStatusAsync, CompleteScriptAsync, CancelScriptAsync)
     // do not accept CancellationToken — cancellation is only checked between polling intervals.
     // This is a known Halibut 8.x limitation.
@@ -62,6 +64,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
             allLogs.AddRange(statusResponse.Logs);
+            TruncateIfExceeded(allLogs);
             LogOutput(statusResponse.Logs, machine.Name, masker);
 
             if (statusResponse.State != ProcessState.Complete)
@@ -84,6 +87,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             new CompleteScriptCommand(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
         allLogs.AddRange(completeResponse.Logs);
+        TruncateIfExceeded(allLogs);
         LogOutput(completeResponse.Logs, machine.Name, masker);
 
         var orderedLogs = allLogs
@@ -120,6 +124,15 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         foreach (var log in logs)
             Log.Information("[Agent Script] Machine={MachineName}, Source={Source}, Message={Message}",
                 machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
+    }
+
+    private static void TruncateIfExceeded(List<ProcessOutput> logs)
+    {
+        if (logs.Count <= MaxLogEntries) return;
+
+        var overflow = logs.Count - MaxLogEntries;
+        logs.RemoveRange(0, overflow);
+        Log.Warning("Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", MaxLogEntries, overflow);
     }
 
     private static async Task TryCancelScriptAsync(

@@ -255,6 +255,77 @@ public class HalibutScriptObserverTests
         result.StderrLines.ShouldNotContain(l => l.Contains("db-password"));
     }
 
+    // === Log Truncation ===
+
+    [Fact]
+    public async Task ObserveAndCompleteAsync_VerboseOutput_TruncatesOldestLogs()
+    {
+        var batchSize = 20_000;
+        var callCount = 0;
+
+        _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                var logs = new List<ProcessOutput>();
+
+                for (var i = 0; i < batchSize; i++)
+                    logs.Add(new ProcessOutput(ProcessOutputSource.StdOut, $"line-{callCount}-{i}"));
+
+                if (callCount >= 6)
+                    return new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, logs, callCount);
+
+                return new ScriptStatusResponse(_ticket, ProcessState.Running, 0, logs, callCount);
+            });
+
+        _scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var result = await _observer.ObserveAndCompleteAsync(
+            _machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.LogLines.Count.ShouldBeLessThanOrEqualTo(HalibutScriptObserver.MaxLogEntries);
+    }
+
+    [Fact]
+    public async Task ObserveAndCompleteAsync_NormalOutput_NoTruncation()
+    {
+        var callCount = 0;
+
+        _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                var logs = new List<ProcessOutput>
+                {
+                    new(ProcessOutputSource.StdOut, $"line-{callCount}")
+                };
+
+                return new ScriptStatusResponse(
+                    _ticket, callCount >= 3 ? ProcessState.Complete : ProcessState.Running, 0, logs, callCount);
+            });
+
+        _scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var result = await _observer.ObserveAndCompleteAsync(
+            _machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.LogLines.Count.ShouldBe(3);
+    }
+
+    // === Configurable Timeout Default ===
+
+    [Fact]
+    public void ScriptTimeoutMinutes_DefaultValue_Is30()
+    {
+        var settings = new Squid.Core.Settings.Halibut.PollingSettings();
+
+        settings.ScriptTimeoutMinutes.ShouldBe(30);
+    }
+
     // === Helpers ===
 
     private void SetupImmediateComplete(int exitCode)

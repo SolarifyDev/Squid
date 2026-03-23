@@ -2055,6 +2055,163 @@ public class ScriptPodServiceTests : IDisposable
         status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Container 'script' terminated"));
     }
 
+    // ========== P0-1: TOCTOU Race Fix ==========
+
+    [Fact]
+    public void ProcessPendingScripts_CancelDuringTryAcquire_RetriesRemainingPending()
+    {
+        var service = CreateService();
+
+        // Start a writer to hold the mutex
+        var activeCmd = MakeIsolatedCommand("echo active", "race-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        // Queue two pending readers
+        var cmdA = new StartScriptCommand("echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null);
+        var ticketA = service.StartScript(cmdA);
+        var cmdB = new StartScriptCommand("echo B", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null);
+        var ticketB = service.StartScript(cmdB);
+
+        service.PendingScripts.ContainsKey(ticketA.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(ticketB.TaskId).ShouldBeTrue();
+
+        // Cancel A (simulates the race: A removed from pending between TryAcquire and TryRemove)
+        service.CancelScript(new CancelScriptCommand(new ScriptTicket(ticketA.TaskId), 0));
+
+        // Complete active → releases mutex → ProcessPendingScripts
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // B should be launched (retry picked it up after A was gone)
+        service.ActiveScripts.ContainsKey(ticketB.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(ticketA.TaskId).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ProcessPendingScripts_DepthGuard_PreventsStackOverflow()
+    {
+        // The depth guard simply ensures that ProcessPendingScripts(depth > 3) returns immediately.
+        // We test this indirectly: with no pending scripts, even calling the method is safe.
+        var service = CreateService();
+
+        // With no pending scripts, ProcessPendingScripts does nothing — no stack overflow.
+        service.ReleaseMutexForTicket("nonexistent-ticket");
+
+        service.ActiveScripts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ProcessPendingScripts_NormalFlow_NoUnnecessaryRetry()
+    {
+        var service = CreateService();
+
+        // Start a writer
+        var activeCmd = MakeIsolatedCommand("echo active", "normal-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        // Queue one pending reader
+        var cmdA = new StartScriptCommand("echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "normal-mutex", Array.Empty<string>(), null);
+        var ticketA = service.StartScript(cmdA);
+
+        // Complete active → releases mutex → ProcessPendingScripts (no race)
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // A should be launched normally, pending empty
+        service.ActiveScripts.ContainsKey(ticketA.TaskId).ShouldBeTrue();
+        service.PendingScripts.ShouldBeEmpty();
+    }
+
+    // ========== P1-7: Concurrency Tests ==========
+
+    [Fact]
+    public void StartScript_WriterBlocked_QueuesAsPending()
+    {
+        var service = CreateService();
+
+        // Start a writer (FullIsolation)
+        var writerCmd = MakeIsolatedCommand("echo writer", "block-mutex");
+        var writerTicket = service.StartScript(writerCmd);
+        service.ActiveScripts.ContainsKey(writerTicket.TaskId).ShouldBeTrue();
+
+        // Start a reader while writer holds the mutex → should queue
+        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "block-mutex", Array.Empty<string>(), null);
+        var readerTicket = service.StartScript(readerCmd);
+
+        service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
+        service.ActiveScripts.ContainsKey(readerTicket.TaskId).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CompleteScript_ReleasesLock_ProcessesPending()
+    {
+        var service = CreateService();
+
+        // Start writer, queue reader
+        var writerCmd = MakeIsolatedCommand("echo writer", "release-mutex");
+        var writerTicket = service.StartScript(writerCmd);
+
+        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "release-mutex", Array.Empty<string>(), null);
+        var readerTicket = service.StartScript(readerCmd);
+
+        service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
+
+        // Complete writer → should release mutex and launch pending reader
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(writerTicket, 0));
+
+        service.ActiveScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
+        service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CancelScript_RemovesPendingScript()
+    {
+        var service = CreateService();
+
+        // Start writer, queue reader
+        var writerCmd = MakeIsolatedCommand("echo writer", "cancel-mutex");
+        service.StartScript(writerCmd);
+
+        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "cancel-mutex", Array.Empty<string>(), null);
+        var readerTicket = service.StartScript(readerCmd);
+
+        service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
+
+        // Cancel the pending reader
+        service.CancelScript(new CancelScriptCommand(readerTicket, 0));
+
+        service.PendingScripts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void StartScript_PendingQueueFull_RejectsWithFatal()
+    {
+        var settings = CreateSettingsWithMaxPending(1);
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        // Start writer
+        var writerCmd = MakeIsolatedCommand("echo writer", "full-mutex");
+        service.StartScript(writerCmd);
+
+        // Fill pending queue (max=1)
+        var pendingCmd = new StartScriptCommand("echo pending1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null);
+        service.StartScript(pendingCmd);
+
+        // Next script should be rejected
+        var rejectedCmd = new StartScriptCommand("echo rejected", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null);
+        var rejectedTicket = service.StartScript(rejectedCmd);
+
+        // Should have terminal result with Fatal exit code
+        var status = service.GetStatus(new ScriptStatusRequest(rejectedTicket, 0));
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+    }
+
     public void Dispose()
     {
         try

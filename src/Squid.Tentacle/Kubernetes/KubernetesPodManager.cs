@@ -31,7 +31,9 @@ public partial class KubernetesPodManager
     public string CreatePod(string ticketId, string? targetNamespace = null, Dictionary<string, string>? additionalLabels = null)
     {
         var semaphore = _createLocks.GetOrAdd(ticketId, _ => new SemaphoreSlim(1, 1));
-        semaphore.Wait();
+
+        if (!semaphore.Wait(TimeSpan.FromSeconds(60)))
+            throw new TimeoutException($"Timed out waiting 60s for pod creation lock for ticket {ticketId}");
 
         try
         {
@@ -66,7 +68,6 @@ public partial class KubernetesPodManager
         finally
         {
             semaphore.Release();
-            _createLocks.TryRemove(ticketId, out _);
         }
     }
 

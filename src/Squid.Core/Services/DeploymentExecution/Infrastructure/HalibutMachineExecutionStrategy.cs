@@ -3,22 +3,23 @@ using Halibut.Diagnostics;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Settings.Halibut;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
-    private static readonly TimeSpan DefaultScriptTimeout = TimeSpan.FromMinutes(30);
-
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
+    private readonly TimeSpan _defaultScriptTimeout;
 
-    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer)
+    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer, HalibutSetting halibutSetting)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
+        _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -57,7 +58,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
@@ -88,7 +89,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
-        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(

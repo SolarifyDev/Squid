@@ -213,6 +213,83 @@ public class ScriptPodTemplateConfigMapTests
     }
 
     // ========================================================================
+    // P2-2: Thread Safety
+    // ========================================================================
+
+    [Fact]
+    public void TryLoadTemplate_ConcurrentCalls_OnlyOneFetch()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        var fetchCount = 0;
+        var template = new ScriptPodTemplate { Image = "thread-safe:v1" };
+        var json = JsonSerializer.Serialize(template, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        var cm = new V1ConfigMap
+        {
+            Metadata = new V1ObjectMeta { Name = "squid-pod-template" },
+            Data = new Dictionary<string, string> { ["template"] = json }
+        };
+
+        ops.Setup(o => o.ListConfigMaps("squid-ns", It.IsAny<string>()))
+            .Returns(() =>
+            {
+                Interlocked.Increment(ref fetchCount);
+                Thread.Sleep(50); // Simulate slow I/O
+                return new V1ConfigMapList { Items = new List<V1ConfigMap> { cm } };
+            });
+
+        var provider = new ScriptPodTemplateProvider(null, _settings, ops.Object);
+
+        // First call populates cache
+        provider.TryLoadTemplate();
+
+        // Reset counter after initial load
+        fetchCount = 0;
+
+        // 10 concurrent calls should all hit cache
+        var tasks = Enumerable.Range(0, 10)
+            .Select(_ => Task.Run(() => provider.TryLoadTemplate()))
+            .ToArray();
+
+        Task.WaitAll(tasks);
+
+        // All should return non-null and no additional fetches should have occurred
+        foreach (var task in tasks)
+            task.Result.ShouldNotBeNull();
+
+        fetchCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void InvalidateCache_DuringLoad_NoCorruption()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        var template = new ScriptPodTemplate { Image = "safe-image:v1" };
+        var json = JsonSerializer.Serialize(template, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        SetupConfigMap(ops, "squid-pod-template", json);
+
+        var provider = new ScriptPodTemplateProvider(null, _settings, ops.Object);
+
+        // Alternate invalidate + load concurrently — should not throw
+        var tasks = Enumerable.Range(0, 20)
+            .Select(i => Task.Run(() =>
+            {
+                if (i % 2 == 0)
+                    provider.InvalidateCache();
+                else
+                    provider.TryLoadTemplate();
+            }))
+            .ToArray();
+
+        Task.WaitAll(tasks);
+
+        // Final load should succeed
+        var result = provider.TryLoadTemplate();
+        result.ShouldNotBeNull();
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 

@@ -23,6 +23,7 @@ public class ScriptPodTemplateProvider
     private readonly IKubernetes _client;
     private readonly KubernetesSettings _settings;
     private readonly IKubernetesPodOperations _ops;
+    private readonly object _cacheLock = new();
     private ScriptPodTemplate? _cachedTemplate;
     private DateTime _cacheExpiry = DateTime.MinValue;
 
@@ -35,22 +36,31 @@ public class ScriptPodTemplateProvider
 
     public virtual ScriptPodTemplate TryLoadTemplate(string templateName = DefaultTemplateName)
     {
-        if (_cachedTemplate != null && DateTime.UtcNow < _cacheExpiry)
-            return _cachedTemplate;
+        lock (_cacheLock)
+        {
+            if (_cachedTemplate != null && DateTime.UtcNow < _cacheExpiry)
+                return _cachedTemplate;
+        }
 
         var template = TryLoadFromCrd(templateName);
         template ??= TryLoadFromConfigMap();
 
-        _cachedTemplate = template;
-        _cacheExpiry = DateTime.UtcNow.Add(CacheTtl);
+        lock (_cacheLock)
+        {
+            _cachedTemplate = template;
+            _cacheExpiry = DateTime.UtcNow.Add(CacheTtl);
+        }
 
         return template;
     }
 
     public void InvalidateCache()
     {
-        _cachedTemplate = null;
-        _cacheExpiry = DateTime.MinValue;
+        lock (_cacheLock)
+        {
+            _cachedTemplate = null;
+            _cacheExpiry = DateTime.MinValue;
+        }
     }
 
     private ScriptPodTemplate TryLoadFromCrd(string templateName)

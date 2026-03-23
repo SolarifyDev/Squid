@@ -12,6 +12,7 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Settings.Halibut;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -21,6 +22,7 @@ public class HalibutMachineExecutionStrategyTests
     private readonly Mock<IYamlNuGetPacker> _yamlNuGetPacker = new();
     private readonly CalamariPayloadBuilder _payloadBuilder;
     private readonly HalibutScriptObserver _observer;
+    private readonly HalibutSetting _halibutSetting = new();
     private readonly HalibutMachineExecutionStrategy _strategy;
 
     public HalibutMachineExecutionStrategyTests()
@@ -30,7 +32,8 @@ public class HalibutMachineExecutionStrategyTests
         _strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             _payloadBuilder,
-            _observer);
+            _observer,
+            _halibutSetting);
     }
 
     // === Endpoint Parsing — invalid machine ===
@@ -195,7 +198,8 @@ public class HalibutMachineExecutionStrategyTests
         var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
-            observer.Object);
+            observer.Object,
+            _halibutSetting);
 
         var result = await strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: "calamari-run-script"),
@@ -237,7 +241,8 @@ public class HalibutMachineExecutionStrategyTests
         var strategy = new HalibutMachineExecutionStrategy(
             _halibutClientFactory.Object,
             payloadBuilder.Object,
-            observer.Object);
+            observer.Object,
+            _halibutSetting);
 
         var result = await strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None);
 

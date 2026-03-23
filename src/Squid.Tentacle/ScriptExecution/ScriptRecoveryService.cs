@@ -86,11 +86,12 @@ public class ScriptRecoveryService
                         TargetNamespace = string.IsNullOrEmpty(targetNamespace) ? null : targetNamespace
                     };
 
-                    service.StartScript(command);
+                    InjectFailure(ticketId, service,
+                        "Pending script could not be recovered: agent restarted while script was queued. Variables and files are no longer available.");
 
                     podOps.DeleteSecret(secret.Metadata.Name, settings.TentacleNamespace);
 
-                    Log.Information("Recovered pending script {TicketId} from Secret", ticketId);
+                    Log.Information("Injected terminal failure for pending script {TicketId} from Secret", ticketId);
                 }
                 catch (Exception ex)
                 {

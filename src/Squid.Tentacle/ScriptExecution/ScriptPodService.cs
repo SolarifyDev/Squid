@@ -384,11 +384,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         ReleaseMutexForTicket(ticketId);
     }
 
-    private void ProcessPendingScripts()
+    private void ProcessPendingScripts(int depth = 0)
     {
         if (_draining) return;
+        if (depth > 3) return;
 
         var launchedWriter = false;
+        var retryNeeded = false;
 
         foreach (var kvp in _pendingScripts.OrderBy(p => p.Value.EnqueuedAt))
         {
@@ -418,6 +420,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             if (!_pendingScripts.TryRemove(kvp.Key, out var pending))
             {
                 handle!.Dispose();
+                retryNeeded = true;
                 continue;
             }
 
@@ -443,6 +446,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)
                 launchedWriter = true;
         }
+
+        if (retryNeeded && !launchedWriter)
+            ProcessPendingScripts(depth + 1);
     }
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)

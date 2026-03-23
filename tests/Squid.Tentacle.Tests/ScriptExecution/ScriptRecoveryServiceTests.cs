@@ -217,7 +217,7 @@ public class ScriptRecoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public void RecoverPending_ReadsFromSecrets()
+    public void RecoverPending_InjectsTerminalFailure_InsteadOfResubmit()
     {
         var ops = new Mock<IKubernetesPodOperations>();
         var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
@@ -238,10 +238,6 @@ public class ScriptRecoveryServiceTests : IDisposable
 
         ops.Setup(o => o.ListSecrets("test-ns", "squid.io/context-type=pending-script"))
             .Returns(new k8s.Models.V1SecretList { Items = new List<k8s.Models.V1Secret> { secret } });
-        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
-            .Returns(new k8s.Models.V1PodList { Items = new List<k8s.Models.V1Pod>() });
-        ops.Setup(o => o.CreatePod(It.IsAny<k8s.Models.V1Pod>(), It.IsAny<string>()))
-            .Returns((k8s.Models.V1Pod pod, string ns) => pod);
 
         var podManager = new KubernetesPodManager(ops.Object, settings);
         var tentacleSettings = new TentacleSettings { WorkspacePath = _tempWorkspace };
@@ -249,8 +245,62 @@ public class ScriptRecoveryServiceTests : IDisposable
 
         _recovery.RecoverPendingScripts(ops.Object, settings, service);
 
-        service.ActiveScripts.Count.ShouldBe(1);
-        ops.Verify(o => o.DeleteSecret("squid-pending-abc123", "test-ns"), Times.Once);
+        // Should NOT be re-launched as active script
+        service.ActiveScripts.Count.ShouldBe(0);
+
+        // Should have terminal result injected
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("abc123456789extra"), 0));
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void RecoverPending_DeletesSecretAfterInjection()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
+
+        var secret = new k8s.Models.V1Secret
+        {
+            Metadata = new k8s.Models.V1ObjectMeta { Name = "squid-pending-xyz789" },
+            StringData = new Dictionary<string, string>
+            {
+                ["ticketId"] = "xyz789012345extra",
+                ["scriptBody"] = "echo test",
+                ["isolation"] = "NoIsolation",
+                ["isolationMutexName"] = "",
+                ["targetNamespace"] = ""
+            }
+        };
+
+        ops.Setup(o => o.ListSecrets("test-ns", "squid.io/context-type=pending-script"))
+            .Returns(new k8s.Models.V1SecretList { Items = new List<k8s.Models.V1Secret> { secret } });
+
+        var podManager = new KubernetesPodManager(ops.Object, settings);
+        var tentacleSettings = new TentacleSettings { WorkspacePath = _tempWorkspace };
+        var service = new ScriptPodService(tentacleSettings, settings, podManager);
+
+        _recovery.RecoverPendingScripts(ops.Object, settings, service);
+
+        ops.Verify(o => o.DeleteSecret("squid-pending-xyz789", "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void RecoverPending_NoSecrets_NoAction()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
+
+        ops.Setup(o => o.ListSecrets("test-ns", "squid.io/context-type=pending-script"))
+            .Returns(new k8s.Models.V1SecretList { Items = new List<k8s.Models.V1Secret>() });
+
+        var podManager = new KubernetesPodManager(ops.Object, settings);
+        var tentacleSettings = new TentacleSettings { WorkspacePath = _tempWorkspace };
+        var service = new ScriptPodService(tentacleSettings, settings, podManager);
+
+        _recovery.RecoverPendingScripts(ops.Object, settings, service);
+
+        service.ActiveScripts.Count.ShouldBe(0);
     }
 
     private void SetupPodPhase(string podName, string phase)
