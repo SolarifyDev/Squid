@@ -32,15 +32,31 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                     scriptTimeout.TotalMinutes, machine.Name);
                 await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
 
+                var collectedLogLines = allLogs
+                    .OrderBy(l => l.Occurred)
+                    .Where(l => !string.IsNullOrEmpty(l.Text))
+                    .Select(l => masker?.Mask(l.Text) ?? l.Text)
+                    .ToList();
+
+                collectedLogLines.Add($"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout");
+
                 return new ScriptExecutionResult
                 {
                     Success = false,
                     ExitCode = ScriptExitCodes.Timeout,
-                    LogLines = new List<string> { $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout" }
+                    LogLines = collectedLogLines
                 };
             }
 
-            ct.ThrowIfCancellationRequested();
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                throw;
+            }
 
             statusResponse = await scriptClient.GetStatusAsync(
                 new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
@@ -50,7 +66,16 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
 
             if (statusResponse.State != ProcessState.Complete)
             {
-                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                    throw;
+                }
+
                 pollInterval = TimeSpan.FromSeconds(Math.Min(pollInterval.TotalSeconds * 1.5, maxPollInterval.TotalSeconds));
             }
         }
@@ -59,17 +84,18 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             new CompleteScriptCommand(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
         allLogs.AddRange(completeResponse.Logs);
+        LogOutput(completeResponse.Logs, machine.Name, masker);
 
         var orderedLogs = allLogs
             .OrderBy(l => l.Occurred)
             .Where(l => !string.IsNullOrEmpty(l.Text))
             .ToList();
 
-        var logLines = orderedLogs.Select(l => l.Text).ToList();
+        var logLines = orderedLogs.Select(l => masker?.Mask(l.Text) ?? l.Text).ToList();
 
         var stderrLines = orderedLogs
             .Where(l => l.Source == ProcessOutputSource.StdErr)
-            .Select(l => l.Text)
+            .Select(l => masker?.Mask(l.Text) ?? l.Text)
             .ToList();
 
         var success = completeResponse.ExitCode == 0;

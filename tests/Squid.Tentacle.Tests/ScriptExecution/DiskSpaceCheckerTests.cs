@@ -72,6 +72,48 @@ public class DiskSpaceCheckerTests
         usage.IsLowSpace.ShouldBe(expectedLow);
     }
 
+    [Fact]
+    public void HasSufficientSpace_EnoughSpace_ReturnsTrue()
+    {
+        var prev = DiskSpaceChecker.Enabled;
+
+        try
+        {
+            DiskSpaceChecker.Enabled = true;
+            var tempDir = Path.GetTempPath();
+
+            var result = DiskSpaceChecker.HasSufficientSpace(tempDir);
+
+            // On most dev machines temp has plenty of space
+            var (available, total) = DiskSpaceChecker.GetDiskSpace(tempDir);
+            if (total > 0 && (double)available / total >= 0.10)
+                result.ShouldBeTrue();
+        }
+        finally
+        {
+            DiskSpaceChecker.Enabled = prev;
+        }
+    }
+
+    [Fact]
+    public void HasSufficientSpace_DisabledChecker_ReturnsTrue()
+    {
+        var prev = DiskSpaceChecker.Enabled;
+
+        try
+        {
+            DiskSpaceChecker.Enabled = false;
+
+            var result = DiskSpaceChecker.HasSufficientSpace("/any/path");
+
+            result.ShouldBeTrue();
+        }
+        finally
+        {
+            DiskSpaceChecker.Enabled = prev;
+        }
+    }
+
     [Theory]
     [InlineData(0, "0 B")]
     [InlineData(512, "512 B")]

@@ -65,7 +65,7 @@ public class ResumeCheckpointTests
 
         ctx.ResumeFromBatchIndex.ShouldBe(2);
         ctx.FailureEncountered.ShouldBeTrue();
-        ctx.Variables.ShouldContain(v => v.Name == "Squid.Action.Step1.Result" && v.Value == "42");
+        ctx.RestoredOutputVariables.ShouldContain(v => v.Name == "Squid.Action.Step1.Result" && v.Value == "42");
     }
 
     [Fact]

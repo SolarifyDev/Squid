@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
+b64d() { echo -n "$1" | base64 --decode; }
 
 # --- Configure kubectl context ---
 KUBECONFIG_PATH="$(mktemp /tmp/kubectl-config-XXXXXX.yaml)"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
-KUBECTL_EXE="{{KubectlExe}}"
+KUBECTL_EXE="$(b64d '{{KubectlExe}}')"
 if [ -z "$KUBECTL_EXE" ]; then
     KUBECTL_EXE="kubectl"
 fi
@@ -31,10 +33,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-CLUSTER_URL="{{ClusterUrl}}"
-ACCOUNT_TYPE="{{AccountType}}"
-SKIP_TLS="{{SkipTlsVerification}}"
-NAMESPACE="{{Namespace}}"
+CLUSTER_URL="$(b64d '{{ClusterUrl}}')"
+ACCOUNT_TYPE="$(b64d '{{AccountType}}')"
+SKIP_TLS="$(b64d '{{SkipTlsVerification}}')"
+NAMESPACE="$(b64d '{{Namespace}}')"
 CLUSTER_NAME="squid-cluster"
 CONTEXT_NAME="squid-context"
 USER_NAME="squid-user"
@@ -46,7 +48,7 @@ if [ "$SKIP_TLS" = "True" ]; then
     CLUSTER_CMD+=("--insecure-skip-tls-verify=true")
 fi
 
-CLUSTER_CERTIFICATE="{{ClusterCertificate}}"
+CLUSTER_CERTIFICATE="$(b64d '{{ClusterCertificate}}')"
 if [ -n "$CLUSTER_CERTIFICATE" ]; then
     CERT_PATH="$(mktemp /tmp/ca-cert-XXXXXX.pem)"
     echo "$CLUSTER_CERTIFICATE" > "$CERT_PATH"
@@ -59,22 +61,22 @@ fi
 case "$ACCOUNT_TYPE" in
     "Token")
         CRED_FILE="$(mktemp /tmp/cred-token-XXXXXX)"
-        echo -n "{{Token}}" > "$CRED_FILE"
+        b64d '{{Token}}' > "$CRED_FILE"
         TOKEN="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" --token="$TOKEN" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "UsernamePassword")
         CRED_FILE="$(mktemp /tmp/cred-pass-XXXXXX)"
-        echo -n "{{Password}}" > "$CRED_FILE"
-        AUTH_USERNAME="{{Username}}"
+        b64d '{{Password}}' > "$CRED_FILE"
+        AUTH_USERNAME="$(b64d '{{Username}}')"
         AUTH_PASSWORD="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" --username="$AUTH_USERNAME" --password="$AUTH_PASSWORD" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "ClientCertificate")
-        CLIENT_CERT="{{ClientCertificateData}}"
-        CLIENT_KEY="{{ClientCertificateKeyData}}"
+        CLIENT_CERT="$(b64d '{{ClientCertificateData}}')"
+        CLIENT_KEY="$(b64d '{{ClientCertificateKeyData}}')"
         CLIENT_CERT_PATH="$(mktemp /tmp/client-cert-XXXXXX.pem)"
         CLIENT_KEY_PATH="$(mktemp /tmp/client-key-XXXXXX.pem)"
         echo "$CLIENT_CERT" > "$CLIENT_CERT_PATH"
@@ -83,11 +85,11 @@ case "$ACCOUNT_TYPE" in
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "AmazonWebServicesAccount")
-        AWS_CLUSTER_NAME="{{AwsClusterName}}"
-        AWS_REGION="{{AwsRegion}}"
+        AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
+        AWS_REGION="$(b64d '{{AwsRegion}}')"
         CRED_FILE="$(mktemp /tmp/cred-aws-XXXXXX)"
-        echo -n "{{SecretKey}}" > "$CRED_FILE"
-        export AWS_ACCESS_KEY_ID="{{AccessKey}}"
+        b64d '{{SecretKey}}' > "$CRED_FILE"
+        export AWS_ACCESS_KEY_ID="$(b64d '{{AccessKey}}')"
         export AWS_SECRET_ACCESS_KEY="$(cat "$CRED_FILE")"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
             --exec-api-version=client.authentication.k8s.io/v1beta1 \
@@ -95,12 +97,35 @@ case "$ACCOUNT_TYPE" in
             --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" --exec-arg="--region" --exec-arg="$AWS_REGION" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
+    "AmazonWebServicesRoleAccount")
+        AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
+        AWS_REGION="$(b64d '{{AwsRegion}}')"
+        AWS_ROLE_ARN="$(b64d '{{AwsAssumeRoleArn}}')"
+        AWS_SESSION_DURATION="$(b64d '{{AwsAssumeRoleSessionDuration}}')"
+        AWS_EXTERNAL_ID="$(b64d '{{AwsAssumeRoleExternalId}}')"
+        CRED_FILE="$(mktemp /tmp/cred-aws-XXXXXX)"
+        b64d '{{SecretKey}}' > "$CRED_FILE"
+        export AWS_ACCESS_KEY_ID="$(b64d '{{AccessKey}}')"
+        export AWS_SECRET_ACCESS_KEY="$(cat "$CRED_FILE")"
+        ASSUME_CMD=(aws sts assume-role --role-arn "$AWS_ROLE_ARN" --role-session-name "squid-deploy")
+        if [ -n "$AWS_SESSION_DURATION" ]; then ASSUME_CMD+=(--duration-seconds "$AWS_SESSION_DURATION"); fi
+        if [ -n "$AWS_EXTERNAL_ID" ]; then ASSUME_CMD+=(--external-id "$AWS_EXTERNAL_ID"); fi
+        ASSUMED="$("${ASSUME_CMD[@]}")" || { echo "ERROR: aws sts assume-role failed" >&2; exit 1; }
+        export AWS_ACCESS_KEY_ID="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['AccessKeyId'])")"
+        export AWS_SECRET_ACCESS_KEY="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['SecretAccessKey'])")"
+        export AWS_SESSION_TOKEN="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['SessionToken'])")"
+        "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
+            --exec-api-version=client.authentication.k8s.io/v1beta1 \
+            --exec-command=aws \
+            --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" --exec-arg="--region" --exec-arg="$AWS_REGION" \
+            || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
+        ;;
     "AmazonWebServicesOidcAccount")
-        AWS_CLUSTER_NAME="{{AwsClusterName}}"
-        AWS_REGION="{{AwsRegion}}"
-        AWS_ROLE_ARN="{{AwsRoleArn}}"
+        AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
+        AWS_REGION="$(b64d '{{AwsRegion}}')"
+        AWS_ROLE_ARN="$(b64d '{{AwsRoleArn}}')"
         AWS_WEB_IDENTITY_FILE="$(mktemp /tmp/aws-token-XXXXXX)"
-        echo "{{AwsWebIdentityToken}}" > "$AWS_WEB_IDENTITY_FILE"
+        b64d '{{AwsWebIdentityToken}}' > "$AWS_WEB_IDENTITY_FILE"
         export AWS_WEB_IDENTITY_TOKEN_FILE="$AWS_WEB_IDENTITY_FILE"
         export AWS_ROLE_ARN="$AWS_ROLE_ARN"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
@@ -116,15 +141,15 @@ case "$ACCOUNT_TYPE" in
         AZURE_CONFIG_DIR="$(mktemp -d /tmp/azure-cli-XXXXXX)"
         export AZURE_CONFIG_DIR
         CRED_FILE="$(mktemp /tmp/cred-azure-XXXXXX)"
-        echo -n "{{AzureKey}}" > "$CRED_FILE"
+        b64d '{{AzureKey}}' > "$CRED_FILE"
         az login --service-principal \
-            -u "{{AzureClientId}}" -p "$(cat "$CRED_FILE")" --tenant "{{AzureTenantId}}" \
+            -u "$(b64d '{{AzureClientId}}')" -p "$(cat "$CRED_FILE")" --tenant "$(b64d '{{AzureTenantId}}')" \
             || { echo "ERROR: az login failed" >&2; exit 1; }
-        az account set --subscription "{{AzureSubscriptionId}}" \
+        az account set --subscription "$(b64d '{{AzureSubscriptionId}}')" \
             || { echo "ERROR: az account set failed" >&2; exit 1; }
         az aks get-credentials \
-            --resource-group "{{AksClusterResourceGroup}}" \
-            --name "{{AksClusterName}}" \
+            --resource-group "$(b64d '{{AksClusterResourceGroup}}')" \
+            --name "$(b64d '{{AksClusterName}}')" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
         if command -v kubelogin &>/dev/null; then
@@ -135,15 +160,15 @@ case "$ACCOUNT_TYPE" in
     "AzureOidc")
         AZURE_CONFIG_DIR="$(mktemp -d /tmp/azure-cli-XXXXXX)"
         export AZURE_CONFIG_DIR
-        AZURE_OIDC_TOKEN="{{AzureOidcToken}}"
+        AZURE_OIDC_TOKEN="$(b64d '{{AzureOidcToken}}')"
         az login --service-principal --federated-token "$AZURE_OIDC_TOKEN" \
-            -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}" \
+            -u "$(b64d '{{AzureClientId}}')" --tenant "$(b64d '{{AzureTenantId}}')" \
             || { echo "ERROR: az login (OIDC) failed" >&2; exit 1; }
-        az account set --subscription "{{AzureSubscriptionId}}" \
+        az account set --subscription "$(b64d '{{AzureSubscriptionId}}')" \
             || { echo "ERROR: az account set failed" >&2; exit 1; }
         az aks get-credentials \
-            --resource-group "{{AksClusterResourceGroup}}" \
-            --name "{{AksClusterName}}" \
+            --resource-group "$(b64d '{{AksClusterResourceGroup}}')" \
+            --name "$(b64d '{{AksClusterName}}')" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
         if command -v kubelogin &>/dev/null; then
@@ -153,16 +178,16 @@ case "$ACCOUNT_TYPE" in
         ;;
     "GoogleCloudAccount")
         GKE_KEY_FILE="$(mktemp /tmp/gcp-key-XXXXXX.json)"
-        echo "{{GcpJsonKey}}" > "$GKE_KEY_FILE"
+        b64d '{{GcpJsonKey}}' > "$GKE_KEY_FILE"
         gcloud auth activate-service-account --key-file="$GKE_KEY_FILE" \
             || { echo "ERROR: gcloud auth failed" >&2; exit 1; }
-        GKE_ZONE="{{GkeZone}}"
-        GKE_REGION="{{GkeRegion}}"
+        GKE_ZONE="$(b64d '{{GkeZone}}')"
+        GKE_REGION="$(b64d '{{GkeRegion}}')"
         GKE_LOC_FLAG=""
         if [ -n "$GKE_ZONE" ]; then GKE_LOC_FLAG="--zone=$GKE_ZONE"; fi
         if [ -n "$GKE_REGION" ]; then GKE_LOC_FLAG="--region=$GKE_REGION"; fi
-        GKE_INTERNAL="{{GkeUseClusterInternalIp}}"
-        GKE_CMD=(gcloud container clusters get-credentials "{{GkeClusterName}}" $GKE_LOC_FLAG --project="{{GkeProject}}")
+        GKE_INTERNAL="$(b64d '{{GkeUseClusterInternalIp}}')"
+        GKE_CMD=(gcloud container clusters get-credentials "$(b64d '{{GkeClusterName}}')" $GKE_LOC_FLAG --project="$(b64d '{{GkeProject}}')")
         if [ "$GKE_INTERNAL" = "True" ]; then GKE_CMD+=("--internal-ip"); fi
         export KUBECONFIG="$KUBECONFIG_PATH"
         "${GKE_CMD[@]}" || { echo "ERROR: gcloud get-credentials failed" >&2; exit 1; }
@@ -170,10 +195,10 @@ case "$ACCOUNT_TYPE" in
 esac
 
 # --- Proxy configuration ---
-PROXY_HOST="{{ProxyHost}}"
-PROXY_PORT="{{ProxyPort}}"
-PROXY_USER="{{ProxyUsername}}"
-PROXY_PASS="{{ProxyPassword}}"
+PROXY_HOST="$(b64d '{{ProxyHost}}')"
+PROXY_PORT="$(b64d '{{ProxyPort}}')"
+PROXY_USER="$(b64d '{{ProxyUsername}}')"
+PROXY_PASS="$(b64d '{{ProxyPassword}}')"
 if [ -n "$PROXY_HOST" ]; then
     if [ -n "$PROXY_USER" ]; then
         export HTTPS_PROXY="http://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"

@@ -243,9 +243,9 @@ public class KubernetesDeployIngressActionHandlerTests
 
         var yaml = Encoding.UTF8.GetString(result.Files["ingress.yaml"]);
         yaml.ShouldContain("kind: Ingress");
-        yaml.ShouldContain("name: web-ingress");
-        yaml.ShouldContain("namespace: production");
-        yaml.ShouldContain("ingressClassName: nginx");
+        yaml.ShouldContain("name: \"web-ingress\"");
+        yaml.ShouldContain("namespace: \"production\"");
+        yaml.ShouldContain("ingressClassName: \"nginx\"");
         yaml.ShouldContain("app.example.com");
         yaml.ShouldContain("tls-secret");
     }

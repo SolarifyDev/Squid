@@ -254,7 +254,7 @@ public class KubernetesDeployYamlActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ScriptBody.ShouldContain("--server-side");
-        result.ScriptBody.ShouldContain("--field-manager=squid-deploy");
+        result.ScriptBody.ShouldContain("--field-manager=\"squid-deploy\"");
     }
 
     [Fact]

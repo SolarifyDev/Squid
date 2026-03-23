@@ -36,7 +36,7 @@ public class HalibutModule : Module
             
         }).As<HalibutRuntime>().SingleInstance();
 
-        builder.RegisterType<HalibutTrustInitializer>().As<IStartable>().SingleInstance();
+        builder.RegisterType<HalibutTrustInitializer>().AsSelf().As<IStartable>().SingleInstance();
     }
 
     private static void StartPollingListenerIfEnabled(IComponentContext ctx, HalibutRuntime halibutRuntime)

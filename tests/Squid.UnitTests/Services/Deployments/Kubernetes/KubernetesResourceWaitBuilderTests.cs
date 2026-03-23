@@ -48,7 +48,7 @@ public class KubernetesResourceWaitBuilderTests
         var yaml = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-deploy";
         var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), CreateAction(), "default", ScriptSyntax.Bash);
 
-        result.ShouldContain("kubectl rollout status deployment/my-deploy");
+        result.ShouldContain("kubectl rollout status \"deployment/my-deploy\" -n \"default\"");
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class KubernetesResourceWaitBuilderTests
         var yaml = "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: my-sts";
         var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), CreateAction(), "default", ScriptSyntax.Bash);
 
-        result.ShouldContain("kubectl rollout status statefulset/my-sts");
+        result.ShouldContain("kubectl rollout status \"statefulset/my-sts\" -n \"default\"");
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class KubernetesResourceWaitBuilderTests
         var yaml = "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: my-ds";
         var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), CreateAction(), "default", ScriptSyntax.Bash);
 
-        result.ShouldContain("kubectl rollout status daemonset/my-ds");
+        result.ShouldContain("kubectl rollout status \"daemonset/my-ds\" -n \"default\"");
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class KubernetesResourceWaitBuilderTests
         var yaml = "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: my-job";
         var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), CreateAction(), "default", ScriptSyntax.Bash);
 
-        result.ShouldContain("kubectl wait --for=condition=complete job/my-job");
+        result.ShouldContain("kubectl wait --for=condition=complete \"job/my-job\" -n \"default\"");
     }
 
     [Fact]
@@ -104,8 +104,8 @@ public class KubernetesResourceWaitBuilderTests
         var yaml = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: dep-1\n---\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: job-1";
         var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), CreateAction(), "default", ScriptSyntax.Bash);
 
-        result.ShouldContain("kubectl rollout status deployment/dep-1");
-        result.ShouldContain("kubectl wait --for=condition=complete job/job-1");
+        result.ShouldContain("kubectl rollout status \"deployment/dep-1\" -n \"default\"");
+        result.ShouldContain("kubectl wait --for=condition=complete \"job/job-1\" -n \"default\"");
     }
 
     [Fact]

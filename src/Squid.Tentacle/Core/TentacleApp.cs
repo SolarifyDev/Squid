@@ -98,7 +98,16 @@ public sealed class TentacleApp
 
         await WaitForShutdownAsync(ct).ConfigureAwait(false);
 
-        Log.Information("Squid Tentacle shutting down gracefully");
+        Log.Information("Squid Tentacle shutting down — entering drain phase");
+        isReady = false;
+
+        if (runtime.ScriptBackend is IGracefulShutdownAware drainable)
+        {
+            var drainTimeout = TimeSpan.FromSeconds(tentacleSettings.ShutdownDrainTimeoutSeconds);
+            await drainable.WaitForDrainAsync(drainTimeout).ConfigureAwait(false);
+        }
+
+        Log.Information("Squid Tentacle shutdown complete");
     }
 
     public static TentacleSettings LoadTentacleSettings(IConfiguration configuration)

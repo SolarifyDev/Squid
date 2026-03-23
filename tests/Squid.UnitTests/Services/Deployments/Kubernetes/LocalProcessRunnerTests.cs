@@ -98,4 +98,30 @@ public class LocalProcessRunnerTests
         result.Success.ShouldBeTrue();
         result.LogLines.Count.ShouldBeGreaterThanOrEqualTo(100);
     }
+
+    // === Output Drain Sync (Fix 14) ===
+
+    [Fact]
+    public async Task RunAsync_LargeOutput_AllLinesCaptured()
+    {
+        var script = "for i in $(seq 1 1000); do echo \"line-$i\"; done";
+
+        var result = await _runner.RunAsync("bash", $"-c \"{script}\"", Path.GetTempPath(), CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.LogLines.Count.ShouldBe(1000);
+        result.LogLines.ShouldContain(l => l.Contains("line-1000"));
+    }
+
+    [Fact]
+    public async Task RunAsync_StderrFlush_AllLinesCaptured()
+    {
+        var script = "for i in $(seq 1 100); do echo \"err-$i\" >&2; done";
+
+        var result = await _runner.RunAsync("bash", $"-c \"{script}\"", Path.GetTempPath(), CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0);
+        result.StderrLines.Count.ShouldBe(100);
+        result.StderrLines.ShouldContain(l => l.Contains("err-100"));
+    }
 }

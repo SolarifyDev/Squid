@@ -41,7 +41,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         var request = plan.Request;
-        var payload = _payloadBuilder.Build(request, ScriptSyntax.Bash);
+        var payload = _payloadBuilder.Build(request, request.Syntax);
 
         var scriptBody = payload.FillTemplate(
             $"./{payload.PackageFileName}",
@@ -58,6 +58,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             scriptBody,
@@ -65,7 +66,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
+            ticketId,
             scriptFiles)
         {
             TargetNamespace = request.TargetNamespace
@@ -88,6 +89,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             request.ScriptBody,
@@ -95,7 +97,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
+            ticketId,
             scriptFiles)
         {
             TargetNamespace = request.TargetNamespace
@@ -141,6 +143,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
+    }
+
+    internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
+    {
+        var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
     }
 
     private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)

@@ -57,7 +57,7 @@ public class KubernetesApplyCommandBuilderTests
 
         var result = KubernetesApplyCommandBuilder.Build("./deploy.yaml", action, ScriptSyntax.Bash);
 
-        result.ShouldContain("--field-manager=squid-deploy");
+        result.ShouldContain("--field-manager=\"squid-deploy\"");
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class KubernetesApplyCommandBuilderTests
 
         var result = KubernetesApplyCommandBuilder.Build("./deploy.yaml", action, ScriptSyntax.Bash);
 
-        result.ShouldContain("--field-manager=my-controller");
+        result.ShouldContain("--field-manager=\"my-controller\"");
         result.ShouldNotContain("squid-deploy");
     }
 

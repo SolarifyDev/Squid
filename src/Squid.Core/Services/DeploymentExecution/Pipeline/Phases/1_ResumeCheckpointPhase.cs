@@ -28,8 +28,7 @@ public sealed class ResumeCheckpointPhase(IDeploymentCheckpointService checkpoin
 
         if (restored == null || restored.Count == 0) return;
 
-        ctx.Variables ??= new List<VariableDto>();
-        ctx.Variables.AddRange(restored);
+        ctx.RestoredOutputVariables.AddRange(restored);
 
         Log.Information("Restored {Count} output variables from checkpoint", restored.Count);
     }

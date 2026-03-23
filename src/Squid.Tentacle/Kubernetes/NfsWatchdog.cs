@@ -98,7 +98,7 @@ public sealed class NfsWatchdog : ITentacleBackgroundTask
 
         try
         {
-            _podOps.DeletePod(hostname, _settings.TentacleNamespace, 0);
+            _podOps.DeletePod(hostname, _settings.TentacleNamespace, _settings.NfsForceKillGracePeriodSeconds);
         }
         catch (Exception ex)
         {

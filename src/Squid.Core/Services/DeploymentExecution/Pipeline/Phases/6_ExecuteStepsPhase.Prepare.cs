@@ -108,7 +108,7 @@ public sealed partial class ExecuteStepsPhase
         prepared.ScriptBody = wrapper.WrapScript(prepared.ScriptBody, scriptContext);
     }
 
-    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables, TimeSpan? stepTimeout = null)
+    private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables, DeploymentStepDto step, TimeSpan? stepTimeout = null)
     {
         var resolvedMode = actionResult.ResolveExecutionMode();
         var resolvedContextPreparationPolicy = ResolveContextPreparationPolicy(actionResult, tc);
@@ -133,8 +133,19 @@ public sealed partial class ExecuteStepsPhase
             ReleaseVersion = _ctx.Release?.Version,
             ContextWrapper = resolvedContextPreparationPolicy == ContextPreparationPolicy.Apply ? tc.Transport?.ScriptWrapper : null,
             Timeout = stepTimeout,
-            Masker = masker
+            Masker = masker,
+            TargetNamespace = ResolveTargetNamespace(effectiveVariables),
+            ServerTaskId = _ctx.ServerTaskId,
+            StepName = step.Name,
+            ActionName = actionResult.ActionName
         };
+    }
+
+    private static string? ResolveTargetNamespace(List<VariableDto> variables)
+    {
+        var namespaceVar = variables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace);
+
+        return namespaceVar?.Value;
     }
 
     private static SensitiveValueMasker BuildSensitiveMasker(List<VariableDto> variables)

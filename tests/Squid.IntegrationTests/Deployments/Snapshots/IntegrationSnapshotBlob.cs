@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.IntegrationTests.Helpers;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
 namespace Squid.IntegrationTests.Deployments.Snapshots;
@@ -185,7 +186,7 @@ public class IntegrationSnapshotBlob : SnapshotFixtureBase
                     {
                         var action = await builder.CreateDeploymentActionAsync(step.Id, a, $"Action {s}.{a}");
                         await builder.CreateActionPropertiesAsync(action.Id,
-                            ("Octopus.Action.Script.ScriptBody", $"echo step{s} action{a}\n{new string('#', 500)}"),
+                            (SpecialVariables.Action.ScriptBody, $"echo step{s} action{a}\n{new string('#', 500)}"),
                             ($"Config{s}{a}", new string('y', 300)));
                         await builder.CreateActionEnvironmentsAsync(action.Id, s * 10 + a);
                         await builder.CreateActionMachineRolesAsync(action.Id, $"role-{s}-{a}");

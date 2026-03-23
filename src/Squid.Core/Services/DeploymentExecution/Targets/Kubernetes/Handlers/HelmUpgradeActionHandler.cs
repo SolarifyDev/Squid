@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -38,16 +39,18 @@ public class HelmUpgradeActionHandler : IActionHandler
         var valuesFilesBlock = BuildValuesFilesBlock(ctx.Action, syntax, files);
         var setValuesBlock = BuildSetValuesBlock(ctx.Action, syntax);
 
+        string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
+
         var scriptBody = template
-            .Replace("{{ReleaseName}}", releaseName, StringComparison.Ordinal)
-            .Replace("{{ChartPath}}", chartPath, StringComparison.Ordinal)
-            .Replace("{{Namespace}}", namespace_, StringComparison.Ordinal)
-            .Replace("{{HelmExe}}", helmExe, StringComparison.Ordinal)
-            .Replace("{{ResetValues}}", resetValues, StringComparison.Ordinal)
-            .Replace("{{HelmWait}}", helmWait, StringComparison.Ordinal)
-            .Replace("{{WaitForJobs}}", waitForJobs, StringComparison.Ordinal)
-            .Replace("{{Timeout}}", timeout, StringComparison.Ordinal)
-            .Replace("{{AdditionalArgs}}", additionalArgs, StringComparison.Ordinal)
+            .Replace("{{ReleaseName}}", B64(releaseName), StringComparison.Ordinal)
+            .Replace("{{ChartPath}}", B64(chartPath), StringComparison.Ordinal)
+            .Replace("{{Namespace}}", B64(namespace_), StringComparison.Ordinal)
+            .Replace("{{HelmExe}}", B64(helmExe), StringComparison.Ordinal)
+            .Replace("{{ResetValues}}", B64(resetValues), StringComparison.Ordinal)
+            .Replace("{{HelmWait}}", B64(helmWait), StringComparison.Ordinal)
+            .Replace("{{WaitForJobs}}", B64(waitForJobs), StringComparison.Ordinal)
+            .Replace("{{Timeout}}", B64(timeout), StringComparison.Ordinal)
+            .Replace("{{AdditionalArgs}}", B64(additionalArgs), StringComparison.Ordinal)
             .Replace("{{ValuesFilesBlock}}", valuesFilesBlock, StringComparison.Ordinal)
             .Replace("{{SetValuesBlock}}", setValuesBlock, StringComparison.Ordinal);
 

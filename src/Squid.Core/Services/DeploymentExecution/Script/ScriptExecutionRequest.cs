@@ -26,6 +26,9 @@ public class ScriptExecutionRequest
     public TimeSpan? Timeout { get; set; }
     public SensitiveValueMasker Masker { get; set; }
     public string? TargetNamespace { get; set; }
+    public int ServerTaskId { get; set; }
+    public string StepName { get; set; }
+    public string ActionName { get; set; }
 
     public ExecutionMode ResolveExecutionMode()
     {

@@ -4,7 +4,7 @@ using Squid.Tentacle.Tests.Support.Environment;
 namespace Squid.Tentacle.Tests.Integration;
 
 // Base class for future real-process / real-Halibut integration suites.
-// Mirrors Octopus' IntegrationTest layering by centralizing prereq checks and timeouts.
+// Mirrors Squid's IntegrationTest layering by centralizing prereq checks and timeouts.
 [Trait("Category", TentacleTestCategories.Integration)]
 public abstract class TentacleIntegrationTestBase : TimedTestBase
 {

@@ -47,6 +47,19 @@ public static class DiskSpaceChecker
         }
     }
 
+    public static bool HasSufficientSpace(string path)
+    {
+        try
+        {
+            EnsureDiskHasEnoughFreeSpace(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static WorkspaceUsage GetWorkspaceUsage(string path)
     {
         var (available, total) = GetDiskSpace(path);

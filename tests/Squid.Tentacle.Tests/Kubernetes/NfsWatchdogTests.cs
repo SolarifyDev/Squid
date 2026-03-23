@@ -141,7 +141,7 @@ public class NfsWatchdogTests : IDisposable
         watchdog.CheckWorkspaceHealth();
         watchdog.CheckWorkspaceHealth();
 
-        _podOps.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", 0), Times.Once);
+        _podOps.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", It.IsAny<int?>()), Times.Once);
     }
 
     [Fact]
@@ -173,14 +173,15 @@ public class NfsWatchdogTests : IDisposable
     }
 
     [Fact]
-    public void ForceDeleteSelf_UsesZeroGracePeriod()
+    public void ForceDeleteSelf_UsesConfiguredGracePeriod()
     {
+        _settings.NfsForceKillGracePeriodSeconds = 45;
         var watchdog = CreateWatchdog(forceKillThreshold: 1);
 
         Directory.Delete(_tempDir, true);
         watchdog.CheckWorkspaceHealth();
 
-        _podOps.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", 0), Times.Once);
+        _podOps.Verify(o => o.DeletePod(It.IsAny<string>(), "test-ns", 45), Times.Once);
     }
 
     public void Dispose()

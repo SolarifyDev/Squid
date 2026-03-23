@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Serilog;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -86,8 +88,9 @@ internal static class KubernetesPropertyParser
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse {PropertyName} as string dictionary", propertyName);
         }
 
         return result;
@@ -135,8 +138,9 @@ internal static class KubernetesPropertyParser
                 });
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse service ports JSON");
         }
 
         return result;
@@ -161,7 +165,8 @@ internal static class KubernetesPropertyParser
             foreach (var element in doc.RootElement.EnumerateArray())
             {
                 var name = element.TryGetProperty(KubernetesContainerPayloadProperties.Name, out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-                var image = GetFirstImagePropertyFromContainer(element) ?? KubernetesDefaultValues.ContainerImage;
+                var image = GetFirstImagePropertyFromContainer(element)
+                    ?? throw new InvalidOperationException($"ContainerImage is required for container '{name}' but was not resolved. Ensure the package feed and version are configured correctly.");
 
                 var container = new ContainerSpec
                 {
@@ -189,8 +194,9 @@ internal static class KubernetesPropertyParser
                 result.Add(container);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse containers JSON");
         }
 
         return result;
@@ -237,8 +243,9 @@ internal static class KubernetesPropertyParser
                 result.Add(volume);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse volumes JSON");
         }
 
         return result;
@@ -803,24 +810,26 @@ internal static class KubernetesPropertyParser
             return;
 
         sb.Append(indent);
-        sb.Append(key);
+        sb.Append(YamlSafeScalar.Escape(key));
         sb.Append(": ");
-        sb.AppendLine(value);
+        sb.AppendLine(YamlSafeScalar.Escape(value));
     }
 
     internal static void AppendDataValue(StringBuilder sb, string indent, string key, string value)
     {
+        var escapedKey = YamlSafeScalar.Escape(key);
+
         if (value.Contains('\n', StringComparison.Ordinal))
         {
             var innerIndent = indent + "  ";
             var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal);
             var indented = normalized.Replace("\n", "\n" + innerIndent, StringComparison.Ordinal);
-            sb.AppendLine($"{indent}{key}: |");
+            sb.AppendLine($"{indent}{escapedKey}: |");
             sb.AppendLine(innerIndent + indented);
             return;
         }
 
-        sb.Append($"{indent}{key}: ");
+        sb.Append($"{indent}{escapedKey}: ");
         AppendYamlString(sb, value);
         sb.AppendLine();
     }
@@ -851,7 +860,7 @@ internal static class KubernetesPropertyParser
                     continue;
 
                 sb.Append(innerIndent);
-                sb.AppendLine($"  - {command}");
+                sb.AppendLine($"  - {YamlSafeScalar.Escape(command)}");
             }
         }
 
@@ -878,12 +887,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {YamlSafeScalar.Escape(header.Name)}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {YamlSafeScalar.Escape(header.Value)}");
                     }
                 }
             }
@@ -921,7 +930,7 @@ internal static class KubernetesPropertyParser
                     continue;
 
                 sb.Append(innerIndent);
-                sb.AppendLine($"  - {command}");
+                sb.AppendLine($"  - {YamlSafeScalar.Escape(command)}");
             }
         }
 
@@ -948,12 +957,12 @@ internal static class KubernetesPropertyParser
                         continue;
 
                     sb.Append(httpIndent);
-                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {header.Name}");
+                    sb.AppendLine($"  - {KubernetesProbeActionPayloadProperties.Name}: {YamlSafeScalar.Escape(header.Name)}");
 
                     if (!string.IsNullOrWhiteSpace(header.Value))
                     {
                         sb.Append(httpIndent);
-                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {header.Value}");
+                        sb.AppendLine($"    {KubernetesProbeActionPayloadProperties.Value}: {YamlSafeScalar.Escape(header.Value)}");
                     }
                 }
             }
@@ -990,8 +999,9 @@ internal static class KubernetesPropertyParser
 
             AppendJsonElementYaml(sb, indent + "  ", doc.RootElement);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warning(ex, "Failed to parse JSON property {Key}", key);
         }
     }
 

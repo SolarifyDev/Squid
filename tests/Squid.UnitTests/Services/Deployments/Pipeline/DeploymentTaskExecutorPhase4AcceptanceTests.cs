@@ -24,7 +24,7 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 public class DeploymentTaskExecutorPhase4AcceptanceTests
 {
     [Fact]
-    public async Task CreateTaskActivityNode_UsesOctopusStyleTitle()
+    public async Task CreateTaskActivityNode_UsesSquidStyleTitle()
     {
         var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
         var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
@@ -179,6 +179,32 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Step 1: Deploy web");
         createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Action && x.Name == "Executing on SJ-US-AKS");
+    }
+
+    [Fact]
+    public async Task ExecuteDeploymentSteps_SyntheticStep_ActivityNodeHasNoStepPrefix()
+    {
+        var strategy = new RecordingStrategy();
+        var handler = new CoordinatedRunScriptHandler(new AsyncBarrier(1));
+        var createdNodes = new List<(DeploymentActivityLogNodeType NodeType, string Name)>();
+        var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
+        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("SJ-US-AKS", "web", transport, endpointJson: "endpoint-a") };
+
+        var syntheticStep = MakeStep("Acquire Packages", 1, null, "web", MakeAction("AcquireAction"));
+        syntheticStep.StepType = "AcquirePackages";
+
+        ctx.Steps = new List<DeploymentStepDto> { syntheticStep };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        createdNodes.ShouldContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name == "Acquire Packages");
+        createdNodes.ShouldNotContain(x => x.NodeType == DeploymentActivityLogNodeType.Step && x.Name.StartsWith("Step "));
     }
 
     [Theory]

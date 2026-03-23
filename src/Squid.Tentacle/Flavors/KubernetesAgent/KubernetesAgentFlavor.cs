@@ -2,6 +2,7 @@ using k8s;
 using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Health;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
@@ -74,7 +75,8 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             var pdbManager = new PodDisruptionBudgetManager(podOps, kubernetesSettings);
             pdbManager.EnsurePdbExists();
 
-            var podMonitorWithPdb = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings, kubernetesSettings, pdbManager);
+            var apiProbe = new KubernetesApiHealthProbe(podOps, kubernetesSettings);
+            var podMonitorWithPdb = new KubernetesPodMonitor(podMgr, scriptPodService, tentacleSettings, kubernetesSettings, pdbManager, apiProbe);
 
             var recoveryService = new ScriptRecoveryService();
             recoveryService.RecoverScripts(tentacleSettings.WorkspacePath, scriptPodService, podMgr, scriptPodService.IsolationMutex);
@@ -88,6 +90,9 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             backgroundTasks.Add(new ResilientBackgroundTask(new KubernetesPodWatcherBackgroundTask(podWatcher)));
 
             startupHooks.Add(new ClusterVersionDetector(k8sClient));
+
+            readinessChecks.Add(() => apiProbe.IsHealthy);
+            readinessChecks.Add(() => DiskSpaceChecker.HasSufficientSpace(tentacleSettings.WorkspacePath));
 
             var watchdogEnabled = string.Equals(Environment.GetEnvironmentVariable("WATCHDOG_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
 

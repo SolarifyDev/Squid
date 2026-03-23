@@ -36,7 +36,7 @@ public class PodLogEncryptionTests
     public void EncryptLine_ProducesPrefix()
     {
         var key = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-1");
-        var encrypted = PodLogEncryption.EncryptLine("hello world", key, 1);
+        var encrypted = PodLogEncryption.EncryptLine("hello world", key);
 
         encrypted.ShouldStartWith("SQUID_ENC|");
     }
@@ -45,7 +45,7 @@ public class PodLogEncryptionTests
     public void TryDecryptLine_RoundTrips()
     {
         var key = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-1");
-        var encrypted = PodLogEncryption.EncryptLine("sensitive deployment output", key, 42);
+        var encrypted = PodLogEncryption.EncryptLine("sensitive deployment output", key);
 
         var (success, plaintext) = PodLogEncryption.TryDecryptLine(encrypted, key);
 
@@ -91,20 +91,38 @@ public class PodLogEncryptionTests
         PodLogEncryption.IsEncryptedLine(null).ShouldBeFalse();
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(100)]
-    [InlineData(long.MaxValue)]
-    public void EncryptDecrypt_DifferentLineNumbers_AllRoundTrip(long lineNumber)
+    [Fact]
+    public void EncryptLine_SameInput_ProducesDifferentCiphertext()
     {
         var key = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-1");
-        var encrypted = PodLogEncryption.EncryptLine("test line", key, lineNumber);
 
-        var (success, plaintext) = PodLogEncryption.TryDecryptLine(encrypted, key);
+        var encrypted1 = PodLogEncryption.EncryptLine("test line", key);
+        var encrypted2 = PodLogEncryption.EncryptLine("test line", key);
 
-        success.ShouldBeTrue();
-        plaintext.ShouldBe("test line");
+        encrypted1.ShouldNotBe(encrypted2);
+
+        // Both should still round-trip correctly
+        var (s1, p1) = PodLogEncryption.TryDecryptLine(encrypted1, key);
+        var (s2, p2) = PodLogEncryption.TryDecryptLine(encrypted2, key);
+
+        s1.ShouldBeTrue();
+        s2.ShouldBeTrue();
+        p1.ShouldBe("test line");
+        p2.ShouldBe("test line");
+    }
+
+    [Fact]
+    public void EncryptLine_RandomNonce_Is12Bytes()
+    {
+        var key = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-1");
+        var encrypted = PodLogEncryption.EncryptLine("test", key);
+
+        // Format: SQUID_ENC|<hex(nonce + ciphertext + tag)>
+        var hex = encrypted.Substring("SQUID_ENC|".Length);
+        var combined = Convert.FromHexString(hex);
+
+        // First 12 bytes are the nonce
+        combined.Length.ShouldBeGreaterThanOrEqualTo(12 + 16); // nonce + tag minimum
     }
 
     [Fact]
@@ -112,7 +130,7 @@ public class PodLogEncryptionTests
     {
         var key1 = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-1");
         var key2 = PodLogEncryption.DeriveLogEncryptionKey(TestMachineKey, "ticket-2");
-        var encrypted = PodLogEncryption.EncryptLine("secret", key1, 1);
+        var encrypted = PodLogEncryption.EncryptLine("secret", key1);
 
         var (success, _) = PodLogEncryption.TryDecryptLine(encrypted, key2);
 

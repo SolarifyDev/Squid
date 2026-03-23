@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
+function B64D($s) { if ([string]::IsNullOrEmpty($s)) { return "" }; [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }
 
 # --- Configure kubectl context ---
 $kubeconfigPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "kubectl-config-$([Guid]::NewGuid().ToString('N')).yaml")
 $env:KUBECONFIG = $kubeconfigPath
 
-$kubectlExe = "{{KubectlExe}}"
+$kubectlExe = B64D "{{KubectlExe}}"
 if ([string]::IsNullOrEmpty($kubectlExe)) {
     $kubectlExe = "kubectl"
 }
@@ -17,10 +18,10 @@ try {
     $awsWebIdentityFile = $null
     $credFile = $null
 
-    $clusterUrl = "{{ClusterUrl}}"
-    $accountType = "{{AccountType}}"
-    $skipTls = "{{SkipTlsVerification}}"
-    $namespace = "{{Namespace}}"
+    $clusterUrl = B64D "{{ClusterUrl}}"
+    $accountType = B64D "{{AccountType}}"
+    $skipTls = B64D "{{SkipTlsVerification}}"
+    $namespace = B64D "{{Namespace}}"
     $clusterName = "squid-cluster"
     $contextName = "squid-context"
     $userName = "squid-user"
@@ -32,7 +33,7 @@ try {
         $clusterArgs += "--insecure-skip-tls-verify=true"
     }
 
-    $clusterCertificate = "{{ClusterCertificate}}"
+    $clusterCertificate = B64D "{{ClusterCertificate}}"
     if ($clusterCertificate -ne "") {
         $certPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "ca-cert-$([Guid]::NewGuid().ToString('N')).pem")
         [System.IO.File]::WriteAllText($certPath, $clusterCertificate)
@@ -46,22 +47,22 @@ try {
     switch ($accountType) {
         "Token" {
             $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-token-$([Guid]::NewGuid().ToString('N'))")
-            [System.IO.File]::WriteAllText($credFile, "{{Token}}")
+            [System.IO.File]::WriteAllText($credFile, (B64D "{{Token}}"))
             $token = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName --token="$token"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "UsernamePassword" {
             $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-pass-$([Guid]::NewGuid().ToString('N'))")
-            [System.IO.File]::WriteAllText($credFile, "{{Password}}")
-            $authUsername = "{{Username}}"
+            [System.IO.File]::WriteAllText($credFile, (B64D "{{Password}}"))
+            $authUsername = B64D "{{Username}}"
             $authPassword = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName --username="$authUsername" --password="$authPassword"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "ClientCertificate" {
-            $clientCert = "{{ClientCertificateData}}"
-            $clientKey = "{{ClientCertificateKeyData}}"
+            $clientCert = B64D "{{ClientCertificateData}}"
+            $clientKey = B64D "{{ClientCertificateKeyData}}"
             $clientCertPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "client-cert-$([Guid]::NewGuid().ToString('N')).pem")
             $clientKeyPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "client-key-$([Guid]::NewGuid().ToString('N')).pem")
             [System.IO.File]::WriteAllText($clientCertPath, $clientCert)
@@ -70,11 +71,11 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "AmazonWebServicesAccount" {
-            $awsClusterName = "{{AwsClusterName}}"
-            $awsRegion = "{{AwsRegion}}"
+            $awsClusterName = B64D "{{AwsClusterName}}"
+            $awsRegion = B64D "{{AwsRegion}}"
             $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-aws-$([Guid]::NewGuid().ToString('N'))")
-            [System.IO.File]::WriteAllText($credFile, "{{SecretKey}}")
-            $env:AWS_ACCESS_KEY_ID = "{{AccessKey}}"
+            [System.IO.File]::WriteAllText($credFile, (B64D "{{SecretKey}}"))
+            $env:AWS_ACCESS_KEY_ID = B64D "{{AccessKey}}"
             $env:AWS_SECRET_ACCESS_KEY = [System.IO.File]::ReadAllText($credFile).Trim()
             & $kubectlExe config set-credentials $userName `
                 --exec-api-version=client.authentication.k8s.io/v1beta1 `
@@ -83,11 +84,11 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "AmazonWebServicesOidcAccount" {
-            $awsClusterName = "{{AwsClusterName}}"
-            $awsRegion = "{{AwsRegion}}"
-            $awsRoleArn = "{{AwsRoleArn}}"
+            $awsClusterName = B64D "{{AwsClusterName}}"
+            $awsRegion = B64D "{{AwsRegion}}"
+            $awsRoleArn = B64D "{{AwsRoleArn}}"
             $awsWebIdentityFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "aws-token-$([Guid]::NewGuid().ToString('N'))")
-            [System.IO.File]::WriteAllText($awsWebIdentityFile, "{{AwsWebIdentityToken}}")
+            [System.IO.File]::WriteAllText($awsWebIdentityFile, (B64D "{{AwsWebIdentityToken}}"))
             $env:AWS_WEB_IDENTITY_TOKEN_FILE = $awsWebIdentityFile
             $env:AWS_ROLE_ARN = $awsRoleArn
             & $kubectlExe config set-credentials $userName `
@@ -104,13 +105,13 @@ try {
             [System.IO.Directory]::CreateDirectory($azureConfigDir) | Out-Null
             $env:AZURE_CONFIG_DIR = $azureConfigDir
             $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-azure-$([Guid]::NewGuid().ToString('N'))")
-            [System.IO.File]::WriteAllText($credFile, "{{AzureKey}}")
+            [System.IO.File]::WriteAllText($credFile, (B64D "{{AzureKey}}"))
             $azureKey = [System.IO.File]::ReadAllText($credFile).Trim()
-            & az login --service-principal -u "{{AzureClientId}}" -p "$azureKey" --tenant "{{AzureTenantId}}"
+            & az login --service-principal -u (B64D "{{AzureClientId}}") -p "$azureKey" --tenant (B64D "{{AzureTenantId}}")
             if ($LASTEXITCODE -ne 0) { throw "az login failed" }
-            & az account set --subscription "{{AzureSubscriptionId}}"
+            & az account set --subscription (B64D "{{AzureSubscriptionId}}")
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
-            & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
+            & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
             $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
             if ($kubeloginPath) {
@@ -124,12 +125,12 @@ try {
             $azureConfigDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "azure-cli-$([Guid]::NewGuid().ToString('N'))")
             [System.IO.Directory]::CreateDirectory($azureConfigDir) | Out-Null
             $env:AZURE_CONFIG_DIR = $azureConfigDir
-            $azureOidcToken = "{{AzureOidcToken}}"
-            & az login --service-principal --federated-token $azureOidcToken -u "{{AzureClientId}}" --tenant "{{AzureTenantId}}"
+            $azureOidcToken = B64D "{{AzureOidcToken}}"
+            & az login --service-principal --federated-token $azureOidcToken -u (B64D "{{AzureClientId}}") --tenant (B64D "{{AzureTenantId}}")
             if ($LASTEXITCODE -ne 0) { throw "az login (OIDC) failed" }
-            & az account set --subscription "{{AzureSubscriptionId}}"
+            & az account set --subscription (B64D "{{AzureSubscriptionId}}")
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
-            & az aks get-credentials --resource-group "{{AksClusterResourceGroup}}" --name "{{AksClusterName}}" --file $kubeconfigPath --overwrite-existing
+            & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
             $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
             if ($kubeloginPath) {
@@ -141,15 +142,15 @@ try {
         }
         "GoogleCloudAccount" {
             $gkeKeyFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "gcp-key-$([Guid]::NewGuid().ToString('N')).json")
-            [System.IO.File]::WriteAllText($gkeKeyFile, "{{GcpJsonKey}}")
+            [System.IO.File]::WriteAllText($gkeKeyFile, (B64D "{{GcpJsonKey}}"))
             & gcloud auth activate-service-account --key-file="$gkeKeyFile"
             if ($LASTEXITCODE -ne 0) { throw "gcloud auth failed" }
-            $gkeZone = "{{GkeZone}}"
-            $gkeRegion = "{{GkeRegion}}"
-            $gkeArgs = @("container", "clusters", "get-credentials", "{{GkeClusterName}}", "--project={{GkeProject}}")
+            $gkeZone = B64D "{{GkeZone}}"
+            $gkeRegion = B64D "{{GkeRegion}}"
+            $gkeArgs = @("container", "clusters", "get-credentials", (B64D "{{GkeClusterName}}"), "--project=$(B64D '{{GkeProject}}')")
             if ($gkeZone -ne "") { $gkeArgs += "--zone=$gkeZone" }
             if ($gkeRegion -ne "") { $gkeArgs += "--region=$gkeRegion" }
-            $gkeInternal = "{{GkeUseClusterInternalIp}}"
+            $gkeInternal = B64D "{{GkeUseClusterInternalIp}}"
             if ($gkeInternal -eq "True") { $gkeArgs += "--internal-ip" }
             $env:KUBECONFIG = $kubeconfigPath
             & gcloud @gkeArgs
@@ -158,10 +159,10 @@ try {
     }
 
     # --- Proxy configuration ---
-    $proxyHost = "{{ProxyHost}}"
-    $proxyPort = "{{ProxyPort}}"
-    $proxyUser = "{{ProxyUsername}}"
-    $proxyPass = "{{ProxyPassword}}"
+    $proxyHost = B64D "{{ProxyHost}}"
+    $proxyPort = B64D "{{ProxyPort}}"
+    $proxyUser = B64D "{{ProxyUsername}}"
+    $proxyPass = B64D "{{ProxyPassword}}"
     if ($proxyHost -ne "") {
         if ($proxyUser -ne "") {
             $env:HTTPS_PROXY = "http://${proxyUser}:${proxyPass}@${proxyHost}:${proxyPort}"

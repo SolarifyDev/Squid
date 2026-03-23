@@ -28,7 +28,7 @@ public class BlueGreenResourceGeneratorTests
 
         result.ShouldContainKey("deployment.yaml");
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
-        yaml.ShouldContain("name: test-deploy-green");
+        yaml.ShouldContain("name: \"test-deploy-green\"");
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class BlueGreenResourceGeneratorTests
         var result = await _compositor.GenerateAsync(step, action, CancellationToken.None);
 
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
-        yaml.ShouldContain("squid.io/deployment-slot: green");
+        yaml.ShouldContain("\"squid.io/deployment-slot\": \"green\"");
     }
 
     [Fact]
@@ -53,8 +53,8 @@ public class BlueGreenResourceGeneratorTests
         var result = await _compositor.GenerateAsync(step, action, CancellationToken.None);
 
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
-        yaml.ShouldContain("name: test-deploy-green");
-        yaml.ShouldContain("squid.io/deployment-slot: green");
+        yaml.ShouldContain("name: \"test-deploy-green\"");
+        yaml.ShouldContain("\"squid.io/deployment-slot\": \"green\"");
     }
 
     [Fact]
@@ -67,8 +67,8 @@ public class BlueGreenResourceGeneratorTests
         var result = await _compositor.GenerateAsync(step, action, CancellationToken.None);
 
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
-        yaml.ShouldContain("name: test-deploy-blue");
-        yaml.ShouldContain("squid.io/deployment-slot: blue");
+        yaml.ShouldContain("name: \"test-deploy-blue\"");
+        yaml.ShouldContain("\"squid.io/deployment-slot\": \"blue\"");
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public class BlueGreenResourceGeneratorTests
 
         result.ShouldContainKey("bluegreen-scaledown.sh");
         var script = Encoding.UTF8.GetString(result["bluegreen-scaledown.sh"]);
-        script.ShouldContain("kubectl scale deployment test-deploy-blue");
+        script.ShouldContain("kubectl scale deployment \"test-deploy-blue\"");
         script.ShouldContain("--replicas=0");
     }
 
@@ -127,7 +127,7 @@ public class BlueGreenResourceGeneratorTests
         result.ShouldNotContainKey("bluegreen-scaledown.sh");
 
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
-        yaml.ShouldContain("name: test-deploy");
+        yaml.ShouldContain("name: \"test-deploy\"");
         yaml.ShouldNotContain("test-deploy-green");
         yaml.ShouldNotContain("test-deploy-blue");
     }
@@ -137,8 +137,8 @@ public class BlueGreenResourceGeneratorTests
     {
         var script = BlueGreenResourceGenerator.GenerateSwitchScript("my-svc", "production", "green");
 
-        script.ShouldContain("-n production");
-        script.ShouldContain("kubectl patch service my-svc");
+        script.ShouldContain("-n \"production\"");
+        script.ShouldContain("kubectl patch service \"my-svc\"");
     }
 
     [Fact]
@@ -146,8 +146,8 @@ public class BlueGreenResourceGeneratorTests
     {
         var script = BlueGreenResourceGenerator.GenerateScaleDownScript("my-deploy-blue", "production");
 
-        script.ShouldContain("-n production");
-        script.ShouldContain("kubectl scale deployment my-deploy-blue");
+        script.ShouldContain("-n \"production\"");
+        script.ShouldContain("kubectl scale deployment \"my-deploy-blue\"");
     }
 
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateMinimal()

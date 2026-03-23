@@ -43,7 +43,7 @@ public class AzureOidcCredentials
     public string SubscriptionNumber { get; set; }
     public string ClientId { get; set; }
     public string TenantId { get; set; }
-    public string Audience { get; set; }
+    public string Jwt { get; set; }
 }
 
 public class GcpCredentials
@@ -55,4 +55,13 @@ public class AwsOidcCredentials
 {
     public string RoleArn { get; set; }
     public string WebIdentityToken { get; set; }
+}
+
+public class AwsRoleCredentials
+{
+    public string AccessKey { get; set; }
+    public string SecretKey { get; set; }
+    public string RoleArn { get; set; }
+    public string SessionDuration { get; set; }
+    public string ExternalId { get; set; }
 }

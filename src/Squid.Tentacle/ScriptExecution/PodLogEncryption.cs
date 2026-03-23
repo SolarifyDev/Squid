@@ -17,10 +17,10 @@ public static class PodLogEncryption
         return Rfc2898DeriveBytes.Pbkdf2(machineKey, salt, Pbkdf2Iterations, HashAlgorithmName.SHA256, KeyLength);
     }
 
-    public static string EncryptLine(string line, byte[] key, long lineNumber)
+    public static string EncryptLine(string line, byte[] key)
     {
         var nonce = new byte[NonceLength];
-        BitConverter.TryWriteBytes(nonce.AsSpan(0, 8), lineNumber);
+        RandomNumberGenerator.Fill(nonce);
 
         var plaintext = Encoding.UTF8.GetBytes(line);
         var ciphertext = new byte[plaintext.Length];

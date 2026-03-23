@@ -59,6 +59,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         try
         {
             await process.WaitForExitAsync(effectiveCt).ConfigureAwait(false);
+            process.WaitForExit(); // Flush async output/error readers
         }
         catch (OperationCanceledException) when (timeoutCts is { IsCancellationRequested: true } && !ct.IsCancellationRequested)
         {

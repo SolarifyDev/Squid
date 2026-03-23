@@ -1,5 +1,6 @@
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -26,11 +27,13 @@ public class KubernetesKustomizeActionHandler : IActionHandler
         var additionalArgs = ctx.Action.GetProperty(KubernetesKustomizeProperties.AdditionalArgs) ?? string.Empty;
         var applyFlags = BuildApplyFlags(ctx.Action);
 
+        string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
+
         var scriptBody = template
-            .Replace("{{OverlayPath}}", overlayPath, StringComparison.Ordinal)
-            .Replace("{{KustomizeExe}}", customKustomizePath, StringComparison.Ordinal)
-            .Replace("{{AdditionalArgs}}", additionalArgs, StringComparison.Ordinal)
-            .Replace("{{ApplyFlags}}", applyFlags, StringComparison.Ordinal);
+            .Replace("{{OverlayPath}}", B64(overlayPath), StringComparison.Ordinal)
+            .Replace("{{KustomizeExe}}", B64(customKustomizePath), StringComparison.Ordinal)
+            .Replace("{{AdditionalArgs}}", B64(additionalArgs), StringComparison.Ordinal)
+            .Replace("{{ApplyFlags}}", B64(applyFlags), StringComparison.Ordinal);
 
         var result = new ActionExecutionResult
         {
@@ -53,7 +56,7 @@ public class KubernetesKustomizeActionHandler : IActionHandler
         if (action.GetProperty(KubernetesProperties.ServerSideApplyEnabled) == KubernetesBooleanValues.True)
         {
             var fieldManager = action.GetProperty(KubernetesProperties.ServerSideApplyFieldManager) ?? "squid-deploy";
-            flags += $"--server-side --field-manager={fieldManager}";
+            flags += $"--server-side --field-manager=\"{fieldManager}\"";
 
             if (action.GetProperty(KubernetesProperties.ServerSideApplyForceConflicts) == KubernetesBooleanValues.True)
                 flags += " --force-conflicts";

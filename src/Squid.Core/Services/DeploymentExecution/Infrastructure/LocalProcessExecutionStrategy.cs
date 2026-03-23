@@ -26,11 +26,13 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(
         ScriptExecutionRequest request, CancellationToken ct)
     {
-        var workDir = CreateWorkDirectory();
-        var plan = ScriptExecutionPlanFactory.Create(request);
+        string workDir = null;
 
         try
         {
+            workDir = CreateWorkDirectory();
+            var plan = ScriptExecutionPlanFactory.Create(request);
+
             if (plan is PackagedPayloadExecutionPlan packagedPlan)
                 return await ExecuteCalamariLocallyAsync(packagedPlan, workDir, ct).ConfigureAwait(false);
 
@@ -38,7 +40,8 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         }
         finally
         {
-            CleanupWorkDirectory(workDir);
+            if (workDir != null)
+                CleanupWorkDirectory(workDir);
         }
     }
 

@@ -11,6 +11,7 @@ public class DeploymentEventContext
     // Step correlation
     public int StepDisplayOrder { get; init; }
     public string StepName { get; init; }
+    public string StepType { get; init; }
 
     // Target
     public string MachineName { get; init; }

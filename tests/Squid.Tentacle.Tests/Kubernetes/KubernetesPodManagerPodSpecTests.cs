@@ -189,11 +189,39 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     [Fact]
-    public void CreatePod_DefaultSettings_NoSecurityContext()
+    public void CreatePod_DefaultSettings_RunAsNonRoot()
     {
         var pod = CaptureCreatedPod();
 
-        pod.Spec.SecurityContext.ShouldBeNull();
+        pod.Spec.SecurityContext.ShouldNotBeNull();
+        pod.Spec.SecurityContext.RunAsNonRoot.ShouldBe(true);
+    }
+
+    [Fact]
+    public void CreatePod_DefaultSettings_DropsAllCapabilities()
+    {
+        var pod = CaptureCreatedPod();
+
+        var sc = pod.Spec.Containers[0].SecurityContext;
+        sc.ShouldNotBeNull();
+        sc.AllowPrivilegeEscalation.ShouldBe(false);
+        sc.Capabilities.Drop.ShouldContain("ALL");
+    }
+
+    [Fact]
+    public void CreatePod_DefaultSettings_NoPrivilegeEscalation()
+    {
+        var pod = CaptureCreatedPod();
+
+        pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation.ShouldBe(false);
+    }
+
+    [Fact]
+    public void CreatePod_ExplicitRunAsUser_UsesConfigured()
+    {
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodRunAsUser = 1000);
+
+        pod.Spec.SecurityContext.RunAsUser.ShouldBe(1000);
     }
 
     [Fact]

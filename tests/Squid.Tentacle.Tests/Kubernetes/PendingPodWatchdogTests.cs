@@ -71,6 +71,9 @@ public class PendingPodWatchdogTests : IDisposable
             Status = new V1PodStatus { Phase = "Pending" }
         });
 
+        _ops.Setup(o => o.ReadPodStatus(podName, "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Pending" } });
+
         _monitor.FailPendingPods();
 
         _scriptPodService.ActiveScripts.ContainsKey(ticketId).ShouldBeFalse();
@@ -166,6 +169,9 @@ public class PendingPodWatchdogTests : IDisposable
             Status = new V1PodStatus { Phase = "Pending" }
         });
 
+        _ops.Setup(o => o.ReadPodStatus(podName, "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Pending" } });
+
         _monitor.FailPendingPods();
 
         var result = _scriptPodService.CompleteScript(new CompleteScriptCommand(ticket, 0));
@@ -214,6 +220,9 @@ public class PendingPodWatchdogTests : IDisposable
             },
             Status = new V1PodStatus { Phase = "Pending" }
         });
+
+        _ops.Setup(o => o.ReadPodStatus(podName, "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Pending" } });
 
         monitor.FailPendingPods();
 

@@ -41,4 +41,9 @@ public class ScriptPodContext
 
     // K8s event injection
     public ConcurrentQueue<ProcessOutput> InjectedEvents { get; } = new();
+
+    // Log streaming
+    public ConcurrentQueue<string> StreamedLogLines { get; } = new();
+    public CancellationTokenSource? LogStreamCts { get; set; }
+    public Task? LogStreamTask { get; set; }
 }

@@ -22,7 +22,7 @@ public sealed partial class ExecuteStepsPhase
         if (eligibleActions.Count == 0 && step.Actions.Count > 0)
             return stepResult;
 
-        await lifecycle.EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = step.Name, StepDisplayOrder = stepSortOrder }), ct).ConfigureAwait(false);
+        await lifecycle.EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = step.Name, StepDisplayOrder = stepSortOrder, StepType = step.StepType }), ct).ConfigureAwait(false);
 
         await EmitSkippedActionEventsAsync(skippedActions, stepSortOrder, ct).ConfigureAwait(false);
 
@@ -164,7 +164,7 @@ public sealed partial class ExecuteStepsPhase
             if (strategy == null)
                 throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
 
-            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, stepTimeout);
+            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, step, stepTimeout);
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
             CaptureOutputVariables(actionResult, execResult.LogLines);
@@ -243,6 +243,13 @@ public sealed partial class ExecuteStepsPhase
         }
     }
 
+    private static readonly string[] ReservedPrefixes = { "Squid.", "Octopus.", "System." };
+
+    private static bool IsReservedName(string name)
+    {
+        return ReservedPrefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void CollectOutputVariables(StepExecutionResult result, string stepName, ActionExecutionResult actionResult)
     {
         foreach (var kv in actionResult.OutputVariables)
@@ -251,7 +258,9 @@ public sealed partial class ExecuteStepsPhase
             var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
-            result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
+
+            if (!IsReservedName(kv.Key))
+                result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
         }
     }
 

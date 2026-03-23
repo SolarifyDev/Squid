@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
@@ -224,7 +225,7 @@ public class GuidedFailureExcludeMachineTests
                         new()
                         {
                             Id = 1, StepId = 1, ActionOrder = 1, Name = "Action 1",
-                            ActionType = "Octopus.Script", IsDisabled = false,
+                            ActionType = SpecialVariables.ActionTypes.Script, IsDisabled = false,
                             Properties = new List<DeploymentActionPropertyDto>(),
                             Environments = new List<int>(),
                             ExcludedEnvironments = new List<int>(),

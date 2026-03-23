@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
@@ -511,7 +512,7 @@ public class KubernetesApiEndpointVariableContributorTests
                         {
                             new()
                             {
-                                Id = 1, Name = "Deploy", ActionType = "Octopus.KubernetesDeployContainers",
+                                Id = 1, Name = "Deploy", ActionType = SpecialVariables.ActionTypes.KubernetesDeployContainers,
                                 ActionOrder = 1,
                                 Properties = new Dictionary<string, string>
                                 {
@@ -541,7 +542,7 @@ public class KubernetesApiEndpointVariableContributorTests
                         {
                             new()
                             {
-                                Id = 1, Name = "Script", ActionType = "Octopus.Script",
+                                Id = 1, Name = "Script", ActionType = SpecialVariables.ActionTypes.Script,
                                 ActionOrder = 1
                             }
                         }

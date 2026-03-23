@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+b64d() { echo -n "$1" | base64 --decode; }
 
 # --- Kustomize deploy ---
-OVERLAY_PATH="{{OverlayPath}}"
-KUSTOMIZE_EXE="{{KustomizeExe}}"
-ADDITIONAL_ARGS="{{AdditionalArgs}}"
-APPLY_FLAGS="{{ApplyFlags}}"
+OVERLAY_PATH="$(b64d '{{OverlayPath}}')"
+KUSTOMIZE_EXE="$(b64d '{{KustomizeExe}}')"
+ADDITIONAL_ARGS="$(b64d '{{AdditionalArgs}}')"
+APPLY_FLAGS="$(b64d '{{ApplyFlags}}')"
 
 if [ -z "$KUSTOMIZE_EXE" ]; then
     KUSTOMIZE_EXE="kubectl kustomize"

@@ -27,7 +27,7 @@ var terminator = new PodTerminator(k8sClient, podName, podNamespace);
 
 Console.WriteLine($"Starting NFS Watchdog. Directory={directory}, Loop={loopSeconds}s, Timeout={timeout}s");
 
-// Main ticker loop (aligned with Octopus ticker)
+// Main ticker loop (aligned with Squid ticker)
 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(loopSeconds));
 
 while (await timer.WaitForNextTickAsync(cts.Token).ConfigureAwait(false))

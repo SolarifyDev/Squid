@@ -70,6 +70,7 @@ public partial class KubernetesPodManager
                         WorkingDir = $"/squid/work/{ticketId}",
                         VolumeMounts = mainVolumeMounts,
                         Env = BuildProxyEnvVars(),
+                        SecurityContext = BuildContainerSecurityContext(),
                         Resources = new V1ResourceRequirements
                         {
                             Requests = new Dictionary<string, ResourceQuantity>
@@ -356,18 +357,27 @@ public partial class KubernetesPodManager
 
     private V1PodSecurityContext BuildPodSecurityContext()
     {
-        if (_settings.ScriptPodRunAsUser == null && !_settings.ScriptPodRunAsNonRoot)
-            return null;
-
-        var ctx = new V1PodSecurityContext();
+        var ctx = new V1PodSecurityContext
+        {
+            RunAsNonRoot = _settings.ScriptPodRunAsNonRoot || !_settings.ScriptPodRunAsUser.HasValue
+        };
 
         if (_settings.ScriptPodRunAsUser.HasValue)
             ctx.RunAsUser = _settings.ScriptPodRunAsUser.Value;
 
-        if (_settings.ScriptPodRunAsNonRoot)
-            ctx.RunAsNonRoot = true;
-
         return ctx;
+    }
+
+    private static V1SecurityContext BuildContainerSecurityContext()
+    {
+        return new V1SecurityContext
+        {
+            AllowPrivilegeEscalation = false,
+            Capabilities = new V1Capabilities
+            {
+                Drop = new List<string> { "ALL" }
+            }
+        };
     }
 
     private List<V1LocalObjectReference> BuildImagePullSecrets()

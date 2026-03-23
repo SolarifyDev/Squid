@@ -6,23 +6,23 @@ namespace Squid.Tentacle.Kubernetes;
 
 public class PodStateCache
 {
-    private readonly ConcurrentDictionary<string, V1Pod> _cache = new(StringComparer.Ordinal);
+    private ConcurrentDictionary<string, V1Pod> _cache = new(StringComparer.Ordinal);
 
     public int Count => _cache.Count;
 
     public void HandleWatchEvent(WatchEventType type, V1Pod pod)
     {
-        var podName = pod.Metadata?.Name;
-        if (string.IsNullOrEmpty(podName)) return;
+        var key = CacheKey(pod);
+        if (string.IsNullOrEmpty(pod.Metadata?.Name)) return;
 
         if (type is WatchEventType.Added or WatchEventType.Modified)
-            _cache[podName] = pod;
+            _cache[key] = pod;
         else if (type is WatchEventType.Deleted)
-            _cache.TryRemove(podName, out _);
+            _cache.TryRemove(key, out _);
     }
 
-    public bool TryGetPod(string podName, out V1Pod pod)
-        => _cache.TryGetValue(podName, out pod);
+    public bool TryGetPod(string podName, out V1Pod pod, string ns = null)
+        => _cache.TryGetValue(CacheKey(podName, ns), out pod);
 
     public bool TryGetPodByTicket(string ticketId, out V1Pod pod)
     {
@@ -43,18 +43,26 @@ public class PodStateCache
 
     public void Invalidate()
     {
-        _cache.Clear();
+        Interlocked.Exchange(ref _cache, new ConcurrentDictionary<string, V1Pod>(StringComparer.Ordinal));
     }
 
     public void Populate(IEnumerable<V1Pod> pods)
     {
-        _cache.Clear();
+        var newCache = new ConcurrentDictionary<string, V1Pod>(StringComparer.Ordinal);
 
         foreach (var pod in pods)
         {
-            var name = pod.Metadata?.Name;
-            if (!string.IsNullOrEmpty(name))
-                _cache[name] = pod;
+            var key = CacheKey(pod);
+            if (!string.IsNullOrEmpty(pod.Metadata?.Name))
+                newCache[key] = pod;
         }
+
+        Interlocked.Exchange(ref _cache, newCache);
     }
+
+    private static string CacheKey(V1Pod pod)
+        => $"{pod.Metadata?.NamespaceProperty ?? "default"}/{pod.Metadata?.Name}";
+
+    private static string CacheKey(string podName, string ns = null)
+        => $"{ns ?? "default"}/{podName}";
 }

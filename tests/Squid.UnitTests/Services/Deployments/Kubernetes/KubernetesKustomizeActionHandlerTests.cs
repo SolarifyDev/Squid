@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -73,7 +74,7 @@ public class KubernetesKustomizeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("./overlays/production");
+        result.ScriptBody.ShouldContain(ShellEscapeHelper.Base64Encode("./overlays/production"));
     }
 
     [Fact]
@@ -88,7 +89,7 @@ public class KubernetesKustomizeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("/usr/bin/kustomize build");
+        result.ScriptBody.ShouldContain(ShellEscapeHelper.Base64Encode("/usr/bin/kustomize build"));
     }
 
     [Fact]
@@ -103,7 +104,7 @@ public class KubernetesKustomizeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("--enable-helm");
+        result.ScriptBody.ShouldContain(ShellEscapeHelper.Base64Encode("--enable-helm"));
     }
 
     [Fact]
@@ -118,7 +119,7 @@ public class KubernetesKustomizeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("--server-side");
+        result.ScriptBody.ShouldContain(ShellEscapeHelper.Base64Encode("--server-side --field-manager=\"squid-deploy\""));
     }
 
     [Fact]

@@ -202,7 +202,7 @@ public class HalibutMachineExecutionStrategyTests
             CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.Bash), Times.Once);
+        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.PowerShell), Times.Once);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
             scriptClient.Object,
@@ -273,6 +273,58 @@ public class HalibutMachineExecutionStrategyTests
 
         capturedCommand.ShouldNotBeNull();
         capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(10));
+    }
+
+    // === Ticket ID Generation ===
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("calamari-run-script")]
+    public async Task ExecuteScriptAsync_GeneratesTicketId_PassedToCommand(string calamariCommand)
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient(machine.Uri);
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("ticket-id-check"));
+
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.TaskId.ShouldNotBeNullOrEmpty();
+        capturedCommand.TaskId.Length.ShouldBe(32); // Guid without hyphens
+    }
+
+    // === Deterministic Ticket ID ===
+
+    [Fact]
+    public void GenerateTicketId_SameInputs_ProducesSameResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+
+        id1.ShouldBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentMachineId_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 43);
+
+        id1.ShouldNotBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentStepName_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Rollback", "RunScript", 42);
+
+        id1.ShouldNotBe(id2);
     }
 
     // === Helpers ===

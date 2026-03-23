@@ -111,6 +111,59 @@ public class PodStateCacheTests
         _cache.TryGetPod("new-pod", out _).ShouldBeTrue();
     }
 
+    // ========== Namespace-Aware Keys ==========
+
+    [Fact]
+    public void SameName_DifferentNamespace_BothCached()
+    {
+        _cache.HandleWatchEvent(WatchEventType.Added, MakePodWithNs("script-1", "ns-a", "t1", "Running"));
+        _cache.HandleWatchEvent(WatchEventType.Added, MakePodWithNs("script-1", "ns-b", "t2", "Pending"));
+
+        _cache.Count.ShouldBe(2);
+        _cache.TryGetPod("script-1", out var podA, "ns-a").ShouldBeTrue();
+        podA.Status.Phase.ShouldBe("Running");
+        _cache.TryGetPod("script-1", out var podB, "ns-b").ShouldBeTrue();
+        podB.Status.Phase.ShouldBe("Pending");
+    }
+
+    [Fact]
+    public void TryGetPod_WithNamespace_ReturnsCorrectPod()
+    {
+        _cache.HandleWatchEvent(WatchEventType.Added, MakePodWithNs("pod-1", "custom-ns", "t1", "Running"));
+
+        _cache.TryGetPod("pod-1", out var pod, "custom-ns").ShouldBeTrue();
+        pod.Metadata.Name.ShouldBe("pod-1");
+    }
+
+    [Fact]
+    public void TryGetPod_WrongNamespace_ReturnsFalse()
+    {
+        _cache.HandleWatchEvent(WatchEventType.Added, MakePodWithNs("pod-1", "ns-a", "t1", "Running"));
+
+        _cache.TryGetPod("pod-1", out _, "ns-b").ShouldBeFalse();
+    }
+
+    // ========== Atomic Swap ==========
+
+    [Fact]
+    public void Populate_AtomicSwap_NoMissedReads()
+    {
+        var pods = Enumerable.Range(0, 100)
+            .Select(i => MakePod($"pod-{i}", $"t-{i}", "Running"))
+            .ToList();
+
+        _cache.Populate(pods);
+
+        var readSuccesses = 0;
+        Parallel.For(0, 100, i =>
+        {
+            if (_cache.TryGetPod($"pod-{i}", out _))
+                Interlocked.Increment(ref readSuccesses);
+        });
+
+        readSuccesses.ShouldBe(100);
+    }
+
     private static V1Pod MakePod(string name, string ticketId, string phase)
     {
         return new V1Pod
@@ -118,6 +171,20 @@ public class PodStateCacheTests
             Metadata = new V1ObjectMeta
             {
                 Name = name,
+                Labels = new Dictionary<string, string> { ["squid.io/ticket-id"] = ticketId }
+            },
+            Status = new V1PodStatus { Phase = phase }
+        };
+    }
+
+    private static V1Pod MakePodWithNs(string name, string ns, string ticketId, string phase)
+    {
+        return new V1Pod
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = name,
+                NamespaceProperty = ns,
                 Labels = new Dictionary<string, string> { ["squid.io/ticket-id"] = ticketId }
             },
             Status = new V1PodStatus { Phase = phase }

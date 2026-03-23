@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Serilog;
 using Squid.Core.Extensions;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -69,9 +70,9 @@ internal static class KubernetesResourceWaitBuilder
                         resources.Add((kindMatch.Groups[1].Value.Trim(), nameMatch.Groups[1].Value.Trim()));
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Parse failure should not block deployment
+                Log.Warning(ex, "Failed to parse wait resource specification");
             }
         }
 
@@ -83,12 +84,12 @@ internal static class KubernetesResourceWaitBuilder
         if (syntax == ScriptSyntax.Bash)
         {
             sb.AppendLine($"echo \"Waiting for rollout: {kind}/{name}\"");
-            sb.AppendLine($"kubectl rollout status {kind.ToLowerInvariant()}/{name} -n \"{namespace_}\" --timeout={timeout}s");
+            sb.AppendLine($"kubectl rollout status \"{kind.ToLowerInvariant()}/{name}\" -n \"{namespace_}\" --timeout={timeout}s");
         }
         else
         {
             sb.AppendLine($"Write-Host \"Waiting for rollout: {kind}/{name}\"");
-            sb.AppendLine($"kubectl rollout status {kind.ToLowerInvariant()}/{name} -n \"{namespace_}\" --timeout={timeout}s");
+            sb.AppendLine($"kubectl rollout status \"{kind.ToLowerInvariant()}/{name}\" -n \"{namespace_}\" --timeout={timeout}s");
             sb.AppendLine("if ($LASTEXITCODE -ne 0) { throw \"Rollout status check failed for " + $"{kind}/{name}" + "\" }");
         }
     }
@@ -98,12 +99,12 @@ internal static class KubernetesResourceWaitBuilder
         if (syntax == ScriptSyntax.Bash)
         {
             sb.AppendLine($"echo \"Waiting for completion: {kind}/{name}\"");
-            sb.AppendLine($"kubectl wait --for=condition=complete {kind.ToLowerInvariant()}/{name} -n \"{namespace_}\" --timeout={timeout}s");
+            sb.AppendLine($"kubectl wait --for=condition=complete \"{kind.ToLowerInvariant()}/{name}\" -n \"{namespace_}\" --timeout={timeout}s");
         }
         else
         {
             sb.AppendLine($"Write-Host \"Waiting for completion: {kind}/{name}\"");
-            sb.AppendLine($"kubectl wait --for=condition=complete {kind.ToLowerInvariant()}/{name} -n \"{namespace_}\" --timeout={timeout}s");
+            sb.AppendLine($"kubectl wait --for=condition=complete \"{kind.ToLowerInvariant()}/{name}\" -n \"{namespace_}\" --timeout={timeout}s");
             sb.AppendLine("if ($LASTEXITCODE -ne 0) { throw \"Wait failed for " + $"{kind}/{name}" + "\" }");
         }
     }

@@ -79,9 +79,9 @@ internal sealed class BlueGreenResourceGenerator
         sb.AppendLine();
         sb.AppendLine("# Blue/Green: patch the Service selector to point to the new deployment slot.");
 
-        var nsFlag = string.IsNullOrWhiteSpace(namespaceName) ? "" : $" -n {namespaceName}";
+        var nsFlag = string.IsNullOrWhiteSpace(namespaceName) ? "" : $" -n \"{namespaceName}\"";
 
-        sb.AppendLine($"kubectl patch service {serviceName}{nsFlag} --type='json' \\");
+        sb.AppendLine($"kubectl patch service \"{serviceName}\"{nsFlag} --type='json' \\");
         sb.AppendLine($"  -p='[{{\"op\": \"add\", \"path\": \"/spec/selector/{KubernetesLabelKeys.DeploymentSlot.Replace("/", "~1")}\", \"value\": \"{newSlot}\"}}]'");
         sb.AppendLine();
         sb.AppendLine($"echo \"Service {serviceName} selector patched to slot: {newSlot}\"");
@@ -97,10 +97,10 @@ internal sealed class BlueGreenResourceGenerator
         sb.AppendLine();
         sb.AppendLine("# Blue/Green: scale down the old deployment after the switch.");
 
-        var nsFlag = string.IsNullOrWhiteSpace(namespaceName) ? "" : $" -n {namespaceName}";
+        var nsFlag = string.IsNullOrWhiteSpace(namespaceName) ? "" : $" -n \"{namespaceName}\"";
 
-        sb.AppendLine($"if kubectl get deployment {oldDeploymentName}{nsFlag} > /dev/null 2>&1; then");
-        sb.AppendLine($"  kubectl scale deployment {oldDeploymentName}{nsFlag} --replicas=0");
+        sb.AppendLine($"if kubectl get deployment \"{oldDeploymentName}\"{nsFlag} > /dev/null 2>&1; then");
+        sb.AppendLine($"  kubectl scale deployment \"{oldDeploymentName}\"{nsFlag} --replicas=0");
         sb.AppendLine($"  echo \"Scaled down old deployment: {oldDeploymentName}\"");
         sb.AppendLine("else");
         sb.AppendLine($"  echo \"Old deployment {oldDeploymentName} not found, nothing to scale down\"");

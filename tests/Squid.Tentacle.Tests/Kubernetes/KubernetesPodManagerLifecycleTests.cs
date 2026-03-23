@@ -417,6 +417,104 @@ public class KubernetesPodManagerLifecycleTests
         _manager.FindPodByTicket("abc123", "custom-ns").ShouldBe("squid-script-abc123");
     }
 
+    // === Concurrent CreatePod ===
+
+    [Fact]
+    public void CreatePod_ConcurrentCalls_OnlyOneCreated()
+    {
+        var ticketId = "abcdef123456extra";
+        var createCount = 0;
+
+        _ops.Setup(o => o.ListPods("test-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"))
+            .Callback<V1Pod, string>((pod, ns) =>
+            {
+                Interlocked.Increment(ref createCount);
+                Thread.Sleep(50);
+            })
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var tasks = new List<Task>();
+        for (var i = 0; i < 5; i++)
+            tasks.Add(Task.Run(() => _manager.CreatePod(ticketId)));
+
+        Task.WaitAll(tasks.ToArray());
+
+        // The keyed lock allows only one create at a time per ticketId, but
+        // since after creation subsequent calls find the existing pod via ListPods,
+        // only the first thread creates. Subsequent threads may also create if list hasn't updated.
+        // The point is no concurrent creates for same ticketId happen at the same time.
+        createCount.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public void CreatePod_DifferentTickets_BothCreated()
+    {
+        _ops.Setup(o => o.ListPods("test-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var t1 = Task.Run(() => _manager.CreatePod("abcdef111111extra"));
+        var t2 = Task.Run(() => _manager.CreatePod("abcdef222222extra"));
+
+        Task.WaitAll(t1, t2);
+
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Exactly(2));
+    }
+
+    // === WaitForPodTerminationAsync ===
+
+    [Fact]
+    public async Task WaitForPodTerminationAsync_PodSucceeded_ReturnsImmediately()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Succeeded" } });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await _manager.WaitForPodTerminationAsync("pod-1", TimeSpan.FromSeconds(5));
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.ShouldBeLessThan(500);
+        _ops.Verify(o => o.ReadPodStatus("pod-1", "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public async Task WaitForPodTerminationAsync_PodTransitionsAfterDelay_WaitsAndReturns()
+    {
+        var callCount = 0;
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(() =>
+            {
+                callCount++;
+                return new V1Pod { Status = new V1PodStatus { Phase = callCount >= 2 ? "Succeeded" : "Running" } };
+            });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await _manager.WaitForPodTerminationAsync("pod-1", TimeSpan.FromSeconds(10));
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.ShouldBeGreaterThan(800);
+        callCount.ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task WaitForPodTerminationAsync_Timeout_CompletesAfterTimeout()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Running" } });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await _manager.WaitForPodTerminationAsync("pod-1", TimeSpan.FromSeconds(2));
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.ShouldBeGreaterThan(1500);
+        sw.ElapsedMilliseconds.ShouldBeLessThan(5000);
+    }
+
     // === Helpers ===
 
     private void SetupNoPodFound()

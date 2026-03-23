@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using k8s.Models;
 using Squid.Message.Constants;
 using Squid.Tentacle.Configuration;
@@ -51,6 +52,8 @@ public class ScriptPodServiceTests : IDisposable
 
         _ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        _ops.Setup(o => o.NamespaceExists(It.IsAny<string>())).Returns(true);
     }
 
     [Fact]
@@ -384,7 +387,7 @@ public class ScriptPodServiceTests : IDisposable
         var result = ScriptPodService.ExtractNewLogLines(ctx, logs, maxLogBufferBytes: 10 * 1024 * 1024);
 
         result.Count.ShouldBe(1);
-        result[0].Text.ShouldBe("deploying with token: ***");
+        result[0].Text.ShouldBe("deploying with token: ********");
     }
 
     // ========== Isolation Mutex ==========
@@ -969,8 +972,7 @@ public class ScriptPodServiceTests : IDisposable
             .Returns((V1Pod pod, string ns) => pod);
 
         var service = CreateService();
-        var command = MakeCommand("echo hello");
-        command.TargetNamespace = "custom-ns";
+        var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
         service.StartScript(command);
 
@@ -986,8 +988,7 @@ public class ScriptPodServiceTests : IDisposable
             .Returns((V1Pod pod, string ns) => pod);
 
         var service = CreateService();
-        var command = MakeCommand("echo hello");
-        command.TargetNamespace = "custom-ns";
+        var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
         var ticket = service.StartScript(command);
 
@@ -1048,13 +1049,769 @@ public class ScriptPodServiceTests : IDisposable
         state.Namespace.ShouldBeNull();
     }
 
+    // === Secret Persistence ===
+
+    [Fact]
+    public void StartScript_Queued_PersistsSecret()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
+        var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager, ops.Object);
+
+        var command = MakeIsolatedCommand("echo test", "secret-mutex");
+        service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        ops.Verify(o => o.CreateOrReplaceSecret(It.IsAny<V1Secret>(), "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void LaunchScript_RemovesPendingSecret()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
+        var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager, ops.Object);
+
+        service.StartScript(MakeCommand("echo test"));
+
+        ops.Verify(o => o.DeleteSecret(It.IsAny<string>(), "test-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void CancelScript_Pending_RemovesPendingSecret()
+    {
+        var ops = new Mock<IKubernetesPodOperations>();
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
+        var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager, ops.Object);
+
+        var command = MakeIsolatedCommand("echo test", "cancel-secret-mutex");
+        service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        service.CancelScript(new CancelScriptCommand(ticket2, 0));
+
+        ops.Verify(o => o.DeleteSecret(It.IsAny<string>(), "test-ns"), Times.Exactly(2));
+    }
+
+    // === WrapCommandWithEosMarker Namespace Preservation ===
+
+    [Fact]
+    public void StartScript_WithTargetNamespace_WrappedCommand_PreservesNamespace()
+    {
+        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
+            .Returns((V1Pod pod, string ns) => pod);
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
+
+        var ticket = service.StartScript(command);
+
+        // The wrapped command used during launch should have preserved TargetNamespace
+        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
+        ctx.Namespace.ShouldBe("custom-ns");
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Once);
+    }
+
+    [Fact]
+    public void StartScript_NullTargetNamespace_WrappedCommand_PreservesNull()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+
+        var ticket = service.StartScript(command);
+
+        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
+        ctx.Namespace.ShouldBeNull();
+    }
+
+    // === Graceful Shutdown Drain ===
+
+    [Fact]
+    public async Task WaitForDrainAsync_NoScripts_CompletesImmediately()
+    {
+        var service = CreateService();
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await service.WaitForDrainAsync(TimeSpan.FromSeconds(5));
+        sw.Stop();
+
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task WaitForDrainAsync_WithActiveScripts_WaitsUntilEmpty()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo drain-test"));
+
+        service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
+
+        // Remove script after a short delay to simulate completion
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(800);
+            service.ActiveScripts.TryRemove(ticket.TaskId, out _);
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await service.WaitForDrainAsync(TimeSpan.FromSeconds(10));
+        sw.Stop();
+
+        sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromMilliseconds(500));
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task WaitForDrainAsync_Timeout_ReturnsAfterTimeout()
+    {
+        var service = CreateService();
+        service.StartScript(MakeCommand("echo never-finishes"));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await service.WaitForDrainAsync(TimeSpan.FromSeconds(1));
+        sw.Stop();
+
+        sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromMilliseconds(800));
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+    }
+
+    // === Precondition Checks ===
+
+    [Fact]
+    public void StartScript_TargetNamespaceDoesNotExist_ReturnsFailure()
+    {
+        _ops.Setup(o => o.NamespaceExists("nonexistent-ns")).Returns(false);
+        _ops.Setup(o => o.ListPods("nonexistent-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello", targetNamespace: "nonexistent-ns");
+
+        var ticket = service.StartScript(command);
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("does not exist"));
+    }
+
+    [Fact]
+    public void StartScript_PreconditionFail_ReleasesMutex()
+    {
+        _ops.Setup(o => o.NamespaceExists("bad-ns")).Returns(false);
+        _ops.Setup(o => o.ListPods("bad-ns", It.IsAny<string>()))
+            .Returns(new V1PodList { Items = new List<V1Pod>() });
+
+        var service = CreateService();
+        var command1 = MakeIsolatedCommand("echo first", "precond-mutex");
+        command1 = new StartScriptCommand(command1.ScriptBody, command1.Isolation, command1.ScriptIsolationMutexTimeout, command1.IsolationMutexName, command1.Arguments, null) { TargetNamespace = "bad-ns" };
+
+        var ticket1 = service.StartScript(command1);
+
+        // Precondition failure should have released the mutex
+        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeFalse();
+
+        // Second script with valid namespace should acquire mutex
+        var command2 = MakeIsolatedCommand("echo second", "precond-mutex");
+        var ticket2 = service.StartScript(command2);
+
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+    }
+
+    // === Pending Queue Bounds ===
+
+    [Fact]
+    public void StartScript_QueueFull_RejectsWithFatalCode()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            MaxPendingScripts = 1
+        };
+
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "queue-mutex");
+        service.StartScript(command); // active
+        service.StartScript(command); // pending (fills queue to 1)
+        var ticket3 = service.StartScript(command); // should be rejected
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket3, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("pending queue full"));
+    }
+
+    [Fact]
+    public void StartScript_QueueNotFull_AcceptsScript()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            MaxPendingScripts = 5
+        };
+
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "accept-mutex");
+        service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_QueueAtLimit_RejectsNextScript()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            ScriptPodImage = "test-image:latest",
+            ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60,
+            ScriptPodCpuRequest = "25m",
+            ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m",
+            ScriptPodMemoryLimit = "512Mi",
+            PvcClaimName = "test-pvc",
+            MaxPendingScripts = 2
+        };
+
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "limit-mutex");
+        service.StartScript(command); // active
+        service.StartScript(command); // pending 1
+        service.StartScript(command); // pending 2 (at limit)
+        var ticket4 = service.StartScript(command); // rejected
+
+        service.PendingScripts.Count.ShouldBe(2);
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket4, 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+    }
+
+    // === Server-Provided Ticket ID (Idempotency) ===
+
+    [Fact]
+    public void StartScript_WithTaskId_UsesProvidedId()
+    {
+        var service = CreateService();
+        var command = new StartScriptCommand("echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "server-provided-id-abc123");
+
+        var ticket = service.StartScript(command);
+
+        ticket.TaskId.ShouldBe("server-provided-id-abc123");
+        service.ActiveScripts.ContainsKey("server-provided-id-abc123").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_WithTaskId_SecondCall_ReturnsExistingTicket()
+    {
+        var service = CreateService();
+        var command = new StartScriptCommand("echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "idempotent-ticket-id");
+
+        var ticket1 = service.StartScript(command);
+        var ticket2 = service.StartScript(command);
+
+        ticket1.TaskId.ShouldBe("idempotent-ticket-id");
+        ticket2.TaskId.ShouldBe("idempotent-ticket-id");
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public void StartScript_NullTaskId_GeneratesNewId()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+
+        var ticket = service.StartScript(command);
+
+        ticket.TaskId.ShouldNotBeNullOrEmpty();
+        ticket.TaskId.Length.ShouldBe(32);
+    }
+
+    // === Terminal Results Eviction ===
+
+    [Fact]
+    public void EvictStaleTerminalResults_OldEntries_Removed()
+    {
+        var service = CreateService();
+        service.InjectTerminalResult("old-ticket", ScriptExitCodes.Timeout, new List<ProcessOutput>());
+
+        // Force the entry to appear old
+        var field = typeof(ScriptPodService).GetField("_terminalResults", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var dict = (System.Collections.Concurrent.ConcurrentDictionary<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)>)field.GetValue(service);
+        dict["old-ticket"] = (dict["old-ticket"].Response, DateTimeOffset.UtcNow.AddHours(-2));
+
+        service.EvictStaleTerminalResults(TimeSpan.FromHours(1));
+
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("old-ticket"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void EvictStaleTerminalResults_RecentEntries_Kept()
+    {
+        var service = CreateService();
+        service.InjectTerminalResult("recent-ticket", ScriptExitCodes.Timeout, new List<ProcessOutput>());
+
+        service.EvictStaleTerminalResults(TimeSpan.FromHours(1));
+
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("recent-ticket"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.Timeout);
+    }
+
+    // === Fix 2: TOCTOU Race — Atomic Queue Bounds ===
+
+    [Fact]
+    public void StartScript_QueueBound_Sequential_RejectsAtLimit()
+    {
+        var settings = CreateSettingsWithMaxPending(2);
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "bound-mutex");
+        service.StartScript(command); // active
+        service.StartScript(command); // pending 1
+        service.StartScript(command); // pending 2
+        var ticket4 = service.StartScript(command); // rejected
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket4, 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("pending queue full"));
+    }
+
+    [Fact]
+    public void StartScript_QueueBound_AfterCancel_AcceptsNewScript()
+    {
+        var settings = CreateSettingsWithMaxPending(1);
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var command = MakeIsolatedCommand("echo test", "cancel-mutex");
+        service.StartScript(command); // active
+        var ticket2 = service.StartScript(command); // pending (at limit)
+
+        service.CancelScript(new CancelScriptCommand(ticket2, 0));
+
+        var ticket3 = service.StartScript(command); // should be accepted
+        service.PendingScripts.ContainsKey(ticket3.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StartScript_QueueBound_ParallelAdds_NeverExceedsLimit()
+    {
+        var settings = CreateSettingsWithMaxPending(3);
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        // First acquire the mutex so all subsequent go to pending
+        var activeCmd = MakeIsolatedCommand("echo active", "parallel-mutex");
+        service.StartScript(activeCmd);
+
+        var results = new System.Collections.Concurrent.ConcurrentBag<ScriptTicket>();
+
+        Parallel.For(0, 10, _ =>
+        {
+            var cmd = MakeIsolatedCommand("echo parallel", "parallel-mutex");
+            var ticket = service.StartScript(cmd);
+            results.Add(ticket);
+        });
+
+        service.PendingScripts.Count.ShouldBeLessThanOrEqualTo(3);
+    }
+
+    // === Fix 3: Workspace Leak on CreatePod Failure ===
+
+    [Fact]
+    public void LaunchScript_CreatePodThrows_WorkspaceCleaned()
+    {
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Throws(new Exception("K8s API error"));
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+
+        // Workspace directory should have been cleaned up
+        var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
+        Directory.Exists(workDir).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void LaunchScript_CreatePodThrows_TerminalResultInjected()
+    {
+        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), It.IsAny<string>()))
+            .Throws(new Exception("K8s API error"));
+
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("K8s API error"));
+    }
+
+    [Fact]
+    public void LaunchScript_CreatePodSucceeds_WorkspacePreserved()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+
+        var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
+        Directory.Exists(workDir).ShouldBeTrue();
+    }
+
+    // === Fix 4: Drain Flag ===
+
+    [Fact]
+    public async Task StartScript_DuringDrain_RejectedWithFatal()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo before-drain");
+        service.StartScript(command); // one active so drain has something to wait on
+
+        _ = service.WaitForDrainAsync(TimeSpan.FromSeconds(5));
+
+        // Allow drain to set the flag
+        await Task.Delay(50);
+
+        var command2 = MakeCommand("echo during-drain");
+        var ticket = service.StartScript(command2);
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
+        status.Logs.ShouldContain(l => l.Text.Contains("shutting down"));
+    }
+
+    [Fact]
+    public void ProcessPendingScripts_DuringDrain_NoPendingPromoted()
+    {
+        var service = CreateService();
+
+        // Create an active script with full isolation
+        var activeCmd = MakeIsolatedCommand("echo active", "drain-promote-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        // Queue a pending script
+        var pendingCmd = MakeIsolatedCommand("echo pending", "drain-promote-mutex");
+        var pendingTicket = service.StartScript(pendingCmd);
+        service.PendingScripts.ContainsKey(pendingTicket.TaskId).ShouldBeTrue();
+
+        // Set _draining via reflection
+        var field = typeof(ScriptPodService).GetField("_draining", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        field.SetValue(service, true);
+
+        // Complete the active script — this triggers ReleaseMutexAndProcessPending
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // Pending should NOT have been promoted
+        service.ActiveScripts.ContainsKey(pendingTicket.TaskId).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void StartScript_BeforeDrain_StillWorks()
+    {
+        var service = CreateService();
+        var command = MakeCommand("echo before-drain");
+        var ticket = service.StartScript(command);
+
+        service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
+    }
+
+    // === Fix 5: FIFO Ordering ===
+
+    [Fact]
+    public void ProcessPendingScripts_FIFO_FirstEnqueuedPromotedFirst()
+    {
+        var service = CreateService();
+
+        // Take the mutex with an active writer
+        var activeCmd = MakeIsolatedCommand("echo active", "fifo-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        // Queue three pending scripts (NoIsolation so they don't block each other once promoted)
+        var cmdA = MakeIsolatedCommand("echo A", "fifo-mutex");
+        var ticketA = service.StartScript(cmdA);
+        var cmdB = MakeIsolatedCommand("echo B", "fifo-mutex");
+        var ticketB = service.StartScript(cmdB);
+        var cmdC = MakeIsolatedCommand("echo C", "fifo-mutex");
+        var ticketC = service.StartScript(cmdC);
+
+        // Force known ordering via reflection
+        var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var pending = (System.Collections.Concurrent.ConcurrentDictionary<string, ScriptPodService.PendingScript>)pendingField.GetValue(service);
+        var now = DateTimeOffset.UtcNow;
+        pending[ticketA.TaskId] = new ScriptPodService.PendingScript(cmdA, now.AddMinutes(-3)); // earliest
+        pending[ticketB.TaskId] = new ScriptPodService.PendingScript(cmdB, now.AddMinutes(-2));
+        pending[ticketC.TaskId] = new ScriptPodService.PendingScript(cmdC, now.AddMinutes(-1));
+
+        // Complete active → releases mutex → ProcessPendingScripts
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // A should be promoted (earliest), not B or C
+        service.ActiveScripts.ContainsKey(ticketA.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ProcessPendingScripts_TimedOut_Skipped_NextPromoted()
+    {
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns", ScriptPodImage = "test-image:latest", ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60, ScriptPodCpuRequest = "25m", ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m", ScriptPodMemoryLimit = "512Mi", PvcClaimName = "test-pvc",
+            IsolationMutexTimeoutMinutes = 1
+        };
+        var podManager = new KubernetesPodManager(_ops.Object, settings);
+        var service = new ScriptPodService(_tentacleSettings, settings, podManager);
+
+        var activeCmd = MakeIsolatedCommand("echo active", "timeout-fifo-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        var cmdA = MakeIsolatedCommand("echo A", "timeout-fifo-mutex");
+        var ticketA = service.StartScript(cmdA);
+        var cmdB = MakeIsolatedCommand("echo B", "timeout-fifo-mutex");
+        var ticketB = service.StartScript(cmdB);
+
+        // Make A timed out, B still valid
+        var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var pending = (System.Collections.Concurrent.ConcurrentDictionary<string, ScriptPodService.PendingScript>)pendingField.GetValue(service);
+        pending[ticketA.TaskId] = new ScriptPodService.PendingScript(cmdA, DateTimeOffset.UtcNow.AddMinutes(-10)); // timed out
+        pending[ticketB.TaskId] = new ScriptPodService.PendingScript(cmdB, DateTimeOffset.UtcNow.AddSeconds(-5)); // recent
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // A should be evicted (timeout), B promoted
+        service.PendingScripts.ContainsKey(ticketA.TaskId).ShouldBeFalse();
+        service.ActiveScripts.ContainsKey(ticketB.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ProcessPendingScripts_FIFO_WriterBeforeReaders()
+    {
+        var service = CreateService();
+
+        // Take the mutex with an active writer
+        var activeCmd = MakeIsolatedCommand("echo active", "writer-first-mutex");
+        var activeTicket = service.StartScript(activeCmd);
+
+        // Queue: writer1 (earliest), then two NoIsolation readers
+        var writer1Cmd = MakeIsolatedCommand("echo writer1", "writer-first-mutex");
+        var ticketW1 = service.StartScript(writer1Cmd);
+        var reader1Cmd = new StartScriptCommand("echo reader1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null);
+        var ticketR1 = service.StartScript(reader1Cmd);
+        var reader2Cmd = new StartScriptCommand("echo reader2", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null);
+        var ticketR2 = service.StartScript(reader2Cmd);
+
+        // Force ordering: writer first
+        var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var pending = (System.Collections.Concurrent.ConcurrentDictionary<string, ScriptPodService.PendingScript>)pendingField.GetValue(service);
+        var now = DateTimeOffset.UtcNow;
+        pending[ticketW1.TaskId] = new ScriptPodService.PendingScript(writer1Cmd, now.AddMinutes(-3));
+        pending[ticketR1.TaskId] = new ScriptPodService.PendingScript(reader1Cmd, now.AddMinutes(-2));
+        pending[ticketR2.TaskId] = new ScriptPodService.PendingScript(reader2Cmd, now.AddMinutes(-1));
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(activeTicket, 0));
+
+        // Writer should be promoted first (FIFO)
+        service.ActiveScripts.ContainsKey(ticketW1.TaskId).ShouldBeTrue();
+    }
+
+    // === Fix 7: Terminal Results Eviction at Lifecycle Boundaries ===
+
+    [Fact]
+    public void CompleteScript_EvictsOldTerminalResults()
+    {
+        var service = CreateService();
+
+        // Inject an old terminal result
+        service.InjectTerminalResult("old-terminal", ScriptExitCodes.Timeout, new List<ProcessOutput>());
+        var termField = typeof(ScriptPodService).GetField("_terminalResults", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var dict = (System.Collections.Concurrent.ConcurrentDictionary<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)>)termField.GetValue(service);
+        dict["old-terminal"] = (dict["old-terminal"].Response, DateTimeOffset.UtcNow.AddHours(-2));
+
+        // Start and complete a script to trigger eviction
+        var command = MakeCommand("echo test");
+        var ticket = service.StartScript(command);
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        // Old terminal result should be evicted
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("old-terminal"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void CancelScript_EvictsOldTerminalResults()
+    {
+        var service = CreateService();
+
+        // Inject an old terminal result
+        service.InjectTerminalResult("old-terminal-cancel", ScriptExitCodes.Fatal, new List<ProcessOutput>());
+        var termField = typeof(ScriptPodService).GetField("_terminalResults", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var dict = (System.Collections.Concurrent.ConcurrentDictionary<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)>)termField.GetValue(service);
+        dict["old-terminal-cancel"] = (dict["old-terminal-cancel"].Response, DateTimeOffset.UtcNow.AddHours(-2));
+
+        // Start and cancel a script to trigger eviction
+        var command = MakeCommand("echo test");
+        var ticket = service.StartScript(command);
+        service.CancelScript(new CancelScriptCommand(ticket, 0));
+
+        // Old terminal result should be evicted
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("old-terminal-cancel"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void CompleteScript_RecentTerminalResultsSurvive()
+    {
+        var service = CreateService();
+
+        // Inject a recent terminal result (< 1hr)
+        service.InjectTerminalResult("recent-terminal", ScriptExitCodes.Timeout, new List<ProcessOutput>());
+
+        // Start and complete a script to trigger eviction
+        var command = MakeCommand("echo test");
+        var ticket = service.StartScript(command);
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        // Recent terminal result should survive
+        var status = service.GetStatus(new ScriptStatusRequest(new ScriptTicket("recent-terminal"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.Timeout);
+    }
+
+    // ========== Log Streaming ==========
+
+    [Fact]
+    public void DrainLogs_StreamedLinesAvailable_PrefersStreamOverPoll()
+    {
+        var service = CreateServiceWithPodOps();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+        var ticketId = ticket.TaskId;
+
+        service.ActiveScripts.TryGetValue(ticketId, out var ctx).ShouldBeTrue();
+
+        // Enqueue streamed lines
+        ctx!.StreamedLogLines.Enqueue("streamed line 1");
+        ctx.StreamedLogLines.Enqueue("streamed line 2");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.Logs.ShouldContain(l => l.Text.Contains("streamed line 1"));
+        status.Logs.ShouldContain(l => l.Text.Contains("streamed line 2"));
+
+        // ReadPodLogs should NOT have been called (stream preferred over poll)
+        _ops.Verify(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()), Times.Never);
+    }
+
+    [Fact]
+    public void DrainLogs_NoStreamedLines_FallsBackToPoll()
+    {
+        var service = CreateServiceWithPodOps();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+
+        SetupPodLogs("polled line 1\npolled line 2");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.Logs.ShouldContain(l => l.Text.Contains("polled line 1"));
+
+        _ops.Verify(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void CompleteScript_CancelsLogStream()
+    {
+        var service = CreateServiceWithPodOps();
+        var command = MakeCommand("echo hello");
+        var ticket = service.StartScript(command);
+
+        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
+
+        // Simulate a log stream CTS that was started
+        ctx!.LogStreamCts = new CancellationTokenSource();
+        ctx.LogStreamCts.IsCancellationRequested.ShouldBeFalse();
+
+        SetupPodExitCode(0);
+
+        service.CompleteScript(new CompleteScriptCommand(ticket, 0));
+
+        ctx.LogStreamCts.IsCancellationRequested.ShouldBeTrue();
+    }
+
     private ScriptPodService CreateService()
     {
         var podManager = new KubernetesPodManager(_ops.Object, _kubernetesSettings);
         return new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
     }
 
-    private static StartScriptCommand MakeCommand(string scriptBody, string? mutexName = null)
+    private ScriptPodService CreateServiceWithPodOps()
+    {
+        var podManager = new KubernetesPodManager(_ops.Object, _kubernetesSettings);
+        return new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager, _ops.Object);
+    }
+
+    private static StartScriptCommand MakeCommand(string scriptBody, string? mutexName = null, string? targetNamespace = null)
     {
         return new StartScriptCommand(
             scriptBody,
@@ -1062,7 +1819,10 @@ public class ScriptPodServiceTests : IDisposable
             TimeSpan.FromMinutes(5),
             mutexName,
             Array.Empty<string>(),
-            null);
+            null)
+        {
+            TargetNamespace = targetNamespace
+        };
     }
 
     private static StartScriptCommand MakeIsolatedCommand(string scriptBody, string mutexName, TimeSpan? timeout = null)
@@ -1074,6 +1834,17 @@ public class ScriptPodServiceTests : IDisposable
             mutexName,
             Array.Empty<string>(),
             null);
+    }
+
+    private KubernetesSettings CreateSettingsWithMaxPending(int maxPending)
+    {
+        return new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns", ScriptPodImage = "test-image:latest", ScriptPodServiceAccount = "test-sa",
+            ScriptPodTimeoutSeconds = 60, ScriptPodCpuRequest = "25m", ScriptPodMemoryRequest = "100Mi",
+            ScriptPodCpuLimit = "500m", ScriptPodMemoryLimit = "512Mi", PvcClaimName = "test-pvc",
+            MaxPendingScripts = maxPending
+        };
     }
 
     private void SetupPodPhase(string phase)

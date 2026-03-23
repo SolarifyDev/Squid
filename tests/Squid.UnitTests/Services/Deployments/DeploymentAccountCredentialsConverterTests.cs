@@ -15,7 +15,7 @@ public class DeploymentAccountCredentialsConverterTests
             SubscriptionNumber = "sub-1",
             ClientId = "cid",
             TenantId = "tid",
-            Audience = "aud"
+            Jwt = "aud"
         });
 
         var result = DeploymentAccountCredentialsConverter.Deserialize(AccountType.AzureOidc, json);
@@ -24,7 +24,7 @@ public class DeploymentAccountCredentialsConverterTests
         creds.SubscriptionNumber.ShouldBe("sub-1");
         creds.ClientId.ShouldBe("cid");
         creds.TenantId.ShouldBe("tid");
-        creds.Audience.ShouldBe("aud");
+        creds.Jwt.ShouldBe("aud");
     }
 
     [Fact]

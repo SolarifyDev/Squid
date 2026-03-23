@@ -9,6 +9,7 @@ public sealed class KubernetesPodWatcher
     private readonly IKubernetesPodOperations _podOps;
     private readonly KubernetesSettings _settings;
     private readonly PodStateCache _cache;
+    private string _lastResourceVersion;
 
     public KubernetesPodWatcher(IKubernetesPodOperations podOps, KubernetesSettings settings, PodStateCache cache = null)
     {
@@ -32,8 +33,9 @@ public sealed class KubernetesPodWatcher
             {
                 PopulateCache(labelSelector);
 
-                await foreach (var (eventType, pod) in _podOps.WatchPodsAsync(_settings.TentacleNamespace, labelSelector, ct).ConfigureAwait(false))
+                await foreach (var (eventType, pod) in _podOps.WatchPodsAsync(_settings.TentacleNamespace, labelSelector, ct, _lastResourceVersion).ConfigureAwait(false))
                 {
+                    _lastResourceVersion = pod.Metadata?.ResourceVersion ?? _lastResourceVersion;
                     _cache?.HandleWatchEvent(eventType, pod);
 
                     if (eventType is WatchEventType.Modified or WatchEventType.Deleted)
@@ -46,8 +48,7 @@ public sealed class KubernetesPodWatcher
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Pod watch stream disconnected, reconnecting...");
-                _cache?.Invalidate();
+                Log.Warning(ex, "Pod watch stream disconnected, reconnecting from resourceVersion {RV}...", _lastResourceVersion);
 
                 try
                 {
@@ -68,6 +69,7 @@ public sealed class KubernetesPodWatcher
         try
         {
             var pods = _podOps.ListPods(_settings.TentacleNamespace, labelSelector);
+            _lastResourceVersion = pods.Metadata?.ResourceVersion;
             _cache.Populate(pods.Items);
 
             Log.Debug("Cache populated with {Count} pods", pods.Items.Count);

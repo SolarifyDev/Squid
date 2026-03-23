@@ -16,6 +16,9 @@ public static class TentacleMetrics
     private static long _managedPods;
     private static long _orphanedPodsCleanedTotal;
     private static long _nfsForceKillsTotal;
+    private static long _scriptsQueuedTotal;
+    private static long _scriptsRejectedTotal;
+    private static long _apiLatencyMs;
 
     public static long ActiveScripts => Interlocked.Read(ref _activeScripts);
     public static long ScriptsStartedTotal => Interlocked.Read(ref _scriptsStartedTotal);
@@ -25,6 +28,9 @@ public static class TentacleMetrics
     public static long ManagedPods => Interlocked.Read(ref _managedPods);
     public static long OrphanedPodsCleanedTotal => Interlocked.Read(ref _orphanedPodsCleanedTotal);
     public static long NfsForceKillsTotal => Interlocked.Read(ref _nfsForceKillsTotal);
+    public static long ScriptsQueuedTotal => Interlocked.Read(ref _scriptsQueuedTotal);
+    public static long ScriptsRejectedTotal => Interlocked.Read(ref _scriptsRejectedTotal);
+    public static long ApiLatencyMs => Interlocked.Read(ref _apiLatencyMs);
 
     public static void ScriptStarted()
     {
@@ -65,6 +71,21 @@ public static class TentacleMetrics
         Interlocked.Increment(ref _nfsForceKillsTotal);
     }
 
+    public static void ScriptQueued()
+    {
+        Interlocked.Increment(ref _scriptsQueuedTotal);
+    }
+
+    public static void ScriptRejected()
+    {
+        Interlocked.Increment(ref _scriptsRejectedTotal);
+    }
+
+    public static void RecordApiLatency(long ms)
+    {
+        Interlocked.Exchange(ref _apiLatencyMs, ms);
+    }
+
     internal static void Reset()
     {
         Interlocked.Exchange(ref _activeScripts, 0);
@@ -75,5 +96,8 @@ public static class TentacleMetrics
         Interlocked.Exchange(ref _managedPods, 0);
         Interlocked.Exchange(ref _orphanedPodsCleanedTotal, 0);
         Interlocked.Exchange(ref _nfsForceKillsTotal, 0);
+        Interlocked.Exchange(ref _scriptsQueuedTotal, 0);
+        Interlocked.Exchange(ref _scriptsRejectedTotal, 0);
+        Interlocked.Exchange(ref _apiLatencyMs, 0);
     }
 }

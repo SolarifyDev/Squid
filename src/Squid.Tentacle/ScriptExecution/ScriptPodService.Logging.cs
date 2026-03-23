@@ -7,12 +7,75 @@ public partial class ScriptPodService
 {
     private List<ProcessOutput> DrainLogs(ScriptPodContext ctx)
     {
+        if (!ctx.StreamedLogLines.IsEmpty)
+            return DrainStreamedLogs(ctx);
+
         var allLogs = _podManager.ReadPodLogs(ctx.PodName, ctx.LastLogTimestamp, ctx.Namespace);
         var logs = ExtractNewLogLines(ctx, allLogs, _kubernetesSettings.MaxLogBufferBytes);
 
         DrainInjectedEvents(ctx, logs);
 
         return logs;
+    }
+
+    private List<ProcessOutput> DrainStreamedLogs(ScriptPodContext ctx)
+    {
+        var logs = new List<ProcessOutput>();
+
+        while (ctx.StreamedLogLines.TryDequeue(out var line))
+        {
+            if (string.IsNullOrEmpty(line)) continue;
+
+            if (TryDetectEosMarker(ctx, line)) continue;
+            if (ctx.LogOutputTruncated) continue;
+
+            var rawLine = line;
+
+            if (PodLogEncryption.IsEncryptedLine(rawLine) && ctx.LogEncryptionKey != null)
+            {
+                var (success, plaintext) = PodLogEncryption.TryDecryptLine(rawLine, ctx.LogEncryptionKey);
+                rawLine = success ? plaintext : rawLine;
+            }
+
+            var parsed = PodLogLineParser.Parse(rawLine);
+            var text = SensitiveOutputMasker.MaskLine(parsed.Text, ctx.SensitiveValues);
+            logs.Add(new ProcessOutput(parsed.Source, text));
+            ctx.LogSequence++;
+        }
+
+        DrainInjectedEvents(ctx, logs);
+
+        return logs;
+    }
+
+    internal void StartLogStream(ScriptPodContext ctx)
+    {
+        if (_podOps == null) return;
+
+        ctx.LogStreamCts = new CancellationTokenSource();
+        ctx.LogStreamTask = Task.Run(() => StreamLogsAsync(ctx, ctx.LogStreamCts.Token));
+    }
+
+    private async Task StreamLogsAsync(ScriptPodContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            using var stream = _podOps.ReadPodLogFollow(ctx.PodName, ctx.Namespace ?? _kubernetesSettings.TentacleNamespace, "script");
+            using var reader = new StreamReader(stream);
+
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+                if (line == null) break;
+
+                ctx.StreamedLogLines.Enqueue(line);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Log stream ended for ticket {TicketId}", ctx.TicketId);
+        }
     }
 
     private List<ProcessOutput> DrainFinalLogs(ScriptPodContext ctx)

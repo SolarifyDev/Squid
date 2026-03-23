@@ -47,19 +47,25 @@ public class ScriptRecoveryService
     {
         try
         {
-            var configMaps = podOps.ListConfigMaps(settings.TentacleNamespace, "squid.io/context-type=pending-script");
+            var secrets = podOps.ListSecrets(settings.TentacleNamespace, "squid.io/context-type=pending-script");
 
-            if (configMaps?.Items == null || configMaps.Items.Count == 0)
+            if (secrets?.Items == null || secrets.Items.Count == 0)
                 return;
 
-            Log.Information("Found {Count} pending script ConfigMaps to recover", configMaps.Items.Count);
+            Log.Information("Found {Count} pending script Secrets to recover", secrets.Items.Count);
 
-            foreach (var cm in configMaps.Items)
+            foreach (var secret in secrets.Items)
             {
                 try
                 {
-                    var data = cm.Data;
-                    if (data == null) continue;
+                    var data = secret.StringData ?? new Dictionary<string, string>();
+
+                    if (data.Count == 0 && secret.Data is { Count: > 0 })
+                    {
+                        data = secret.Data.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => System.Text.Encoding.UTF8.GetString(kvp.Value));
+                    }
 
                     data.TryGetValue("ticketId", out var ticketId);
                     data.TryGetValue("scriptBody", out var scriptBody);
@@ -82,19 +88,19 @@ public class ScriptRecoveryService
 
                     service.StartScript(command);
 
-                    podOps.DeleteConfigMap(cm.Metadata.Name, settings.TentacleNamespace);
+                    podOps.DeleteSecret(secret.Metadata.Name, settings.TentacleNamespace);
 
-                    Log.Information("Recovered pending script {TicketId} from ConfigMap", ticketId);
+                    Log.Information("Recovered pending script {TicketId} from Secret", ticketId);
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning(ex, "Failed to recover pending script from ConfigMap {Name}", cm.Metadata?.Name);
+                    Log.Warning(ex, "Failed to recover pending script from Secret {Name}", secret.Metadata?.Name);
                 }
             }
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to list pending script ConfigMaps for recovery");
+            Log.Warning(ex, "Failed to list pending script Secrets for recovery");
         }
     }
 

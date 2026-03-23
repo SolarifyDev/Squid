@@ -11,7 +11,7 @@ public class SensitiveOutputMaskerTests
 
         var result = SensitiveOutputMasker.MaskLine("Connection string: server=host;password=my-secret-password;", secrets);
 
-        result.ShouldBe("Connection string: server=host;password=***;");
+        result.ShouldBe("Connection string: server=host;password=********;");
     }
 
     [Fact]
@@ -21,7 +21,7 @@ public class SensitiveOutputMaskerTests
 
         var result = SensitiveOutputMasker.MaskLine("Values: secret1 and secret2 in output", secrets);
 
-        result.ShouldBe("Values: *** and *** in output");
+        result.ShouldBe("Values: ******** and ******** in output");
     }
 
     [Fact]
@@ -34,14 +34,18 @@ public class SensitiveOutputMaskerTests
         result.ShouldBe("just normal output");
     }
 
-    [Fact]
-    public void MaskLine_ShortValue_NotMasked()
+    [Theory]
+    [InlineData("ab", "Values: ab in output")]
+    [InlineData("env", "Values: env in output")]
+    [InlineData("dev", "Values: dev in output")]
+    [InlineData("api", "Values: api in output")]
+    public void MaskLine_ShortValue_NotMasked(string shortSecret, string expectedOutput)
     {
-        var secrets = new HashSet<string>(StringComparer.Ordinal) { "ab" };
+        var secrets = new HashSet<string>(StringComparer.Ordinal) { shortSecret };
 
-        var result = SensitiveOutputMasker.MaskLine("Values: ab in output", secrets);
+        var result = SensitiveOutputMasker.MaskLine(expectedOutput, secrets);
 
-        result.ShouldBe("Values: ab in output");
+        result.ShouldBe(expectedOutput);
     }
 
     [Fact]
@@ -65,6 +69,16 @@ public class SensitiveOutputMaskerTests
 
         var result = SensitiveOutputMasker.MaskLine("secret is not Secret", secrets);
 
-        result.ShouldBe("secret is not ***");
+        result.ShouldBe("secret is not ********");
+    }
+
+    [Fact]
+    public void MaskLine_LongerValueFirst_NoPartialCorruption()
+    {
+        var secrets = new HashSet<string>(StringComparer.Ordinal) { "abcd", "abcdef" };
+
+        var result = SensitiveOutputMasker.MaskLine("value=abcdef end", secrets);
+
+        result.ShouldBe("value=******** end");
     }
 }

@@ -1,4 +1,4 @@
-using Halibut;
+using Squid.Core.Halibut;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Events.Machine;
 using Squid.Message.Models.Deployments.Machine;
@@ -19,13 +19,13 @@ public class MachineService : IMachineService
 {
     private readonly IMapper _mapper;
     private readonly IMachineDataProvider _machineDataProvider;
-    private readonly HalibutRuntime _halibutRuntime;
+    private readonly HalibutTrustInitializer _trustInitializer;
 
-    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, HalibutRuntime halibutRuntime)
+    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, HalibutTrustInitializer trustInitializer)
     {
         _mapper = mapper;
         _machineDataProvider = machineDataProvider;
-        _halibutRuntime = halibutRuntime;
+        _trustInitializer = trustInitializer;
     }
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
@@ -50,7 +50,10 @@ public class MachineService : IMachineService
         if (machine == null)
             throw new InvalidOperationException($"Machine {command.MachineId} not found");
 
+        var oldThumbprint = machine.Thumbprint;
+
         ApplyUpdate(machine, command);
+        TrustNewThumbprintIfChanged(machine, oldThumbprint);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -75,6 +78,22 @@ public class MachineService : IMachineService
 
         if (command.MachinePolicyId.HasValue)
             machine.MachinePolicyId = command.MachinePolicyId.Value;
+
+        if (command.Thumbprint != null)
+            machine.Thumbprint = command.Thumbprint;
+    }
+
+    private void TrustNewThumbprintIfChanged(Persistence.Entities.Deployments.Machine machine, string oldThumbprint)
+    {
+        if (string.IsNullOrEmpty(machine.PollingSubscriptionId)) return;
+        if (string.Equals(machine.Thumbprint, oldThumbprint, StringComparison.Ordinal)) return;
+
+        if (!string.IsNullOrEmpty(oldThumbprint))
+            _trustInitializer.RemoveTrust(oldThumbprint);
+
+        _trustInitializer.TrustThumbprint(machine.Thumbprint);
+
+        Log.Information("Rotated Halibut trust for machine {MachineName}: {OldThumbprint} → {NewThumbprint}", machine.Name, oldThumbprint, machine.Thumbprint);
     }
 
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)
@@ -105,9 +124,7 @@ public class MachineService : IMachineService
         {
             if (string.IsNullOrEmpty(machine.Thumbprint)) continue;
 
-            _halibutRuntime.RemoveTrust(machine.Thumbprint);
-
-            Log.Information("Removed Halibut trust for machine {MachineName} ({Thumbprint})", machine.Name, machine.Thumbprint);
+            _trustInitializer.RemoveTrust(machine.Thumbprint);
         }
     }
 }

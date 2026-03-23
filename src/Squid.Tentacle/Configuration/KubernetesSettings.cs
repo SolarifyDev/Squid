@@ -46,6 +46,12 @@ public class KubernetesSettings
     public string ScriptPodNodeArchitecture { get; set; } = "";
     public string ScriptPodNodeSelector { get; set; } = "";
 
+    // Pending script queue bound
+    public int MaxPendingScripts { get; set; } = 100;
+
     // Item 1: Pod log encryption
-    public bool EncryptPodLogs { get; set; } = false;
+    public bool EncryptPodLogs { get; set; } = true;
+
+    // NFS watchdog force-kill grace period
+    public int NfsForceKillGracePeriodSeconds { get; set; } = 30;
 }

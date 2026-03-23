@@ -66,8 +66,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("rollingUpdate:");
-        yaml.ShouldContain("maxUnavailable: 25%");
-        yaml.ShouldContain("maxSurge: 1");
+        yaml.ShouldContain("\"maxUnavailable\": \"25%\"");
+        yaml.ShouldContain("\"maxSurge\": \"1\"");
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("serviceAccountName: my-service-account");
+        yaml.ShouldContain("\"serviceAccountName\": \"my-service-account\"");
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("restartPolicy: OnFailure");
+        yaml.ShouldContain("restartPolicy: \"OnFailure\"");
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("dnsPolicy: None");
+        yaml.ShouldContain("dnsPolicy: \"None\"");
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("priorityClassName: high-priority");
+        yaml.ShouldContain("\"priorityClassName\": \"high-priority\"");
     }
 
     // === Pod spec: readinessGates ===
@@ -228,7 +228,7 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("readinessGates:");
-        yaml.ShouldContain("conditionType: feature-gate-1");
+        yaml.ShouldContain("conditionType: \"feature-gate-1\"");
     }
 
     [Fact]
@@ -239,8 +239,8 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("conditionType: gate-a");
-        yaml.ShouldContain("conditionType: gate-b");
+        yaml.ShouldContain("conditionType: \"gate-a\"");
+        yaml.ShouldContain("conditionType: \"gate-b\"");
     }
 
     [Fact]
@@ -251,9 +251,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("conditionType: gate-a");
-        yaml.ShouldContain("conditionType: gate-b");
-        yaml.ShouldContain("conditionType: gate-c");
+        yaml.ShouldContain("conditionType: \"gate-a\"");
+        yaml.ShouldContain("conditionType: \"gate-b\"");
+        yaml.ShouldContain("conditionType: \"gate-c\"");
     }
 
     // === Deployment strategy mapping ===
@@ -282,8 +282,8 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("dnsConfig:");
         yaml.ShouldContain("nameservers:");
-        yaml.ShouldContain("- 8.8.8.8");
-        yaml.ShouldContain("- 8.8.4.4");
+        yaml.ShouldContain("- \"8.8.8.8\"");
+        yaml.ShouldContain("- \"8.8.4.4\"");
     }
 
     [Fact]
@@ -295,8 +295,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("nameservers:");
-        yaml.ShouldContain("- 8.8.8.8");
-        yaml.ShouldContain("- 8.8.4.4");
+        yaml.ShouldContain("- \"8.8.8.8\"");
+        yaml.ShouldContain("- \"8.8.4.4\"");
     }
 
     [Fact]
@@ -309,8 +309,8 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("dnsConfig:");
         yaml.ShouldContain("searches:");
-        yaml.ShouldContain("- my.dns.search.suffix");
-        yaml.ShouldContain("- second.suffix");
+        yaml.ShouldContain("- \"my.dns.search.suffix\"");
+        yaml.ShouldContain("- \"second.suffix\"");
     }
 
     [Fact]
@@ -407,10 +407,10 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("seLinuxOptions:");
-        yaml.ShouldContain("level: s0:c123,c456");
-        yaml.ShouldContain("role: system_r");
-        yaml.ShouldContain("type: svirt_lxc_net_t");
-        yaml.ShouldContain("user: system_u");
+        yaml.ShouldContain("\"level\": \"s0:c123,c456\"");
+        yaml.ShouldContain("\"role\": \"system_r\"");
+        yaml.ShouldContain("\"type\": \"svirt_lxc_net_t\"");
+        yaml.ShouldContain("\"user\": \"system_u\"");
     }
 
     [Fact]
@@ -500,9 +500,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: cm-vol");
+        yaml.ShouldContain("- name: \"cm-vol\"");
         yaml.ShouldContain("configMap:");
-        yaml.ShouldContain("name: my-cm");
+        yaml.ShouldContain("name: \"my-cm\"");
     }
 
     [Fact]
@@ -514,9 +514,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: secret-vol");
+        yaml.ShouldContain("- name: \"secret-vol\"");
         yaml.ShouldContain("secret:");
-        yaml.ShouldContain("secretName: my-secret");
+        yaml.ShouldContain("secretName: \"my-secret\"");
     }
 
     [Fact]
@@ -528,7 +528,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: empty-vol");
+        yaml.ShouldContain("- name: \"empty-vol\"");
         yaml.ShouldContain("emptyDir: {}");
     }
 
@@ -541,9 +541,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: pvc-vol");
+        yaml.ShouldContain("- name: \"pvc-vol\"");
         yaml.ShouldContain("persistentVolumeClaim:");
-        yaml.ShouldContain("claimName: my-pvc");
+        yaml.ShouldContain("claimName: \"my-pvc\"");
     }
 
     [Fact]
@@ -555,9 +555,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: hp-vol");
+        yaml.ShouldContain("- name: \"hp-vol\"");
         yaml.ShouldContain("hostPath:");
-        yaml.ShouldContain("path: /var/log");
+        yaml.ShouldContain("path: \"/var/log\"");
     }
 
     // === JSON passthrough formatting (tolerations, affinity, hostAliases) ===
@@ -633,9 +633,9 @@ public class DeploymentResourceGeneratorTests
     }
 
     [Fact]
-    public async Task Generate_Tolerations_FullOctopusExample_MatchesConventionalFormat()
+    public async Task Generate_Tolerations_FullSquidExample_MatchesConventionalFormat()
     {
-        // Verifies exact output matches the reference Octopus YAML provided during review
+        // Verifies exact output matches the reference Squid YAML provided during review
         var (step, action) = CreateMinimal();
         Add(action, "Squid.Action.KubernetesContainers.Tolerations",
             """[{"key":"test","operator":"equal","value":"1","effect":""}]""");
@@ -658,10 +658,10 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- ip: 127.0.0.1");
+        yaml.ShouldContain("- ip: \"127.0.0.1\"");
         yaml.ShouldContain("hostnames:");
-        yaml.ShouldContain("- foo.local");
-        yaml.ShouldContain("- bar.local");
+        yaml.ShouldContain("- \"foo.local\"");
+        yaml.ShouldContain("- \"bar.local\"");
         yaml.ShouldNotContain("hostnames: foo.local bar.local");
     }
 
@@ -675,10 +675,10 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- ip: 127.0.0.1");
+        yaml.ShouldContain("- ip: \"127.0.0.1\"");
         yaml.ShouldContain("hostnames:");
-        yaml.ShouldContain("- foo.local");
-        yaml.ShouldContain("- bar.local");
+        yaml.ShouldContain("- \"foo.local\"");
+        yaml.ShouldContain("- \"bar.local\"");
     }
 
     [Fact]
@@ -746,7 +746,7 @@ public class DeploymentResourceGeneratorTests
 
         yaml.IndexOf("init-app", initIndex, containersIndex - initIndex, StringComparison.Ordinal)
             .ShouldBeGreaterThan(-1, "init-app should appear under initContainers:");
-        yaml.IndexOf("- name: app", containersIndex, StringComparison.Ordinal)
+        yaml.IndexOf("- name: \"app\"", containersIndex, StringComparison.Ordinal)
             .ShouldBeGreaterThan(-1, "app should appear under containers:");
     }
 
@@ -778,12 +778,12 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("httpGet:");
-        yaml.ShouldContain("path: /health");
-        yaml.ShouldContain("port: 8080");
-        yaml.ShouldContain("scheme: HTTP");
-        yaml.ShouldContain("initialDelaySeconds: 10");
-        yaml.ShouldContain("periodSeconds: 5");
-        yaml.ShouldContain("failureThreshold: 3");
+        yaml.ShouldContain("\"path\": \"/health\"");
+        yaml.ShouldContain("\"port\": \"8080\"");
+        yaml.ShouldContain("\"scheme\": \"HTTP\"");
+        yaml.ShouldContain("\"initialDelaySeconds\": \"10\"");
+        yaml.ShouldContain("\"periodSeconds\": \"5\"");
+        yaml.ShouldContain("\"failureThreshold\": \"3\"");
         yaml.ShouldNotContain("type: httpGet");
     }
 
@@ -800,7 +800,7 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("readinessProbe:");
         yaml.ShouldContain("exec:");
         yaml.ShouldContain("command:");
-        yaml.ShouldContain("- cat /tmp/healthy");
+        yaml.ShouldContain("- \"cat /tmp/healthy\"");
         yaml.ShouldNotContain("type: exec");
     }
 
@@ -816,9 +816,9 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("startupProbe:");
         yaml.ShouldContain("exec:");
-        yaml.ShouldContain("- /bin/sh");
-        yaml.ShouldContain("- -c");
-        yaml.ShouldContain("- cat /tmp/healthy");
+        yaml.ShouldContain("- \"/bin/sh\"");
+        yaml.ShouldContain("- \"-c\"");
+        yaml.ShouldContain("- \"cat /tmp/healthy\"");
     }
 
     [Fact]
@@ -833,7 +833,7 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("tcpSocket:");
-        yaml.ShouldContain("port: 3306");
+        yaml.ShouldContain("\"port\": \"3306\"");
         yaml.ShouldNotContain("type: tcpSocket");
     }
 
@@ -853,7 +853,7 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("preStop:");
         yaml.ShouldContain("exec:");
         yaml.ShouldContain("command:");
-        yaml.ShouldContain("- sleep 5");
+        yaml.ShouldContain("- \"sleep 5\"");
     }
 
     [Fact]
@@ -869,7 +869,7 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("lifecycle:");
         yaml.ShouldContain("postStart:");
         yaml.ShouldContain("exec:");
-        yaml.ShouldContain("- echo started");
+        yaml.ShouldContain("- \"echo started\"");
     }
 
     [Theory]
@@ -901,7 +901,7 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("envFrom:");
         yaml.ShouldContain("- configMapRef:");
-        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("name: \"app-config\"");
     }
 
     [Fact]
@@ -915,8 +915,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("envFrom:");
-        yaml.ShouldContain("name: config-a");
-        yaml.ShouldContain("name: config-b");
+        yaml.ShouldContain("name: \"config-a\"");
+        yaml.ShouldContain("name: \"config-b\"");
 
         var firstRef = yaml.IndexOf("configMapRef:", StringComparison.Ordinal);
         var secondRef = yaml.IndexOf("configMapRef:", firstRef + 1, StringComparison.Ordinal);
@@ -946,8 +946,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("env:");
-        yaml.ShouldContain("- name: DB_HOST");
-        yaml.ShouldContain("value: localhost");
+        yaml.ShouldContain("- name: \"DB_HOST\"");
+        yaml.ShouldContain("\"value\": localhost");
     }
 
     [Fact]
@@ -960,9 +960,9 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: DB_HOST");
-        yaml.ShouldContain("value: localhost");
-        yaml.ShouldContain("- name: DB_PORT");
+        yaml.ShouldContain("- name: \"DB_HOST\"");
+        yaml.ShouldContain("\"value\": localhost");
+        yaml.ShouldContain("- name: \"DB_PORT\"");
     }
 
     [Fact]
@@ -975,7 +975,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("value: '8080'");
+        yaml.ShouldContain("\"value\": '8080'");
     }
 
     [Fact]
@@ -1001,10 +1001,10 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("env:");
-        yaml.ShouldContain("- name: CONFIG_VAR");
+        yaml.ShouldContain("- name: \"CONFIG_VAR\"");
         yaml.ShouldContain("configMapKeyRef:");
-        yaml.ShouldContain("name: my-config");
-        yaml.ShouldContain("key: my-key");
+        yaml.ShouldContain("name: \"my-config\"");
+        yaml.ShouldContain("key: \"my-key\"");
     }
 
     [Fact]
@@ -1017,8 +1017,8 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("- name: VAR_A");
-        yaml.ShouldContain("- name: VAR_B");
+        yaml.ShouldContain("- name: \"VAR_A\"");
+        yaml.ShouldContain("- name: \"VAR_B\"");
     }
 
     // === Container: env (secretKeyRef) ===
@@ -1034,10 +1034,10 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("env:");
-        yaml.ShouldContain("- name: SECRET_VAR");
+        yaml.ShouldContain("- name: \"SECRET_VAR\"");
         yaml.ShouldContain("secretKeyRef:");
-        yaml.ShouldContain("name: my-secret");
-        yaml.ShouldContain("key: secret-key");
+        yaml.ShouldContain("name: \"my-secret\"");
+        yaml.ShouldContain("key: \"secret-key\"");
     }
 
     // === Container: env (fieldRef) ===
@@ -1053,9 +1053,9 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("env:");
-        yaml.ShouldContain("- name: POD_NAME");
+        yaml.ShouldContain("- name: \"POD_NAME\"");
         yaml.ShouldContain("fieldRef:");
-        yaml.ShouldContain("fieldPath: metadata.name");
+        yaml.ShouldContain("fieldPath: \"metadata.name\"");
     }
 
     [Fact]
@@ -1068,7 +1068,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("fieldPath: status.podIP");
+        yaml.ShouldContain("fieldPath: \"status.podIP\"");
     }
 
     // === Container: envFrom (secretRef) ===
@@ -1085,7 +1085,7 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("envFrom:");
         yaml.ShouldContain("- secretRef:");
-        yaml.ShouldContain("name: my-secret");
+        yaml.ShouldContain("name: \"my-secret\"");
     }
 
     [Fact]
@@ -1100,9 +1100,9 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("envFrom:");
         yaml.ShouldContain("configMapRef:");
-        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("name: \"app-config\"");
         yaml.ShouldContain("secretRef:");
-        yaml.ShouldContain("name: app-secret");
+        yaml.ShouldContain("name: \"app-secret\"");
 
         var envFromIndex = yaml.IndexOf("envFrom:", StringComparison.Ordinal);
         yaml.IndexOf("envFrom:", envFromIndex + 1, StringComparison.Ordinal)
@@ -1123,9 +1123,9 @@ public class DeploymentResourceGeneratorTests
 
         yaml.ShouldContain("envFrom:");
         yaml.ShouldContain("configMapRef:");
-        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("name: \"app-config\"");
         yaml.ShouldContain("optional: true");
-        yaml.ShouldContain("prefix: CFG_");
+        yaml.ShouldContain("prefix: \"CFG_\"");
     }
 
     [Fact]
@@ -1139,9 +1139,9 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("secretRef:");
-        yaml.ShouldContain("name: my-secret");
+        yaml.ShouldContain("name: \"my-secret\"");
         yaml.ShouldContain("optional: false");
-        yaml.ShouldContain("prefix: SEC_");
+        yaml.ShouldContain("prefix: \"SEC_\"");
     }
 
     [Fact]
@@ -1155,7 +1155,7 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("configMapRef:");
-        yaml.ShouldContain("name: app-config");
+        yaml.ShouldContain("name: \"app-config\"");
         yaml.ShouldNotContain("optional:");
         yaml.ShouldNotContain("prefix:");
     }
@@ -1216,7 +1216,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("imagePullPolicy: Always");
+        yaml.ShouldContain("imagePullPolicy: \"Always\"");
     }
 
     [Fact]
@@ -1242,8 +1242,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("command:");
-        yaml.ShouldContain("- node");
-        yaml.ShouldContain("- server.js");
+        yaml.ShouldContain("- \"node\"");
+        yaml.ShouldContain("- \"server.js\"");
     }
 
     [Fact]
@@ -1257,8 +1257,8 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("args:");
-        yaml.ShouldContain("- --port");
-        yaml.ShouldContain("- 3000");
+        yaml.ShouldContain("- \"--port\"");
+        yaml.ShouldContain("- \"3000\"");
     }
 
     [Fact]
@@ -1286,7 +1286,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("terminationMessagePath: /dev/termination-log");
+        yaml.ShouldContain("terminationMessagePath: \"/dev/termination-log\"");
     }
 
     [Fact]
@@ -1299,7 +1299,7 @@ public class DeploymentResourceGeneratorTests
 
         var yaml = await GetDeploymentYaml(step, action);
 
-        yaml.ShouldContain("terminationMessagePolicy: FallbackToLogsOnError");
+        yaml.ShouldContain("terminationMessagePolicy: \"FallbackToLogsOnError\"");
     }
 
     [Fact]
@@ -1326,7 +1326,7 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("env:");
-        yaml.ShouldContain("- name: PLAIN");
+        yaml.ShouldContain("- name: \"PLAIN\"");
         yaml.ShouldContain("configMapKeyRef:");
         yaml.ShouldContain("secretKeyRef:");
         yaml.ShouldContain("fieldRef:");
@@ -1349,9 +1349,9 @@ public class DeploymentResourceGeneratorTests
         var yaml = await GetDeploymentYaml(step, action);
 
         yaml.ShouldContain("command:");
-        yaml.ShouldContain("- /bin/sh");
-        yaml.ShouldContain("- -c");
-        yaml.ShouldContain("- echo hello");
+        yaml.ShouldContain("- \"/bin/sh\"");
+        yaml.ShouldContain("- \"-c\"");
+        yaml.ShouldContain("- \"echo hello\"");
     }
 
     // === Helpers ===

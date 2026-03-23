@@ -103,6 +103,25 @@ public class PackageAcquisitionInjectorTests
         result[2].Name.ShouldBe("Deploy");
     }
 
+    // === Synthetic step identity ===
+
+    [Fact]
+    public void Inject_SyntheticStep_HasAcquirePackagesStepType()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            BuildStep("Deploy", "Deploy App", stepOrder: 5)
+        };
+        var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy App" } };
+
+        var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
+
+        result.Count.ShouldBe(2);
+        result[0].Name.ShouldBe("Acquire Packages");
+        result[0].StepType.ShouldBe("AcquirePackages");
+        result[0].StepOrder.ShouldBe(0);
+    }
+
     // === No action matches packages → no injection ===
 
     [Fact]
@@ -118,11 +137,12 @@ public class PackageAcquisitionInjectorTests
 
     // === Helpers ===
 
-    private static DeploymentStepDto BuildStep(string name, string actionName, string actionType = "Squid.KubernetesRunScript", string packageRequirement = "")
+    private static DeploymentStepDto BuildStep(string name, string actionName, string actionType = "Squid.KubernetesRunScript", string packageRequirement = "", int stepOrder = 1)
     {
         return new DeploymentStepDto
         {
             Name = name,
+            StepOrder = stepOrder,
             PackageRequirement = packageRequirement,
             Condition = "Success",
             StartTrigger = SpecialVariables.StartTriggers.StartAfterPrevious,

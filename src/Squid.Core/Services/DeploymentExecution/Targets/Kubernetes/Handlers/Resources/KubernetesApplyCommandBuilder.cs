@@ -13,7 +13,7 @@ internal static class KubernetesApplyCommandBuilder
         if (action.GetProperty(KubernetesProperties.ServerSideApplyEnabled) == KubernetesBooleanValues.True)
         {
             var fieldManager = action.GetProperty(KubernetesProperties.ServerSideApplyFieldManager) ?? "squid-deploy";
-            cmd += $" --server-side --field-manager={fieldManager}";
+            cmd += $" --server-side --field-manager=\"{fieldManager}\"";
 
             if (action.GetProperty(KubernetesProperties.ServerSideApplyForceConflicts) == KubernetesBooleanValues.True)
                 cmd += " --force-conflicts";

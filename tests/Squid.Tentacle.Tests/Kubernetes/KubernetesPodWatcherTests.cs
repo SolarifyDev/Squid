@@ -74,8 +74,8 @@ public class KubernetesPodWatcherTests
         var cts = new CancellationTokenSource();
         var ops = new Mock<IKubernetesPodOperations>();
 
-        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string ns, string label, CancellationToken ct) =>
+        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns((string ns, string label, CancellationToken ct, string rv) =>
             {
                 callCount++;
                 if (callCount == 1)
@@ -98,12 +98,48 @@ public class KubernetesPodWatcherTests
         cts.Cancel();
 
         var ops = new Mock<IKubernetesPodOperations>();
-        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string ns, string label, CancellationToken ct) => EmptyAsyncEnumerable(ct));
+        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns((string ns, string label, CancellationToken ct, string rv) => EmptyAsyncEnumerable(ct));
 
         var watcher = new KubernetesPodWatcher(ops.Object, _settings);
 
         await Should.NotThrowAsync(() => watcher.RunAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task RunAsync_Reconnect_PassesLastResourceVersion()
+    {
+        var capturedResourceVersions = new List<string>();
+        var callCount = 0;
+        var cts = new CancellationTokenSource();
+        var ops = new Mock<IKubernetesPodOperations>();
+        var cache = new PodStateCache();
+
+        // ListPods returns resourceVersion "rv-500"
+        ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1PodList
+            {
+                Metadata = new V1ListMeta { ResourceVersion = "rv-500" },
+                Items = new List<V1Pod>()
+            });
+
+        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns((string ns, string label, CancellationToken ct, string rv) =>
+            {
+                capturedResourceVersions.Add(rv);
+                callCount++;
+                if (callCount == 1)
+                    throw new IOException("stream disconnected");
+                cts.Cancel();
+                return EmptyAsyncEnumerable(ct);
+            });
+
+        var watcher = new KubernetesPodWatcher(ops.Object, _settings, cache);
+        await watcher.RunAsync(cts.Token);
+
+        capturedResourceVersions.Count.ShouldBeGreaterThanOrEqualTo(2);
+        capturedResourceVersions[0].ShouldBe("rv-500");
+        capturedResourceVersions[1].ShouldBe("rv-500");
     }
 
     private static V1Pod BuildPod(string name, string phase, string ticketId)
@@ -123,8 +159,8 @@ public class KubernetesPodWatcherTests
     {
         var ops = new Mock<IKubernetesPodOperations>();
 
-        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string ns, string label, CancellationToken ct) =>
+        ops.Setup(o => o.WatchPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .Returns((string ns, string label, CancellationToken ct, string rv) =>
             {
                 cts.Cancel();
                 return ToAsyncEnumerable(events, ct);

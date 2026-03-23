@@ -16,6 +16,8 @@ public class KubernetesPodMonitor
     private readonly ScriptPodService _scriptPodService;
     private readonly TentacleSettings _tentacleSettings;
     private readonly PodDisruptionBudgetManager _pdbManager;
+    private readonly KubernetesApiHealthProbe _apiHealthProbe;
+    private readonly KubernetesLeaderElection _leaderElection;
     private readonly TimeSpan _pendingPodTimeout;
     private readonly TimeSpan _orphanAge;
     private readonly int _orphanGracePeriod;
@@ -25,12 +27,16 @@ public class KubernetesPodMonitor
         ScriptPodService scriptPodService,
         TentacleSettings tentacleSettings,
         KubernetesSettings kubernetesSettings,
-        PodDisruptionBudgetManager pdbManager = null)
+        PodDisruptionBudgetManager pdbManager = null,
+        KubernetesApiHealthProbe apiHealthProbe = null,
+        KubernetesLeaderElection leaderElection = null)
     {
         _podManager = podManager;
         _scriptPodService = scriptPodService;
         _tentacleSettings = tentacleSettings;
         _pdbManager = pdbManager;
+        _apiHealthProbe = apiHealthProbe;
+        _leaderElection = leaderElection;
         _pendingPodTimeout = TimeSpan.FromMinutes(kubernetesSettings.PendingPodTimeoutMinutes);
         _orphanAge = TimeSpan.FromMinutes(kubernetesSettings.OrphanCleanupMinutes);
         _orphanGracePeriod = kubernetesSettings.OrphanPodGracePeriodSeconds;
@@ -45,11 +51,7 @@ public class KubernetesPodMonitor
             try
             {
                 await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
-                FailPendingPods();
-                CleanupOrphanedPods();
-                CleanupOrphanedWorkspaces();
-                CheckWorkspaceCapacity();
-                _pdbManager?.ReconcilePdb();
+                RunCleanupCycle();
             }
             catch (OperationCanceledException)
             {
@@ -60,6 +62,23 @@ public class KubernetesPodMonitor
                 Log.Warning(ex, "Pod monitor cleanup cycle failed");
             }
         }
+    }
+
+    internal void RunCleanupCycle()
+    {
+        if (_leaderElection != null && !_leaderElection.IsLeader)
+        {
+            Log.Debug("Skipping cleanup cycle — not leader");
+            return;
+        }
+
+        FailPendingPods();
+        CleanupOrphanedPods();
+        CleanupOrphanedWorkspaces();
+        CheckWorkspaceCapacity();
+        _pdbManager?.ReconcilePdb();
+        _scriptPodService.EvictStaleTerminalResults(TimeSpan.FromHours(1));
+        _apiHealthProbe?.Check();
     }
 
     internal void FailPendingPods()
@@ -84,6 +103,14 @@ public class KubernetesPodMonitor
 
             var podName = pod.Metadata.Name;
 
+            // Re-check phase — pod may have transitioned since list snapshot
+            var currentPhase = _podManager.GetPodPhase(podName);
+            if (currentPhase != "Pending")
+            {
+                Log.Debug("Pod {PodName} transitioned to {Phase} since list, skipping", podName, currentPhase);
+                continue;
+            }
+
             // Atomic remove — if another thread already completed this ticket, TryRemove returns false and we skip
             if (!activeTickets.TryRemove(ticketId, out var ctx)) continue;
 
@@ -96,6 +123,8 @@ public class KubernetesPodMonitor
                 $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
 
             _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
+
+            _scriptPodService.ReleaseMutexForTicket(ticketId);
         }
     }
 
