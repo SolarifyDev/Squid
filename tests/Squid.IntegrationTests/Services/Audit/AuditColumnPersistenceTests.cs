@@ -118,11 +118,7 @@ public class AuditColumnPersistenceTests : TestBase
                 Endpoint = "{}",
                 Roles = "[]",
                 EnvironmentIds = "[]",
-                Json = "{}",
-                DataVersion = Array.Empty<byte>(),
-                ShellName = string.Empty,
-                ShellVersion = string.Empty,
-                LicenseHash = string.Empty
+                DataVersion = Array.Empty<byte>()
             };
 
             await repo.InsertAsync(machine);

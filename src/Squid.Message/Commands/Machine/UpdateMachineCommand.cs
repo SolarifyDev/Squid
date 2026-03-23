@@ -21,8 +21,6 @@ public class UpdateMachineCommand : ICommand, ISpaceScoped
     public List<int> EnvironmentIds { get; set; }
 
     public int? MachinePolicyId { get; set; }
-
-    public string Thumbprint { get; set; }
 }
 
 public class UpdateMachineResponse : SquidResponse<MachineDto>

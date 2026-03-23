@@ -43,8 +43,6 @@ public partial class MachineRegistrationService
             command.MachineName ?? $"k8s-api-{Guid.NewGuid():N[..8]}",
             serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
 
-        machine.Uri = command.ClusterUrl ?? string.Empty;
-
         return machine;
     }
 }

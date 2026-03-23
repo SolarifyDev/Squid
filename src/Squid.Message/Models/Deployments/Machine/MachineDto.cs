@@ -14,15 +14,7 @@ public class MachineDto : IBaseModel
 
     public List<int> EnvironmentIds { get; set; }
 
-    public string Json { get; set; }
-
     public int? MachinePolicyId { get; set; }
-
-    public string Thumbprint { get; set; }
-
-    public string Uri { get; set; }
-
-    public bool HasLatestCalamari { get; set; }
 
     public string Endpoint { get; set; }
 
@@ -30,19 +22,7 @@ public class MachineDto : IBaseModel
 
     public int SpaceId { get; set; }
 
-    public OperatingSystemType OperatingSystem { get; set; }
-
-    public string ShellName { get; set; }
-
-    public string ShellVersion { get; set; }
-
-    public string PollingSubscriptionId { get; set; }
-
-    public string LicenseHash { get; set; }
-
     public string Slug { get; set; }
-
-    public string AgentVersion { get; set; }
 
     public MachineHealthStatus HealthStatus { get; set; }
 

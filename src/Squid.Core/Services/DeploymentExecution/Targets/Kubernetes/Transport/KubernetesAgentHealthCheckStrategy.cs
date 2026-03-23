@@ -1,5 +1,4 @@
 using Halibut;
-using Halibut.Diagnostics;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Models.Deployments.Execution;
@@ -53,14 +52,6 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
 
     internal static ServiceEndPoint ParseAgentEndpoint(Machine machine)
     {
-        var uri = machine.Uri;
-
-        if (string.IsNullOrEmpty(uri) && !string.IsNullOrEmpty(machine.PollingSubscriptionId))
-            uri = $"poll://{machine.PollingSubscriptionId}/";
-
-        if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(machine.Thumbprint))
-            return null;
-
-        return new ServiceEndPoint(uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        return Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
     }
 }

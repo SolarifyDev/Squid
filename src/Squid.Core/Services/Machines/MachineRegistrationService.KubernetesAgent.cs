@@ -20,17 +20,17 @@ public partial class MachineRegistrationService
 
         if (existing != null)
         {
-            existing.Thumbprint = command.Thumbprint;
+            var agentVersion = command.AgentVersion ?? EndpointJsonHelper.GetField(existing.Endpoint, "AgentVersion");
+
             existing.Roles = serializedRoles ?? existing.Roles;
             existing.EnvironmentIds = resolvedEnvironmentIds ?? existing.EnvironmentIds;
-            existing.Endpoint = BuildKubernetesAgentEndpointJson(command);
-            existing.AgentVersion = command.AgentVersion ?? existing.AgentVersion;
+            existing.Endpoint = BuildKubernetesAgentEndpointJson(command, agentVersion);
 
             await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             machine = existing;
 
-            Log.Information("Updated existing machine {MachineName} ({SubscriptionId})", machine.Name, machine.PollingSubscriptionId);
+            Log.Information("Updated existing machine {MachineName} ({SubscriptionId})", machine.Name, command.SubscriptionId);
         }
         else
         {
@@ -39,7 +39,7 @@ public partial class MachineRegistrationService
             await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
             await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            Log.Information("Registered new machine {MachineName} ({SubscriptionId})", machine.Name, machine.PollingSubscriptionId);
+            Log.Information("Registered new machine {MachineName} ({SubscriptionId})", machine.Name, command.SubscriptionId);
         }
 
         _trustDistributor.Reconfigure();
@@ -52,7 +52,7 @@ public partial class MachineRegistrationService
         };
     }
 
-    private static string BuildKubernetesAgentEndpointJson(RegisterKubernetesAgentCommand command)
+    private static string BuildKubernetesAgentEndpointJson(RegisterKubernetesAgentCommand command, string agentVersion = null)
     {
         return JsonSerializer.Serialize(new KubernetesAgentEndpointDto
         {
@@ -62,21 +62,18 @@ public partial class MachineRegistrationService
             ReleaseName = command.ReleaseName,
             HelmNamespace = command.HelmNamespace,
             ChartRef = command.ChartRef,
-            CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesAgent)
+            CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesAgent),
+            AgentVersion = agentVersion ?? command.AgentVersion
         });
     }
 
     private Machine BuildKubernetesAgentMachine(RegisterKubernetesAgentCommand command, string resolvedEnvironmentIds)
     {
-        var endpointJson = BuildKubernetesAgentEndpointJson(command);
+        var endpointJson = BuildKubernetesAgentEndpointJson(command, command.AgentVersion);
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"machine-{command.SubscriptionId[..8]}",
             SerializeRolesFromCsv(command.Roles), resolvedEnvironmentIds, command.SpaceId, endpointJson);
-
-        machine.Thumbprint = command.Thumbprint;
-        machine.PollingSubscriptionId = command.SubscriptionId;
-        machine.AgentVersion = command.AgentVersion;
 
         return machine;
     }

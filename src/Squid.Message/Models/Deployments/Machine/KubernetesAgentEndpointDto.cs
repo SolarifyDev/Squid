@@ -9,4 +9,5 @@ public class KubernetesAgentEndpointDto
     public string ReleaseName { get; set; }
     public string HelmNamespace { get; set; }
     public string ChartRef { get; set; }
+    public string AgentVersion { get; set; }
 }

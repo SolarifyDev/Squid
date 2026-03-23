@@ -723,7 +723,7 @@ public class KubernetesPodManagerLifecycleTests
     // === P0-2: Semaphore Timeout and Disposal ===
 
     [Fact]
-    public void CreatePod_AfterCompletion_SemaphoreRemovedFromLocks()
+    public void CreatePod_AfterCompletion_SemaphoreIsReleased()
     {
         SetupNoPodFound();
 
@@ -734,12 +734,13 @@ public class KubernetesPodManagerLifecycleTests
 
         podName.ShouldNotBeNullOrEmpty();
 
-        // The _createLocks dictionary should no longer contain the ticket
+        // The semaphore should be released (available for next caller)
         var locksField = typeof(KubernetesPodManager).GetField("_createLocks",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         var locks = (System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>)locksField.GetValue(_manager);
 
-        locks.ContainsKey("ticket123456789").ShouldBeFalse();
+        locks.ContainsKey("ticket123456789").ShouldBeTrue();
+        locks["ticket123456789"].CurrentCount.ShouldBe(1);
     }
 
     [Fact]

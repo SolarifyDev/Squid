@@ -122,9 +122,7 @@ public class MachineRegistrationServiceTests
             Name = "existing-agent",
             EnvironmentIds = "99",
             Roles = "old-role",
-            Thumbprint = "old-thumb",
-            Endpoint = "{}",
-            PollingSubscriptionId = "sub-123"
+            Endpoint = "{}"
         };
 
         _machineDataProvider
@@ -173,7 +171,8 @@ public class MachineRegistrationServiceTests
         await _service.RegisterKubernetesAgentAsync(CreateCommand(agentVersion: "1.0.3"), CancellationToken.None);
 
         captured.ShouldNotBeNull();
-        captured.AgentVersion.ShouldBe("1.0.3");
+        var endpoint = JsonSerializer.Deserialize<KubernetesAgentEndpointDto>(captured.Endpoint);
+        endpoint.AgentVersion.ShouldBe("1.0.3");
     }
 
     [Fact]
@@ -185,10 +184,7 @@ public class MachineRegistrationServiceTests
             Name = "existing-agent",
             EnvironmentIds = "[1]",
             Roles = "[\"k8s\"]",
-            Thumbprint = "old-thumb",
-            Endpoint = "{}",
-            PollingSubscriptionId = "sub-123",
-            AgentVersion = "1.0.0"
+            Endpoint = "{}"
         };
 
         _machineDataProvider
@@ -209,7 +205,8 @@ public class MachineRegistrationServiceTests
             CreateCommand(subscriptionId: "sub-123", agentVersion: "1.0.3"), CancellationToken.None);
 
         captured.ShouldNotBeNull();
-        captured.AgentVersion.ShouldBe("1.0.3");
+        var endpoint = JsonSerializer.Deserialize<KubernetesAgentEndpointDto>(captured.Endpoint);
+        endpoint.AgentVersion.ShouldBe("1.0.3");
     }
 
     [Fact]
@@ -251,10 +248,7 @@ public class MachineRegistrationServiceTests
             Name = "existing-agent",
             EnvironmentIds = "[1]",
             Roles = "[\"k8s\"]",
-            Thumbprint = "old-thumb",
-            Endpoint = "{}",
-            PollingSubscriptionId = "sub-123",
-            AgentVersion = "1.0.0"
+            Endpoint = "{}"
         };
 
         _machineDataProvider

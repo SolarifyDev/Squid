@@ -107,6 +107,16 @@ public class EfRepository : IRepository
         return await _dbContext.Set<TEntity>().FromSqlRaw(sql, parameters).ToListAsync();
     }
 
+    public IQueryable<TEntity> FromSqlRaw<TEntity>(string sql, params object[] parameters) where TEntity : class, IEntity
+    {
+        return _dbContext.Set<TEntity>().FromSqlRaw(sql, parameters);
+    }
+
+    public async Task<List<TResult>> SqlQueryRawAsync<TResult>(string sql, params object[] parameters)
+    {
+        return await _dbContext.Database.SqlQueryRaw<TResult>(sql, parameters).ToListAsync();
+    }
+
     public IQueryable<TEntity> Query<TEntity>(Expression<Func<TEntity, bool>>? predicate = null)
         where TEntity : class, IEntity
     {

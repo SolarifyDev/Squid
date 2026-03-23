@@ -328,11 +328,7 @@ public class TestDataBuilder
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { environmentId }),
             SpaceId = 1,
             Endpoint = "{}",
-            Json = "{}",
             DataVersion = Array.Empty<byte>(),
-            ShellName = string.Empty,
-            ShellVersion = string.Empty,
-            LicenseHash = string.Empty,
             Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 

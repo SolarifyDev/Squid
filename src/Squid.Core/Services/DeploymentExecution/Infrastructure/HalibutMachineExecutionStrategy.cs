@@ -157,18 +157,12 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     {
         try
         {
-            var uri = machine.Uri;
+            var endpoint = Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 
-            if (string.IsNullOrEmpty(uri) && !string.IsNullOrEmpty(machine.PollingSubscriptionId))
-                uri = $"poll://{machine.PollingSubscriptionId}/";
+            if (endpoint == null)
+                Log.Warning("Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
 
-            if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(machine.Thumbprint))
-            {
-                Log.Warning("Machine {MachineName} has missing Uri or Thumbprint", machine.Name);
-                return null;
-            }
-
-            return new ServiceEndPoint(uri, machine.Thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return endpoint;
         }
         catch (Exception ex)
         {

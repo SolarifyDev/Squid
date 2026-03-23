@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM alpine:3.19
+FROM alpine:3.19
 
 RUN apk add --no-cache nfs-utils bash
 

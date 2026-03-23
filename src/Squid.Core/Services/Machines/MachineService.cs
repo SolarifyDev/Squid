@@ -77,9 +77,6 @@ public class MachineService : IMachineService
 
         if (command.MachinePolicyId.HasValue)
             machine.MachinePolicyId = command.MachinePolicyId.Value;
-
-        if (command.Thumbprint != null)
-            machine.Thumbprint = command.Thumbprint;
     }
 
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)

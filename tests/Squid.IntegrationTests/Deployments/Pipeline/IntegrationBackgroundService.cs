@@ -120,18 +120,10 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 IsDisabled = false,
                 Roles = "[\"web\"]",
                 EnvironmentIds = $"[{environment.Id}]",
-                Json = "{\"Endpoint\":{\"Uri\":\"https://localhost:10933\",\"Thumbprint\":\"TEST-THUMBPRINT\"}}",
                 MachinePolicyId = null,
-                Thumbprint = "TEST-THUMBPRINT",
-                Uri = "https://172.16.145.222:10933",
-                HasLatestCalamari = false,
                 Endpoint = endpointJson,
                 DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
-                OperatingSystem = OperatingSystemType.Windows,
-                ShellName = "PowerShell",
-                ShellVersion = "7.0",
-                LicenseHash = string.Empty,
                 Slug = "test-machine"
             };
 

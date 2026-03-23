@@ -110,19 +110,6 @@ public class MachineServiceTests
         await Should.ThrowAsync<InvalidOperationException>(() => _service.UpdateMachineAsync(command, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task UpdateMachine_NullThumbprint_DoesNotChangeExisting()
-    {
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "EXISTING-THUMB", PollingSubscriptionId = "poll://sub-1/" };
-        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
-
-        var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
-
-        await _service.UpdateMachineAsync(command, CancellationToken.None);
-
-        machine.Thumbprint.ShouldBe("EXISTING-THUMB");
-    }
-
     // ========================================================================
     // UpdateMachineAsync — Trust Reconfiguration
     // ========================================================================
@@ -130,7 +117,7 @@ public class MachineServiceTests
     [Fact]
     public async Task UpdateMachine_PersistsThenReconfiguresTrust()
     {
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "OLD-THUMB", PollingSubscriptionId = "poll://sub-1/" };
+        var machine = new Machine { Id = 1, Name = "agent-1" };
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
 
         var callOrder = new List<string>();
@@ -142,7 +129,7 @@ public class MachineServiceTests
             .Setup(t => t.Reconfigure())
             .Callback(() => callOrder.Add("reconfigure"));
 
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
+        var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
 
         await _service.UpdateMachineAsync(command, CancellationToken.None);
 
@@ -152,10 +139,10 @@ public class MachineServiceTests
     [Fact]
     public async Task UpdateMachine_NonPollingMachine_StillReconfigures()
     {
-        var machine = new Machine { Id = 1, Name = "api-target", Thumbprint = "OLD-THUMB", PollingSubscriptionId = null };
+        var machine = new Machine { Id = 1, Name = "api-target" };
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
 
-        var command = new UpdateMachineCommand { MachineId = 1, Thumbprint = "NEW-THUMB" };
+        var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
 
         await _service.UpdateMachineAsync(command, CancellationToken.None);
 
@@ -165,7 +152,7 @@ public class MachineServiceTests
     [Fact]
     public async Task UpdateMachine_DisablingMachine_ReconfiguresTrust()
     {
-        var machine = new Machine { Id = 1, Name = "agent-1", Thumbprint = "THUMB", PollingSubscriptionId = "poll://sub-1/", IsDisabled = false };
+        var machine = new Machine { Id = 1, Name = "agent-1", IsDisabled = false };
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
 
         var command = new UpdateMachineCommand { MachineId = 1, IsDisabled = true };
@@ -182,7 +169,7 @@ public class MachineServiceTests
     [Fact]
     public async Task DeleteMachines_PersistsThenReconfiguresTrust()
     {
-        var machines = new List<Machine> { new() { Id = 1, Name = "agent-1", Thumbprint = "THUMB-A" } };
+        var machines = new List<Machine> { new() { Id = 1, Name = "agent-1" } };
         _machineDataProvider.Setup(p => p.GetMachinesByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(machines);
 
         var callOrder = new List<string>();
