@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+b64d() { echo -n "$1" | base64 --decode; }
 
 # --- Helm upgrade/install ---
-RELEASE_NAME="{{ReleaseName}}"
-CHART_PATH="{{ChartPath}}"
-HELM_NAMESPACE="{{Namespace}}"
-HELM_EXE="{{HelmExe}}"
-RESET_VALUES="{{ResetValues}}"
-HELM_WAIT="{{HelmWait}}"
-ADDITIONAL_ARGS="{{AdditionalArgs}}"
+RELEASE_NAME="$(b64d '{{ReleaseName}}')"
+CHART_PATH="$(b64d '{{ChartPath}}')"
+HELM_NAMESPACE="$(b64d '{{Namespace}}')"
+HELM_EXE="$(b64d '{{HelmExe}}')"
+RESET_VALUES="$(b64d '{{ResetValues}}')"
+HELM_WAIT="$(b64d '{{HelmWait}}')"
+ADDITIONAL_ARGS="$(b64d '{{AdditionalArgs}}')"
 
 if [ -z "$HELM_EXE" ]; then
     HELM_EXE="helm"
@@ -22,6 +23,16 @@ fi
 
 if [ "$HELM_WAIT" = "True" ]; then
     HELM_CMD+=("--wait")
+fi
+
+HELM_WAIT_FOR_JOBS="$(b64d '{{WaitForJobs}}')"
+if [ "$HELM_WAIT_FOR_JOBS" = "True" ]; then
+    HELM_CMD+=("--wait-for-jobs")
+fi
+
+HELM_TIMEOUT="$(b64d '{{Timeout}}')"
+if [ -n "$HELM_TIMEOUT" ]; then
+    HELM_CMD+=("--timeout" "$HELM_TIMEOUT")
 fi
 
 # Values files

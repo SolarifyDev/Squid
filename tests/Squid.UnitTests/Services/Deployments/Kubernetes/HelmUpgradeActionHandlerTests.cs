@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -13,6 +14,8 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 public class HelmUpgradeActionHandlerTests
 {
     private readonly HelmUpgradeActionHandler _handler = new();
+
+    private static string B64(string value) => ShellEscapeHelper.Base64Encode(value);
 
     private static DeploymentActionDto CreateAction(
         string actionType = "Squid.HelmChartUpgrade",
@@ -100,7 +103,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("my-app");
+        result.ScriptBody.ShouldContain(B64("my-app"));
     }
 
     [Fact]
@@ -112,7 +115,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("FallbackRelease");
+        result.ScriptBody.ShouldContain(B64("FallbackRelease"));
     }
 
     [Fact]
@@ -138,7 +141,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("./charts/myapp");
+        result.ScriptBody.ShouldContain(B64("./charts/myapp"));
     }
 
     [Fact]
@@ -164,7 +167,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("staging");
+        result.ScriptBody.ShouldContain(B64("staging"));
     }
 
     // === Syntax Tests ===
@@ -406,7 +409,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("/usr/local/bin/helm3");
+        result.ScriptBody.ShouldContain(B64("/usr/local/bin/helm3"));
     }
 
     [Fact]
@@ -421,7 +424,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("C:\\tools\\helm.exe");
+        result.ScriptBody.ShouldContain(B64("C:\\tools\\helm.exe"));
     }
 
     [Fact]
@@ -452,7 +455,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("--timeout 600s --debug");
+        result.ScriptBody.ShouldContain(B64("--timeout 600s --debug"));
     }
 
     [Fact]
@@ -463,7 +466,6 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldNotContain("--timeout");
         result.ScriptBody.ShouldNotContain("--debug");
     }
 
@@ -530,12 +532,12 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("myapp");
-        result.ScriptBody.ShouldContain("./charts/myapp");
-        result.ScriptBody.ShouldContain("production");
-        result.ScriptBody.ShouldContain("/opt/helm");
+        result.ScriptBody.ShouldContain(B64("myapp"));
+        result.ScriptBody.ShouldContain(B64("./charts/myapp"));
+        result.ScriptBody.ShouldContain(B64("production"));
+        result.ScriptBody.ShouldContain(B64("/opt/helm"));
         result.ScriptBody.ShouldContain("image.tag=");
-        result.ScriptBody.ShouldContain("--timeout 300s");
+        result.ScriptBody.ShouldContain(B64("--timeout 300s"));
         result.Files.ShouldContainKey("rawYamlValues.yaml");
         result.CalamariCommand.ShouldBeNull();
         result.Syntax.ShouldBe(ScriptSyntax.Bash);
@@ -562,12 +564,12 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("webapp");
-        result.ScriptBody.ShouldContain("stable/nginx");
-        result.ScriptBody.ShouldContain("web");
+        result.ScriptBody.ShouldContain(B64("webapp"));
+        result.ScriptBody.ShouldContain(B64("stable/nginx"));
+        result.ScriptBody.ShouldContain(B64("web"));
         result.ScriptBody.ShouldContain("--set");
         result.ScriptBody.ShouldContain("image.repository=");
-        result.ScriptBody.ShouldContain("--wait --debug");
+        result.ScriptBody.ShouldContain(B64("--wait --debug"));
         result.Files.ShouldContainKey("rawYamlValues.yaml");
         result.CalamariCommand.ShouldBeNull();
         result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
@@ -597,7 +599,7 @@ public class HelmUpgradeActionHandlerTests
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ScriptBody.ShouldContain("False");
+        result.ScriptBody.ShouldContain(B64("False"));
     }
 
     // === Security — No eval in Bash Template ===
@@ -693,5 +695,172 @@ public class HelmUpgradeActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ScriptBody.ShouldContain("#!/usr/bin/env bash");
+    }
+
+    // === Wait/Timeout Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_WaitEnabled_ContainsWaitFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.Wait"] = "True"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("\"--wait\"");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WaitForJobsEnabled_ContainsWaitForJobsFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.WaitForJobs"] = "True"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("True"));
+    }
+
+    [Fact]
+    public async Task PrepareAsync_TimeoutSet_ContainsTimeoutFlag()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.Timeout"] = "10m"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("10m"));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task PrepareAsync_WaitAndWaitForJobsCombinations(bool wait, bool waitForJobs)
+    {
+        var props = new Dictionary<string, string> { ["Squid.Action.Script.Syntax"] = "Bash" };
+        if (wait) props["Squid.Action.Helm.Wait"] = "True";
+        if (waitForJobs) props["Squid.Action.Helm.WaitForJobs"] = "True";
+        var action = CreateAction(properties: props);
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        var expectedWait = wait ? B64("True") : B64("False");
+        var expectedWaitForJobs = waitForJobs ? B64("True") : B64("False");
+
+        result.ScriptBody.ShouldContain($"b64d '{expectedWait}'");
+        result.ScriptBody.ShouldContain($"b64d '{expectedWaitForJobs}'");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_LegacyHelmWait_BackwardsCompatible()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ClientVersion"] = "3"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("True"));
+    }
+
+    // === Multi-Source Values Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_InlineYaml_WritesValuesFile()
+    {
+        var valueSources = "[{\"Type\":\"InlineYaml\",\"Value\":\"replicas: 3\\nimage: nginx\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("values-0.yaml");
+        result.ScriptBody.ShouldContain("values-0.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_KeyValues_EmitsSetFlags()
+    {
+        var valueSources = "[{\"Type\":\"KeyValues\",\"Value\":\"{\\\"app.name\\\":\\\"myapp\\\"}\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("--set");
+        result.ScriptBody.ShouldContain("app.name");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_MultiSourceValues_MultipleInlineYaml_WritesMultipleFilesInOrder()
+    {
+        var valueSources = "[{\"Type\":\"InlineYaml\",\"Value\":\"a: 1\"},{\"Type\":\"InlineYaml\",\"Value\":\"b: 2\"}]";
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = valueSources
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("values-0.yaml");
+        result.Files.ShouldContainKey("values-1.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoValueSources_FallsBackToLegacyProperties()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.YamlValues"] = "legacy: true"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldContainKey("rawYamlValues.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_EmptyValueSources_NoValuesFlags()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ValueSources"] = "[]"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.Files.ShouldNotContainKey("rawYamlValues.yaml");
     }
 }

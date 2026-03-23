@@ -18,6 +18,7 @@ namespace Squid.UnitTests.Services.Machines;
 public class MachineRegistrationServiceTests : IDisposable
 {
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
+    private readonly Mock<IMachinePolicyDataProvider> _policyDataProvider = new();
     private readonly Mock<IEnvironmentDataProvider> _environmentDataProvider = new();
     private readonly HalibutRuntime _halibutRuntime;
     private readonly SelfCertSetting _selfCertSetting;
@@ -39,7 +40,7 @@ public class MachineRegistrationServiceTests : IDisposable
             .Build();
 
         _service = new MachineRegistrationService(
-            _machineDataProvider.Object, _environmentDataProvider.Object, _halibutRuntime, _selfCertSetting);
+            _machineDataProvider.Object, _policyDataProvider.Object, _environmentDataProvider.Object, _halibutRuntime, _selfCertSetting);
     }
 
     public void Dispose()
@@ -294,6 +295,109 @@ public class MachineRegistrationServiceTests : IDisposable
         endpoint.ReleaseName.ShouldBe("squid-agent-updated");
         endpoint.HelmNamespace.ShouldBe("squid-agent");
         endpoint.ChartRef.ShouldBe("oci://registry-1.docker.io/squidcd/kubernetes-agent");
+    }
+
+    // ========================================================================
+    // Default policy auto-assignment
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterAgent_NewRegistration_AssignsDefaultPolicy()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 42, IsDefault = true, Name = "Default" });
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(42);
+    }
+
+    [Fact]
+    public async Task RegisterAgent_NoDefaultPolicy_MachinePolicyIdRemainsNull()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((MachinePolicy)null);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ReRegistration_DoesNotReassignPolicy()
+    {
+        var existing = new Machine
+        {
+            Id = 42, Name = "existing-agent", EnvironmentIds = "[1]", Roles = "[\"k8s\"]",
+            Thumbprint = "old-thumb", Endpoint = "{}", PollingSubscriptionId = "sub-123",
+            MachinePolicyId = 99
+        };
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync("sub-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        await _service.RegisterKubernetesAgentAsync(CreateCommand(subscriptionId: "sub-123"), CancellationToken.None);
+
+        _policyDataProvider.Verify(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()), Times.Never);
+        existing.MachinePolicyId.ShouldBe(99);
+    }
+
+    [Fact]
+    public async Task RegisterKubernetesApi_NewRegistration_AssignsDefaultPolicy()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 42, IsDefault = true, Name = "Default" });
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesApiAsync(new RegisterKubernetesApiCommand
+        {
+            MachineName = "test-api",
+            ClusterUrl = "https://cluster.local",
+            SpaceId = 1,
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(42);
     }
 
     private static RegisterKubernetesAgentCommand CreateCommand(

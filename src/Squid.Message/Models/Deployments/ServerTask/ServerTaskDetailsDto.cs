@@ -33,6 +33,8 @@ public class ServerTaskSummaryDto
     public int EnvironmentId { get; set; }
 
     public int DurationSeconds { get; set; }
+
+    public bool IsCompleted { get; set; }
 }
 
 public class ServerTaskProgressDto

@@ -1,5 +1,6 @@
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Script;
@@ -22,6 +23,12 @@ public class ScriptExecutionRequest
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public string ReleaseVersion { get; set; }
     public IScriptContextWrapper ContextWrapper { get; set; }
+    public TimeSpan? Timeout { get; set; }
+    public SensitiveValueMasker Masker { get; set; }
+    public string? TargetNamespace { get; set; }
+    public int ServerTaskId { get; set; }
+    public string StepName { get; set; }
+    public string ActionName { get; set; }
 
     public ExecutionMode ResolveExecutionMode()
     {

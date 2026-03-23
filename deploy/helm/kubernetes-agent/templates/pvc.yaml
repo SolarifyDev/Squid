@@ -7,13 +7,19 @@ metadata:
 spec:
   accessModes:
     {{- toYaml .Values.workspace.accessModes | nindent 4 }}
-  {{- if .Values.workspace.nfs.enabled }}
+  {{- if include "kubernetes-agent.useBuiltinNfs" . }}
+  volumeName: {{ include "kubernetes-agent.nfs.pv-name" . }}
+  storageClassName: ""
+  {{- else if include "kubernetes-agent.useExternalNfs" . }}
   volumeName: {{ include "kubernetes-agent.fullname" . }}-pv
+  storageClassName: ""
+  {{- else }}
+  {{- if .Values.workspace.volumeName }}
+  volumeName: {{ .Values.workspace.volumeName }}
   {{- end }}
   {{- if .Values.workspace.storageClassName }}
   storageClassName: {{ .Values.workspace.storageClassName }}
-  {{- else if .Values.workspace.nfs.enabled }}
-  storageClassName: ""
+  {{- end }}
   {{- end }}
   resources:
     requests:

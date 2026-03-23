@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Core.Extensions;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -23,7 +24,7 @@ public class KubernetesDeployConfigMapActionHandler : IActionHandler
 
         return Task.FromResult(new ActionExecutionResult
         {
-            ScriptBody = "kubectl apply -f \"./configmap.yaml\"",
+            ScriptBody = KubernetesApplyCommandBuilder.Build("./configmap.yaml", ctx.Action, ScriptSyntax.Bash),
             Files = new Dictionary<string, byte[]> { ["configmap.yaml"] = Encoding.UTF8.GetBytes(yaml) },
             CalamariCommand = null,
             ExecutionMode = ExecutionMode.DirectScript,

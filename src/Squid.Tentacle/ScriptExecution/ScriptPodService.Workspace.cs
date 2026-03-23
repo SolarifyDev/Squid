@@ -5,6 +5,7 @@ namespace Squid.Tentacle.ScriptExecution;
 
 public partial class ScriptPodService
 {
+    internal const string PathTraversalSkipMessage = "Path traversal detected in file name, skipping";
     // Workspace permissions: group-writable (0770/0660).
     // Tentacle runs as root (gid=0), script pods typically belong to root group (gid=0)
     // per OCI/OpenShift best practice. This covers bitnami, alpine, distroless, and OpenShift random-UID images.
@@ -38,13 +39,24 @@ public partial class ScriptPodService
         ResilientFileSystem.SetUnixFileMode(scriptPath, ExecutableFileMode);
     }
 
-    private static void WriteAdditionalFiles(string workDir, List<ScriptFile> files)
+    internal static void WriteAdditionalFiles(string workDir, List<ScriptFile> files)
     {
         if (files == null) return;
+
+        var resolvedWorkDir = Path.GetFullPath(workDir);
 
         foreach (var file in files)
         {
             var filePath = Path.Combine(workDir, file.Name);
+            var resolvedPath = Path.GetFullPath(filePath);
+
+            if (!resolvedPath.StartsWith(resolvedWorkDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                && !string.Equals(resolvedPath, resolvedWorkDir, StringComparison.Ordinal))
+            {
+                Log.Warning("Path traversal detected in file name '{FileName}', skipping", file.Name);
+                continue;
+            }
+
             var fileDir = Path.GetDirectoryName(filePath);
 
             if (!string.IsNullOrEmpty(fileDir) && !ResilientFileSystem.DirectoryExists(fileDir))

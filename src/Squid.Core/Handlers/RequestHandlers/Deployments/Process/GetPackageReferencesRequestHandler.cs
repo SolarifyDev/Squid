@@ -27,7 +27,8 @@ public class GetPackageReferencesRequestHandler : IRequestHandler<GetPackageRefe
                     PackageReferenceName = r.PackageReferenceName,
                     PackageId = r.PackageId,
                     FeedId = r.FeedId,
-                    FeedName = r.FeedName
+                    FeedName = r.FeedName,
+                    LastReleaseVersion = r.LastReleaseVersion
                 }).ToList()
             }
         };

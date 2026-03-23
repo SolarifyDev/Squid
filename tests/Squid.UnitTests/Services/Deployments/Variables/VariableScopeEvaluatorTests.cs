@@ -1681,6 +1681,37 @@ public class VariableScopeEvaluatorTests
         VariableScopeEvaluator.ComputeRank(variable).ShouldBe(1_000);
     }
 
+    // ========== Priority: Same Rank, Last Wins ==========
+
+    [Fact]
+    public void Evaluate_SameRank_LaterVariableWins()
+    {
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("SharedName", "first-value"),
+            MakeVariable("SharedName", "second-value")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext());
+
+        result.Single().Value.ShouldBe("second-value");
+    }
+
+    [Fact]
+    public void Evaluate_OutputVariable_OverridesBaseAtSameRank()
+    {
+        // Simulates: base variable first, output variable appended later
+        var variables = new List<VariableDto>
+        {
+            MakeVariable("Namespace", "base-ns"),
+            MakeVariable("Namespace", "output-ns")
+        };
+
+        var result = VariableScopeEvaluator.Evaluate(variables, new VariableScopeContext());
+
+        result.Single().Value.ShouldBe("output-ns");
+    }
+
     // ========== Helpers ==========
 
     private static VariableDto MakeVariable(string name, string value,

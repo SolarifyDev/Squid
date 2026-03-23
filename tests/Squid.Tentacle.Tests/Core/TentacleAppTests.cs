@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Configuration;
+using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
@@ -42,7 +43,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -91,7 +92,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -128,7 +129,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -161,7 +162,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -204,7 +205,7 @@ public class TentacleAppTests : TimedTestBase
             CertificateManagerFactory = _ => certManager,
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
-            HalibutHostFactory = (_, _, _) => halibutHost,
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
             HealthCheckServerFactory = (_, _) => healthServer
         });
 
@@ -218,6 +219,84 @@ public class TentacleAppTests : TimedTestBase
 
         registrar.LastIdentity.SubscriptionId.ShouldBe("external-sub-id");
         halibutHost.SubscriptionId.ShouldBe("external-sub-id");
+    }
+
+    [Fact]
+    public async Task Shutdown_FlipsReadinessToFalse()
+    {
+        using var cert = CreateCertificate();
+        var certManager = new FakeCertificateManager(cert, "sub-readiness");
+        var registrar = new FakeRegistrar();
+        var drainableBackend = new FakeDrainableScriptBackend();
+        var hook = new FakeStartupHook("hook-ready");
+        var flavor = new FakeFlavor("KubernetesAgent", registrar, drainableBackend, [hook], [],
+            readinessCheck: () => true);
+
+        var halibutHost = new FakeHalibutHost();
+        Func<bool> capturedReadiness = null;
+        var healthServer = new FakeHealthServer();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => certManager,
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
+            HealthCheckServerFactory = (port, readiness) =>
+            {
+                capturedReadiness = readiness;
+                return healthServer;
+            }
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", ServerCommsUrl = "https://localhost:10943" };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+
+        capturedReadiness.ShouldNotBeNull();
+        capturedReadiness().ShouldBeTrue();
+
+        cts.Cancel();
+        await runTask;
+
+        // After shutdown, readiness should be false (isReady = false)
+        capturedReadiness().ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Shutdown_CallsDrainOnScriptBackend()
+    {
+        using var cert = CreateCertificate();
+        var certManager = new FakeCertificateManager(cert, "sub-drain");
+        var registrar = new FakeRegistrar();
+        var drainableBackend = new FakeDrainableScriptBackend();
+        var hook = new FakeStartupHook("hook-drain");
+        var flavor = new FakeFlavor("KubernetesAgent", registrar, drainableBackend, [hook], []);
+
+        var halibutHost = new FakeHalibutHost();
+        var healthServer = new FakeHealthServer();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => certManager,
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, _, _, _) => halibutHost,
+            HealthCheckServerFactory = (_, _) => healthServer
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var settings = new TentacleSettings { Flavor = "KubernetesAgent", ServerCommsUrl = "https://localhost:10943", ShutdownDrainTimeoutSeconds = 2 };
+        var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+        cts.Cancel();
+        await runTask;
+
+        drainableBackend.DrainCalls.ShouldBe(1);
+        drainableBackend.LastDrainTimeout.TotalSeconds.ShouldBe(2);
     }
 
     [Fact]
@@ -262,6 +341,24 @@ public class TentacleAppTests : TimedTestBase
         return X509CertificateLoader.LoadPkcs12(cert.Export(X509ContentType.Pfx), null);
     }
 
+    private sealed class FakeDrainableScriptBackend : ITentacleScriptBackend, IGracefulShutdownAware
+    {
+        public int DrainCalls { get; private set; }
+        public TimeSpan LastDrainTimeout { get; private set; }
+
+        public ScriptTicket StartScript(StartScriptCommand command) => new("fake-ticket");
+        public ScriptStatusResponse GetStatus(ScriptStatusRequest request) => new(new ScriptTicket("fake-ticket"), ProcessState.Running, 0, new List<ProcessOutput>(), 0);
+        public ScriptStatusResponse CompleteScript(CompleteScriptCommand command) => new(new ScriptTicket("fake-ticket"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0);
+        public ScriptStatusResponse CancelScript(CancelScriptCommand command) => new(new ScriptTicket("fake-ticket"), ProcessState.Complete, -1, new List<ProcessOutput>(), 0);
+
+        public Task WaitForDrainAsync(TimeSpan timeout)
+        {
+            DrainCalls++;
+            LastDrainTimeout = timeout;
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeFlavor : ITentacleFlavor
     {
         private readonly TentacleFlavorRuntime _runtime;
@@ -273,7 +370,8 @@ public class TentacleAppTests : TimedTestBase
             IReadOnlyList<ITentacleStartupHook> hooks,
             IReadOnlyList<ITentacleBackgroundTask> backgroundTasks,
             TentacleCommunicationMode communicationMode = TentacleCommunicationMode.Polling,
-            int? listeningPort = null)
+            int? listeningPort = null,
+            Func<bool> readinessCheck = null)
         {
             Id = id;
             _runtime = new TentacleFlavorRuntime
@@ -283,7 +381,8 @@ public class TentacleAppTests : TimedTestBase
                 StartupHooks = hooks,
                 BackgroundTasks = backgroundTasks,
                 CommunicationMode = communicationMode,
-                ListeningPort = listeningPort
+                ListeningPort = listeningPort,
+                ReadinessCheck = readinessCheck
             };
         }
 

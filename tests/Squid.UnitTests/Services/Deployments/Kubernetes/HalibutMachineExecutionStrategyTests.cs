@@ -10,6 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -187,7 +188,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -200,13 +202,14 @@ public class HalibutMachineExecutionStrategyTests
             CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.Bash), Times.Once);
+        payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.PowerShell), Times.Once);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
     }
 
     [Fact]
@@ -227,7 +230,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<IAsyncScriptService>(),
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -245,7 +249,82 @@ public class HalibutMachineExecutionStrategyTests
             scriptClient.Object,
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<SensitiveValueMasker>()), Times.Once);
+    }
+
+    // === Request Timeout Override ===
+
+    [Fact]
+    public async Task ExecuteScriptAsync_WithRequestTimeout_UsesRequestTimeoutOverDefault()
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient(machine.Uri);
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("timeout-override"));
+
+        var request = CreateRequest(machine);
+        request.Timeout = TimeSpan.FromMinutes(10);
+
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(10));
+    }
+
+    // === Ticket ID Generation ===
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("calamari-run-script")]
+    public async Task ExecuteScriptAsync_GeneratesTicketId_PassedToCommand(string calamariCommand)
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient(machine.Uri);
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(new ScriptTicket("ticket-id-check"));
+
+        await _strategy.ExecuteScriptAsync(
+            CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
+
+        capturedCommand.ShouldNotBeNull();
+        capturedCommand.TaskId.ShouldNotBeNullOrEmpty();
+        capturedCommand.TaskId.Length.ShouldBe(32); // Guid without hyphens
+    }
+
+    // === Deterministic Ticket ID ===
+
+    [Fact]
+    public void GenerateTicketId_SameInputs_ProducesSameResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+
+        id1.ShouldBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentMachineId_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 43);
+
+        id1.ShouldNotBe(id2);
+    }
+
+    [Fact]
+    public void GenerateTicketId_DifferentStepName_ProducesDifferentResult()
+    {
+        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Rollback", "RunScript", 42);
+
+        id1.ShouldNotBe(id2);
     }
 
     // === Helpers ===

@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using Serilog;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -43,10 +45,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("apiVersion: apps/v1");
         sb.AppendLine("kind: Deployment");
         sb.AppendLine("metadata:");
-        sb.AppendLine($"  name: {deploymentName}");
+        sb.AppendLine($"  name: {YamlSafeScalar.Escape(deploymentName)}");
 
         if (!string.IsNullOrWhiteSpace(namespaceName))
-            sb.AppendLine($"  namespace: {namespaceName}");
+            sb.AppendLine($"  namespace: {YamlSafeScalar.Escape(namespaceName)}");
 
         AppendDictionary(sb, "  annotations:", "    ", deploymentAnnotations);
         AppendDictionary(sb, "  labels:", "    ", deploymentLabels);
@@ -125,17 +127,17 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendVolumeYaml(StringBuilder sb, VolumeSpec volume)
     {
-        sb.AppendLine($"      - name: {volume.Name}");
+        sb.AppendLine($"      - name: {YamlSafeScalar.Escape(volume.Name)}");
 
         if (!string.IsNullOrWhiteSpace(volume.ConfigMapName))
         {
             sb.AppendLine("        configMap:");
-            sb.AppendLine($"          name: {volume.ConfigMapName}");
+            sb.AppendLine($"          name: {YamlSafeScalar.Escape(volume.ConfigMapName)}");
         }
         else if (!string.IsNullOrWhiteSpace(volume.SecretName))
         {
             sb.AppendLine("        secret:");
-            sb.AppendLine($"          secretName: {volume.SecretName}");
+            sb.AppendLine($"          secretName: {YamlSafeScalar.Escape(volume.SecretName)}");
         }
         else if (volume.EmptyDir)
         {
@@ -144,12 +146,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         else if (!string.IsNullOrWhiteSpace(volume.PvcClaimName))
         {
             sb.AppendLine("        persistentVolumeClaim:");
-            sb.AppendLine($"          claimName: {volume.PvcClaimName}");
+            sb.AppendLine($"          claimName: {YamlSafeScalar.Escape(volume.PvcClaimName)}");
         }
         else if (!string.IsNullOrWhiteSpace(volume.HostPath))
         {
             sb.AppendLine("        hostPath:");
-            sb.AppendLine($"          path: {volume.HostPath}");
+            sb.AppendLine($"          path: {YamlSafeScalar.Escape(volume.HostPath)}");
         }
     }
 
@@ -201,7 +203,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (string.IsNullOrWhiteSpace(restartPolicy) || string.Equals(restartPolicy, KubernetesPodDefaultValues.RestartPolicyAlways, StringComparison.OrdinalIgnoreCase))
             return;
 
-        sb.AppendLine($"      restartPolicy: {restartPolicy}");
+        sb.AppendLine($"      restartPolicy: {YamlSafeScalar.Escape(restartPolicy)}");
     }
 
     private static void AppendDnsPolicyIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
@@ -211,7 +213,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         if (string.IsNullOrWhiteSpace(dnsPolicy) || string.Equals(dnsPolicy, KubernetesPodDefaultValues.DnsPolicyClusterFirst, StringComparison.OrdinalIgnoreCase))
             return;
 
-        sb.AppendLine($"      dnsPolicy: {dnsPolicy}");
+        sb.AppendLine($"      dnsPolicy: {YamlSafeScalar.Escape(dnsPolicy)}");
     }
 
     private static void AppendHostNetworkIfNeeded(StringBuilder sb, Dictionary<string, string> properties)
@@ -237,7 +239,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("      readinessGates:");
 
         foreach (var gate in gates)
-            sb.AppendLine($"      - {KubernetesReadinessGatePayloadProperties.ConditionType}: {gate}");
+            sb.AppendLine($"      - {KubernetesReadinessGatePayloadProperties.ConditionType}: {YamlSafeScalar.Escape(gate)}");
     }
 
     private static void AppendAffinityIfPresent(StringBuilder sb, Dictionary<string, string> properties)
@@ -270,7 +272,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("        nodeAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, "          ", doc.RootElement);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to parse node affinity JSON");
+            }
         }
 
         if (hasPodAffinity)
@@ -281,7 +286,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("        podAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, "          ", doc.RootElement);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to parse pod affinity JSON");
+            }
         }
 
         if (hasPodAntiAffinity)
@@ -292,7 +300,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("        podAntiAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, "          ", doc.RootElement);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to parse pod anti-affinity JSON");
+            }
         }
     }
 
@@ -319,7 +330,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             sb.AppendLine("        nameservers:");
 
             foreach (var ns in nameservers)
-                sb.AppendLine($"        - {ns}");
+                sb.AppendLine($"        - {YamlSafeScalar.Escape(ns)}");
         }
 
         if (searches.Length > 0)
@@ -327,7 +338,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             sb.AppendLine("        searches:");
 
             foreach (var s in searches)
-                sb.AppendLine($"        - {s}");
+                sb.AppendLine($"        - {YamlSafeScalar.Escape(s)}");
         }
 
         if (hasOptions)
@@ -338,7 +349,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("        options:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, "          ", doc.RootElement);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to parse DNS config options JSON");
+            }
         }
     }
 
@@ -411,7 +425,10 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("        sysctls:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, "          ", doc.RootElement);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to parse pod security sysctls JSON");
+            }
         }
     }
 
@@ -440,10 +457,13 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             foreach (var secret in doc.RootElement.EnumerateArray())
             {
                 if (secret.TryGetProperty(KubernetesImagePullSecretPayloadProperties.Name, out var nameElement))
-                    sb.AppendLine($"      - name: {nameElement.GetString()}");
+                    sb.AppendLine($"      - name: {YamlSafeScalar.Escape(nameElement.GetString() ?? string.Empty)}");
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse image pull secrets JSON");
+        }
     }
 
     private static void AppendHostAliasesIfPresent(StringBuilder sb, Dictionary<string, string> properties)
@@ -479,7 +499,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                     hasAny = true;
                 }
 
-                sb.AppendLine($"      - ip: {ip}");
+                sb.AppendLine($"      - ip: {YamlSafeScalar.Escape(ip)}");
 
                 var hostnames = ParseHostnames(element);
 
@@ -488,11 +508,14 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                     sb.AppendLine("        hostnames:");
 
                     foreach (var hostname in hostnames)
-                        sb.AppendLine($"        - {hostname}");
+                        sb.AppendLine($"        - {YamlSafeScalar.Escape(hostname)}");
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse host aliases JSON");
+        }
     }
 
     private static string[] ParseHostnames(JsonElement element)
@@ -533,8 +556,11 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
     private static void AppendContainerYaml(StringBuilder sb, ContainerSpec container)
     {
-        sb.AppendLine($"      - name: {container.Name}");
-        sb.AppendLine($"        image: {container.Image}");
+        sb.AppendLine($"      - name: {YamlSafeScalar.Escape(container.Name)}");
+        sb.AppendLine($"        image: {YamlSafeScalar.Escape(container.Image)}");
+
+        if (!string.IsNullOrWhiteSpace(container.ImagePullPolicy))
+            sb.AppendLine($"        imagePullPolicy: {YamlSafeScalar.Escape(container.ImagePullPolicy)}");
 
         if (container.Ports.Count > 0)
         {
@@ -542,11 +568,11 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var port in container.Ports)
             {
-                sb.AppendLine($"        - name: {port.Name}");
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(port.Name)}");
                 sb.AppendLine($"          containerPort: {port.Port}");
 
                 if (!string.IsNullOrWhiteSpace(port.Protocol))
-                    sb.AppendLine($"          protocol: {port.Protocol}");
+                    sb.AppendLine($"          protocol: {YamlSafeScalar.Escape(port.Protocol)}");
             }
         }
 
@@ -559,7 +585,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("          requests:");
 
                 foreach (var kvp in container.ResourcesRequests)
-                    sb.AppendLine($"            {kvp.Key}: {kvp.Value}");
+                    sb.AppendLine($"            {YamlSafeScalar.Escape(kvp.Key)}: {YamlSafeScalar.Escape(kvp.Value)}");
             }
 
             if (container.ResourcesLimits.Count > 0)
@@ -567,7 +593,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                 sb.AppendLine("          limits:");
 
                 foreach (var kvp in container.ResourcesLimits)
-                    sb.AppendLine($"            {kvp.Key}: {kvp.Value}");
+                    sb.AppendLine($"            {YamlSafeScalar.Escape(kvp.Key)}: {YamlSafeScalar.Escape(kvp.Value)}");
             }
         }
 
@@ -577,22 +603,104 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
 
             foreach (var mount in container.VolumeMounts)
             {
-                sb.AppendLine($"        - name: {mount.Name}");
-                sb.AppendLine($"          mountPath: {mount.MountPath}");
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(mount.Name)}");
+                sb.AppendLine($"          mountPath: {YamlSafeScalar.Escape(mount.MountPath)}");
 
                 if (!string.IsNullOrWhiteSpace(mount.SubPath))
-                    sb.AppendLine($"          subPath: {mount.SubPath}");
+                    sb.AppendLine($"          subPath: {YamlSafeScalar.Escape(mount.SubPath)}");
             }
         }
 
-        if (container.ConfigMapEnvFromSource.Count > 0)
+        if (container.Command.Count > 0)
+        {
+            sb.AppendLine("        command:");
+
+            foreach (var cmd in container.Command)
+                sb.AppendLine($"        - {YamlSafeScalar.Escape(cmd)}");
+        }
+
+        if (container.Args.Count > 0)
+        {
+            sb.AppendLine("        args:");
+
+            foreach (var arg in container.Args)
+                sb.AppendLine($"        - {YamlSafeScalar.Escape(arg)}");
+        }
+
+        if (container.ConfigMapEnvFromSource.Count > 0 || container.SecretEnvFromSource.Count > 0)
         {
             sb.AppendLine("        envFrom:");
 
             foreach (var envFrom in container.ConfigMapEnvFromSource)
             {
                 sb.AppendLine("        - configMapRef:");
-                sb.AppendLine($"            name: {envFrom}");
+                sb.AppendLine($"            name: {YamlSafeScalar.Escape(envFrom.Name)}");
+
+                if (envFrom.Optional.HasValue)
+                    sb.AppendLine($"            optional: {(envFrom.Optional.Value ? "true" : "false")}");
+
+                if (!string.IsNullOrWhiteSpace(envFrom.Prefix))
+                    sb.AppendLine($"          prefix: {YamlSafeScalar.Escape(envFrom.Prefix)}");
+            }
+
+            foreach (var envFrom in container.SecretEnvFromSource)
+            {
+                sb.AppendLine("        - secretRef:");
+                sb.AppendLine($"            name: {YamlSafeScalar.Escape(envFrom.Name)}");
+
+                if (envFrom.Optional.HasValue)
+                    sb.AppendLine($"            optional: {(envFrom.Optional.Value ? "true" : "false")}");
+
+                if (!string.IsNullOrWhiteSpace(envFrom.Prefix))
+                    sb.AppendLine($"          prefix: {YamlSafeScalar.Escape(envFrom.Prefix)}");
+            }
+        }
+
+        var hasEnv = container.EnvironmentVariables.Count > 0
+            || container.ConfigMapEnvVariables.Count > 0
+            || container.SecretEnvVariables.Count > 0
+            || container.FieldRefEnvVariables.Count > 0;
+
+        if (hasEnv)
+        {
+            sb.AppendLine("        env:");
+
+            foreach (var env in container.EnvironmentVariables)
+            {
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(env.Name)}");
+                KubernetesPropertyParser.AppendDataValue(sb, "          ", "value", env.Value);
+            }
+
+            foreach (var env in container.ConfigMapEnvVariables)
+            {
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(env.EnvVarName)}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            configMapKeyRef:");
+                sb.AppendLine($"              name: {YamlSafeScalar.Escape(env.SourceName)}");
+                sb.AppendLine($"              key: {YamlSafeScalar.Escape(env.SourceKey)}");
+
+                if (env.Optional.HasValue)
+                    sb.AppendLine($"              optional: {(env.Optional.Value ? "true" : "false")}");
+            }
+
+            foreach (var env in container.SecretEnvVariables)
+            {
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(env.EnvVarName)}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            secretKeyRef:");
+                sb.AppendLine($"              name: {YamlSafeScalar.Escape(env.SourceName)}");
+                sb.AppendLine($"              key: {YamlSafeScalar.Escape(env.SourceKey)}");
+
+                if (env.Optional.HasValue)
+                    sb.AppendLine($"              optional: {(env.Optional.Value ? "true" : "false")}");
+            }
+
+            foreach (var env in container.FieldRefEnvVariables)
+            {
+                sb.AppendLine($"        - name: {YamlSafeScalar.Escape(env.EnvVarName)}");
+                sb.AppendLine("          valueFrom:");
+                sb.AppendLine("            fieldRef:");
+                sb.AppendLine($"              fieldPath: {YamlSafeScalar.Escape(env.FieldPath)}");
             }
         }
 
@@ -615,6 +723,12 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             if (container.Lifecycle.PostStart != null)
                 KubernetesPropertyParser.AppendLifecycleHandlerYaml(sb, "          ", "postStart", container.Lifecycle.PostStart);
         }
+
+        if (!string.IsNullOrWhiteSpace(container.TerminationMessagePath))
+            sb.AppendLine($"        terminationMessagePath: {YamlSafeScalar.Escape(container.TerminationMessagePath)}");
+
+        if (!string.IsNullOrWhiteSpace(container.TerminationMessagePolicy))
+            sb.AppendLine($"        terminationMessagePolicy: {YamlSafeScalar.Escape(container.TerminationMessagePolicy)}");
 
         if (container.SecurityContext != null)
         {
@@ -639,7 +753,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                     foreach (var capability in container.SecurityContext.Capabilities.Add)
                     {
                         if (!string.IsNullOrWhiteSpace(capability))
-                            sb.AppendLine($"            - {capability}");
+                            sb.AppendLine($"            - {YamlSafeScalar.Escape(capability)}");
                     }
                 }
 
@@ -650,7 +764,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
                     foreach (var capability in container.SecurityContext.Capabilities.Drop)
                     {
                         if (!string.IsNullOrWhiteSpace(capability))
-                            sb.AppendLine($"            - {capability}");
+                            sb.AppendLine($"            - {YamlSafeScalar.Escape(capability)}");
                     }
                 }
             }

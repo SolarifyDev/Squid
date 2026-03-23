@@ -3,7 +3,7 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 public sealed class SensitiveValueMasker
 {
     public const string MaskToken = "********";
-    private const int MinValueLength = 3;
+    private const int MinValueLength = 4;
 
     private readonly string[] _sortedValues;
 

@@ -1,6 +1,7 @@
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Health;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
 using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
@@ -9,22 +10,36 @@ namespace Squid.Tentacle.Kubernetes;
 
 public class KubernetesPodMonitor
 {
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan PendingPodTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(300);
 
     private readonly KubernetesPodManager _podManager;
     private readonly ScriptPodService _scriptPodService;
     private readonly TentacleSettings _tentacleSettings;
+    private readonly PodDisruptionBudgetManager _pdbManager;
+    private readonly KubernetesApiHealthProbe _apiHealthProbe;
+    private readonly KubernetesLeaderElection _leaderElection;
+    private readonly TimeSpan _pendingPodTimeout;
+    private readonly TimeSpan _orphanAge;
+    private readonly int _orphanGracePeriod;
 
     public KubernetesPodMonitor(
         KubernetesPodManager podManager,
         ScriptPodService scriptPodService,
-        TentacleSettings tentacleSettings)
+        TentacleSettings tentacleSettings,
+        KubernetesSettings kubernetesSettings,
+        PodDisruptionBudgetManager pdbManager = null,
+        KubernetesApiHealthProbe apiHealthProbe = null,
+        KubernetesLeaderElection leaderElection = null)
     {
         _podManager = podManager;
         _scriptPodService = scriptPodService;
         _tentacleSettings = tentacleSettings;
+        _pdbManager = pdbManager;
+        _apiHealthProbe = apiHealthProbe;
+        _leaderElection = leaderElection;
+        _pendingPodTimeout = TimeSpan.FromMinutes(kubernetesSettings.PendingPodTimeoutMinutes);
+        _orphanAge = TimeSpan.FromMinutes(kubernetesSettings.OrphanCleanupMinutes);
+        _orphanGracePeriod = kubernetesSettings.OrphanPodGracePeriodSeconds;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -36,9 +51,7 @@ public class KubernetesPodMonitor
             try
             {
                 await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
-                FailPendingPods();
-                CleanupOrphanedPods();
-                CleanupOrphanedWorkspaces();
+                RunCleanupCycle();
             }
             catch (OperationCanceledException)
             {
@@ -49,6 +62,23 @@ public class KubernetesPodMonitor
                 Log.Warning(ex, "Pod monitor cleanup cycle failed");
             }
         }
+    }
+
+    internal void RunCleanupCycle()
+    {
+        if (_leaderElection != null && !_leaderElection.IsLeader)
+        {
+            Log.Debug("Skipping cleanup cycle — not leader");
+            return;
+        }
+
+        FailPendingPods();
+        CleanupOrphanedPods();
+        CleanupOrphanedWorkspaces();
+        CheckWorkspaceCapacity();
+        _pdbManager?.ReconcilePdb();
+        _scriptPodService.EvictStaleTerminalResults(TimeSpan.FromHours(1));
+        _apiHealthProbe?.Check();
     }
 
     internal void FailPendingPods()
@@ -64,33 +94,45 @@ public class KubernetesPodMonitor
             if (createdAt == null) continue;
 
             var age = DateTime.UtcNow - createdAt.Value;
-            if (age < PendingPodTimeout) continue;
+            if (age < _pendingPodTimeout) continue;
 
             string ticketId = null;
             pod.Metadata.Labels?.TryGetValue("squid.io/ticket-id", out ticketId);
 
-            if (ticketId == null || !activeTickets.ContainsKey(ticketId)) continue;
+            if (ticketId == null) continue;
 
             var podName = pod.Metadata.Name;
+
+            // Re-check phase — pod may have transitioned since list snapshot
+            var currentPhase = _podManager.GetPodPhase(podName);
+            if (currentPhase != "Pending")
+            {
+                Log.Debug("Pod {PodName} transitioned to {Phase} since list, skipping", podName, currentPhase);
+                continue;
+            }
+
+            // Atomic remove — if another thread already completed this ticket, TryRemove returns false and we skip
+            if (!activeTickets.TryRemove(ticketId, out var ctx)) continue;
 
             Log.Warning("Pod {PodName} stuck in Pending for {AgeMinutes:F0}m, marking as failed (ticket {TicketId})",
                 podName, age.TotalMinutes, ticketId);
 
-            if (activeTickets.TryRemove(ticketId, out var ctx))
-            {
-                _podManager.DeletePod(podName);
+            _podManager.DeletePod(podName, 0);
 
-                var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
-                    $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
+            var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
+                $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
 
-                _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
-            }
+            _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
+
+            _scriptPodService.ReleaseMutexForTicket(ticketId);
         }
     }
 
     private void CleanupOrphanedPods()
     {
         var pods = _podManager.ListManagedPods();
+        TentacleMetrics.SetManagedPods(pods.Count);
+
         var activeTickets = _scriptPodService.ActiveScripts;
 
         foreach (var pod in pods)
@@ -122,14 +164,15 @@ public class KubernetesPodMonitor
 
         var age = DateTime.UtcNow - finishedAt.Value;
 
-        if (age < OrphanAge)
+        if (age < _orphanAge)
             return;
 
         if (ticketId != null && activeTickets.ContainsKey(ticketId))
             return;
 
         Log.Information("Cleaning up orphaned pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m)", podName, pod.Status?.Phase, age.TotalMinutes);
-        _podManager.DeletePod(podName);
+        _podManager.DeletePod(podName, 0);
+        TentacleMetrics.OrphanedPodCleaned();
     }
 
     private void CleanupStaleRunningPod(k8s.Models.V1Pod pod, string podName, string ticketId,
@@ -145,12 +188,26 @@ public class KubernetesPodMonitor
 
         var age = DateTime.UtcNow - startedAt.Value;
 
-        if (age < OrphanAge)
+        if (age < _orphanAge)
             return;
 
         Log.Information("Cleaning up stale running pod {PodName} (phase={Phase}, age={AgeMinutes:F0}m, no active ticket)",
             podName, pod.Status?.Phase, age.TotalMinutes);
-        _podManager.DeletePod(podName);
+        _podManager.DeletePod(podName, _orphanGracePeriod);
+        TentacleMetrics.OrphanedPodCleaned();
+    }
+
+    private void CheckWorkspaceCapacity()
+    {
+        var usage = DiskSpaceChecker.GetWorkspaceUsage(_tentacleSettings.WorkspacePath);
+
+        if (usage.TotalBytes <= 0) return;
+
+        if (usage.IsLowSpace)
+        {
+            Log.Warning("Workspace disk space is low: {Free} free of {Total} ({Percentage:P1})",
+                DiskSpaceChecker.FormatBytes(usage.FreeBytes), DiskSpaceChecker.FormatBytes(usage.TotalBytes), usage.FreePercentage);
+        }
     }
 
     private void CleanupOrphanedWorkspaces()
@@ -170,7 +227,7 @@ public class KubernetesPodMonitor
             var dirInfo = new DirectoryInfo(dir);
             var age = DateTime.UtcNow - dirInfo.LastWriteTimeUtc;
 
-            if (age < OrphanAge)
+            if (age < _orphanAge)
                 continue;
 
             try

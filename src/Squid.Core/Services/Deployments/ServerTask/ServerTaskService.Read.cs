@@ -65,6 +65,16 @@ public partial class ServerTaskService
         return BuildLogPage(logs, pageSize);
     }
 
+    public async Task<(int TotalCount, List<ServerTaskSummaryDto> Items)> GetTaskListAsync(int projectId, string state = null, int pageIndex = 1, int pageSize = 30, CancellationToken ct = default)
+    {
+        var skip = (Math.Max(pageIndex, 1) - 1) * pageSize;
+
+        var (totalCount, tasks) = await _serverTaskDataProvider
+            .GetServerTasksByProjectAsync(projectId, state, skip, pageSize, ct).ConfigureAwait(false);
+
+        return (totalCount, tasks.Select(MapTask).ToList());
+    }
+
     private static ServerTaskLogPageDto BuildLogPage(List<Persistence.Entities.Deployments.ServerTaskLog> logs, int pageSize)
     {
         var hasMore = logs.Count > pageSize;

@@ -48,10 +48,10 @@ public class SensitiveValueMaskerTests
     [Fact]
     public void Mask_IgnoresValuesShort()
     {
-        var masker = new SensitiveValueMasker(new[] { "ab", "", " ", null });
+        var masker = new SensitiveValueMasker(new[] { "ab", "env", "dev", "api", "", " ", null });
 
         masker.ValueCount.ShouldBe(0);
-        masker.Mask("ab test").ShouldBe("ab test");
+        masker.Mask("ab env dev api test").ShouldBe("ab env dev api test");
     }
 
     [Fact]

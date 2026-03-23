@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using k8s.Models;
 using Squid.Message.Constants;
 using Squid.Tentacle.Configuration;
@@ -12,40 +13,71 @@ public partial class KubernetesPodManager
     private readonly IKubernetesPodOperations _ops;
     private readonly KubernetesSettings _settings;
     private readonly ScriptPodTemplateProvider _templateProvider;
+    private readonly PodStateCache _cache;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _createLocks = new();
 
-    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null)
+    public KubernetesPodManager(IKubernetesPodOperations ops, KubernetesSettings settings, ScriptPodTemplateProvider templateProvider = null, PodStateCache cache = null)
     {
         _ops = ops;
         _settings = settings;
         _templateProvider = templateProvider;
+        _cache = cache;
     }
 
-    public string CreatePod(string ticketId)
+    private string ResolveNamespace(string? targetNamespace) => targetNamespace ?? _settings.TentacleNamespace;
+
+    public string CreatePod(string ticketId, string? targetNamespace = null)
     {
-        var podName = $"squid-script-{ticketId[..12]}";
+        var semaphore = _createLocks.GetOrAdd(ticketId, _ => new SemaphoreSlim(1, 1));
+        semaphore.Wait();
 
-        var existingPod = FindPodByTicket(ticketId);
-
-        if (existingPod != null)
-        {
-            Log.Information("Reusing existing pod {PodName} for ticket {TicketId}", existingPod, ticketId);
-            return existingPod;
-        }
-
-        var pod = BuildPodSpec(podName, ticketId);
-        _ops.CreatePod(pod, _settings.TentacleNamespace);
-
-        Log.Information("Created script pod {PodName} for ticket {TicketId}", podName, ticketId);
-
-        return podName;
-    }
-
-    public string? FindPodByTicket(string ticketId)
-    {
         try
         {
+            var ns = ResolveNamespace(targetNamespace);
+            var podName = $"squid-script-{ticketId[..12]}";
+
+            var existingPod = FindPodByTicket(ticketId, targetNamespace);
+
+            if (existingPod != null)
+            {
+                var phase = GetPodPhase(existingPod, targetNamespace);
+
+                if (phase is "Succeeded" or "Failed")
+                {
+                    Log.Information("Pod {PodName} is terminal ({Phase}), recreating for ticket {TicketId}", existingPod, phase, ticketId);
+                    DeletePod(existingPod, targetNamespace: targetNamespace);
+                }
+                else
+                {
+                    Log.Information("Reusing existing pod {PodName} (phase: {Phase}) for ticket {TicketId}", existingPod, phase, ticketId);
+                    return existingPod;
+                }
+            }
+
+            var pod = BuildPodSpec(podName, ticketId);
+            _ops.CreatePod(pod, ns);
+
+            Log.Information("Created script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, ns);
+
+            return podName;
+        }
+        finally
+        {
+            semaphore.Release();
+            _createLocks.TryRemove(ticketId, out _);
+        }
+    }
+
+    public string? FindPodByTicket(string ticketId, string? targetNamespace = null)
+    {
+        if (_cache != null && _cache.TryGetPodByTicket(ticketId, out var cached))
+            return cached.Metadata?.Name;
+
+        try
+        {
+            var ns = ResolveNamespace(targetNamespace);
             var labelSelector = $"squid.io/ticket-id={ticketId}";
-            var pods = _ops.ListPods(_settings.TentacleNamespace, labelSelector);
+            var pods = _ops.ListPods(ns, labelSelector);
 
             var existing = pods?.Items?.FirstOrDefault();
 
@@ -58,11 +90,16 @@ public partial class KubernetesPodManager
         }
     }
 
-    public string? GetPodPhase(string podName)
+    public string? GetPodPhase(string podName, string? targetNamespace = null)
     {
+        var ns = ResolveNamespace(targetNamespace);
+
+        if (_cache != null && _cache.TryGetPod(podName, out var cached, ns))
+            return cached.Status?.Phase;
+
         try
         {
-            var pod = _ops.ReadPodStatus(podName, _settings.TentacleNamespace);
+            var pod = _ops.ReadPodStatus(podName, ns);
             return pod?.Status?.Phase;
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -70,13 +107,19 @@ public partial class KubernetesPodManager
             Log.Warning("Pod {PodName} not found", podName);
             return PhaseNotFound;
         }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read phase for pod {PodName}, treating as Running", podName);
+            return null;
+        }
     }
 
-    public int GetPodExitCode(string podName)
+    public int GetPodExitCode(string podName, string? targetNamespace = null)
     {
         try
         {
-            var pod = _ops.ReadPodStatus(podName, _settings.TentacleNamespace);
+            var ns = ResolveNamespace(targetNamespace);
+            var pod = _ops.ReadPodStatus(podName, ns);
 
             var containerStatus = pod?.Status?.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
 
@@ -95,13 +138,14 @@ public partial class KubernetesPodManager
         }
     }
 
-    public string ReadPodLogs(string podName)
+    public string ReadPodLogs(string podName, DateTime? sinceTime = null, string? targetNamespace = null)
     {
         try
         {
-            var stream = _ops.ReadPodLog(podName, _settings.TentacleNamespace, "script");
-
+            var ns = ResolveNamespace(targetNamespace);
+            using var stream = _ops.ReadPodLog(podName, ns, "script", sinceTime);
             using var reader = new StreamReader(stream);
+
             return reader.ReadToEnd();
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.BadRequest && ex.Response.Content?.Contains("PodInitializing") == true)
@@ -116,13 +160,14 @@ public partial class KubernetesPodManager
         }
     }
 
-    public void DeletePod(string podName)
+    public void DeletePod(string podName, int? gracePeriodSeconds = null, string? targetNamespace = null)
     {
         try
         {
-            _ops.DeletePod(podName, _settings.TentacleNamespace);
+            var ns = ResolveNamespace(targetNamespace);
+            _ops.DeletePod(podName, ns, gracePeriodSeconds);
 
-            Log.Information("Deleted script pod {PodName}", podName);
+            Log.Information("Deleted script pod {PodName} (gracePeriod={GracePeriod})", podName, gracePeriodSeconds?.ToString() ?? "default");
         }
         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -134,22 +179,35 @@ public partial class KubernetesPodManager
         }
     }
 
-    public void WaitForPodTermination(string podName, TimeSpan timeout)
+    public async Task WaitForPodTerminationAsync(string podName, TimeSpan timeout, string? targetNamespace = null, CancellationToken ct = default)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
 
-        while (DateTime.UtcNow < deadline)
+        try
         {
-            var phase = GetPodPhase(podName);
+            while (!cts.IsCancellationRequested)
+            {
+                var phase = GetPodPhase(podName, targetNamespace);
 
-            if (phase is "Succeeded" or "Failed" or PhaseNotFound)
-                return;
+                if (phase is "Succeeded" or "Failed" or PhaseNotFound)
+                    return;
 
-            Thread.Sleep(1000);
+                await Task.Delay(1000, cts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout expired, not caller cancellation
         }
 
         Log.Warning("Pod {PodName} did not terminate within {TimeoutSeconds}s", podName, timeout.TotalSeconds);
     }
+
+    public void WaitForPodTermination(string podName, TimeSpan timeout, string? targetNamespace = null)
+        => WaitForPodTerminationAsync(podName, timeout, targetNamespace).GetAwaiter().GetResult();
+
+    public bool NamespaceExists(string ns) => _ops.NamespaceExists(ns);
 
     public List<V1Pod> ListManagedPods()
     {

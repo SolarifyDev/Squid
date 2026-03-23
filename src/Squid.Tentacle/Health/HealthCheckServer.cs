@@ -80,6 +80,17 @@ public class HealthCheckServer : IHealthCheckServer
                     : "{\"status\":\"not ready\"}";
                 break;
 
+            case "/metrics":
+                statusCode = 200;
+                body = MetricsExporter.ExportPrometheus();
+                context.Response.StatusCode = statusCode;
+                context.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+                var metricsBuffer = System.Text.Encoding.UTF8.GetBytes(body);
+                context.Response.ContentLength64 = metricsBuffer.Length;
+                context.Response.OutputStream.Write(metricsBuffer, 0, metricsBuffer.Length);
+                context.Response.Close();
+                return;
+
             default:
                 statusCode = 404;
                 body = "{\"error\":\"not found\"}";

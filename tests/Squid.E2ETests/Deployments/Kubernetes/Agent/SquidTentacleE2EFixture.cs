@@ -74,10 +74,7 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     private static void SetKubeconfigEnvironment()
     {
-        var kubeconfigPath = System.Environment.GetEnvironmentVariable("SQUID_E2E_KUBECONFIG")
-                             ?? KindClusterFixture.DefaultKubeconfigPath;
-
-        System.Environment.SetEnvironmentVariable("KUBECONFIG", kubeconfigPath);
+        System.Environment.SetEnvironmentVariable("KUBECONFIG", KindClusterFixture.DefaultKubeconfigPath);
     }
 
     private static void AddCalamariToPath()

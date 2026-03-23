@@ -1,3 +1,4 @@
+using k8s;
 using k8s.Models;
 using Polly;
 using Polly.Retry;
@@ -32,11 +33,14 @@ public class ResilientKubernetesPodOperations : IKubernetesPodOperations
     public V1Pod ReadPodStatus(string name, string namespaceParameter)
         => _retryPolicy.Execute(() => _inner.ReadPodStatus(name, namespaceParameter));
 
-    public Stream ReadPodLog(string name, string namespaceParameter, string container)
-        => _retryPolicy.Execute(() => _inner.ReadPodLog(name, namespaceParameter, container));
+    public Stream ReadPodLog(string name, string namespaceParameter, string container, DateTime? sinceTime = null)
+        => _retryPolicy.Execute(() => _inner.ReadPodLog(name, namespaceParameter, container, sinceTime));
 
-    public void DeletePod(string name, string namespaceParameter)
-        => _retryPolicy.Execute(() => _inner.DeletePod(name, namespaceParameter));
+    public Stream ReadPodLogFollow(string name, string namespaceParameter, string container, DateTime? sinceTime = null)
+        => _inner.ReadPodLogFollow(name, namespaceParameter, container, sinceTime);
+
+    public void DeletePod(string name, string namespaceParameter, int? gracePeriodSeconds = null)
+        => _retryPolicy.Execute(() => _inner.DeletePod(name, namespaceParameter, gracePeriodSeconds));
 
     public V1PodList ListPods(string namespaceParameter, string labelSelector)
         => _retryPolicy.Execute(() => _inner.ListPods(namespaceParameter, labelSelector));
@@ -55,6 +59,27 @@ public class ResilientKubernetesPodOperations : IKubernetesPodOperations
 
     public void DeleteSecret(string name, string namespaceParameter)
         => _retryPolicy.Execute(() => _inner.DeleteSecret(name, namespaceParameter));
+
+    public V1PodDisruptionBudget? ReadPodDisruptionBudget(string name, string namespaceParameter)
+        => _retryPolicy.Execute(() => _inner.ReadPodDisruptionBudget(name, namespaceParameter));
+
+    public V1PodDisruptionBudget CreatePodDisruptionBudget(V1PodDisruptionBudget pdb, string namespaceParameter)
+        => _retryPolicy.Execute(() => _inner.CreatePodDisruptionBudget(pdb, namespaceParameter));
+
+    public V1ConfigMapList ListConfigMaps(string namespaceParameter, string labelSelector)
+        => _retryPolicy.Execute(() => _inner.ListConfigMaps(namespaceParameter, labelSelector));
+
+    public V1SecretList ListSecrets(string namespaceParameter, string labelSelector)
+        => _retryPolicy.Execute(() => _inner.ListSecrets(namespaceParameter, labelSelector));
+
+    public bool NamespaceExists(string name)
+        => _retryPolicy.Execute(() => _inner.NamespaceExists(name));
+
+    public IAsyncEnumerable<(WatchEventType, V1Pod)> WatchPodsAsync(string namespaceParameter, string labelSelector, CancellationToken ct, string resourceVersion = null)
+        => _inner.WatchPodsAsync(namespaceParameter, labelSelector, ct, resourceVersion);
+
+    public IAsyncEnumerable<(WatchEventType, Corev1Event)> WatchEventsAsync(string namespaceParameter, string fieldSelector, CancellationToken ct, string resourceVersion = null)
+        => _inner.WatchEventsAsync(namespaceParameter, fieldSelector, ct, resourceVersion);
 
     private static bool IsTransient(System.Net.HttpStatusCode? statusCode)
     {

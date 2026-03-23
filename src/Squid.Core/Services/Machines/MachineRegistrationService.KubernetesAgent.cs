@@ -38,6 +38,7 @@ public partial class MachineRegistrationService
         {
             machine = BuildKubernetesAgentMachine(command, resolvedEnvironmentIds);
 
+            await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
             await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             Log.Information("Registered new machine {MachineName} ({SubscriptionId})", machine.Name, machine.PollingSubscriptionId);

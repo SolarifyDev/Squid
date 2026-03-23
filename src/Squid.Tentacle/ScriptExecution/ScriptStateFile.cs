@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Serilog;
+using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -10,6 +11,7 @@ public class ScriptStateFile
     public string EosMarkerToken { get; set; } = string.Empty;
     public string Isolation { get; set; } = string.Empty;
     public string? IsolationMutexName { get; set; }
+    public string? Namespace { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
     private const string FileName = ".squid-state.json";
@@ -26,7 +28,7 @@ public class ScriptStateFile
     {
         var path = GetPath(workDir);
         var json = JsonSerializer.Serialize(state, JsonOptions);
-        File.WriteAllText(path, json);
+        RFS.WriteAllText(path, json);
 
         Log.Debug("Wrote script state file for ticket {TicketId} to {Path}", state.TicketId, path);
     }
@@ -35,11 +37,11 @@ public class ScriptStateFile
     {
         var path = GetPath(workDir);
 
-        if (!File.Exists(path)) return null;
+        if (!RFS.FileExists(path)) return null;
 
         try
         {
-            var json = File.ReadAllText(path);
+            var json = RFS.ReadAllText(path);
             return JsonSerializer.Deserialize<ScriptStateFile>(json, JsonOptions);
         }
         catch (Exception ex)

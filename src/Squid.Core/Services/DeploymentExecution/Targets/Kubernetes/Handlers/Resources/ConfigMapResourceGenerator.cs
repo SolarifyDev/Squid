@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -34,10 +35,10 @@ internal sealed class ConfigMapResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("apiVersion: v1");
         sb.AppendLine("kind: ConfigMap");
         sb.AppendLine("metadata:");
-        sb.AppendLine($"  name: {configMapName}");
+        sb.AppendLine($"  name: {YamlSafeScalar.Escape(configMapName)}");
 
         if (!string.IsNullOrWhiteSpace(namespaceName))
-            sb.AppendLine($"  namespace: {namespaceName}");
+            sb.AppendLine($"  namespace: {YamlSafeScalar.Escape(namespaceName)}");
 
         sb.AppendLine("data:");
 

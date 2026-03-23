@@ -8,7 +8,7 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
-    private static readonly TimeSpan ScriptExecutionTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DefaultScriptTimeout = TimeSpan.FromMinutes(30);
 
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
@@ -41,7 +41,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         var request = plan.Request;
-        var payload = _payloadBuilder.Build(request, ScriptSyntax.Bash);
+        var payload = _payloadBuilder.Build(request, request.Syntax);
 
         var scriptBody = payload.FillTemplate(
             $"./{payload.PackageFileName}",
@@ -57,7 +57,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             scriptBody,
@@ -65,15 +66,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
-            scriptFiles);
+            ticketId,
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -84,7 +88,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
-        var scriptTimeout = ScriptExecutionTimeout;
+        var scriptTimeout = request.Timeout ?? DefaultScriptTimeout;
+        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
         var command = new StartScriptCommand(
             request.ScriptBody,
@@ -92,15 +97,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            null,
-            scriptFiles);
+            ticketId,
+            scriptFiles)
+        {
+            TargetNamespace = request.TargetNamespace
+        };
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(
@@ -135,6 +143,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
+    }
+
+    internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
+    {
+        var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
     }
 
     private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using k8s;
 using k8s.Models;
 
@@ -18,11 +19,34 @@ public class KubernetesPodOperations : IKubernetesPodOperations
     public V1Pod ReadPodStatus(string name, string namespaceParameter)
         => _client.CoreV1.ReadNamespacedPodStatus(name, namespaceParameter);
 
-    public Stream ReadPodLog(string name, string namespaceParameter, string container)
-        => _client.CoreV1.ReadNamespacedPodLog(name, namespaceParameter, container: container);
+    public Stream ReadPodLog(string name, string namespaceParameter, string container, DateTime? sinceTime = null)
+    {
+        int? sinceSeconds = null;
 
-    public void DeletePod(string name, string namespaceParameter)
-        => _client.CoreV1.DeleteNamespacedPod(name, namespaceParameter);
+        if (sinceTime.HasValue)
+        {
+            var elapsed = (int)(DateTime.UtcNow - sinceTime.Value).TotalSeconds;
+            sinceSeconds = Math.Max(elapsed, 1);
+        }
+
+        return _client.CoreV1.ReadNamespacedPodLog(name, namespaceParameter, container: container, sinceSeconds: sinceSeconds);
+    }
+
+    public Stream ReadPodLogFollow(string name, string namespaceParameter, string container, DateTime? sinceTime = null)
+    {
+        int? sinceSeconds = null;
+
+        if (sinceTime.HasValue)
+        {
+            var elapsed = (int)(DateTime.UtcNow - sinceTime.Value).TotalSeconds;
+            sinceSeconds = Math.Max(elapsed, 1);
+        }
+
+        return _client.CoreV1.ReadNamespacedPodLog(name, namespaceParameter, container: container, sinceSeconds: sinceSeconds, follow: true);
+    }
+
+    public void DeletePod(string name, string namespaceParameter, int? gracePeriodSeconds = null)
+        => _client.CoreV1.DeleteNamespacedPod(name, namespaceParameter, gracePeriodSeconds: gracePeriodSeconds);
 
     public V1PodList ListPods(string namespaceParameter, string labelSelector)
         => _client.CoreV1.ListNamespacedPod(namespaceParameter, labelSelector: labelSelector);
@@ -59,4 +83,58 @@ public class KubernetesPodOperations : IKubernetesPodOperations
 
     public void DeleteSecret(string name, string namespaceParameter)
         => _client.CoreV1.DeleteNamespacedSecret(name, namespaceParameter);
+
+    public V1PodDisruptionBudget? ReadPodDisruptionBudget(string name, string namespaceParameter)
+    {
+        try
+        {
+            return _client.PolicyV1.ReadNamespacedPodDisruptionBudget(name, namespaceParameter);
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public V1PodDisruptionBudget CreatePodDisruptionBudget(V1PodDisruptionBudget pdb, string namespaceParameter)
+        => _client.PolicyV1.CreateNamespacedPodDisruptionBudget(pdb, namespaceParameter);
+
+    public V1ConfigMapList ListConfigMaps(string namespaceParameter, string labelSelector)
+        => _client.CoreV1.ListNamespacedConfigMap(namespaceParameter, labelSelector: labelSelector);
+
+    public V1SecretList ListSecrets(string namespaceParameter, string labelSelector)
+        => _client.CoreV1.ListNamespacedSecret(namespaceParameter, labelSelector: labelSelector);
+
+    public bool NamespaceExists(string name)
+    {
+        try
+        {
+            _client.CoreV1.ReadNamespace(name);
+            return true;
+        }
+        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
+    public async IAsyncEnumerable<(WatchEventType, V1Pod)> WatchPodsAsync(string namespaceParameter, string labelSelector, [EnumeratorCancellation] CancellationToken ct, string resourceVersion = null)
+    {
+        var response = _client.CoreV1.ListNamespacedPodWithHttpMessagesAsync(namespaceParameter, labelSelector: labelSelector, resourceVersion: resourceVersion, watch: true, cancellationToken: ct);
+
+        await foreach (var (type, pod) in response.WatchAsync<V1Pod, V1PodList>(cancellationToken: ct).ConfigureAwait(false))
+        {
+            yield return (type, pod);
+        }
+    }
+
+    public async IAsyncEnumerable<(WatchEventType, Corev1Event)> WatchEventsAsync(string namespaceParameter, string fieldSelector, [EnumeratorCancellation] CancellationToken ct, string resourceVersion = null)
+    {
+        var response = _client.CoreV1.ListNamespacedEventWithHttpMessagesAsync(namespaceParameter, fieldSelector: fieldSelector, resourceVersion: resourceVersion, watch: true, cancellationToken: ct);
+
+        await foreach (var (type, evt) in response.WatchAsync<Corev1Event, Corev1EventList>(cancellationToken: ct).ConfigureAwait(false))
+        {
+            yield return (type, evt);
+        }
+    }
 }

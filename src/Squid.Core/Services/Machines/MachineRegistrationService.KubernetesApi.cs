@@ -13,6 +13,7 @@ public partial class MachineRegistrationService
         var endpointJson = BuildKubernetesApiEndpointJson(command);
         var machine = BuildKubernetesApiMachine(command, endpointJson);
 
+        await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
         await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new RegisterMachineResponseData

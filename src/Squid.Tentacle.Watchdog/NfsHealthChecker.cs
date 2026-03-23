@@ -2,7 +2,7 @@ namespace Squid.Tentacle.Watchdog;
 
 public static class NfsHealthChecker
 {
-    // Aligned with Octopus checkFilesystem(): os.ReadDir(path)
+    // Aligned with Squid checkFilesystem(): os.ReadDir(path)
     public static bool CheckFilesystem(string path)
     {
         try
@@ -17,13 +17,13 @@ public static class NfsHealthChecker
         }
         catch (Exception ex)
         {
-            // Non-NFS errors are ignored (aligned with Octopus behavior)
+            // Non-NFS errors are ignored (aligned with Squid behavior)
             Console.WriteLine($"Non-NFS filesystem error (ignored): {ex.Message}");
             return true;
         }
     }
 
-    // Aligned with Octopus IsCorruptedMnt()
+    // Aligned with Squid IsCorruptedMnt()
     // ESTALE=116, ENOTCONN=107, EIO=5, EACCES=13, EHOSTDOWN=64, EWOULDBLOCK=35
     public static bool IsCorruptedMount(Exception ex)
     {

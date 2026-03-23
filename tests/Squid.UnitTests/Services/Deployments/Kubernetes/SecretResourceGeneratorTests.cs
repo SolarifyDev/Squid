@@ -52,7 +52,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("name: my-secret");
+        yaml.ShouldContain("name: \"my-secret\"");
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("namespace: secure-ns");
+        yaml.ShouldContain("namespace: \"secure-ns\"");
     }
 
     // === Data values — simple ===
@@ -75,7 +75,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("DB_USER: admin");
+        yaml.ShouldContain("\"DB_USER\": admin");
     }
 
     // === Value quoting — booleans / nulls ===
@@ -92,7 +92,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain($"MY_KEY: {expected}");
+        yaml.ShouldContain($"\"MY_KEY\": {expected}");
     }
 
     // === Value quoting — numerics ===
@@ -107,7 +107,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain($"PORT: {expected}");
+        yaml.ShouldContain($"\"PORT\": {expected}");
     }
 
     // === Value quoting — special characters ===
@@ -119,7 +119,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("CONN_STR: 'Server=host: 1433;Database=db'");
+        yaml.ShouldContain("\"CONN_STR\": 'Server=host: 1433;Database=db'");
     }
 
     // === Empty values ===
@@ -131,7 +131,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("EMPTY_SECRET: ''");
+        yaml.ShouldContain("\"EMPTY_SECRET\": ''");
     }
 
     // === Multiple values ===
@@ -143,8 +143,8 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("DB_USER: admin");
-        yaml.ShouldContain("DB_PASS: secret123");
+        yaml.ShouldContain("\"DB_USER\": admin");
+        yaml.ShouldContain("\"DB_PASS\": secret123");
     }
 
     // === JSON format ===
@@ -156,7 +156,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("DB_USER: admin");
+        yaml.ShouldContain("\"DB_USER\": admin");
     }
 
     [Fact]
@@ -166,8 +166,8 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("API_KEY: my-api-key");
-        yaml.ShouldContain("TOKEN: my-token");
+        yaml.ShouldContain("\"API_KEY\": my-api-key");
+        yaml.ShouldContain("\"TOKEN\": my-token");
     }
 
     [Fact]
@@ -181,7 +181,7 @@ public class SecretResourceGeneratorTests
 
         var yaml = await GetSecretYaml(step, action);
 
-        yaml.ShouldContain("LOWER_KEY: lower-val");
+        yaml.ShouldContain("\"LOWER_KEY\": lower-val");
     }
 
     // === CanGenerate guards ===

@@ -67,4 +67,13 @@ public class ExternalFeedController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("package-versions")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(SearchFeedPackageVersionsResponse))]
+    public async Task<IActionResult> SearchFeedPackageVersionsAsync([FromQuery] SearchFeedPackageVersionsRequest request)
+    {
+        var response = await _mediator.RequestAsync<SearchFeedPackageVersionsRequest, SearchFeedPackageVersionsResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

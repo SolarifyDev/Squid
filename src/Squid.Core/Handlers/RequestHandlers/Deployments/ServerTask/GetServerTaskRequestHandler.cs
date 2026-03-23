@@ -80,3 +80,31 @@ public class GetServerTaskNodeLogsRequestHandler : IRequestHandler<GetServerTask
         };
     }
 }
+
+public class GetServerTaskListRequestHandler : IRequestHandler<GetServerTaskListRequest, GetServerTaskListResponse>
+{
+    private readonly IServerTaskService _serverTaskService;
+
+    public GetServerTaskListRequestHandler(IServerTaskService serverTaskService)
+    {
+        _serverTaskService = serverTaskService;
+    }
+
+    public async Task<GetServerTaskListResponse> Handle(IReceiveContext<GetServerTaskListRequest> context, CancellationToken cancellationToken)
+    {
+        var msg = context.Message;
+
+        var (totalCount, items) = await _serverTaskService
+            .GetTaskListAsync(msg.ProjectId, msg.State, msg.PageIndex, msg.PageSize, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new GetServerTaskListResponse
+        {
+            Data = new GetServerTaskListResponseData
+            {
+                TotalCount = totalCount,
+                Items = items
+            }
+        };
+    }
+}

@@ -64,10 +64,10 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("name: postboyweb-deployment");
-        yaml.ShouldContain("namespace: postboyweb-namespace");
+        yaml.ShouldContain("name: \"postboyweb-deployment\"");
+        yaml.ShouldContain("namespace: \"postboyweb-namespace\"");
         yaml.ShouldContain("replicas: 1");
-        yaml.ShouldContain("image: nginx:1.25");
+        yaml.ShouldContain("image: \"nginx:1.25\"");
         yaml.ShouldContain("containerPort: 80");
         yaml.ShouldContain("volumeMounts:");
     }
@@ -81,10 +81,10 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
         yaml.ShouldContain("kind: Service");
-        yaml.ShouldContain("name: postboyweb-service");
-        yaml.ShouldContain("type: ClusterIP");
+        yaml.ShouldContain("name: \"postboyweb-service\"");
+        yaml.ShouldContain("type: \"ClusterIP\"");
         yaml.ShouldContain("port: 8000");
-        yaml.ShouldContain("targetPort: 80");
+        yaml.ShouldContain("targetPort: \"80\"");
     }
 
     [Fact]
@@ -96,8 +96,8 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
         yaml.ShouldContain("kind: ConfigMap");
-        yaml.ShouldContain("name: postboyweb-config");
-        yaml.ShouldContain("appsettings.json");
+        yaml.ShouldContain("name: \"postboyweb-config\"");
+        yaml.ShouldContain("\"appsettings.json\"");
         yaml.ShouldContain("ApiBaseUrl");
     }
 
@@ -125,13 +125,13 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("name: squid-api-deployment");
-        yaml.ShouldContain("namespace: squid-backend-namespace");
+        yaml.ShouldContain("name: \"squid-api-deployment\"");
+        yaml.ShouldContain("namespace: \"squid-backend-namespace\"");
         yaml.ShouldContain("replicas: 2");
-        yaml.ShouldContain("image: repo/squid-api:1.0");
+        yaml.ShouldContain("image: \"repo/squid-api:1.0\"");
         yaml.ShouldContain("containerPort: 8080");
         yaml.ShouldContain("envFrom:");
-        yaml.ShouldContain("squid-api-config-variables");
+        yaml.ShouldContain("\"squid-api-config-variables\"");
     }
 
     [Fact]
@@ -143,10 +143,10 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
         yaml.ShouldContain("kind: Service");
-        yaml.ShouldContain("name: squid-api-service");
-        yaml.ShouldContain("type: ClusterIP");
+        yaml.ShouldContain("name: \"squid-api-service\"");
+        yaml.ShouldContain("type: \"ClusterIP\"");
         yaml.ShouldContain("port: 8080");
-        yaml.ShouldContain("targetPort: 8080");
+        yaml.ShouldContain("targetPort: \"8080\"");
     }
 
     [Fact]
@@ -158,8 +158,8 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
         yaml.ShouldContain("kind: ConfigMap");
-        yaml.ShouldContain("name: squid-api-config-variables");
-        yaml.ShouldContain("ConnectionStrings__DefaultConnection");
+        yaml.ShouldContain("name: \"squid-api-config-variables\"");
+        yaml.ShouldContain("\"ConnectionStrings__DefaultConnection\"");
         yaml.ShouldContain("Host=example;Database=example;User Id=example;Password=example;");
     }
 
@@ -223,7 +223,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("namespace: default");
+        yaml.ShouldContain("namespace: \"default\"");
     }
 
     [Fact]
@@ -235,7 +235,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("namespace: fallback-ns");
+        yaml.ShouldContain("namespace: \"fallback-ns\"");
     }
 
     [Fact]
@@ -253,7 +253,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("name: my-action-name");
+        yaml.ShouldContain("name: \"my-action-name\"");
     }
 
     [Fact]
@@ -282,7 +282,7 @@ public class KubernetesContainersActionYamlGeneratorTests
     // === Container defaults ===
 
     [Fact]
-    public async Task GenerateAsync_ContainerNoImage_DefaultsToNginxLatest()
+    public async Task GenerateAsync_ContainerNoImage_NoDeploymentYaml()
     {
         var step = new DeploymentStepDto { Id = 1, Name = "test" };
         var action = new DeploymentActionDto { ActionType = "Squid.KubernetesDeployContainers" };
@@ -290,9 +290,8 @@ public class KubernetesContainersActionYamlGeneratorTests
             """[{ "Name": "app", "Ports": [{ "key": "http", "value": "80", "option": "TCP" }] }]""");
 
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
-        var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("image: nginx:latest");
+        result.ShouldNotContainKey("deployment.yaml");
     }
 
     [Fact]
@@ -306,7 +305,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("image: myregistry/myapp");
+        yaml.ShouldContain("image: \"myregistry/myapp\"");
     }
 
     [Fact]
@@ -320,7 +319,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
-        yaml.ShouldContain("- name: container");
+        yaml.ShouldContain("- name: \"container\"");
     }
 
     // === Probes ===
@@ -347,10 +346,10 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("livenessProbe:");
         yaml.ShouldContain("httpGet:");
-        yaml.ShouldContain("path: /health");
-        yaml.ShouldContain("port: 80");
-        yaml.ShouldContain("initialDelaySeconds: 10");
-        yaml.ShouldContain("periodSeconds: 30");
+        yaml.ShouldContain("\"path\": \"/health\"");
+        yaml.ShouldContain("\"port\": \"80\"");
+        yaml.ShouldContain("\"initialDelaySeconds\": \"10\"");
+        yaml.ShouldContain("\"periodSeconds\": \"30\"");
     }
 
     [Fact]
@@ -375,8 +374,8 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("readinessProbe:");
         yaml.ShouldContain("exec:");
         yaml.ShouldContain("command:");
-        yaml.ShouldContain("- cat");
-        yaml.ShouldContain("failureThreshold: 3");
+        yaml.ShouldContain("- \"cat\"");
+        yaml.ShouldContain("\"failureThreshold\": \"3\"");
     }
 
     [Fact]
@@ -400,7 +399,7 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("startupProbe:");
         yaml.ShouldContain("tcpSocket:");
-        yaml.ShouldContain("port: 8080");
+        yaml.ShouldContain("\"port\": \"8080\"");
     }
 
     // === Security Context ===
@@ -429,13 +428,13 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
         yaml.ShouldContain("securityContext:");
-        yaml.ShouldContain("runAsNonRoot: true");
-        yaml.ShouldContain("readOnlyRootFilesystem: true");
+        yaml.ShouldContain("\"runAsNonRoot\": \"true\"");
+        yaml.ShouldContain("\"readOnlyRootFilesystem\": \"true\"");
         yaml.ShouldContain("capabilities:");
         yaml.ShouldContain("drop:");
-        yaml.ShouldContain("- ALL");
+        yaml.ShouldContain("- \"ALL\"");
         yaml.ShouldContain("add:");
-        yaml.ShouldContain("- NET_BIND_SERVICE");
+        yaml.ShouldContain("- \"NET_BIND_SERVICE\"");
     }
 
     // === Lifecycle ===
@@ -463,7 +462,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         yaml.ShouldContain("lifecycle:");
         yaml.ShouldContain("preStop:");
         yaml.ShouldContain("exec:");
-        yaml.ShouldContain("- /bin/sh");
+        yaml.ShouldContain("- \"/bin/sh\"");
     }
 
     // === Tolerations ===
@@ -494,7 +493,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("prometheus.io/scrape: true");
+        yaml.ShouldContain("\"prometheus.io/scrape\": \"true\"");
     }
 
     [Fact]
@@ -508,7 +507,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
         yaml.ShouldContain("labels:");
-        yaml.ShouldContain("tier: frontend");
+        yaml.ShouldContain("\"tier\": \"frontend\"");
         yaml.ShouldContain("matchLabels:");
     }
 
@@ -528,7 +527,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
-        yaml.ShouldContain("config.yaml: |");
+        yaml.ShouldContain("\"config.yaml\": |");
     }
 
     [Fact]
@@ -545,7 +544,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
-        yaml.ShouldContain("EMPTY_VAR: ''");
+        yaml.ShouldContain("\"EMPTY_VAR\": ''");
     }
 
     [Fact]
@@ -560,9 +559,9 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
 
         yaml.ShouldContain("kind: ConfigMap");
-        yaml.ShouldContain("name: test-config");
-        yaml.ShouldContain("APP_ENV: production");
-        yaml.ShouldContain("APP_PORT: '8080'");
+        yaml.ShouldContain("name: \"test-config\"");
+        yaml.ShouldContain("\"APP_ENV\": production");
+        yaml.ShouldContain("\"APP_PORT\": '8080'");
     }
 
     // === Service ports integer values ===
@@ -581,7 +580,7 @@ public class KubernetesContainersActionYamlGeneratorTests
 
         yaml.ShouldContain("kind: Service");
         yaml.ShouldContain("port: 80");
-        yaml.ShouldContain("targetPort: 80");
+        yaml.ShouldContain("targetPort: \"80\"");
     }
 
     // === Service with NodePort ===
@@ -598,7 +597,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
-        yaml.ShouldContain("type: NodePort");
+        yaml.ShouldContain("type: \"NodePort\"");
         yaml.ShouldContain("nodePort: 30080");
     }
 
@@ -618,7 +617,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
         yaml.ShouldContain("annotations:");
-        yaml.ShouldContain("service.beta.kubernetes.io/aws-load-balancer-type: nlb");
+        yaml.ShouldContain("\"service.beta.kubernetes.io/aws-load-balancer-type\": \"nlb\"");
     }
 
     // === Service clusterIP ===
@@ -635,7 +634,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
-        yaml.ShouldContain("clusterIP: 10.96.0.100");
+        yaml.ShouldContain("clusterIP: \"10.96.0.100\"");
     }
 
     // === Service named targetPort ===
@@ -651,7 +650,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
         var yaml = Encoding.UTF8.GetString(result["service.yaml"]);
 
-        yaml.ShouldContain("targetPort: http");
+        yaml.ShouldContain("targetPort: \"http\"");
     }
 
     // === Malformed JSON resilience ===
@@ -693,7 +692,7 @@ public class KubernetesContainersActionYamlGeneratorTests
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
 
         yaml.ShouldContain("imagePullSecrets:");
-        yaml.ShouldContain("- name: my-registry-secret");
+        yaml.ShouldContain("- name: \"my-registry-secret\"");
     }
 
     // === Helpers ===

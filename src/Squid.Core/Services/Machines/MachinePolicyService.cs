@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Requests.Machines;
 
@@ -17,9 +19,13 @@ public interface IMachinePolicyService : IScopedDependency
     Task DeleteAsync(DeleteMachinePolicyCommand command, CancellationToken cancellationToken = default);
 }
 
-public class MachinePolicyService(IMachinePolicyDataProvider dataProvider) : IMachinePolicyService
+public class MachinePolicyService(IMachinePolicyDataProvider dataProvider, IMachineDataProvider machineDataProvider) : IMachinePolicyService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     public async Task<GetMachinePoliciesResponse> GetAllAsync(CancellationToken cancellationToken = default)
     {
@@ -79,10 +85,31 @@ public class MachinePolicyService(IMachinePolicyDataProvider dataProvider) : IMa
         if (policy.IsDefault)
             throw new InvalidOperationException("Cannot delete the default machine policy");
 
+        await ReassignMachinesToDefaultPolicyAsync(policy.Id, cancellationToken).ConfigureAwait(false);
+
         await dataProvider.DeleteAsync(policy, cancellationToken).ConfigureAwait(false);
     }
 
-    private static MachinePolicyDto ToDto(MachinePolicy entity)
+    private async Task ReassignMachinesToDefaultPolicyAsync(int deletedPolicyId, CancellationToken cancellationToken)
+    {
+        var affectedMachines = await machineDataProvider.GetMachinesByPolicyIdAsync(deletedPolicyId, cancellationToken).ConfigureAwait(false);
+
+        if (affectedMachines.Count == 0) return;
+
+        var defaultPolicy = await dataProvider.GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+        var defaultPolicyId = defaultPolicy?.Id;
+
+        foreach (var machine in affectedMachines)
+        {
+            machine.MachinePolicyId = defaultPolicyId;
+            await machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        Log.Information("Reassigned {Count} machines from policy {DeletedPolicyId} to default policy {DefaultPolicyId}", affectedMachines.Count, deletedPolicyId, defaultPolicyId);
+    }
+
+    internal static MachinePolicyDto ToDto(MachinePolicy entity)
     {
         return new MachinePolicyDto
         {
@@ -91,14 +118,15 @@ public class MachinePolicyService(IMachinePolicyDataProvider dataProvider) : IMa
             Name = entity.Name,
             Description = entity.Description,
             IsDefault = entity.IsDefault,
-            MachineHealthCheckPolicy = Deserialize<MachineHealthCheckPolicyDto>(entity.MachineHealthCheckPolicy) ?? new(),
+            MachineHealthCheckPolicy = MigrateScriptPolicyKeys(Deserialize<MachineHealthCheckPolicyDto>(entity.MachineHealthCheckPolicy) ?? new()),
             MachineConnectivityPolicy = Deserialize<MachineConnectivityPolicyDto>(entity.MachineConnectivityPolicy) ?? new(),
             MachineCleanupPolicy = Deserialize<MachineCleanupPolicyDto>(entity.MachineCleanupPolicy) ?? new(),
-            MachineUpdatePolicy = Deserialize<MachineUpdatePolicyDto>(entity.MachineUpdatePolicy) ?? new()
+            MachineUpdatePolicy = Deserialize<MachineUpdatePolicyDto>(entity.MachineUpdatePolicy) ?? new(),
+            MachineRpcCallRetryPolicy = Deserialize<MachineRpcCallRetryPolicyDto>(entity.MachineRpcCallRetryPolicy) ?? new()
         };
     }
 
-    private static void ApplyDto(MachinePolicy entity, MachinePolicyDto dto)
+    internal static void ApplyDto(MachinePolicy entity, MachinePolicyDto dto)
     {
         entity.SpaceId = dto.SpaceId;
         entity.Name = dto.Name;
@@ -108,9 +136,49 @@ public class MachinePolicyService(IMachinePolicyDataProvider dataProvider) : IMa
         entity.MachineConnectivityPolicy = Serialize(dto.MachineConnectivityPolicy);
         entity.MachineCleanupPolicy = Serialize(dto.MachineCleanupPolicy);
         entity.MachineUpdatePolicy = Serialize(dto.MachineUpdatePolicy);
+        entity.MachineRpcCallRetryPolicy = Serialize(dto.MachineRpcCallRetryPolicy);
     }
 
-    private static T Deserialize<T>(string json) where T : class
+    internal static MachineHealthCheckPolicyDto MigrateScriptPolicyKeys(MachineHealthCheckPolicyDto dto)
+    {
+        if (dto?.ScriptPolicies == null || dto.ScriptPolicies.Count == 0) return dto;
+
+        var needsMigration = dto.ScriptPolicies.Keys.Any(IsOldCommunicationStyleKey);
+
+        if (!needsMigration) return dto;
+
+        var migrated = new Dictionary<string, MachineScriptPolicyDto>();
+
+        // New-format keys first — they take priority over migrated old keys
+        foreach (var (key, value) in dto.ScriptPolicies)
+        {
+            if (!IsOldCommunicationStyleKey(key))
+                migrated.TryAdd(key, value);
+        }
+
+        // Old keys — only added if no new-format key already claimed the slot
+        foreach (var (key, value) in dto.ScriptPolicies)
+        {
+            if (!IsOldCommunicationStyleKey(key)) continue;
+
+            var newKey = key switch
+            {
+                "KubernetesApi" or "KubernetesAgent" or "Ssh" => ScriptSyntax.Bash.ToString(),
+                "WindowsTentacle" => ScriptSyntax.PowerShell.ToString(),
+                _ => key
+            };
+
+            migrated.TryAdd(newKey, value);
+        }
+
+        dto.ScriptPolicies = migrated;
+        return dto;
+    }
+
+    private static bool IsOldCommunicationStyleKey(string key)
+        => key is "KubernetesApi" or "KubernetesAgent" or "Ssh" or "WindowsTentacle";
+
+    internal static T Deserialize<T>(string json) where T : class
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
 
@@ -124,7 +192,7 @@ public class MachinePolicyService(IMachinePolicyDataProvider dataProvider) : IMa
         }
     }
 
-    private static string Serialize<T>(T obj) where T : class
+    internal static string Serialize<T>(T obj) where T : class
     {
         if (obj == null) return null;
 

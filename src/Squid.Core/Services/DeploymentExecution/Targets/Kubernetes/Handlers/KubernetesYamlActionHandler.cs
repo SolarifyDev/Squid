@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Serilog;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Message.Constants;
@@ -119,9 +120,9 @@ public class KubernetesYamlActionHandler : IActionHandler
                     feedIds.Add(feedId);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse container feed secrets from action");
         }
 
         return feedIds.ToList();
@@ -148,9 +149,9 @@ public class KubernetesYamlActionHandler : IActionHandler
                     return true;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse containers for feed secrets check");
         }
 
         return false;
@@ -277,9 +278,9 @@ public class KubernetesYamlActionHandler : IActionHandler
             if (modified)
                 containersProp.PropertyValue = JsonSerializer.Serialize(containers);
         }
-        catch
+        catch (Exception ex)
         {
-            // Parse failure should not block deployment
+            Log.Warning(ex, "Failed to parse container images for resolution");
         }
     }
 

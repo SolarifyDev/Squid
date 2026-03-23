@@ -398,7 +398,7 @@ public class TargetRoleCombinationTests
         var action = new DeploymentActionDto
         {
             Id = 1, StepId = 1, ActionOrder = 1, Name = "Deploy",
-            ActionType = "Octopus.Script", IsDisabled = false,
+            ActionType = SpecialVariables.ActionTypes.Script, IsDisabled = false,
             Environments = new List<int> { 1, 2 },
             ExcludedEnvironments = new List<int> { 3 },
             Channels = new List<int> { 10, 20 }

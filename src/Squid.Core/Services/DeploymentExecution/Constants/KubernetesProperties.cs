@@ -30,6 +30,7 @@ internal static class KubernetesProperties
     internal const string PodSecuritySeLinuxType = "Squid.Action.KubernetesContainers.PodSecuritySeLinuxType";
     internal const string PodSecuritySeLinuxUser = "Squid.Action.KubernetesContainers.PodSecuritySeLinuxUser";
     internal const string DeploymentStyle = "Squid.Action.KubernetesContainers.DeploymentStyle";
+    internal const string BlueGreenActiveSlot = "Squid.Action.KubernetesContainers.BlueGreenActiveSlot";
     internal const string MaxUnavailable = "Squid.Action.KubernetesContainers.MaxUnavailable";
     internal const string MaxSurge = "Squid.Action.KubernetesContainers.MaxSurge";
     internal const string DeploymentLabels = "Squid.Action.KubernetesContainers.DeploymentLabels";
@@ -75,6 +76,14 @@ internal static class KubernetesProperties
     internal const string PodSecuritySysctls = "Squid.Action.KubernetesContainers.PodSecuritySysctls";
     internal const string DnsConfigOptions = "Squid.Action.KubernetesContainers.DnsConfigOptions";
 
+    // Server-side apply
+    internal const string ServerSideApplyEnabled = "Squid.Action.Kubernetes.ServerSideApply.Enabled";
+    internal const string ServerSideApplyFieldManager = "Squid.Action.Kubernetes.ServerSideApply.FieldManager";
+    internal const string ServerSideApplyForceConflicts = "Squid.Action.Kubernetes.ServerSideApply.ForceConflicts";
+
+    // Resource status check
+    internal const string ObjectStatusCheckTimeout = "Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout";
+
     // Legacy fallback
     internal const string LegacyNamespace = "Squid.Action.Kubernetes.Namespace";
 }
@@ -103,6 +112,20 @@ internal static class KubernetesContainerPayloadProperties
     internal const string StartupProbe = "StartupProbe";
     internal const string SecurityContext = "SecurityContext";
     internal const string Lifecycle = "Lifecycle";
+
+    // Environment variables
+    internal const string EnvironmentVariables = "EnvironmentVariables";
+    internal const string SecretEnvironmentVariables = "SecretEnvironmentVariables";
+    internal const string ConfigMapEnvironmentVariables = "ConfigMapEnvironmentVariables";
+    internal const string FieldRefEnvironmentVariables = "FieldRefEnvironmentVariables";
+    internal const string SecretEnvFromSource = "SecretEnvFromSource";
+
+    // Container settings
+    internal const string ImagePullPolicy = "ImagePullPolicy";
+    internal const string TerminationMessagePath = "TerminationMessagePath";
+    internal const string TerminationMessagePolicy = "TerminationMessagePolicy";
+    internal const string Command = "Command";
+    internal const string Args = "Args";
 }
 
 /// <summary>
@@ -141,7 +164,48 @@ internal static class KubernetesContainerVolumeMountPayloadProperties
 /// </summary>
 internal static class KubernetesContainerEnvFromPayloadProperties
 {
-    internal const string ConfigMapName = "key";
+    internal const string Name = "key";
+    internal const string Prefix = "value";
+    internal const string Optional = "option";
+}
+
+/// <summary>
+/// Keys for Containers[].EnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerEnvVarPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for Containers[].ConfigMapEnvironmentVariables / SecretEnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerEnvVarSourcePayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+    internal const string Option = "option";
+    internal const string Optional = "optional";
+}
+
+/// <summary>
+/// Keys for Containers[].FieldRefEnvironmentVariables items.
+/// </summary>
+internal static class KubernetesContainerFieldRefPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Value = "value";
+}
+
+/// <summary>
+/// Keys for Containers[].SecretEnvFromSource items.
+/// </summary>
+internal static class KubernetesContainerSecretEnvFromPayloadProperties
+{
+    internal const string Name = "key";
+    internal const string Prefix = "value";
+    internal const string Optional = "option";
 }
 
 /// <summary>
@@ -300,6 +364,7 @@ internal static class KubernetesImagePullSecretPayloadProperties
 internal static class KubernetesLabelKeys
 {
     internal const string App = "app";
+    internal const string DeploymentSlot = "squid.io/deployment-slot";
 }
 
 internal static class KubernetesBooleanValues
@@ -318,6 +383,7 @@ internal static class KubernetesDeploymentStrategyValues
 {
     internal const string Recreate = "Recreate";
     internal const string RollingUpdate = "RollingUpdate";
+    internal const string BlueGreen = "BlueGreen";
 }
 
 internal static class KubernetesPodDefaultValues
@@ -401,4 +467,15 @@ internal static class KubernetesHelmProperties
     internal const string AdditionalArgs = "Squid.Action.Helm.AdditionalArgs";
     internal const string YamlValues = "Squid.Action.Helm.YamlValues";
     internal const string KeyValues = "Squid.Action.Helm.KeyValues";
+    internal const string HelmWait = "Squid.Action.Helm.Wait";
+    internal const string WaitForJobs = "Squid.Action.Helm.WaitForJobs";
+    internal const string Timeout = "Squid.Action.Helm.Timeout";
+    internal const string ValueSources = "Squid.Action.Helm.ValueSources";
+}
+
+internal static class KubernetesKustomizeProperties
+{
+    internal const string OverlayPath = "Squid.Action.KubernetesKustomize.OverlayPath";
+    internal const string CustomKustomizePath = "Squid.Action.KubernetesKustomize.CustomKustomizePath";
+    internal const string AdditionalArgs = "Squid.Action.KubernetesKustomize.AdditionalArgs";
 }

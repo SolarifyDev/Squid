@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using Serilog;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
@@ -45,23 +47,23 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine("apiVersion: networking.k8s.io/v1");
         sb.AppendLine("kind: Ingress");
         sb.AppendLine("metadata:");
-        sb.AppendLine($"  name: {ingressName}");
+        sb.AppendLine($"  name: {YamlSafeScalar.Escape(ingressName)}");
 
         if (!string.IsNullOrWhiteSpace(namespaceName))
-            sb.AppendLine($"  namespace: {namespaceName}");
+            sb.AppendLine($"  namespace: {YamlSafeScalar.Escape(namespaceName)}");
 
         if (annotations.Count > 0)
         {
             sb.AppendLine("  annotations:");
 
             foreach (var kvp in annotations)
-                sb.AppendLine($"    {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"    {YamlSafeScalar.Escape(kvp.Key)}: {YamlSafeScalar.Escape(kvp.Value)}");
         }
 
         sb.AppendLine("spec:");
 
         if (!string.IsNullOrWhiteSpace(ingressClassName))
-            sb.AppendLine($"  ingressClassName: {ingressClassName}");
+            sb.AppendLine($"  ingressClassName: {YamlSafeScalar.Escape(ingressClassName)}");
 
         AppendRules(sb, rulesJson);
 
@@ -85,11 +87,14 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
             foreach (var rule in doc.RootElement.EnumerateArray())
             {
                 var host = rule.TryGetProperty(KubernetesIngressPayloadProperties.Host, out var hostProp) ? hostProp.GetString() : null;
-                sb.AppendLine($"  - host: {host ?? string.Empty}");
+                sb.AppendLine($"  - host: {YamlSafeScalar.Escape(host ?? string.Empty)}");
                 AppendRuleHttp(sb, rule);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse ingress rules JSON");
+        }
     }
 
     private static void AppendRuleHttp(StringBuilder sb, JsonElement rule)
@@ -113,8 +118,8 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         {
             var pathStr = path.TryGetProperty(KubernetesIngressPayloadProperties.Path, out var pathProp) ? pathProp.GetString() : KubernetesIngressDefaultValues.Path;
             var pathType = path.TryGetProperty(KubernetesIngressPayloadProperties.PathType, out var pathTypeProp) ? pathTypeProp.GetString() : KubernetesIngressDefaultValues.PathType;
-            sb.AppendLine($"      - path: {pathStr}");
-            sb.AppendLine($"        pathType: {pathType}");
+            sb.AppendLine($"      - path: {YamlSafeScalar.Escape(pathStr ?? string.Empty)}");
+            sb.AppendLine($"        pathType: {YamlSafeScalar.Escape(pathType ?? string.Empty)}");
             sb.AppendLine("        backend:");
 
             if (path.TryGetProperty(KubernetesIngressPayloadProperties.Backend, out var backend))
@@ -138,7 +143,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
                     : servicePortProp.GetString();
 
             sb.AppendLine("          service:");
-            sb.AppendLine($"            name: {serviceName}");
+            sb.AppendLine($"            name: {YamlSafeScalar.Escape(serviceName ?? string.Empty)}");
             sb.AppendLine("            port:");
 
             if (!string.IsNullOrWhiteSpace(servicePort))
@@ -146,7 +151,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
                 if (int.TryParse(servicePort, out _))
                     sb.AppendLine($"              number: {servicePort}");
                 else
-                    sb.AppendLine($"              name: {servicePort}");
+                    sb.AppendLine($"              name: {YamlSafeScalar.Escape(servicePort)}");
             }
         }
         // K8s v1 format: { service: { name: "...", port: { number: 80 } } }
@@ -154,7 +159,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         {
             var serviceName = service.TryGetProperty(KubernetesIngressPayloadProperties.Name, out var sNameProp) ? sNameProp.GetString() : null;
             sb.AppendLine("          service:");
-            sb.AppendLine($"            name: {serviceName}");
+            sb.AppendLine($"            name: {YamlSafeScalar.Escape(serviceName ?? string.Empty)}");
 
             if (service.TryGetProperty(KubernetesIngressPayloadProperties.Port, out var portObj) && portObj.TryGetProperty(KubernetesIngressPayloadProperties.Number, out var numProp))
             {
@@ -184,7 +189,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
                     sb.AppendLine("  - hosts:");
 
                     foreach (var host in hostsElement.EnumerateArray())
-                        sb.AppendLine($"    - {host.GetString()}");
+                        sb.AppendLine($"    - {YamlSafeScalar.Escape(host.GetString() ?? string.Empty)}");
                 }
                 else
                 {
@@ -192,9 +197,12 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
                 }
 
                 if (!string.IsNullOrWhiteSpace(secretName))
-                    sb.AppendLine($"    secretName: {secretName}");
+                    sb.AppendLine($"    secretName: {YamlSafeScalar.Escape(secretName)}");
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse ingress TLS certificates JSON");
+        }
     }
 }

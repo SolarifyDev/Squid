@@ -12,6 +12,7 @@ using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Enums;
 using ScriptContext = Squid.Core.Services.DeploymentExecution.Transport.ScriptContext;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -36,7 +37,7 @@ public class KubernetesApiExecutionStrategyTests
             .Returns<ScriptExecutionRequest, ScriptSyntax>((req, _) => CreatePayloadForRequest(req));
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
     }
 
@@ -49,8 +50,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedArguments = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, args, _, _) =>
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, args, _, _, _, _) =>
             {
                 capturedExecutable = exe;
                 capturedArguments = args;
@@ -73,8 +74,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedArguments = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, args, _, _) =>
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, args, _, _, _, _) =>
             {
                 capturedExecutable = exe;
                 capturedArguments = args;
@@ -96,8 +97,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedExecutable = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, _, _, _) => capturedExecutable = exe)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, _, _, _, _, _) => capturedExecutable = exe)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
@@ -111,8 +112,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedExecutable = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, _, _, _) => capturedExecutable = exe)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, _, _, _, _, _) => capturedExecutable = exe)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         var request = CreateRequest(calamariCommand: null);
@@ -129,8 +130,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedExecutable = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, _, _, _) => capturedExecutable = exe)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, _, _, _, _, _) => capturedExecutable = exe)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         var request = CreateRequest(calamariCommand: "legacy-flag");
@@ -174,8 +175,8 @@ public class KubernetesApiExecutionStrategyTests
             new KubernetesApiScriptContextWrapper(contextBuilder.Object));
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, args, _, _) => capturedArguments = args)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((_, args, _, _, _, _) => capturedArguments = args)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         var request = CreateRequest(calamariCommand: "legacy");
@@ -205,8 +206,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedWorkDir = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((_, _, wd, _, _, _) => capturedWorkDir = wd)
             .ThrowsAsync(new Exception("process failed"));
 
         try
@@ -228,8 +229,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedWorkDir = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((_, _, wd, _, _, _) => capturedWorkDir = wd)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         await _strategy.ExecuteScriptAsync(CreateRequest(), CancellationToken.None);
@@ -279,8 +280,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedWorkDir = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, _, wd, _) => capturedWorkDir = wd)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((_, _, wd, _, _, _) => capturedWorkDir = wd)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         await _strategy.ExecuteScriptAsync(CreateRequest(), CancellationToken.None);
@@ -307,8 +308,8 @@ public class KubernetesApiExecutionStrategyTests
             });
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((exe, args, wd, _) =>
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((exe, args, wd, _, _, _) =>
             {
                 capturedExecutable = exe;
                 capturedArguments = args;
@@ -366,8 +367,8 @@ public class KubernetesApiExecutionStrategyTests
         string capturedArguments = null;
 
         _processRunner
-            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, args, _, _) => capturedArguments = args)
+            .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>()))
+            .Callback<string, string, string, CancellationToken, TimeSpan?, SensitiveValueMasker>((_, args, _, _, _, _) => capturedArguments = args)
             .ReturnsAsync(new ScriptExecutionResult { Success = true });
 
         await _strategy.ExecuteScriptAsync(CreateRequest(calamariCommand: "calamari-run-script"), CancellationToken.None);
