@@ -809,6 +809,44 @@ public class KubernetesPodManagerLifecycleTests
         result.Message.ShouldContain(reason);
     }
 
+    [Theory]
+    [InlineData("PodInitializing")]
+    [InlineData("ContainerCreating")]
+    public void GetPodStartupDiagnostics_NormalWaitingReason_ReturnsNull(string reason)
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    InitContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "copy-calamari",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = reason }
+                            }
+                        }
+                    },
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = reason }
+                            }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetPodStartupDiagnostics("pod-1").ShouldBeNull();
+    }
+
     [Fact]
     public void GetPodStartupDiagnostics_InitContainer_TakesPrecedence_OverScriptContainer()
     {
