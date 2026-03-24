@@ -42,7 +42,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
         var accountData = context.GetAccountData();
         var accountTypeStr = accountData?.AuthenticationAccountType.ToString() ?? "Token";
 
-        return new List<VariableDto>
+        var vars = new List<VariableDto>
         {
             EndpointVariableFactory.Make(SpecialVariables.Kubernetes.ClusterUrl, endpoint.ClusterUrl ?? string.Empty),
             EndpointVariableFactory.Make(SpecialVariables.Account.AccountType, accountTypeStr),
@@ -54,6 +54,10 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
             EndpointVariableFactory.Make(SpecialVariables.Kubernetes.OutputKubectlVersion, KubernetesBooleanValues.True),
             EndpointVariableFactory.Make(SpecialVariables.Kubernetes.PrintEvaluatedVariables, KubernetesBooleanValues.True)
         };
+
+        vars.AddRange(AccountVariableExpander.Expand(accountData));
+
+        return vars;
     }
 
     private static string ResolveClusterCertificate(EndpointContext context)

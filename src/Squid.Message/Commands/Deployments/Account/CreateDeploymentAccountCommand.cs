@@ -19,6 +19,7 @@ public class CreateDeploymentAccountCommand : ICommand, ISpaceScoped
     public string ClientCertificateKeyData { get; set; }
     public string AccessKey { get; set; }
     public string SecretKey { get; set; }
+    public List<int> EnvironmentIds { get; set; }
 }
 
 public class CreateDeploymentAccountResponse : SquidResponse<CreateDeploymentAccountResponseData>

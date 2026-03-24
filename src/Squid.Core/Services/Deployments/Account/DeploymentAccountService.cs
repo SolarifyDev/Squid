@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Account;
 using Squid.Message.Enums;
@@ -26,7 +27,8 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             Name = command.Name,
             Slug = $"account-{Guid.NewGuid():N}",
             AccountType = command.AccountType,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(credentials)
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(credentials),
+            EnvironmentIds = SerializeEnvironmentIds(command.EnvironmentIds)
         };
 
         await dataProvider.AddAccountAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -48,6 +50,9 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
 
         entity.Name = command.Name;
         entity.AccountType = command.AccountType;
+
+        if (command.EnvironmentIds != null)
+            entity.EnvironmentIds = SerializeEnvironmentIds(command.EnvironmentIds);
 
         var existing = DeploymentAccountCredentialsConverter.Deserialize(entity.AccountType, entity.Credentials);
         
@@ -101,7 +106,8 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             Name = entity.Name,
             Slug = entity.Slug,
             AccountType = entity.AccountType,
-            Credentials = BuildCredentialsSummary(entity.AccountType, creds)
+            Credentials = BuildCredentialsSummary(entity.AccountType, creds),
+            EnvironmentIds = DeserializeEnvironmentIds(entity.EnvironmentIds)
         };
     }
 
@@ -193,5 +199,20 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             },
             _ => existing
         };
+    }
+
+    internal static string SerializeEnvironmentIds(List<int> environmentIds)
+    {
+        if (environmentIds == null || environmentIds.Count == 0) return null;
+
+        return JsonSerializer.Serialize(environmentIds);
+    }
+
+    internal static List<int> DeserializeEnvironmentIds(string json)
+    {
+        if (string.IsNullOrEmpty(json)) return new();
+
+        try { return JsonSerializer.Deserialize<List<int>>(json); }
+        catch { return new(); }
     }
 }

@@ -1,4 +1,7 @@
+using System.Text.Json;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Core.Services.Deployments.Account.Exceptions;
 using Squid.Core.Services.Deployments.Certificates;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
@@ -23,7 +26,7 @@ public sealed class PrepareTargetsPhase(
             LoadTransportForTarget(tc);
 
             if (tc.Transport != null)
-                await LoadAuthenticationAsync(tc, ct).ConfigureAwait(false);
+                await LoadAuthenticationAsync(ctx, tc, ct).ConfigureAwait(false);
 
             ContributeEndpointVariablesForTarget(tc);
 
@@ -41,14 +44,14 @@ public sealed class PrepareTargetsPhase(
         tc.Transport = transportRegistry.Resolve(tc.CommunicationStyle);
     }
 
-    private async Task LoadAuthenticationAsync(DeploymentTargetContext tc, CancellationToken ct)
+    private async Task LoadAuthenticationAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, CancellationToken ct)
     {
         var refs = tc.Transport.Variables.ParseResourceReferences(tc.EndpointContext.EndpointJson);
 
         var authAccountId = refs.FindFirst(EndpointResourceType.AuthenticationAccount);
 
         if (authAccountId.HasValue)
-            await ResolveAccountAsync(tc, authAccountId.Value, ct).ConfigureAwait(false);
+            await ResolveAccountAsync(ctx, tc, authAccountId.Value, ct).ConfigureAwait(false);
 
         foreach (var certRef in refs.References.Where(r => r.Type is EndpointResourceType.ClientCertificate or EndpointResourceType.ClusterCertificate))
         {
@@ -56,13 +59,29 @@ public sealed class PrepareTargetsPhase(
         }
     }
 
-    private async Task ResolveAccountAsync(DeploymentTargetContext tc, int accountId, CancellationToken ct)
+    private async Task ResolveAccountAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, int accountId, CancellationToken ct)
     {
         var account = await deploymentAccountDataProvider.GetAccountByIdAsync(accountId, ct).ConfigureAwait(false);
 
         if (account == null) return;
 
+        ValidateAccountEnvironmentScope(account, ctx.Environment);
+
         tc.EndpointContext.SetAccountData(account.AccountType, account.Credentials);
+    }
+
+    internal static void ValidateAccountEnvironmentScope(DeploymentAccount account, Persistence.Entities.Deployments.Environment environment)
+    {
+        if (string.IsNullOrEmpty(account.EnvironmentIds)) return;
+
+        List<int> scopedIds;
+        try { scopedIds = JsonSerializer.Deserialize<List<int>>(account.EnvironmentIds); }
+        catch { return; }
+
+        if (scopedIds == null || scopedIds.Count == 0) return;
+
+        if (!scopedIds.Contains(environment.Id))
+            throw new AccountEnvironmentScopeException(account.Id, account.Name, environment.Id);
     }
 
     private async Task ResolveCertificateAsync(DeploymentTargetContext tc, EndpointResourceReference certRef, CancellationToken ct)

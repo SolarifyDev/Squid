@@ -134,6 +134,25 @@ public static class SpecialVariables
     {
         public const string AccountType = "Squid.Account.AccountType";
         public const string CredentialsJson = "Squid.Account.CredentialsJson";
+        public const string Token = "Squid.Account.Token";
+        public const string Username = "Squid.Account.Username";
+        public const string Password = "Squid.Account.Password";
+        public const string ClientCertificateData = "Squid.Account.ClientCertificateData";
+        public const string ClientCertificateKeyData = "Squid.Account.ClientCertificateKeyData";
+        public const string AccessKey = "Squid.Account.AccessKey";
+        public const string SecretKey = "Squid.Account.SecretKey";
+        public const string SubscriptionNumber = "Squid.Account.SubscriptionNumber";
+        public const string ClientId = "Squid.Account.ClientId";
+        public const string TenantId = "Squid.Account.TenantId";
+        public const string AzureKey = "Squid.Account.AzureKey";
+        public const string AzureJwt = "Squid.Account.AzureJwt";
+        public const string GcpJsonKey = "Squid.Account.GcpJsonKey";
+        public const string RoleArn = "Squid.Account.RoleArn";
+        public const string SessionDuration = "Squid.Account.SessionDuration";
+        public const string ExternalId = "Squid.Account.ExternalId";
+        public const string WebIdentityToken = "Squid.Account.WebIdentityToken";
+        public const string SshPrivateKeyFile = "Squid.Account.SshPrivateKeyFile";
+        public const string SshPassphrase = "Squid.Account.SshPassphrase";
     }
 
     public static class Kubernetes
