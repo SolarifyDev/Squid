@@ -964,48 +964,39 @@ public class ScriptPodServiceTests : IDisposable
     // === Multi-Namespace ===
 
     [Fact]
-    public void StartScript_WithTargetNamespace_CreatesPodInNamespace()
+    public void StartScript_WithTargetNamespace_AlwaysCreatesInAgentNamespace()
     {
-        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
-            .Returns(new V1PodList { Items = new List<V1Pod>() });
-        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
-            .Returns((V1Pod pod, string ns) => pod);
-
         var service = CreateService();
         var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
         service.StartScript(command);
 
-        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Once);
+        // Target namespace is for kubectl context, not pod placement
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
     }
 
     [Fact]
-    public void StartScript_WithTargetNamespace_ContextCarriesNamespace()
+    public void StartScript_WithTargetNamespace_PodStillCreatedInAgentNamespace()
     {
-        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
-            .Returns(new V1PodList { Items = new List<V1Pod>() });
-        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
-            .Returns((V1Pod pod, string ns) => pod);
-
         var service = CreateService();
         var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
-        var ticket = service.StartScript(command);
+        service.StartScript(command);
 
-        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
-        ctx.Namespace.ShouldBe("custom-ns");
+        // Pod always created in agent namespace, not target namespace
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Never);
     }
 
     [Fact]
-    public void StartScript_NoTargetNamespace_ContextNamespaceIsNull()
+    public void StartScript_NoTargetNamespace_PodCreatedInAgentNamespace()
     {
         var service = CreateService();
         var command = MakeCommand("echo hello");
 
-        var ticket = service.StartScript(command);
+        service.StartScript(command);
 
-        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
-        ctx.Namespace.ShouldBeNull();
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
     }
 
     [Fact]
@@ -1167,24 +1158,21 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
-        var ticket = service.StartScript(command);
+        service.StartScript(command);
 
-        // The wrapped command used during launch should have preserved TargetNamespace
-        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
-        ctx.Namespace.ShouldBe("custom-ns");
-        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Once);
+        // Script pod always created in agent namespace, not target namespace
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
     }
 
     [Fact]
-    public void StartScript_NullTargetNamespace_WrappedCommand_PreservesNull()
+    public void StartScript_NullTargetNamespace_CreatesInAgentNamespace()
     {
         var service = CreateService();
         var command = MakeCommand("echo hello");
 
-        var ticket = service.StartScript(command);
+        service.StartScript(command);
 
-        service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
-        ctx.Namespace.ShouldBeNull();
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
     }
 
     // === Graceful Shutdown Drain ===
@@ -1236,50 +1224,6 @@ public class ScriptPodServiceTests : IDisposable
 
         sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromMilliseconds(800));
         sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
-    }
-
-    // === Precondition Checks ===
-
-    [Fact]
-    public void StartScript_TargetNamespaceDoesNotExist_ReturnsFailure()
-    {
-        _ops.Setup(o => o.NamespaceExists("nonexistent-ns")).Returns(false);
-        _ops.Setup(o => o.ListPods("nonexistent-ns", It.IsAny<string>()))
-            .Returns(new V1PodList { Items = new List<V1Pod>() });
-
-        var service = CreateService();
-        var command = MakeCommand("echo hello", targetNamespace: "nonexistent-ns");
-
-        var ticket = service.StartScript(command);
-
-        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
-
-        status.State.ShouldBe(ProcessState.Complete);
-        status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
-        status.Logs.ShouldContain(l => l.Text.Contains("does not exist"));
-    }
-
-    [Fact]
-    public void StartScript_PreconditionFail_ReleasesMutex()
-    {
-        _ops.Setup(o => o.NamespaceExists("bad-ns")).Returns(false);
-        _ops.Setup(o => o.ListPods("bad-ns", It.IsAny<string>()))
-            .Returns(new V1PodList { Items = new List<V1Pod>() });
-
-        var service = CreateService();
-        var command1 = MakeIsolatedCommand("echo first", "precond-mutex");
-        command1 = new StartScriptCommand(command1.ScriptBody, command1.Isolation, command1.ScriptIsolationMutexTimeout, command1.IsolationMutexName, command1.Arguments, null) { TargetNamespace = "bad-ns" };
-
-        var ticket1 = service.StartScript(command1);
-
-        // Precondition failure should have released the mutex
-        service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeFalse();
-
-        // Second script with valid namespace should acquire mutex
-        var command2 = MakeIsolatedCommand("echo second", "precond-mutex");
-        var ticket2 = service.StartScript(command2);
-
-        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
     }
 
     // === Pending Queue Bounds ===
