@@ -9,8 +9,8 @@ public partial class KubernetesPodManager
     private V1Pod BuildPodSpec(string podName, string ticketId, string ns, Dictionary<string, string>? additionalLabels = null)
     {
         var template = _templateProvider?.TryLoadTemplate();
-        var rawScriptMode = _settings.RawScriptMode;
-        var useInitContainer = !rawScriptMode && !string.IsNullOrEmpty(_settings.TentacleImage);
+        var rawScriptMode = _settings.RawScriptMode || string.IsNullOrEmpty(_settings.TentacleImage);
+        var useInitContainer = !rawScriptMode;
         var isolateWorkspace = _settings.IsolateWorkspaceToEmptyDir;
 
         var workspaceVolumeName = isolateWorkspace ? "workspace-local" : "workspace";
