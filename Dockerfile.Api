@@ -24,7 +24,7 @@ FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
 
 WORKDIR /app
 COPY --from=build /app .
-COPY --from=build /calamari/squid-calamari /squid/bin/squid-calamari
+COPY --from=build /calamari/ /squid/bin/
 COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
 
 EXPOSE 8080
