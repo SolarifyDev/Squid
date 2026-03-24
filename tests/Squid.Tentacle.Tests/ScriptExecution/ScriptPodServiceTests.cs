@@ -53,7 +53,6 @@ public class ScriptPodServiceTests : IDisposable
         _ops.Setup(o => o.ListPods(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(new V1PodList { Items = new List<V1Pod>() });
 
-        _ops.Setup(o => o.NamespaceExists(It.IsAny<string>())).Returns(true);
     }
 
     [Fact]
@@ -961,7 +960,10 @@ public class ScriptPodServiceTests : IDisposable
 
     // ========== Helpers ==========
 
-    // === Multi-Namespace ===
+    // === Namespace — pod always created in agent namespace ===
+    // TargetNamespace is for kubectl context wrapping (IScriptContextWrapper),
+    // not for pod placement. PVC, ServiceAccount, ImagePullSecrets are namespace-scoped
+    // and only exist in the agent namespace.
 
     [Fact]
     public void StartScript_WithTargetNamespace_AlwaysCreatesInAgentNamespace()
@@ -971,19 +973,6 @@ public class ScriptPodServiceTests : IDisposable
 
         service.StartScript(command);
 
-        // Target namespace is for kubectl context, not pod placement
-        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
-    }
-
-    [Fact]
-    public void StartScript_WithTargetNamespace_PodStillCreatedInAgentNamespace()
-    {
-        var service = CreateService();
-        var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
-
-        service.StartScript(command);
-
-        // Pod always created in agent namespace, not target namespace
         _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
         _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Never);
     }
@@ -1148,20 +1137,16 @@ public class ScriptPodServiceTests : IDisposable
     // === WrapCommandWithEosMarker Namespace Preservation ===
 
     [Fact]
-    public void StartScript_WithTargetNamespace_WrappedCommand_PreservesNamespace()
+    public void StartScript_WithTargetNamespace_WrappedCommand_StillCreatesInAgentNamespace()
     {
-        _ops.Setup(o => o.ListPods("custom-ns", It.IsAny<string>()))
-            .Returns(new V1PodList { Items = new List<V1Pod>() });
-        _ops.Setup(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"))
-            .Returns((V1Pod pod, string ns) => pod);
-
         var service = CreateService();
         var command = MakeCommand("echo hello", targetNamespace: "custom-ns");
 
         service.StartScript(command);
 
-        // Script pod always created in agent namespace, not target namespace
+        // Even after EOS wrapping, pod goes to agent namespace, not target namespace
         _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "test-ns"), Times.Once);
+        _ops.Verify(o => o.CreatePod(It.IsAny<V1Pod>(), "custom-ns"), Times.Never);
     }
 
     [Fact]

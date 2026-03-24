@@ -10,6 +10,7 @@ public class DeploymentAccountDto : IBaseModel
     public string Slug { get; set; }
     public AccountType AccountType { get; set; }
     public object Credentials { get; set; }
+    public List<int> EnvironmentIds { get; set; }
 }
 
 public class TokenCredentialsSummary

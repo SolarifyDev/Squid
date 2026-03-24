@@ -20,6 +20,7 @@ public class UpdateDeploymentAccountCommand : ICommand, ISpaceScoped
     public string ClientCertificateKeyDataNewValue { get; set; }
     public string AccessKey { get; set; }
     public string SecretKeyNewValue { get; set; }
+    public List<int> EnvironmentIds { get; set; }
 }
 
 public class UpdateDeploymentAccountResponse : SquidResponse<UpdateDeploymentAccountResponseData>

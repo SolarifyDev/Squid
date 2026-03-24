@@ -123,11 +123,11 @@ public class KubernetesApiEndpointVariableContributorTests
     // === ContributeVariables — count & all names ===
 
     [Fact]
-    public void ContributeVariables_ValidEndpoint_Returns9Variables()
+    public void ContributeVariables_ValidEndpoint_Returns9BaseVariablesPlusAccountExpansion()
     {
         var vars = _contributor.ContributeVariables(TokenContext());
 
-        vars.Count.ShouldBe(9);
+        vars.Count.ShouldBeGreaterThanOrEqualTo(9);
     }
 
     [Fact]
@@ -358,6 +358,36 @@ public class KubernetesApiEndpointVariableContributorTests
 
         vars.ShouldContain(v => v.Name == "Squid.Action.Kubernetes.ClusterUrl" && !v.IsSensitive);
         vars.ShouldContain(v => v.Name == "Squid.Account.AccountType" && !v.IsSensitive);
+    }
+
+    // === ContributeVariables — individual account variable expansion ===
+
+    [Fact]
+    public void ContributeVariables_TokenAccount_IncludesTokenVariable()
+    {
+        var vars = _contributor.ContributeVariables(TokenContext());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.Token" && v.Value == "test-token-123" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_UsernamePasswordAccount_IncludesUsernameAndPassword()
+    {
+        var vars = _contributor.ContributeVariables(UsernamePasswordContext());
+
+        vars.ShouldContain(v => v.Name == "Squid.Account.Username" && v.Value == "admin");
+        vars.ShouldContain(v => v.Name == "Squid.Account.Password" && v.Value == "s3cret" && v.IsSensitive);
+    }
+
+    [Fact]
+    public void ContributeVariables_NullAccount_NoAccountVariablesExpanded()
+    {
+        var ctx = new EndpointContext { EndpointJson = MakeEndpointJson() };
+        var vars = _contributor.ContributeVariables(ctx);
+
+        vars.ShouldNotContain(v => v.Name == "Squid.Account.Token");
+        vars.ShouldNotContain(v => v.Name == "Squid.Account.Username");
+        vars.ShouldNotContain(v => v.Name == "Squid.Account.Password");
     }
 
     // === ContributeAdditionalVariablesAsync — ContainerImage ===

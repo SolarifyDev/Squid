@@ -97,7 +97,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     private void LaunchScript(string ticketId, StartScriptCommand command)
     {
-        ValidatePreconditions(command);
+        DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(_tentacleSettings.WorkspacePath);
 
         var eosMarkerToken = EosMarker.GenerateMarkerToken();
         var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
@@ -106,6 +106,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         try
         {
+            // Script pod always created in agent namespace — PVC, ServiceAccount, and
+            // ImagePullSecrets are namespace-scoped and only exist in the agent namespace.
+            // TargetNamespace is for kubectl context wrapping (handled by IScriptContextWrapper).
             var podName = _podManager.CreatePod(ticketId, additionalLabels: command.Labels);
             RemovePendingSecret(ticketId);
 
@@ -126,11 +129,6 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
     }
 
-    private void ValidatePreconditions(StartScriptCommand command)
-    {
-        DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(_tentacleSettings.WorkspacePath);
-    }
-
     private static void WriteStateFile(string workDir, string ticketId, string podName, string eosMarkerToken, StartScriptCommand command)
     {
         try
@@ -142,7 +140,6 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 EosMarkerToken = eosMarkerToken,
                 Isolation = command.Isolation.ToString(),
                 IsolationMutexName = command.IsolationMutexName,
-                Namespace = command.TargetNamespace,
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }

@@ -127,7 +127,7 @@ public class TransportRegistryTests
     }
 
     [Theory]
-    [InlineData("KubernetesApi", 9)]
+    [InlineData("KubernetesApi", 10)]
     [InlineData("KubernetesAgent", 3)]
     public void ContributeVariables_CorrectCount(string style, int expectedCount)
     {

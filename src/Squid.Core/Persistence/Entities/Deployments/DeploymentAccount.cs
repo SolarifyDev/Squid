@@ -9,7 +9,7 @@ public class DeploymentAccount : IEntity<int>, IAuditable
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; }
     public string Slug { get; set; } = string.Empty;
-    public string EnvironmentId { get; set; }
+    public string EnvironmentIds { get; set; }
     public AccountType AccountType { get; set; }
     public string Credentials { get; set; }
 
