@@ -103,7 +103,7 @@ public class ContainerImageResolutionTests
     [InlineData(null, "https://registry.internal.com:5000/v2", "registry.internal.com:5000")]
     public void ResolveFeedUri_ReturnsExpectedUri(string registryPath, string feedUri, string expected)
     {
-        var feed = new ExternalFeed { RegistryPath = registryPath, FeedUri = feedUri };
+        var feed = new ExternalFeed { Properties = ExternalFeedProperties.Serialize(registryPath != null ? new Dictionary<string, string> { ["RegistryPath"] = registryPath } : null), FeedUri = feedUri };
 
         var result = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
 
@@ -128,7 +128,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
@@ -161,7 +161,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
@@ -195,7 +195,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
         feedProvider.Setup(f => f.GetFeedByIdAsync(20, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ExternalFeed { Id = 20, FeedUri = "https://registry.internal.com/v2" });
 
@@ -232,7 +232,7 @@ public class ContainerImageResolutionTests
             {
                 Id = 10,
                 FeedUri = "https://index.docker.io/v2",
-                RegistryPath = "docker.io"
+                Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" })
             });
 
         var generator = CreateMockGenerator(canHandle: true);
@@ -264,7 +264,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
@@ -295,7 +295,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
@@ -325,7 +325,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
@@ -352,7 +352,7 @@ public class ContainerImageResolutionTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         feedProvider.Setup(f => f.GetFeedByIdAsync(10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", RegistryPath = "docker.io" });
+            .ReturnsAsync(new ExternalFeed { Id = 10, FeedUri = "https://index.docker.io/v2", Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }) });
 
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);

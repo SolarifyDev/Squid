@@ -11,9 +11,10 @@ public static class ScriptExitCodes
     public const int ProcessTerminated = -45;
     public const int PodNotFound = -81;
     public const int ContainerTerminated = -82;
+    public const int PodStartupFailed = -83;
 
     public static bool IsInfrastructureFailure(int exitCode)
-        => exitCode is Fatal or Timeout or PodNotFound or ContainerTerminated or ProcessTerminated;
+        => exitCode is Fatal or Timeout or PodNotFound or ContainerTerminated or ProcessTerminated or PodStartupFailed;
 
     public static string Describe(int exitCode)
     {
@@ -28,6 +29,7 @@ public static class ScriptExitCodes
             ProcessTerminated => "Process terminated unexpectedly",
             PodNotFound => "Kubernetes pod not found",
             ContainerTerminated => "Kubernetes container terminated unexpectedly",
+            PodStartupFailed => "Kubernetes pod startup failed",
             _ => $"Script exited with code {exitCode}"
         };
     }

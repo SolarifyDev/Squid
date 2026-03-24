@@ -20,7 +20,8 @@ public sealed class KubernetesEventMonitor : ITentacleBackgroundTask
         "FailedMount",
         "FailedAttachVolume",
         "Evicted",
-        "Preempting"
+        "Preempting",
+        "Failed"
     };
 
     private readonly IKubernetesPodOperations _podOps;

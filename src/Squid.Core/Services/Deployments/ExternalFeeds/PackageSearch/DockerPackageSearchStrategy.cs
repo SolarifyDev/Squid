@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Http;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
@@ -111,7 +112,7 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
 
     private static string ResolveNamespace(ExternalFeed feed)
     {
-        var registryPath = feed.RegistryPath?.Trim().Trim('/');
+        var registryPath = ExternalFeedProperties.GetRegistryPath(feed)?.Trim().Trim('/');
         if (!string.IsNullOrWhiteSpace(registryPath))
             return registryPath;
 

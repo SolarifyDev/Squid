@@ -2141,6 +2141,110 @@ public class ScriptPodServiceTests : IDisposable
         status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
     }
 
+    // ========== Pod Startup Diagnostics ==========
+
+    [Fact]
+    public void GetStatus_PermanentInitContainerError_ReturnsCompleteWithStartupFailedCode()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    Phase = "Pending",
+                    InitContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "copy-calamari",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = "CreateContainerConfigError", Message = "container has runAsNonRoot and image will run as root" }
+                            }
+                        }
+                    }
+                }
+            });
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(ScriptExitCodes.PodStartupFailed);
+        status.Logs.ShouldContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Pod startup failed"));
+        status.Logs.ShouldContain(l => l.Text.Contains("CreateContainerConfigError"));
+    }
+
+    [Fact]
+    public void GetStatus_TransientImagePullError_ReturnsRunningWithWarning()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    Phase = "Pending",
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = "ImagePullBackOff", Message = "pull access denied" }
+                            }
+                        }
+                    }
+                }
+            });
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("[K8s Warning]"));
+        status.Logs.ShouldContain(l => l.Text.Contains("ImagePullBackOff"));
+    }
+
+    [Fact]
+    public void GetStatus_PendingNoIssues_ReturnsRunningNormally()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodPhase("Pending");
+        SetupPodLogs("");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Pod startup failed"));
+        status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("[K8s Warning]"));
+    }
+
+    [Fact]
+    public void GetStatus_RunningPod_NoDiagnostics()
+    {
+        var service = CreateService();
+        var ticket = service.StartScript(MakeCommand("echo test"));
+
+        SetupPodWithContainerStates("Running",
+            ("script", new V1ContainerState { Running = new V1ContainerStateRunning() }));
+        SetupPodLogs("output line\n");
+
+        var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
+
+        status.State.ShouldBe(ProcessState.Running);
+        status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("Pod startup failed"));
+        status.Logs.ShouldNotContain(l => l.Source == ProcessOutputSource.StdErr && l.Text.Contains("[K8s Warning]"));
+    }
+
     public void Dispose()
     {
         try

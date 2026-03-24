@@ -269,6 +269,82 @@ public partial class KubernetesPodManager
         }
     }
 
+    public PodStartupDiagnostic? GetPodStartupDiagnostics(string podName, string? targetNamespace = null)
+    {
+        try
+        {
+            var ns = ResolveNamespace(targetNamespace);
+            V1Pod pod;
+
+            if (_cache != null && _cache.TryGetPod(podName, out var cached, ns))
+                pod = cached;
+            else
+                pod = _ops.ReadPodStatus(podName, ns);
+
+            if (pod?.Status == null) return null;
+
+            var initDiag = CheckInitContainerWaiting(pod);
+            if (initDiag != null) return initDiag;
+
+            var scriptDiag = CheckScriptContainerWaiting(pod);
+            if (scriptDiag != null) return scriptDiag;
+
+            return CheckUnschedulable(pod);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to read startup diagnostics for pod {PodName}", podName);
+            return null;
+        }
+    }
+
+    private static PodStartupDiagnostic? CheckInitContainerWaiting(V1Pod pod)
+    {
+        if (pod.Status.InitContainerStatuses == null) return null;
+
+        foreach (var init in pod.Status.InitContainerStatuses)
+        {
+            var waiting = init.State?.Waiting;
+            if (waiting?.Reason == null) continue;
+
+            return new PodStartupDiagnostic(
+                waiting.Reason,
+                $"Init container '{init.Name}' — {waiting.Reason}: {waiting.Message ?? "no details"}",
+                IsPermanentReason(waiting.Reason));
+        }
+
+        return null;
+    }
+
+    private static PodStartupDiagnostic? CheckScriptContainerWaiting(V1Pod pod)
+    {
+        var script = pod.Status.ContainerStatuses?.FirstOrDefault(c => c.Name == "script");
+        var waiting = script?.State?.Waiting;
+
+        if (waiting?.Reason == null) return null;
+
+        return new PodStartupDiagnostic(
+            waiting.Reason,
+            $"Container 'script' — {waiting.Reason}: {waiting.Message ?? "no details"}",
+            IsPermanentReason(waiting.Reason));
+    }
+
+    private static PodStartupDiagnostic? CheckUnschedulable(V1Pod pod)
+    {
+        var condition = pod.Status.Conditions?.FirstOrDefault(c => c.Type == "PodScheduled" && c.Status == "False");
+        if (condition == null) return null;
+
+        return new PodStartupDiagnostic(
+            condition.Reason ?? "Unschedulable",
+            $"Pod scheduling failed — {condition.Reason ?? "Unschedulable"}: {condition.Message ?? "no details"}",
+            IsPermanentReason(condition.Reason ?? "Unschedulable"));
+    }
+
+    private static bool IsPermanentReason(string reason)
+    {
+        return reason is "CreateContainerConfigError" or "InvalidImageName" or "RunContainerError" or "CreateContainerError";
+    }
+
     public bool NamespaceExists(string ns) => _ops.NamespaceExists(ns);
 
     public List<V1Pod> ListManagedPods()
@@ -285,3 +361,5 @@ public partial class KubernetesPodManager
 }
 
 public record ContainerTerminationResult(int ExitCode, string? Reason, string? Message = null, long? Signal = null);
+
+public record PodStartupDiagnostic(string Reason, string Message, bool IsPermanent);

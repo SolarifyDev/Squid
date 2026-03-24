@@ -228,6 +228,23 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 logs.Insert(0, new ProcessOutput(ProcessOutputSource.StdErr, diagnostic));
         }
 
+        if (state == ProcessState.Running)
+        {
+            var startupDiag = _podManager.GetPodStartupDiagnostics(ctx.PodName);
+
+            if (startupDiag != null)
+            {
+                if (startupDiag.IsPermanent)
+                {
+                    logs.Insert(0, new ProcessOutput(ProcessOutputSource.StdErr, $"Pod startup failed — {startupDiag.Message}"));
+
+                    return new ScriptStatusResponse(request.Ticket, ProcessState.Complete, ScriptExitCodes.PodStartupFailed, logs, ctx.LogSequence);
+                }
+
+                logs.Add(new ProcessOutput(ProcessOutputSource.StdErr, $"[K8s Warning] {startupDiag.Message}"));
+            }
+        }
+
         if (phase is "Succeeded" or "Failed" && ctx.LogTruncationDetected && !ctx.EosDetected)
         {
             logs.Insert(0, new ProcessOutput(ProcessOutputSource.StdErr,

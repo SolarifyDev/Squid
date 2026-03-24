@@ -107,7 +107,7 @@ public class K8sTestDataSeeder
             Slug = "dockerhub",
             FeedType = "Docker",
             FeedUri = "https://index.docker.io/v2",
-            RegistryPath = "docker.io",
+            Properties = Squid.Core.Services.Deployments.ExternalFeeds.ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }),
             Username = "testuser",
             Password = "testpass",
             SpaceId = 1
