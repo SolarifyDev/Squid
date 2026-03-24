@@ -107,13 +107,8 @@ public class KubernetesPodManagerPodSpecTests
         var container = pod.Spec.Containers.ShouldHaveSingleItem();
         container.Name.ShouldBe("script");
         container.Image.ShouldBe("bitnami/kubectl:1.28");
-        container.Command.ShouldBe(new[] { "/squid/bin/squid-calamari" });
-        container.Args.ShouldBe(new[]
-        {
-            "run-script",
-            $"--script=/squid/work/{TicketId}/script.sh",
-            $"--variables=/squid/work/{TicketId}/variables.json"
-        });
+        container.Command.ShouldBe(new[] { "bash" });
+        container.Args.ShouldBe(new[] { $"/squid/work/{TicketId}/script.sh" });
         container.WorkingDir.ShouldBe($"/squid/work/{TicketId}");
     }
 
@@ -698,9 +693,20 @@ public class KubernetesPodManagerPodSpecTests
     }
 
     [Fact]
-    public void CreatePod_DefaultMode_UsesCalamariCommand()
+    public void CreatePod_NoTentacleImage_FallsBackToRawScriptMode()
     {
         var pod = CaptureCreatedPod();
+
+        var container = pod.Spec.Containers[0];
+        container.Command.ShouldBe(new[] { "bash" });
+        container.Args[0].ShouldBe($"/squid/work/{TicketId}/script.sh");
+        pod.Spec.InitContainers.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CreatePod_WithTentacleImage_UsesCalamariCommand()
+    {
+        var pod = CaptureCreatedPodWithTentacleImage("squidcd/squid-tentacle:1.0.0");
 
         var container = pod.Spec.Containers[0];
         container.Command.ShouldBe(new[] { "/squid/bin/squid-calamari" });
