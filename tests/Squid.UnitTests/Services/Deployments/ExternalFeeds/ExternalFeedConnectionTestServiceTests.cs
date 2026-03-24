@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using System.Text;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
@@ -105,7 +106,7 @@ public class ExternalFeedConnectionTestServiceTests
 
         result.Success.ShouldBeTrue();
         result.Message.ShouldBe("Connected successfully (HTTP 401).");
-        requestedUri.ShouldBe(new Uri("https://registry.example.com/v2"));
+        requestedUri.ShouldBe(new Uri("https://registry.example.com/v2/"));
         configuredTimeout.ShouldBe(TimeSpan.FromSeconds(30));
 
         configuredHeaders.ShouldNotBeNull();
@@ -124,13 +125,11 @@ public class ExternalFeedConnectionTestServiceTests
             .ReturnsAsync(new ExternalFeed
             {
                 Id = 101,
-                ApiVersion = "",
                 FeedType = "Docker Container Registry",
                 FeedUri = "https://index.docker.io/v2",
                 Name = "Squid hub",
                 PackageAcquisitionLocationOptions = "",
                 Password = null,
-                RegistryPath = "",
                 Slug = "squid-hub",
                 SpaceId = 1,
                 Username = "squidcd"
@@ -308,7 +307,7 @@ public class ExternalFeedConnectionTestServiceTests
         {
             requestedUris.Add(request.RequestUri.AbsoluteUri);
 
-            if (request.RequestUri.AbsolutePath.EndsWith("/v2", StringComparison.OrdinalIgnoreCase))
+            if (request.RequestUri.AbsolutePath.TrimEnd('/').EndsWith("/v2", StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
                 {
@@ -316,7 +315,7 @@ public class ExternalFeedConnectionTestServiceTests
                 });
             }
 
-            if (request.RequestUri.AbsolutePath.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            if (request.RequestUri.AbsolutePath.TrimEnd('/').EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
             }
@@ -335,8 +334,8 @@ public class ExternalFeedConnectionTestServiceTests
         result.Message.ShouldBe("Connected successfully (HTTP 401).");
         requestedUris.ShouldBe(
         [
-            "https://registry.example.com/v2",
-            "https://registry.example.com/v1"
+            "https://registry.example.com/v2/",
+            "https://registry.example.com/v1/"
         ]);
     }
 
@@ -381,7 +380,7 @@ public class ExternalFeedConnectionTestServiceTests
                 Id = 14,
                 FeedType = "Docker",
                 FeedUri = "https://registry.example.com",
-                ApiVersion = "v1"
+                Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["ApiVersion"] = "v1" })
             });
 
         var client = CreateHttpClient((request, _) =>
@@ -398,7 +397,7 @@ public class ExternalFeedConnectionTestServiceTests
         var result = await sut.TestAsync(14, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        requestedUris.ShouldBe(["https://registry.example.com/v1"]);
+        requestedUris.ShouldBe(["https://registry.example.com/v1/"]);
     }
 
     [Theory]
@@ -432,7 +431,7 @@ public class ExternalFeedConnectionTestServiceTests
         var result = await sut.TestAsync(15, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        requestedUri.ShouldBe(new Uri("https://registry.example.com/v2"));
+        requestedUri.ShouldBe(new Uri("https://registry.example.com/v2/"));
     }
 
     [Fact]

@@ -160,10 +160,15 @@ public class KubernetesPodMonitor
 
             _podManager.DeletePod(podName, 0);
 
-            var errorLog = new ProcessOutput(ProcessOutputSource.StdErr,
-                $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.");
+            var startupDiag = _podManager.GetPodStartupDiagnostics(podName);
+            var errorMessage = startupDiag != null
+                ? $"Script pod {podName} stuck in Pending for {age.TotalMinutes:F0} minutes — {startupDiag.Message}"
+                : $"Script pod {podName} stuck in Pending state for {age.TotalMinutes:F0} minutes. Likely cause: insufficient cluster resources, image pull failure, or unschedulable node.";
+            var exitCode = startupDiag is { IsPermanent: true } ? ScriptExitCodes.PodStartupFailed : ScriptExitCodes.Timeout;
 
-            _scriptPodService.InjectTerminalResult(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { errorLog });
+            var errorLog = new ProcessOutput(ProcessOutputSource.StdErr, errorMessage);
+
+            _scriptPodService.InjectTerminalResult(ticketId, exitCode, new List<ProcessOutput> { errorLog });
 
             _scriptPodService.ReleaseMutexForTicket(ticketId);
         }

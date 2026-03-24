@@ -258,11 +258,11 @@ public class KubernetesEventMonitorTests : IDisposable
     // ========== Configurable WarningReasons ==========
 
     [Fact]
-    public void EventMonitor_DefaultReasons_Include9Hardcoded()
+    public void EventMonitor_DefaultReasons_Include10Hardcoded()
     {
         var monitor = new KubernetesEventMonitor(_podOps.Object, _settings);
 
-        monitor.WarningReasonCount.ShouldBe(9);
+        monitor.WarningReasonCount.ShouldBe(10);
     }
 
     [Fact]
@@ -276,7 +276,7 @@ public class KubernetesEventMonitorTests : IDisposable
 
         var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
 
-        monitor.WarningReasonCount.ShouldBe(11);
+        monitor.WarningReasonCount.ShouldBe(12);
     }
 
     [Fact]
@@ -290,7 +290,7 @@ public class KubernetesEventMonitorTests : IDisposable
 
         var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
 
-        monitor.WarningReasonCount.ShouldBe(9);
+        monitor.WarningReasonCount.ShouldBe(10);
     }
 
     [Fact]
@@ -304,7 +304,7 @@ public class KubernetesEventMonitorTests : IDisposable
 
         var monitor = new KubernetesEventMonitor(_podOps.Object, settings);
 
-        monitor.WarningReasonCount.ShouldBe(9);
+        monitor.WarningReasonCount.ShouldBe(10);
     }
 
     [Fact]

@@ -6,9 +6,7 @@ public class ExternalFeed : IEntity<int>, IAuditable
 
     public string FeedType { get; set; }
 
-    public string ApiVersion { get; set; }
-
-    public string RegistryPath { get; set; }
+    public string Properties { get; set; }
 
     public string FeedUri { get; set; }
 

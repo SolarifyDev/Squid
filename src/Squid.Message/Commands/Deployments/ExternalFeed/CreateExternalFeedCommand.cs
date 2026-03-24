@@ -11,9 +11,7 @@ public class CreateExternalFeedCommand : ICommand, ISpaceScoped
 {
     public string FeedType { get; set; }
 
-    public string ApiVersion { get; set; }
-
-    public string RegistryPath { get; set; }
+    public Dictionary<string, string> Properties { get; set; }
 
     public string FeedUri { get; set; }
 

@@ -37,7 +37,7 @@ public sealed class ExternalFeedDockerProbeRule : ExternalFeedProbeRuleBase
 
     public override ExternalFeedProbePlan Resolve(ExternalFeed feed, Uri normalizedBaseUri)
     {
-        var apiVersion = NormalizeDockerApiVersion(feed.ApiVersion);
+        var apiVersion = NormalizeDockerApiVersion(ExternalFeedProperties.GetApiVersion(feed));
         if (!string.IsNullOrWhiteSpace(apiVersion))
             return ExternalFeedProbePlan.Single(ExternalFeedProbeUri.EnsureEndsWithPathSegment(normalizedBaseUri, apiVersion));
 
@@ -45,10 +45,12 @@ public sealed class ExternalFeedDockerProbeRule : ExternalFeedProbeRuleBase
             ExternalFeedProbeUri.EndsWithPathSegment(normalizedBaseUri, "v2"))
             return ExternalFeedProbePlan.Single(normalizedBaseUri);
 
+        // Trailing slash is critical: registries like ACR 301-redirect /v2 → /v2/,
+        // and HttpClient strips the Authorization header on redirect.
         return new ExternalFeedProbePlan(
         [
-            ExternalFeedProbeUri.EnsureEndsWithPathSegment(normalizedBaseUri, "v2"),
-            ExternalFeedProbeUri.EnsureEndsWithPathSegment(normalizedBaseUri, "v1")
+            ExternalFeedProbeUri.EnsureEndsWithPathSegment(normalizedBaseUri, "v2/"),
+            ExternalFeedProbeUri.EnsureEndsWithPathSegment(normalizedBaseUri, "v1/")
         ]);
     }
 
@@ -59,8 +61,8 @@ public sealed class ExternalFeedDockerProbeRule : ExternalFeedProbeRuleBase
 
         return apiVersion.Trim().ToLowerInvariant() switch
         {
-            "1" or "v1" => "v1",
-            "2" or "v2" => "v2",
+            "1" or "v1" => "v1/",
+            "2" or "v2" => "v2/",
             _ => null
         };
     }

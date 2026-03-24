@@ -476,7 +476,7 @@ public class KubernetesApiEndpointVariableContributorTests
             {
                 Id = 10,
                 FeedUri = "https://index.docker.io/v2",
-                RegistryPath = "docker.io"
+                Properties = ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" })
             });
 
         var contributor = new KubernetesApiEndpointVariableContributor(feedProvider.Object);

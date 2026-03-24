@@ -105,6 +105,14 @@ public partial class KubernetesPodManager
                     {
                         new() { Name = "squid-bin", MountPath = "/squid-bin" }
                     },
+                    // Tentacle image may run as root — override pod-level runAsNonRoot
+                    // since this init container only copies a binary
+                    SecurityContext = new V1SecurityContext
+                    {
+                        RunAsNonRoot = false,
+                        AllowPrivilegeEscalation = false,
+                        Capabilities = new V1Capabilities { Drop = new List<string> { "ALL" } }
+                    },
                     Resources = new V1ResourceRequirements
                     {
                         Requests = new Dictionary<string, ResourceQuantity>

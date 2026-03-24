@@ -770,6 +770,140 @@ public class KubernetesPodManagerLifecycleTests
         }
     }
 
+    // === GetPodStartupDiagnostics ===
+
+    [Theory]
+    [InlineData("CreateContainerConfigError", true)]
+    [InlineData("InvalidImageName", true)]
+    [InlineData("RunContainerError", true)]
+    [InlineData("CreateContainerError", true)]
+    [InlineData("ImagePullBackOff", false)]
+    [InlineData("ErrImagePull", false)]
+    [InlineData("CrashLoopBackOff", false)]
+    public void GetPodStartupDiagnostics_ClassifiesReasonCorrectly(string reason, bool expectedPermanent)
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = reason, Message = "test message" }
+                            }
+                        }
+                    }
+                }
+            });
+
+        var result = _manager.GetPodStartupDiagnostics("pod-1");
+
+        result.ShouldNotBeNull();
+        result.Reason.ShouldBe(reason);
+        result.IsPermanent.ShouldBe(expectedPermanent);
+        result.Message.ShouldContain(reason);
+    }
+
+    [Fact]
+    public void GetPodStartupDiagnostics_InitContainer_TakesPrecedence_OverScriptContainer()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    InitContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "copy-calamari",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = "CreateContainerConfigError", Message = "runAsNonRoot" }
+                            }
+                        }
+                    },
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState
+                            {
+                                Waiting = new V1ContainerStateWaiting { Reason = "ImagePullBackOff", Message = "pull denied" }
+                            }
+                        }
+                    }
+                }
+            });
+
+        var result = _manager.GetPodStartupDiagnostics("pod-1");
+
+        result.ShouldNotBeNull();
+        result.Reason.ShouldBe("CreateContainerConfigError");
+        result.IsPermanent.ShouldBeTrue();
+        result.Message.ShouldContain("copy-calamari");
+    }
+
+    [Fact]
+    public void GetPodStartupDiagnostics_AllContainersRunning_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    ContainerStatuses = new List<V1ContainerStatus>
+                    {
+                        new()
+                        {
+                            Name = "script",
+                            State = new V1ContainerState { Running = new V1ContainerStateRunning() }
+                        }
+                    }
+                }
+            });
+
+        _manager.GetPodStartupDiagnostics("pod-1").ShouldBeNull();
+    }
+
+    [Fact]
+    public void GetPodStartupDiagnostics_PodUnschedulable_ReturnsTransient()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Returns(new V1Pod
+            {
+                Status = new V1PodStatus
+                {
+                    Conditions = new List<V1PodCondition>
+                    {
+                        new() { Type = "PodScheduled", Status = "False", Reason = "Unschedulable", Message = "0/3 nodes available" }
+                    }
+                }
+            });
+
+        var result = _manager.GetPodStartupDiagnostics("pod-1");
+
+        result.ShouldNotBeNull();
+        result.Reason.ShouldBe("Unschedulable");
+        result.IsPermanent.ShouldBeFalse();
+        result.Message.ShouldContain("0/3 nodes available");
+    }
+
+    [Fact]
+    public void GetPodStartupDiagnostics_ReadPodStatusThrows_ReturnsNull()
+    {
+        _ops.Setup(o => o.ReadPodStatus("pod-1", "test-ns"))
+            .Throws(new Exception("connection refused"));
+
+        _manager.GetPodStartupDiagnostics("pod-1").ShouldBeNull();
+    }
+
     // === Helpers ===
 
     private void SetupNoPodFound()

@@ -162,8 +162,9 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
     public static string ResolveFeedUri(ExternalFeed feed)
     {
-        if (!string.IsNullOrEmpty(feed.RegistryPath))
-            return feed.RegistryPath;
+        var registryPath = ExternalFeedProperties.GetRegistryPath(feed);
+        if (!string.IsNullOrEmpty(registryPath))
+            return registryPath;
 
         var uri = new Uri(feed.FeedUri ?? string.Empty);
         return uri.Port != 443 && uri.Port != -1
