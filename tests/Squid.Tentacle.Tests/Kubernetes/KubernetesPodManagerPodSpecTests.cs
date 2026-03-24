@@ -153,7 +153,7 @@ public class KubernetesPodManagerPodSpecTests
         var initContainer = pod.Spec.InitContainers.ShouldHaveSingleItem();
         initContainer.Name.ShouldBe("copy-calamari");
         initContainer.Image.ShouldBe("squidcd/squid-tentacle:1.0.0");
-        initContainer.Command.ShouldBe(new[] { "cp", "/squid/bin/squid-calamari", "/squid-bin/squid-calamari" });
+        initContainer.Command.ShouldBe(new[] { "sh", "-c", "cp -a /squid/bin/. /squid-bin/" });
     }
 
     [Fact]

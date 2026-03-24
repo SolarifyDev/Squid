@@ -100,7 +100,7 @@ public partial class KubernetesPodManager
                 {
                     Name = "copy-calamari",
                     Image = _settings.TentacleImage,
-                    Command = new[] { "cp", "/squid/bin/squid-calamari", "/squid-bin/squid-calamari" },
+                    Command = new[] { "sh", "-c", "cp -a /squid/bin/. /squid-bin/" },
                     VolumeMounts = new List<V1VolumeMount>
                     {
                         new() { Name = "squid-bin", MountPath = "/squid-bin" }

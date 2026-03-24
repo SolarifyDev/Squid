@@ -298,6 +298,11 @@ public partial class KubernetesPodManager
         }
     }
 
+    private static bool IsNormalWaitingReason(string reason)
+    {
+        return reason is "PodInitializing" or "ContainerCreating";
+    }
+
     private static PodStartupDiagnostic? CheckInitContainerWaiting(V1Pod pod)
     {
         if (pod.Status.InitContainerStatuses == null) return null;
@@ -306,6 +311,7 @@ public partial class KubernetesPodManager
         {
             var waiting = init.State?.Waiting;
             if (waiting?.Reason == null) continue;
+            if (IsNormalWaitingReason(waiting.Reason)) continue;
 
             return new PodStartupDiagnostic(
                 waiting.Reason,
@@ -322,6 +328,7 @@ public partial class KubernetesPodManager
         var waiting = script?.State?.Waiting;
 
         if (waiting?.Reason == null) return null;
+        if (IsNormalWaitingReason(waiting.Reason)) return null;
 
         return new PodStartupDiagnostic(
             waiting.Reason,
