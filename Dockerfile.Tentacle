@@ -15,5 +15,5 @@ FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/runtime:9.0
 WORKDIR /app
 COPY --from=build /squid-dirs/squid/ /squid/
 COPY --from=build /app .
-COPY --from=build /calamari/squid-calamari /squid/bin/squid-calamari
+COPY --from=build /calamari/ /squid/bin/
 ENTRYPOINT ["dotnet", "Squid.Tentacle.dll"]
