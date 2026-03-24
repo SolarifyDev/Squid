@@ -10,7 +10,7 @@ public partial class ScriptPodService
         if (!ctx.StreamedLogLines.IsEmpty)
             return DrainStreamedLogs(ctx);
 
-        var allLogs = _podManager.ReadPodLogs(ctx.PodName, ctx.LastLogTimestamp, ctx.Namespace);
+        var allLogs = _podManager.ReadPodLogs(ctx.PodName, ctx.LastLogTimestamp);
         var logs = ExtractNewLogLines(ctx, allLogs, _kubernetesSettings.MaxLogBufferBytes);
 
         PersistLogTimestamp(ctx);
@@ -61,7 +61,7 @@ public partial class ScriptPodService
     {
         try
         {
-            using var stream = _podOps.ReadPodLogFollow(ctx.PodName, ctx.Namespace ?? _kubernetesSettings.TentacleNamespace, "script");
+            using var stream = _podOps.ReadPodLogFollow(ctx.PodName, _kubernetesSettings.TentacleNamespace, "script");
             using var reader = new StreamReader(stream);
 
             while (!ct.IsCancellationRequested)
@@ -81,7 +81,7 @@ public partial class ScriptPodService
 
     private List<ProcessOutput> DrainFinalLogs(ScriptPodContext ctx)
     {
-        var allLogs = _podManager.ReadPodLogs(ctx.PodName, targetNamespace: ctx.Namespace);
+        var allLogs = _podManager.ReadPodLogs(ctx.PodName);
         var logs = ExtractNewLogLines(ctx, allLogs, _kubernetesSettings.MaxLogBufferBytes);
 
         DrainInjectedEvents(ctx, logs);

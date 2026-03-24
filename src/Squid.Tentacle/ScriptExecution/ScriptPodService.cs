@@ -101,16 +101,15 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         var eosMarkerToken = EosMarker.GenerateMarkerToken();
         var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
-        var targetNamespace = command.TargetNamespace;
 
         var workDir = PrepareWorkspace(ticketId, wrappedCommand);
 
         try
         {
-            var podName = _podManager.CreatePod(ticketId, targetNamespace, command.Labels);
+            var podName = _podManager.CreatePod(ticketId, additionalLabels: command.Labels);
             RemovePendingSecret(ticketId);
 
-            var ctx = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken, targetNamespace);
+            var ctx = new ScriptPodContext(ticketId, podName, workDir, eosMarkerToken);
             ctx.SensitiveValues = SensitiveVariableDecryptor.ExtractSensitiveValues(workDir);
             _scripts[ticketId] = ctx;
             TentacleMetrics.ScriptStarted();
@@ -118,7 +117,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             WriteStateFile(workDir, ticketId, podName, eosMarkerToken, command);
 
-            Log.Information("Started script pod {PodName} for ticket {TicketId} in namespace {Namespace}", podName, ticketId, targetNamespace ?? "default");
+            Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
         }
         catch
         {
@@ -130,11 +129,6 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     private void ValidatePreconditions(StartScriptCommand command)
     {
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(_tentacleSettings.WorkspacePath);
-
-        var targetNs = command.TargetNamespace;
-
-        if (targetNs != null && !_podManager.NamespaceExists(targetNs))
-            throw new InvalidOperationException($"Target namespace '{targetNs}' does not exist");
     }
 
     private static void WriteStateFile(string workDir, string ticketId, string podName, string eosMarkerToken, StartScriptCommand command)
@@ -219,19 +213,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         if (ctx.EosDetected)
             return new ScriptStatusResponse(request.Ticket, ProcessState.Complete, ctx.EosExitCode, logs, ctx.LogSequence);
 
-        var phase = _podManager.GetPodPhase(ctx.PodName, ctx.Namespace);
-        var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName, ctx.Namespace);
+        var phase = _podManager.GetPodPhase(ctx.PodName);
+        var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
 
         var state = containerTermination != null
             ? ProcessState.Complete
             : MapPhaseToState(phase);
 
         var exitCode = containerTermination?.ExitCode
-            ?? (state == ProcessState.Complete ? _podManager.GetPodExitCode(ctx.PodName, ctx.Namespace) : 0);
+            ?? (state == ProcessState.Complete ? _podManager.GetPodExitCode(ctx.PodName) : 0);
 
         if (containerTermination != null && containerTermination.ExitCode != 0)
         {
-            var diagnostic = _podManager.GetContainerDiagnostics(ctx.PodName, ctx.Namespace);
+            var diagnostic = _podManager.GetContainerDiagnostics(ctx.PodName);
 
             if (diagnostic != null)
                 logs.Insert(0, new ProcessOutput(ProcessOutputSource.StdErr, diagnostic));
@@ -257,13 +251,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
 
             ctx.LogStreamCts?.Cancel();
-            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30), ctx.Namespace);
+            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
 
             var logs = DrainFinalLogs(ctx);
-            var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName, ctx.Namespace);
-            var exitCode = containerTermination?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName, ctx.Namespace);
+            var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
+            var exitCode = containerTermination?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName);
 
-            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds, ctx.Namespace);
+            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
 
             if (exitCode == 0)
@@ -296,7 +290,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
 
             ctx.LogStreamCts?.Cancel();
-            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds, ctx.Namespace);
+            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
 
             TentacleMetrics.ScriptCanceled();

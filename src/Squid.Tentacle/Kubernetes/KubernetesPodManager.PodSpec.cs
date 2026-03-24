@@ -6,7 +6,7 @@ namespace Squid.Tentacle.Kubernetes;
 
 public partial class KubernetesPodManager
 {
-    private V1Pod BuildPodSpec(string podName, string ticketId, string ns, Dictionary<string, string>? additionalLabels = null)
+    private V1Pod BuildPodSpec(string podName, string ticketId, Dictionary<string, string>? additionalLabels = null)
     {
         var template = _templateProvider?.TryLoadTemplate();
         var rawScriptMode = _settings.RawScriptMode;
@@ -46,7 +46,7 @@ public partial class KubernetesPodManager
             Metadata = new V1ObjectMeta
             {
                 Name = podName,
-                NamespaceProperty = ns,
+                NamespaceProperty = _settings.TentacleNamespace,
                 Labels = BuildLabels(ticketId, additionalLabels),
                 Annotations = BuildAnnotations()
             },
