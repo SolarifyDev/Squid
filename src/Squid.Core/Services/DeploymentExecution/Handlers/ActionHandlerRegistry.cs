@@ -33,6 +33,6 @@ public class ActionHandlerRegistry : IActionHandlerRegistry
     {
         var handler = Resolve(action);
 
-        return handler?.ExecutionScope ?? ExecutionScope.TargetLevel;
+        return handler?.ExecutionScope ?? ExecutionScope.StepLevel;
     }
 }

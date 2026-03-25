@@ -1,10 +1,58 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
+using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Account;
 
 namespace Squid.UnitTests.Services.Deployments.Account;
 
 public class DeploymentAccountServiceTests
 {
+    // === BuildCredentialsSummary — Azure ===
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildCredentialsSummary_AzureServicePrincipal_ReturnsSummary(bool hasKey)
+    {
+        var creds = new AzureServicePrincipalCredentials
+        {
+            SubscriptionNumber = "sub-1",
+            ClientId = "cid-1",
+            TenantId = "tid-1",
+            Key = hasKey ? "secret" : null
+        };
+
+        var result = DeploymentAccountService.BuildCredentialsSummary(AccountType.AzureServicePrincipal, creds);
+
+        var summary = result.ShouldBeOfType<AzureServicePrincipalCredentialsSummary>();
+        summary.SubscriptionNumber.ShouldBe("sub-1");
+        summary.ClientId.ShouldBe("cid-1");
+        summary.TenantId.ShouldBe("tid-1");
+        summary.KeyHasValue.ShouldBe(hasKey);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildCredentialsSummary_AzureOidc_ReturnsSummary(bool hasJwt)
+    {
+        var creds = new AzureOidcCredentials
+        {
+            SubscriptionNumber = "sub-1",
+            ClientId = "cid-1",
+            TenantId = "tid-1",
+            Jwt = hasJwt ? "token" : null
+        };
+
+        var result = DeploymentAccountService.BuildCredentialsSummary(AccountType.AzureOidc, creds);
+
+        var summary = result.ShouldBeOfType<AzureOidcCredentialsSummary>();
+        summary.SubscriptionNumber.ShouldBe("sub-1");
+        summary.ClientId.ShouldBe("cid-1");
+        summary.TenantId.ShouldBe("tid-1");
+        summary.JwtHasValue.ShouldBe(hasJwt);
+    }
+
     // === SerializeEnvironmentIds ===
 
     [Fact]

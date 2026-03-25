@@ -19,7 +19,7 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
 {
     public async Task<CreateDeploymentAccountResponseData> CreateAsync(CreateDeploymentAccountCommand command, CancellationToken cancellationToken)
     {
-        var credentials = BuildCredentials(command.AccountType, command);
+        var credentials = DeploymentAccountCredentialsConverter.Deserialize(command.AccountType, command.Credentials);
 
         var entity = new DeploymentAccount
         {
@@ -54,11 +54,11 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
         if (command.EnvironmentIds != null)
             entity.EnvironmentIds = SerializeEnvironmentIds(command.EnvironmentIds);
 
-        var existing = DeploymentAccountCredentialsConverter.Deserialize(entity.AccountType, entity.Credentials);
-        
-        var merged = MergeCredentials(command, existing);
-        
-        entity.Credentials = DeploymentAccountCredentialsConverter.Serialize(merged);
+        var incoming = DeploymentAccountCredentialsConverter.Deserialize(command.AccountType, command.Credentials);
+
+        entity.Credentials = incoming != null
+            ? DeploymentAccountCredentialsConverter.Serialize(incoming)
+            : entity.Credentials;
 
         await dataProvider.UpdateAccountAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -111,7 +111,7 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
         };
     }
 
-    private static object BuildCredentialsSummary(AccountType accountType, object creds)
+    internal static object BuildCredentialsSummary(AccountType accountType, object creds)
     {
         return accountType switch
         {
@@ -137,7 +137,8 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             AccountType.SshKeyPair => new SshKeyPairCredentialsSummary
             {
                 Username = (creds as SshKeyPairCredentials)?.Username,
-                PrivateKeyFileHasValue = creds is SshKeyPairCredentials ssh && !string.IsNullOrEmpty(ssh.PrivateKeyFile)
+                PrivateKeyFileHasValue = creds is SshKeyPairCredentials ssh && !string.IsNullOrEmpty(ssh.PrivateKeyFile),
+                PassphraseHasValue = creds is SshKeyPairCredentials sshP && !string.IsNullOrEmpty(sshP.PrivateKeyPassphrase)
             },
             AccountType.AzureServicePrincipal => new AzureServicePrincipalCredentialsSummary
             {
@@ -146,58 +147,18 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
                 TenantId = (creds as AzureServicePrincipalCredentials)?.TenantId,
                 KeyHasValue = creds is AzureServicePrincipalCredentials az && !string.IsNullOrEmpty(az.Key)
             },
-            _ => null
-        };
-    }
-
-    private static object BuildCredentials(AccountType accountType, CreateDeploymentAccountCommand command)
-    {
-        return accountType switch
-        {
-            AccountType.Token => new TokenCredentials { Token = command.Token },
-            AccountType.UsernamePassword => new UsernamePasswordCredentials
+            AccountType.AzureOidc => new AzureOidcCredentialsSummary
             {
-                Username = command.Username,
-                Password = command.Password
+                SubscriptionNumber = (creds as AzureOidcCredentials)?.SubscriptionNumber,
+                ClientId = (creds as AzureOidcCredentials)?.ClientId,
+                TenantId = (creds as AzureOidcCredentials)?.TenantId,
+                JwtHasValue = creds is AzureOidcCredentials oidc && !string.IsNullOrEmpty(oidc.Jwt)
             },
-            AccountType.ClientCertificate => new ClientCertificateCredentials
+            AccountType.GoogleCloudAccount => new GcpCredentialsSummary
             {
-                ClientCertificateData = command.ClientCertificateData,
-                ClientCertificateKeyData = command.ClientCertificateKeyData
-            },
-            AccountType.AmazonWebServicesAccount or AccountType.AmazonWebServicesRoleAccount => new AwsCredentials
-            {
-                AccessKey = command.AccessKey,
-                SecretKey = command.SecretKey
+                JsonKeyHasValue = creds is GcpCredentials gcp && !string.IsNullOrEmpty(gcp.JsonKey)
             },
             _ => null
-        };
-    }
-
-    private static object MergeCredentials(UpdateDeploymentAccountCommand command, object existing)
-    {
-        return command.AccountType switch
-        {
-            AccountType.Token => new TokenCredentials
-            {
-                Token = command.TokenNewValue ?? (existing as TokenCredentials)?.Token
-            },
-            AccountType.UsernamePassword => new UsernamePasswordCredentials
-            {
-                Username = command.Username ?? (existing as UsernamePasswordCredentials)?.Username,
-                Password = command.PasswordNewValue ?? (existing as UsernamePasswordCredentials)?.Password
-            },
-            AccountType.ClientCertificate => new ClientCertificateCredentials
-            {
-                ClientCertificateData = command.ClientCertificateDataNewValue ?? (existing as ClientCertificateCredentials)?.ClientCertificateData,
-                ClientCertificateKeyData = command.ClientCertificateKeyDataNewValue ?? (existing as ClientCertificateCredentials)?.ClientCertificateKeyData
-            },
-            AccountType.AmazonWebServicesAccount or AccountType.AmazonWebServicesRoleAccount => new AwsCredentials
-            {
-                AccessKey = command.AccessKey ?? (existing as AwsCredentials)?.AccessKey,
-                SecretKey = command.SecretKeyNewValue ?? (existing as AwsCredentials)?.SecretKey
-            },
-            _ => existing
         };
     }
 

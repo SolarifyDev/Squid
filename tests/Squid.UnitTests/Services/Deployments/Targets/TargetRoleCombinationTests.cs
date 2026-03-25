@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
@@ -525,5 +526,41 @@ public class TargetRoleCombinationTests
         };
 
         return step;
+    }
+
+    // ========== Pre-Filter with Synthetic Steps (ResolveScope defaults) ==========
+
+    [Fact]
+    public void PreFilter_SyntheticStepNoHandler_StepLevelDefault_PreFilterStillNarrows()
+    {
+        // Simulates Acquire Packages: no registered handler → ResolveScope returns StepLevel
+        // This role-less synthetic step should NOT prevent pre-filtering
+        var machines = new List<Machine>
+        {
+            MakeMachine(1, "web"),
+            MakeMachine(2, "api"),
+            MakeMachine(3, "database")
+        };
+
+        var steps = new List<DeploymentStepDto>
+        {
+            MakeStepWithAction(1, "Acquire Packages", targetRoles: null, actionType: "Squid.TentaclePackage"),
+            MakeStepWithAction(2, "Deploy Web", targetRoles: "web", actionType: "Squid.KubernetesRunScript")
+        };
+
+        // No handler for TentaclePackage → StepLevel (default for unknown)
+        // KubernetesRunScript → TargetLevel (known handler)
+        ExecutionScope ScopeResolver(DeploymentActionDto a) =>
+            a.ActionType == "Squid.KubernetesRunScript"
+                ? ExecutionScope.TargetLevel
+                : ExecutionScope.StepLevel;
+
+        var allRoles = DeploymentTargetFinder.CollectAllTargetRoles(steps, ScopeResolver);
+        allRoles.Count.ShouldBe(1);
+        allRoles.ShouldContain("web");
+
+        var filtered = DeploymentTargetFinder.FilterByRoles(machines, allRoles);
+        filtered.Count.ShouldBe(1);
+        filtered[0].Id.ShouldBe(1);
     }
 }

@@ -218,6 +218,111 @@ public class DockerPackageSearchStrategyTests
     }
 
     [Fact]
+    public async Task SearchAsync_DockerHub_WithCredentials_ShouldAuthenticateNamespaceSearch()
+    {
+        var loginRequested = false;
+        Dictionary<string, string> capturedHeaders = null;
+
+        var handler = new DelegatingStubHandler((request, _) =>
+        {
+            if (request.RequestUri.PathAndQuery.Contains("/v2/users/login"))
+            {
+                loginRequested = true;
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"token":"test-hub-jwt"}""")
+                });
+            }
+
+            if (request.RequestUri.PathAndQuery.Contains("/v2/namespaces/"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                        {
+                            "results": [
+                                {"name": "squid-web"},
+                                {"name": "squid-api"}
+                            ]
+                        }
+                        """)
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns((TimeSpan? _, bool _, Dictionary<string, string> h) =>
+            {
+                if (h != null)
+                    capturedHeaders = h;
+
+                return new HttpClient(handler, disposeHandler: false);
+            });
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "Docker", FeedUri = "https://index.docker.io", Username = "sjdistributor", Password = "secret123" };
+
+        var result = await sut.SearchAsync(feed, "squid", 10, CancellationToken.None);
+
+        loginRequested.ShouldBeTrue();
+        capturedHeaders.ShouldNotBeNull();
+        capturedHeaders.ShouldContainKeyAndValue("Authorization", "Bearer test-hub-jwt");
+        result.ShouldNotBeNull();
+        result.Count.ShouldBe(2);
+        result.ShouldContain("sjdistributor/squid-web");
+        result.ShouldContain("sjdistributor/squid-api");
+    }
+
+    [Fact]
+    public async Task SearchAsync_DockerHub_WithoutCredentials_ShouldNotAuthenticate()
+    {
+        var loginRequested = false;
+        string capturedAuthHeader = null;
+
+        var client = CreateHttpClient((request, _) =>
+        {
+            if (request.RequestUri.PathAndQuery.Contains("/v2/users/login"))
+            {
+                loginRequested = true;
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"token":"should-not-happen"}""")
+                });
+            }
+
+            capturedAuthHeader = request.Headers.Authorization?.ToString();
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {
+                        "results": [
+                            {"repo_name": "library/nginx"}
+                        ]
+                    }
+                    """)
+            });
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "Docker", FeedUri = "https://index.docker.io" };
+
+        var result = await sut.SearchAsync(feed, "nginx", 10, CancellationToken.None);
+
+        loginRequested.ShouldBeFalse();
+        capturedAuthHeader.ShouldBeNull();
+        result.ShouldNotBeNull();
+        result.ShouldContain("library/nginx");
+    }
+
+    [Fact]
     public async Task SearchAsync_ShouldReturnEmpty_WhenFeedUriInvalid()
     {
         var sut = CreateSut();
