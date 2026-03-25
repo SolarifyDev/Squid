@@ -1,1 +1,0 @@
-ALTER TABLE machine ADD COLUMN IF NOT EXISTS agent_version TEXT NULL;

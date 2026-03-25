@@ -1,1 +1,0 @@
-ALTER TABLE deployment_process ADD COLUMN IF NOT EXISTS project_id INT NOT NULL DEFAULT 0;
