@@ -35,8 +35,6 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         candidates = FilterDisabled(candidates);
         candidates = ApplyMachineSelection(candidates, selection);
 
-        Log.Information("Found {Count} target machines for deployment {DeploymentId}", candidates.Count, deployment.Id);
-
         return candidates;
     }
 

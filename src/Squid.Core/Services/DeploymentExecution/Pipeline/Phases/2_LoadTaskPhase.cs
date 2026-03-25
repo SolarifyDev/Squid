@@ -13,6 +13,6 @@ public sealed class LoadTaskPhase(IServerTaskService serverTaskService) : IDeplo
         ctx.Task = result.Task;
         ctx.IsResume = result.IsResumed;
 
-        Log.Information("Start processing task {TaskId} (resume: {IsResume})", ctx.ServerTaskId, ctx.IsResume);
+        Log.Information("[Deploy] Start processing task {TaskId} (resume: {IsResume})", ctx.ServerTaskId, ctx.IsResume);
     }
 }

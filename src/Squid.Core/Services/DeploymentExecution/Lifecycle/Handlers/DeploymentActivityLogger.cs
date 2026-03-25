@@ -56,12 +56,12 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to locate existing task node on resume for task {TaskId}", Ctx.ServerTaskId);
+            Log.Warning(ex, "[Deploy] Failed to locate existing task node on resume for task {TaskId}", Ctx.ServerTaskId);
         }
 
         if (_taskNodeId == null)
         {
-            Log.Warning("No existing task node found on resume for task {TaskId}, creating fallback", Ctx.ServerTaskId);
+            Log.Warning("[Deploy] No existing task node found on resume for task {TaskId}, creating fallback", Ctx.ServerTaskId);
             var node = await CreateActivityNodeAsync(null, "Resumed deployment", DeploymentActivityLogNodeType.Task, DeploymentActivityLogNodeStatus.Running, 0, ct).ConfigureAwait(false);
             _taskNodeId = node?.Id;
         }
@@ -429,7 +429,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         _masker = new SensitiveValueMasker(sensitiveValues);
 
         if (_masker.ValueCount > 0)
-            Log.Debug("Initialized sensitive value masker with {Count} values for task {TaskId}", _masker.ValueCount, Ctx.ServerTaskId);
+            Log.Debug("[Deploy] Initialized sensitive value masker with {Count} values for task {TaskId}", _masker.ValueCount, Ctx.ServerTaskId);
     }
 
     private IEnumerable<string> CollectSensitiveValues()
@@ -468,7 +468,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to flush log writer for task {TaskId}", Ctx.ServerTaskId);
+            Log.Warning(ex, "[Deploy] Failed to flush log writer for task {TaskId}", Ctx.ServerTaskId);
         }
     }
 
@@ -489,7 +489,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to create activity log node: {Name}", name);
+            Log.Warning(ex, "[Deploy] Failed to create activity log node: {Name}", name);
             return null;
         }
     }
@@ -504,7 +504,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to persist task log entry");
+            Log.Warning(ex, "[Deploy] Failed to persist task log entry");
         }
     }
 
@@ -530,7 +530,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to persist script output for task {TaskId}", Ctx.ServerTaskId);
+            Log.Warning(ex, "[Deploy] Failed to persist script output for task {TaskId}", Ctx.ServerTaskId);
         }
     }
 
@@ -544,7 +544,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to update activity node status for node {NodeId}", nodeId);
+            Log.Warning(ex, "[Deploy] Failed to update activity node status for node {NodeId}", nodeId);
         }
     }
 }

@@ -25,7 +25,7 @@ public sealed class DeploymentLifecyclePublisher : IDeploymentLifecycle
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Lifecycle handler {Handler} failed for event {Event}, continuing", handler.GetType().Name, @event.GetType().Name);
+                Log.Warning(ex, "[Deploy] Lifecycle handler {Handler} failed for event {Event}, continuing", handler.GetType().Name, @event.GetType().Name);
             }
         }
     }

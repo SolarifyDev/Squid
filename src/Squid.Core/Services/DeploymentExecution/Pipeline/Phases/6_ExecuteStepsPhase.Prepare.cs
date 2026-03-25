@@ -36,7 +36,7 @@ public sealed partial class ExecuteStepsPhase
 
             if (handler == null)
             {
-                Log.Warning("No handler found for action {ActionType}, skipping", action.ActionType);
+                Log.Warning("[Deploy] No handler found for action {ActionType}, skipping", action.ActionType);
 
                 await lifecycle.EmitAsync(new ActionNoHandlerEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionType = action.ActionType }), ct).ConfigureAwait(false);
 

@@ -87,7 +87,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to emit lifecycle event for task {TaskId}", ctx.ServerTaskId);
+            Log.Warning(ex, "[Deploy] Failed to emit lifecycle event for task {TaskId}", ctx.ServerTaskId);
         }
 
         try
@@ -96,7 +96,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
+            Log.Error(ex, "[Deploy] Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
         }
     }
 
@@ -107,6 +107,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         if (task == null || string.IsNullOrEmpty(task.ConcurrencyTag)) return;
 
         var deadline = DateTime.UtcNow.Add(ConcurrencyMaxWait);
+        var logged = false;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -116,11 +117,15 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             if (!hasBlocker) return;
 
-            Log.Information("Task {TaskId} waiting for concurrency slot (tag: {Tag})", serverTaskId, task.ConcurrencyTag);
+            if (!logged)
+            {
+                Log.Information("[Deploy] Task {TaskId} waiting for concurrency slot (tag: {Tag})", serverTaskId, task.ConcurrencyTag);
+                logged = true;
+            }
 
             await Task.Delay(ConcurrencyPollInterval, ct).ConfigureAwait(false);
         }
 
-        Log.Warning("Task {TaskId} exceeded concurrency wait timeout ({Timeout}), proceeding anyway", serverTaskId, ConcurrencyMaxWait);
+        Log.Warning("[Deploy] Task {TaskId} exceeded concurrency wait timeout ({Timeout}), proceeding anyway", serverTaskId, ConcurrencyMaxWait);
     }
 }

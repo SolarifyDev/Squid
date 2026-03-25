@@ -35,7 +35,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
         {
             if (_ctx.ResumeFromBatchIndex.HasValue && _currentBatchIndex <= _ctx.ResumeFromBatchIndex.Value)
             {
-                Log.Information("Skipping batch {BatchIndex} (already completed in previous run)", _currentBatchIndex);
+                Log.Information("[Deploy] Skipping batch {BatchIndex} (already completed in previous run)", _currentBatchIndex);
                 _currentBatchIndex++;
                 continue;
             }
@@ -71,7 +71,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to persist checkpoint at batch {BatchIndex}, continuing", batchIndex);
+            Log.Warning(ex, "[Deploy] Failed to persist checkpoint at batch {BatchIndex}, continuing", batchIndex);
         }
     }
 
@@ -93,11 +93,7 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
             if (result.OutputVariables.Count > 0)
             {
                 _ctx.Variables.AddRange(result.OutputVariables);
-                foreach (var v in result.OutputVariables)
-                {
-                    var displayValue = v.IsSensitive ? "********" : v.Value;
-                    Log.Information("Output variable captured: {Name} = {Value}", v.Name, displayValue);
-                }
+                Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
             }
 
             _ctx.FailureEncountered |= result.Failed;

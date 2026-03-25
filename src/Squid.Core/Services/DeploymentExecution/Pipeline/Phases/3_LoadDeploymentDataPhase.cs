@@ -49,7 +49,5 @@ public sealed class LoadDeploymentDataPhase(
     private async Task LoadSelectedPackagesAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         ctx.SelectedPackages = await releaseSelectedPackageDataProvider.GetByReleaseIdAsync(ctx.Release.Id, ct).ConfigureAwait(false);
-
-        Log.Information("Loaded {Count} selected packages for release {ReleaseId}", ctx.SelectedPackages.Count, ctx.Release.Id);
     }
 }

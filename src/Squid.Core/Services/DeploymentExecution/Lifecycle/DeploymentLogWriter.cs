@@ -178,7 +178,7 @@ public sealed class DeploymentLogWriter : IDeploymentLogWriter, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Serilog.Log.Warning(ex, "Background log flush failed");
+                Serilog.Log.Warning(ex, "[Deploy] Background log flush failed");
             }
             finally
             {

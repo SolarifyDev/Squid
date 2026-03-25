@@ -19,7 +19,7 @@ public sealed class ResumeCheckpointPhase(IDeploymentCheckpointService checkpoin
         if (checkpoint.OutputVariablesJson != null)
             RestoreOutputVariables(ctx, checkpoint.OutputVariablesJson);
 
-        Log.Information("Resuming deployment from batch index {BatchIndex}", checkpoint.LastCompletedBatchIndex);
+        Log.Information("[Deploy] Resuming deployment from batch index {BatchIndex}", checkpoint.LastCompletedBatchIndex);
     }
 
     private static void RestoreOutputVariables(DeploymentTaskContext ctx, string json)
@@ -30,6 +30,6 @@ public sealed class ResumeCheckpointPhase(IDeploymentCheckpointService checkpoin
 
         ctx.RestoredOutputVariables.AddRange(restored);
 
-        Log.Information("Restored {Count} output variables from checkpoint", restored.Count);
+        Log.Information("[Deploy] Restored {Count} output variables from checkpoint", restored.Count);
     }
 }

@@ -33,8 +33,6 @@ public sealed class PrepareDeploymentPhase(
 
     private async Task LoadOrSnapshotAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("Loading process snapshot for deployment {DeploymentId}", ctx.Deployment.Id);
-
         if (ctx.Deployment.ProcessSnapshotId.HasValue)
         {
             ctx.ProcessSnapshot = await snapshotService.LoadProcessSnapshotAsync(ctx.Deployment.ProcessSnapshotId.Value, ct).ConfigureAwait(false);
@@ -51,8 +49,6 @@ public sealed class PrepareDeploymentPhase(
 
     private async Task ResolveVariablesAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("Resolving variables for deployment {DeploymentId}", ctx.Deployment.Id);
-
         ctx.Variables = await variableResolver.ResolveVariablesAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
@@ -79,8 +75,6 @@ public sealed class PrepareDeploymentPhase(
 
     private async Task FindTargetsAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("Finding targets for deployment {DeploymentId}", ctx.Deployment.Id);
-
         ctx.AllTargets = await targetFinder.FindTargetsAsync(ctx.Deployment, ct).ConfigureAwait(false);
 
         var (healthy, excludedByHealth) = DeploymentTargetFinder.FilterByHealthStatus(ctx.AllTargets);
@@ -93,7 +87,7 @@ public sealed class PrepareDeploymentPhase(
 
         if (ctx.AllTargets.Count == 0) throw new DeploymentTargetException($"No target machines found for deployment {ctx.Deployment.Id}", ctx.Deployment.Id);
 
-        Log.Information("Found {Count} target machines for deployment {DeploymentId}", ctx.AllTargets.Count, ctx.Deployment.Id);
+        Log.Information("[Deploy] Found {Count} target machines for deployment {DeploymentId}", ctx.AllTargets.Count, ctx.Deployment.Id);
     }
 
     private static void ConvertSnapshotToSteps(DeploymentTaskContext ctx)
@@ -118,7 +112,7 @@ public sealed class PrepareDeploymentPhase(
         ctx.AllTargets = DeploymentTargetFinder.FilterByRoles(ctx.AllTargets, allRoles);
 
         if (ctx.AllTargets.Count < before)
-            Log.Information("Pre-filtered targets by roles: {Before} -> {After} (roles: {Roles})", before, ctx.AllTargets.Count, string.Join(", ", allRoles));
+            Log.Information("[Deploy] Pre-filtered targets by roles: {Before} -> {After} (roles: {Roles})", before, ctx.AllTargets.Count, string.Join(", ", allRoles));
 
         if (ctx.AllTargets.Count == 0)
             throw new DeploymentTargetException($"No target machines match the required roles [{string.Join(", ", allRoles)}] for deployment {ctx.Deployment.Id}", ctx.Deployment.Id);

@@ -153,7 +153,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse container package from action");
+                Log.Warning(ex, "[Deploy] Failed to parse container package from action");
             }
         }
 

@@ -90,7 +90,7 @@ internal static class KubernetesPropertyParser
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse {PropertyName} as string dictionary", propertyName);
+            Log.Warning(ex, "[Deploy] Failed to parse {PropertyName} as string dictionary", propertyName);
         }
 
         return result;
@@ -140,7 +140,7 @@ internal static class KubernetesPropertyParser
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse service ports JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse service ports JSON");
         }
 
         return result;
@@ -196,7 +196,7 @@ internal static class KubernetesPropertyParser
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse containers JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse containers JSON");
         }
 
         return result;
@@ -245,7 +245,7 @@ internal static class KubernetesPropertyParser
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse volumes JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse volumes JSON");
         }
 
         return result;
@@ -1026,7 +1026,7 @@ internal static class KubernetesPropertyParser
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse JSON property {Key}", key);
+            Log.Warning(ex, "[Deploy] Failed to parse JSON property {Key}", key);
         }
     }
 
