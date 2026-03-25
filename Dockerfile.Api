@@ -19,6 +19,13 @@ RUN KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt) && \
     curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl" && \
     chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
 
+# Download helm matching target architecture
+RUN if [ "$TARGETARCH" = "amd64" ]; then HARCH="amd64"; else HARCH="$TARGETARCH"; fi && \
+    curl -fsSL https://get.helm.sh/helm-v3.17.3-linux-${HARCH}.tar.gz | tar xz && \
+    mv linux-${HARCH}/helm /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm && \
+    rm -rf linux-${HARCH}
+
 # Runtime
 FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
 
@@ -26,8 +33,10 @@ WORKDIR /app
 COPY --from=build /app .
 COPY --from=build /calamari/ /squid/bin/
 COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=build /usr/local/bin/helm /usr/local/bin/helm
 
 EXPOSE 8080
 EXPOSE 443
+EXPOSE 10943
 
 ENTRYPOINT ["dotnet", "Squid.Api.dll"]
