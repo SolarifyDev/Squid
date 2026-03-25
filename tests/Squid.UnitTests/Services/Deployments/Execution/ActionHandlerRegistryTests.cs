@@ -123,4 +123,24 @@ public class ActionHandlerRegistryTests
 
         result.ShouldBeNull();
     }
+
+    [Fact]
+    public void ResolveScope_KnownHandler_ReturnsHandlerScope()
+    {
+        var mock = new Mock<IActionHandler>();
+        mock.Setup(h => h.ActionType).Returns("Squid.Manual");
+        mock.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
+        mock.Setup(h => h.ExecutionScope).Returns(ExecutionScope.StepLevel);
+        var registry = new ActionHandlerRegistry(new[] { mock.Object });
+
+        registry.ResolveScope(CreateAction("Squid.Manual")).ShouldBe(ExecutionScope.StepLevel);
+    }
+
+    [Fact]
+    public void ResolveScope_UnknownAction_DefaultsToStepLevel()
+    {
+        var registry = new ActionHandlerRegistry(Enumerable.Empty<IActionHandler>());
+
+        registry.ResolveScope(CreateAction("Squid.TentaclePackage")).ShouldBe(ExecutionScope.StepLevel);
+    }
 }

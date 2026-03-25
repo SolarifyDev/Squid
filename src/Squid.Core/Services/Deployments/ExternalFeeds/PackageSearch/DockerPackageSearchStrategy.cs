@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
@@ -36,7 +37,8 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
             ? $"https://hub.docker.com/v2/search/repositories/?query={Uri.EscapeDataString(effectiveQuery)}&page_size={take}"
             : $"https://hub.docker.com/v2/namespaces/{Uri.EscapeDataString(ns)}/repositories/?page_size={take}&name={Uri.EscapeDataString(effectiveQuery)}";
 
-        var client = httpClientFactory.CreateClient(timeout: SearchTimeout);
+        var headers = await BuildDockerHubAuthHeadersAsync(feed, ct).ConfigureAwait(false);
+        var client = httpClientFactory.CreateClient(timeout: SearchTimeout, headers: headers);
 
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 
@@ -108,6 +110,46 @@ public class DockerPackageSearchStrategy(ISquidHttpClientFactory httpClientFacto
         var encoded = DockerRegistryAuthHelper.ToBasicAuthValue(feed.Username, feed.Password);
 
         return new Dictionary<string, string> { ["Authorization"] = $"Basic {encoded}" };
+    }
+
+    private async Task<Dictionary<string, string>> BuildDockerHubAuthHeadersAsync(ExternalFeed feed, CancellationToken ct)
+    {
+        if (!DockerRegistryAuthHelper.HasCredentials(feed))
+            return null;
+
+        var token = await LoginDockerHubAsync(feed.Username, feed.Password, ct).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(token))
+            return null;
+
+        return new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" };
+    }
+
+    private async Task<string> LoginDockerHubAsync(string username, string password, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(timeout: SearchTimeout);
+        var payload = JsonSerializer.Serialize(new { username, password });
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await client.PostAsync("https://hub.docker.com/v2/users/login/", content, ct).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            return doc.RootElement.TryGetProperty("token", out var token) && token.ValueKind == JsonValueKind.String
+                ? token.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static string ResolveNamespace(ExternalFeed feed)

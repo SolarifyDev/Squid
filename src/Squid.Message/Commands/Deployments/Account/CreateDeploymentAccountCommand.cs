@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Message.Attributes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
@@ -12,13 +13,7 @@ public class CreateDeploymentAccountCommand : ICommand, ISpaceScoped
     int? ISpaceScoped.SpaceId => SpaceId;
     public string Name { get; set; }
     public AccountType AccountType { get; set; }
-    public string Token { get; set; }
-    public string Username { get; set; }
-    public string Password { get; set; }
-    public string ClientCertificateData { get; set; }
-    public string ClientCertificateKeyData { get; set; }
-    public string AccessKey { get; set; }
-    public string SecretKey { get; set; }
+    public JsonElement? Credentials { get; set; }
     public List<int> EnvironmentIds { get; set; }
 }
 

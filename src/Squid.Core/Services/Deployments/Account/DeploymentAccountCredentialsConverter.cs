@@ -17,18 +17,34 @@ public static class DeploymentAccountCredentialsConverter
     {
         if (string.IsNullOrEmpty(json)) return null;
 
+        var type = GetCredentialsType(accountType);
+
+        return type == null ? null : JsonSerializer.Deserialize(json, type);
+    }
+
+    public static object Deserialize(AccountType accountType, JsonElement? json)
+    {
+        if (json == null) return null;
+
+        var type = GetCredentialsType(accountType);
+
+        return type == null ? null : json.Value.Deserialize(type);
+    }
+
+    private static Type GetCredentialsType(AccountType accountType)
+    {
         return accountType switch
         {
-            AccountType.Token => JsonSerializer.Deserialize<TokenCredentials>(json),
-            AccountType.UsernamePassword => JsonSerializer.Deserialize<UsernamePasswordCredentials>(json),
-            AccountType.ClientCertificate => JsonSerializer.Deserialize<ClientCertificateCredentials>(json),
-            AccountType.AmazonWebServicesAccount => JsonSerializer.Deserialize<AwsCredentials>(json),
-            AccountType.AmazonWebServicesRoleAccount => JsonSerializer.Deserialize<AwsRoleCredentials>(json),
-            AccountType.SshKeyPair => JsonSerializer.Deserialize<SshKeyPairCredentials>(json),
-            AccountType.AzureServicePrincipal => JsonSerializer.Deserialize<AzureServicePrincipalCredentials>(json),
-            AccountType.AzureOidc => JsonSerializer.Deserialize<AzureOidcCredentials>(json),
-            AccountType.GoogleCloudAccount => JsonSerializer.Deserialize<GcpCredentials>(json),
-            AccountType.AmazonWebServicesOidcAccount => JsonSerializer.Deserialize<AwsOidcCredentials>(json),
+            AccountType.Token => typeof(TokenCredentials),
+            AccountType.UsernamePassword => typeof(UsernamePasswordCredentials),
+            AccountType.ClientCertificate => typeof(ClientCertificateCredentials),
+            AccountType.AmazonWebServicesAccount => typeof(AwsCredentials),
+            AccountType.AmazonWebServicesRoleAccount => typeof(AwsRoleCredentials),
+            AccountType.SshKeyPair => typeof(SshKeyPairCredentials),
+            AccountType.AzureServicePrincipal => typeof(AzureServicePrincipalCredentials),
+            AccountType.AzureOidc => typeof(AzureOidcCredentials),
+            AccountType.GoogleCloudAccount => typeof(GcpCredentials),
+            AccountType.AmazonWebServicesOidcAccount => typeof(AwsOidcCredentials),
             _ => null
         };
     }

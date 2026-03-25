@@ -40,6 +40,7 @@ public class SshKeyPairCredentialsSummary
 {
     public string Username { get; set; }
     public bool PrivateKeyFileHasValue { get; set; }
+    public bool PassphraseHasValue { get; set; }
 }
 
 public class AzureServicePrincipalCredentialsSummary
@@ -48,4 +49,17 @@ public class AzureServicePrincipalCredentialsSummary
     public string ClientId { get; set; }
     public string TenantId { get; set; }
     public bool KeyHasValue { get; set; }
+}
+
+public class AzureOidcCredentialsSummary
+{
+    public string SubscriptionNumber { get; set; }
+    public string ClientId { get; set; }
+    public string TenantId { get; set; }
+    public bool JwtHasValue { get; set; }
+}
+
+public class GcpCredentialsSummary
+{
+    public bool JsonKeyHasValue { get; set; }
 }
