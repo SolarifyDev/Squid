@@ -87,8 +87,6 @@ public sealed partial class ExecuteStepsPhase
 
         if (!eligibility.ShouldExecute)
         {
-            Log.Information("Skipping step {StepName} on target {TargetName}: {Reason}", step.Name, tc.Machine.Name, eligibility.SkipReason);
-
             await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
 
             return new StepExecutionResult();
@@ -189,7 +187,7 @@ public sealed partial class ExecuteStepsPhase
         {
             result.Failed = true;
 
-            Log.Error(ex, "Action failed in step {StepName}: {Error}", step.Name, ex.Message);
+            Log.Error(ex, "[Deploy] Action failed in step {StepName}", step.Name);
 
             await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
 
@@ -276,7 +274,7 @@ public sealed partial class ExecuteStepsPhase
                 break;
 
             default:
-                Log.Warning("Unknown synthetic step type {StepType}, skipping", step.StepType);
+                Log.Warning("[Deploy] Unknown synthetic step type {StepType}, skipping", step.StepType);
                 break;
         }
 
@@ -328,8 +326,6 @@ public sealed partial class ExecuteStepsPhase
     {
         foreach (var (action, eligibility) in skipped)
         {
-            Log.Information("Skipping action {ActionName}: {Reason}", action.Name, eligibility.SkipReason);
-
             if (eligibility.SkipReason == ActionSkipReason.ManuallySkipped)
                 await lifecycle.EmitAsync(new ActionManuallyExcludedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name }), ct).ConfigureAwait(false);
             else

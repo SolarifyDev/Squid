@@ -70,7 +70,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         var scriptPath = Path.Combine(workDir, scriptFileName);
         await File.WriteAllTextAsync(scriptPath, scriptBody, Utf8NoBom, ct).ConfigureAwait(false);
 
-        Log.Information("Executing packaged YAML deployment locally in {WorkDir}", workDir);
+        Log.Information("[Deploy] Executing packaged YAML deployment locally in {WorkDir}", workDir);
 
         return await _processRunner.RunAsync(executable, args.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, request.Timeout, request.Masker).ConfigureAwait(false);
     }
@@ -84,7 +84,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         var scriptPath = Path.Combine(workDir, scriptFileName);
         await File.WriteAllTextAsync(scriptPath, plan.ScriptBody, Utf8NoBom, ct).ConfigureAwait(false);
 
-        Log.Information("Executing script locally in {WorkDir}", workDir);
+        Log.Information("[Deploy] Executing script locally in {WorkDir}", workDir);
 
         return await _processRunner.RunAsync(executable, arguments.Replace("{{ScriptPath}}", scriptPath, StringComparison.Ordinal), workDir, ct, plan.Request.Timeout, plan.Request.Masker)
             .ConfigureAwait(false);
@@ -128,7 +128,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to clean up work directory {WorkDir}", workDir);
+            Log.Warning(ex, "[Deploy] Failed to clean up work directory {WorkDir}", workDir);
         }
     }
 

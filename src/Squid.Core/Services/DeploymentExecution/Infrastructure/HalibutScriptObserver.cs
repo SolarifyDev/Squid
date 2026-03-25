@@ -30,7 +30,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         {
             if (DateTime.UtcNow - startTime > scriptTimeout)
             {
-                Log.Warning("Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
+                Log.Warning("[Deploy] Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
                     scriptTimeout.TotalMinutes, machine.Name);
                 await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
 
@@ -105,10 +105,10 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         var success = completeResponse.ExitCode == 0;
 
         if (!success)
-            Log.Error("Script failed on agent {MachineName} with exit code {ExitCode}",
+            Log.Error("[Deploy] Script failed on agent {MachineName} with exit code {ExitCode}",
                 machine.Name, completeResponse.ExitCode);
         else
-            Log.Information("Script completed successfully on agent {MachineName}", machine.Name);
+            Log.Information("[Deploy] Script completed successfully on agent {MachineName}", machine.Name);
 
         return new ScriptExecutionResult
         {
@@ -122,7 +122,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
     private static void LogOutput(List<ProcessOutput> logs, string machineName, SensitiveValueMasker masker)
     {
         foreach (var log in logs)
-            Log.Information("[Agent Script] Machine={MachineName}, Source={Source}, Message={Message}",
+            Log.Information("[Deploy:Agent] Machine={MachineName}, Source={Source}, Message={Message}",
                 machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
     }
 
@@ -132,7 +132,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
 
         var overflow = logs.Count - MaxLogEntries;
         logs.RemoveRange(0, overflow);
-        Log.Warning("Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", MaxLogEntries, overflow);
+        Log.Warning("[Deploy] Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", MaxLogEntries, overflow);
     }
 
     private static async Task TryCancelScriptAsync(
@@ -145,7 +145,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to cancel script with ticket {Ticket}", ticket.TaskId);
+            Log.Error(ex, "[Deploy] Failed to cancel script with ticket {Ticket}", ticket.TaskId);
         }
     }
 }

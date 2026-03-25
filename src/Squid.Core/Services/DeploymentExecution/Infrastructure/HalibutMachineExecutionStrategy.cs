@@ -75,7 +75,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
-        Log.Information("Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
+        Log.Information("[Deploy] Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
         return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
@@ -106,7 +106,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
-        Log.Information("Starting direct script on agent {MachineName} with ticket {Ticket}",
+        Log.Information("[Deploy] Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, ticket);
 
         return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
@@ -160,13 +160,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             var endpoint = Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 
             if (endpoint == null)
-                Log.Warning("Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
+                Log.Warning("[Deploy] Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
 
             return endpoint;
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse endpoint for machine {MachineName}", machine.Name);
+            Log.Warning(ex, "[Deploy] Failed to parse endpoint for machine {MachineName}", machine.Name);
             return null;
         }
     }

@@ -32,7 +32,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
             if (e.Data == null) return;
 
             lock (logLock) { logLines.Add(e.Data); }
-            Log.Information("[LocalExec:stdout] {Line}", masker?.Mask(e.Data) ?? e.Data);
+            Log.Information("[Deploy:stdout] {Line}", masker?.Mask(e.Data) ?? e.Data);
         };
 
         process.ErrorDataReceived += (_, e) =>
@@ -45,7 +45,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
                 stderrLines.Add(e.Data);
             }
 
-            Log.Warning("[LocalExec:stderr] {Line}", masker?.Mask(e.Data) ?? e.Data);
+            Log.Warning("[Deploy:stderr] {Line}", masker?.Mask(e.Data) ?? e.Data);
         };
 
         process.Start();
@@ -64,7 +64,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         catch (OperationCanceledException) when (timeoutCts is { IsCancellationRequested: true } && !ct.IsCancellationRequested)
         {
             TryKillProcess(process);
-            Log.Warning("Local process timed out after {Timeout}", timeout!.Value);
+            Log.Warning("[Deploy] Local process timed out after {Timeout}", timeout!.Value);
 
             return new ScriptExecutionResult
             {
@@ -82,7 +82,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
 
         var exitCode = process.ExitCode;
 
-        Log.Information("Local process exited with code {ExitCode}", exitCode);
+        Log.Information("[Deploy] Local process exited with code {ExitCode}", exitCode);
 
         return new ScriptExecutionResult
         {
@@ -107,7 +107,7 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
         catch (InvalidOperationException) { /* already exited */ }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to kill local process");
+            Log.Warning(ex, "[Deploy] Failed to kill local process");
         }
     }
 }

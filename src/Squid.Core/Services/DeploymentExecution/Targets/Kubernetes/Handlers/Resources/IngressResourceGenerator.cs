@@ -93,7 +93,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse ingress rules JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse ingress rules JSON");
         }
     }
 
@@ -202,7 +202,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse ingress TLS certificates JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse ingress TLS certificates JSON");
         }
     }
 }

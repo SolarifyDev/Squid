@@ -86,7 +86,7 @@ public sealed partial class ExecuteStepsPhase
     private static ActionDirective ApplyExcludeAndSkip(DeploymentTargetContext tc)
     {
         tc.Exclude("Excluded via guided failure");
-        Log.Information("Machine {MachineName} excluded from remaining deployment steps via guided failure", tc.Machine.Name);
+        Log.Information("[Deploy] Machine {MachineName} excluded from remaining deployment steps via guided failure", tc.Machine.Name);
         return ActionDirective.Skip;
     }
 }

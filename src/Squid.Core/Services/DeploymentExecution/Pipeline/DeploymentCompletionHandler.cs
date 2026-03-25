@@ -27,12 +27,12 @@ public sealed class DeploymentCompletionHandler(
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
         await TriggerAutoDeploymentsAsync(ctx, ct).ConfigureAwait(false);
 
-        Log.Information("Task {TaskId} completed successfully", ctx.ServerTaskId);
+        Log.Information("[Deploy] Task {TaskId} completed successfully", ctx.ServerTaskId);
     }
 
     public async Task OnFailureAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
-        Log.Error(ex, "Task {TaskId} failed: {ErrorMessage}", ctx.ServerTaskId, ex.Message);
+        Log.Error(ex, "[Deploy] Task {TaskId} failed", ctx.ServerTaskId);
 
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, ex.Message).ConfigureAwait(false);
@@ -49,7 +49,7 @@ public sealed class DeploymentCompletionHandler(
 
     public async Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("Task {TaskId} cancelled", ctx.ServerTaskId);
+        Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
 
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
@@ -64,7 +64,7 @@ public sealed class DeploymentCompletionHandler(
 
     public Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
+        Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
         return Task.CompletedTask;
     }
@@ -90,8 +90,6 @@ public sealed class DeploymentCompletionHandler(
         };
 
         await deploymentCompletionDataProvider.AddDeploymentCompletionAsync(completion).ConfigureAwait(false);
-
-        Log.Information("Recorded deployment completion for deployment {DeploymentId}: {Status}", ctx.Deployment.Id, success ? "Success" : "Failed");
     }
 
     private async Task CleanupCheckpointAsync(DeploymentTaskContext ctx, CancellationToken ct)
@@ -102,7 +100,7 @@ public sealed class DeploymentCompletionHandler(
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to cleanup checkpoint for task {TaskId}, continuing", ctx.ServerTaskId);
+            Log.Warning(ex, "[Deploy] Failed to cleanup checkpoint for task {TaskId}, continuing", ctx.ServerTaskId);
         }
     }
 
@@ -116,7 +114,7 @@ public sealed class DeploymentCompletionHandler(
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Auto-deploy trigger failed for deployment {DeploymentId}, continuing", ctx.Deployment?.Id);
+            Log.Warning(ex, "[Deploy] Auto-deploy trigger failed for deployment {DeploymentId}, continuing", ctx.Deployment?.Id);
         }
     }
 }

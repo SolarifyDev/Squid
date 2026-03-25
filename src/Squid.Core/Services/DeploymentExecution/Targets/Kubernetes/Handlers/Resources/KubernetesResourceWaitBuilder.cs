@@ -72,7 +72,7 @@ internal static class KubernetesResourceWaitBuilder
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse wait resource specification");
+                Log.Warning(ex, "[Deploy] Failed to parse wait resource specification");
             }
         }
 

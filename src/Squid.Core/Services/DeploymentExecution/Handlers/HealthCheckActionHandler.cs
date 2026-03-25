@@ -80,7 +80,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
             unhealthyCount++;
             tc.Exclude($"Health check failed: {result.Detail}");
-            Log.Warning("Health check failed for {MachineName}: {Detail}", tc.Machine.Name, result.Detail);
+            Log.Warning("[Deploy] Health check failed for {MachineName}: {Detail}", tc.Machine.Name, result.Detail);
         }
 
         return (healthyCount, unhealthyCount);
@@ -107,7 +107,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Health check threw for {MachineName}", tc.Machine.Name);
+            Log.Warning(ex, "[Deploy] Health check threw for {MachineName}", tc.Machine.Name);
             return new HealthCheckResult(false, $"Health check exception: {ex.Message}");
         }
     }
@@ -145,7 +145,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Full health check threw for {MachineName}", tc.Machine.Name);
+            Log.Warning(ex, "[Deploy] Full health check threw for {MachineName}", tc.Machine.Name);
             return new HealthCheckResult(false, $"Full health check exception: {ex.Message}");
         }
     }
@@ -158,7 +158,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
         if (newMachines.Count == 0) return;
 
-        Log.Information("Including {Count} new deployment target(s) discovered during health check", newMachines.Count);
+        Log.Information("[Deploy] Including {Count} new deployment target(s) discovered during health check", newMachines.Count);
 
         deployCtx.AllTargets.AddRange(newMachines);
 

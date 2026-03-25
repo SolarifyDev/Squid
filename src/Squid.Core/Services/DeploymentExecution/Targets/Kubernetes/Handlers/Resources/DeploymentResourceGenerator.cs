@@ -284,7 +284,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse node affinity JSON");
+                Log.Warning(ex, "[Deploy] Failed to parse node affinity JSON");
             }
         }
 
@@ -298,7 +298,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse pod affinity JSON");
+                Log.Warning(ex, "[Deploy] Failed to parse pod affinity JSON");
             }
         }
 
@@ -312,7 +312,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse pod anti-affinity JSON");
+                Log.Warning(ex, "[Deploy] Failed to parse pod anti-affinity JSON");
             }
         }
     }
@@ -361,7 +361,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse DNS config options JSON");
+                Log.Warning(ex, "[Deploy] Failed to parse DNS config options JSON");
             }
         }
     }
@@ -437,7 +437,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to parse pod security sysctls JSON");
+                Log.Warning(ex, "[Deploy] Failed to parse pod security sysctls JSON");
             }
         }
     }
@@ -472,7 +472,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse image pull secrets JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse image pull secrets JSON");
         }
     }
 
@@ -524,7 +524,7 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse host aliases JSON");
+            Log.Warning(ex, "[Deploy] Failed to parse host aliases JSON");
         }
     }
 

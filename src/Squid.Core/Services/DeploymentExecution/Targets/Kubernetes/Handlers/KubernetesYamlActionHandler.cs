@@ -123,7 +123,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse container feed secrets from action");
+            Log.Warning(ex, "[Deploy] Failed to parse container feed secrets from action");
         }
 
         return feedIds.ToList();
@@ -152,7 +152,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse containers for feed secrets check");
+            Log.Warning(ex, "[Deploy] Failed to parse containers for feed secrets check");
         }
 
         return false;
@@ -295,7 +295,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to parse container images for resolution");
+            Log.Warning(ex, "[Deploy] Failed to parse container images for resolution");
         }
     }
 

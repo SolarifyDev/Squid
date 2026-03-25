@@ -16,7 +16,7 @@ public sealed class RetentionCleanupPhase(IRetentionPolicyEnforcer retentionEnfo
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Retention cleanup failed for project {ProjectId}, continuing", ctx.Project.Id);
+            Log.Warning(ex, "[Deploy] Retention cleanup failed for project {ProjectId}, continuing", ctx.Project.Id);
         }
     }
 }
