@@ -45,7 +45,6 @@ public class DefaultSpaceSeeder : IStartable
                 IsDefault = true,
                 Json = "{}",
                 TaskQueueStopped = false,
-                DataVersion = Array.Empty<byte>(),
                 IsPrivate = false
             };
 

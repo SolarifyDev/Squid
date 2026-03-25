@@ -16,7 +16,6 @@ public class ProjectMapping : Profile
 
         CreateMap<CreateOrUpdateProjectModel, Project>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())
-            .ForMember(dest => dest.DataVersion, opt => opt.Ignore())
             .ForMember(dest => dest.VariableSetId, opt => opt.Ignore())
             .ForMember(dest => dest.DeploymentProcessId, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())

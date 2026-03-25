@@ -98,7 +98,6 @@ public class TestDataBuilder
             Json = string.Empty,
             IncludedLibraryVariableSetIds = "[]",
             DiscreteChannelRelease = false,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             LastModifiedDate = DateTimeOffset.UtcNow,
             AllowIgnoreChannelRules = false
@@ -129,8 +128,7 @@ public class TestDataBuilder
             Name = name,
             Description = string.Empty,
             SpaceId = 1,
-            Slug = name.ToLowerInvariant().Replace(" ", "-"),
-            DataVersion = Array.Empty<byte>()
+            Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 
         await _repository.InsertAsync(entity).ConfigureAwait(false);
@@ -328,7 +326,6 @@ public class TestDataBuilder
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { environmentId }),
             SpaceId = 1,
             Endpoint = "{}",
-            DataVersion = Array.Empty<byte>(),
             Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 
@@ -358,7 +355,6 @@ public class TestDataBuilder
             Json = string.Empty,
             IncludedLibraryVariableSetIds = "[]",
             DiscreteChannelRelease = discreteChannelRelease,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             LastModifiedDate = DateTimeOffset.UtcNow,
             AllowIgnoreChannelRules = false

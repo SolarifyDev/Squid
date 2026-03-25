@@ -12,8 +12,6 @@ public class ProjectGroup : IEntity<int>, IAuditable
 
     public string Slug { get; set; }
 
-    public byte[] DataVersion { get; set; }
-
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

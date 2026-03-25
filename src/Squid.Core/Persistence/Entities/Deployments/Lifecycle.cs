@@ -12,8 +12,6 @@ public class Lifecycle : IEntity<int>, IAuditable
 
     public string Slug { get; set; }
 
-    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
-    
     // Release retention (inline)
     public int ReleaseRetentionQuantity { get; set; }
     public bool ReleaseRetentionKeepForever { get; set; } = true;

@@ -14,8 +14,7 @@ public class LifecycleMapping : Profile
         CreateMap<LifecyclePhaseDto, LifecyclePhase>();
 
         CreateMap<LifeCycleModel, Lifecycle>()
-            .ForMember(dest => dest.Id, opt => opt.Ignore())
-            .ForMember(dest => dest.DataVersion, opt => opt.Ignore());
+            .ForMember(dest => dest.Id, opt => opt.Ignore());
 
         CreateMap<LifecyclePhaseModel, LifecyclePhase>()
             .ForMember(dest => dest.Id, opt => opt.Ignore())

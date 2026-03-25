@@ -10,8 +10,6 @@ public class DeploymentEnvironment : IEntity<int>, IAuditable
 
     public string Json { get; set; }
 
-    public byte[] DataVersion { get; set; }
-
     public int SpaceId { get; set; }
 
     public string Slug { get; set; }

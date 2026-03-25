@@ -46,7 +46,6 @@ public partial class MachineRegistrationService : IMachineRegistrationService
             Roles = roles ?? "[]",
             EnvironmentIds = environmentIds ?? "[]",
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = spaceId,
             Slug = $"machine-{Guid.NewGuid():N}",
         };

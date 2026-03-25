@@ -12,7 +12,6 @@ public class Machine : IEntity<int>, IAuditable
     public string EnvironmentIds { get; set; }
     public int? MachinePolicyId { get; set; }
     public string Endpoint { get; set; }
-    public byte[] DataVersion { get; set; }
     public int SpaceId { get; set; }
     public string Slug { get; set; }
 

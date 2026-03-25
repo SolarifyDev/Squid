@@ -10,7 +10,6 @@ public class ChannelMapping : Profile
         CreateMap<Channel, ChannelDto>().ReverseMap();
 
         CreateMap<CreateOrUpdateChannelModel, Channel>()
-            .ForMember(dest => dest.Id, opt => opt.Ignore())
-            .ForMember(dest => dest.DataVersion, opt => opt.Ignore());
+            .ForMember(dest => dest.Id, opt => opt.Ignore());
     }
 }

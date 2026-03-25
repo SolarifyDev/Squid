@@ -366,7 +366,6 @@ public class DeploymentVariableResolverTests
             VariableSetId = variableSetId,
             IncludedLibraryVariableSetIds = includedLibraryVariableSetIds,
             Json = string.Empty,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             LastModifiedDate = DateTimeOffset.UtcNow
         };

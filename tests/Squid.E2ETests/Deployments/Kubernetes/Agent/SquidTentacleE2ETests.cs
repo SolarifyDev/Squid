@@ -425,7 +425,6 @@ public class SquidTentacleE2ETests
             Roles = "k8s",
             EnvironmentIds = string.Empty,
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             Slug = $"real-tentacle-ns-{Guid.NewGuid():N}"
         };

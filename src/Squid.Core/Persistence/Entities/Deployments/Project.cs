@@ -43,8 +43,6 @@ public class Project : IEntity<int>, IAuditable
 
     public bool DiscreteChannelRelease { get; set; }
 
-    public byte[] DataVersion { get; set; }
-
     public int? ClonedFromProjectId { get; set; }
 
     public int SpaceId { get; set; }

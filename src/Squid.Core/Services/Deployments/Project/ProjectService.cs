@@ -176,7 +176,6 @@ public partial class ProjectService : IProjectService
 
         project.IncludedLibraryVariableSetIds ??= "[]";
         project.Json ??= string.Empty;
-        project.DataVersion ??= Array.Empty<byte>();
 
         if (string.IsNullOrWhiteSpace(project.Slug))
             project.Slug = SlugGenerator.Generate(project.Name);

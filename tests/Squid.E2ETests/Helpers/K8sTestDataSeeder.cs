@@ -197,7 +197,6 @@ public class K8sTestDataSeeder
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             Slug = "e2e-k8s-target"
         };
@@ -226,7 +225,6 @@ public class K8sTestDataSeeder
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             Slug = $"e2e-k8s-agent-{subscriptionId[..8]}"
         };
