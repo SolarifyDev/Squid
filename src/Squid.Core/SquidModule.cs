@@ -3,6 +3,7 @@ using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.Machines;
 using Squid.Core.Services.Spaces;
 using Squid.Core.Settings.System;
 
@@ -34,6 +35,7 @@ public class SquidModule : Module
 
         builder.RegisterType<BuiltInRoleSeeder>().As<IStartable>().SingleInstance();
         builder.RegisterType<DefaultSpaceSeeder>().As<IStartable>().SingleInstance();
+        builder.RegisterType<DefaultMachinePolicySeeder>().As<IStartable>().SingleInstance();
     }
 
     private void RegisterLogging(ContainerBuilder builder)

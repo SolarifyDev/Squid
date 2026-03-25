@@ -122,7 +122,6 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
                 EnvironmentIds = $"[{environment.Id}]",
                 MachinePolicyId = null,
                 Endpoint = endpointJson,
-                DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
                 Slug = "test-machine"
             };

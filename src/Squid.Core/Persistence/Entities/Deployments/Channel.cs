@@ -18,8 +18,6 @@ public class Channel : IEntity<int>, IAuditable
 
     public bool IsDefault { get; set; }
 
-    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
-
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

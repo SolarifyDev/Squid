@@ -163,7 +163,6 @@ public class MachineTimestampTests : TestBase
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { 1 }),
             SpaceId = 1,
             Endpoint = BuildEndpointJson(subscriptionId),
-            DataVersion = Array.Empty<byte>(),
             Slug = "test-agent"
         };
     }

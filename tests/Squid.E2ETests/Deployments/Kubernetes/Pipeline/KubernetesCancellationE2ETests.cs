@@ -114,7 +114,6 @@ public class KubernetesCancellationE2ETests
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
-                DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
                 Slug = "e2e-cancellation-target"
             };

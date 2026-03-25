@@ -15,9 +15,7 @@ public class ReleaseDto
     public int ProjectDeploymentProcessSnapshotId { get; set; }
     
     public int ChannelId { get; set; }
-    
-    public byte[] DataVersion { get; set; }
-    
+
     public int SpaceId { get; set; }
     
     public DateTimeOffset LastModifiedDate { get; set; }

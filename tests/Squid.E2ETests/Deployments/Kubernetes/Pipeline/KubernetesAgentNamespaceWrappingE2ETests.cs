@@ -391,7 +391,6 @@ data:
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             Slug = $"ns-wrap-test-{Guid.NewGuid():N}"
         };

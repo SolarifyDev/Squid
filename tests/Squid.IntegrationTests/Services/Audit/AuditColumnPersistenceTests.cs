@@ -117,8 +117,7 @@ public class AuditColumnPersistenceTests : TestBase
                 HealthLastChecked = healthCheckTime,
                 Endpoint = "{}",
                 Roles = "[]",
-                EnvironmentIds = "[]",
-                DataVersion = Array.Empty<byte>()
+                EnvironmentIds = "[]"
             };
 
             await repo.InsertAsync(machine);

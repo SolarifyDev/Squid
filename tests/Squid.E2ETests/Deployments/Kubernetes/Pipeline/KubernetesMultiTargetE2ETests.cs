@@ -334,7 +334,6 @@ public class KubernetesMultiTargetE2ETests
             Roles = roles,
             EnvironmentIds = environment.Id.ToString(),
             Endpoint = endpointJson,
-            DataVersion = Array.Empty<byte>(),
             SpaceId = 1,
             Slug = $"e2e-{slugSuffix}"
         };

@@ -116,7 +116,6 @@ public class KubernetesHealthCheckE2ETests
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 HealthStatus = MachineHealthStatus.Healthy,
-                DataVersion = Array.Empty<byte>(),
                 SpaceId = 1,
                 Slug = "e2e-healthy-target"
             };

@@ -7,5 +7,4 @@ public class ProjectGroupDto
     public string Description { get; set; }
     public int SpaceId { get; set; }
     public string Slug { get; set; }
-    public byte[] DataVersion { get; set; }
 }

@@ -26,8 +26,6 @@ public class ProjectDto
 
     public bool DiscreteChannelRelease { get; set; }
 
-    public byte[] DataVersion { get; set; } = Guid.NewGuid().ToByteArray();
-
     public int? ClonedFromProjectId { get; set; }
 
     public int SpaceId { get; set; }

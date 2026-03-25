@@ -18,8 +18,6 @@ public class MachineDto : IBaseModel
 
     public string Endpoint { get; set; }
 
-    public byte[] DataVersion { get; set; }
-
     public int SpaceId { get; set; }
 
     public string Slug { get; set; }
