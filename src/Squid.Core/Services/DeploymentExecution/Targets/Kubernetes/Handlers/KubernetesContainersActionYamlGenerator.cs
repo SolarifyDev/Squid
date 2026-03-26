@@ -11,6 +11,9 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     private const string ContainersActionType = "Squid.KubernetesDeployContainers";
 
     private readonly DeploymentResourceGenerator _deployment = new();
+    private readonly StatefulSetResourceGenerator _statefulSet = new();
+    private readonly DaemonSetResourceGenerator _daemonSet = new();
+    private readonly JobResourceGenerator _job = new();
     private readonly ServiceResourceGenerator _service = new();
     private readonly ConfigMapResourceGenerator _configMap = new();
     private readonly IngressResourceGenerator _ingress = new();
@@ -43,6 +46,18 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         {
             foreach (var kvp in _blueGreen.GenerateAll(properties))
                 result[kvp.Key] = Encoding.UTF8.GetBytes(kvp.Value);
+        }
+        else if (_statefulSet.CanGenerate(properties))
+        {
+            AddResource(result, "statefulset.yaml", _statefulSet, properties);
+        }
+        else if (_daemonSet.CanGenerate(properties))
+        {
+            AddResource(result, "daemonset.yaml", _daemonSet, properties);
+        }
+        else if (_job.CanGenerate(properties))
+        {
+            AddResource(result, "job.yaml", _job, properties);
         }
         else
         {

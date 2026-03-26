@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Json;
 using Serilog;
+using Squid.Core.Extensions;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -40,6 +42,8 @@ public class KubernetesYamlActionHandler : IActionHandler
         if (generator == null)
             return null;
 
+        var syntax = ScriptSyntax.Bash;
+
         await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
         InjectDeploymentIdSuffix(ctx);
 
@@ -51,15 +55,71 @@ public class KubernetesYamlActionHandler : IActionHandler
         if (secretYaml != null)
             yamlFiles["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
 
+        var scriptBody = BuildApplyScript(yamlFiles, ctx.Action, syntax);
+        scriptBody += ExtractAndAppendShellScripts(yamlFiles);
+
+        var namespace_ = GetNamespaceFromAction(ctx.Action);
+        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(yamlFiles, ctx.Action, namespace_, syntax);
+
+        RemoveNonYamlFiles(yamlFiles);
+
         return new ActionExecutionResult
         {
-            CalamariCommand = "calamari-kubernetes-deploy",
-            ExecutionMode = ExecutionMode.PackagedPayload,
-            PayloadKind = PayloadKind.YamlBundle,
+            ScriptBody = scriptBody,
             Files = yamlFiles,
-            Syntax = ScriptSyntax.Bash
+            CalamariCommand = null,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Syntax = syntax
         };
     }
+
+    private static string BuildApplyScript(Dictionary<string, byte[]> yamlFiles, DeploymentActionDto action, ScriptSyntax syntax)
+    {
+        var sb = new StringBuilder();
+
+        foreach (var fileName in yamlFiles.Keys.Where(IsYamlFile).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var targetPath = syntax == ScriptSyntax.Bash ? $"./{fileName}" : $".\\{fileName}";
+            sb.AppendLine(KubernetesApplyCommandBuilder.Build(targetPath, action, syntax));
+        }
+
+        return sb.ToString();
+    }
+
+    private static string ExtractAndAppendShellScripts(Dictionary<string, byte[]> yamlFiles)
+    {
+        var sb = new StringBuilder();
+
+        foreach (var fileName in yamlFiles.Keys.Where(IsShellScript).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var content = Encoding.UTF8.GetString(yamlFiles[fileName]);
+
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                sb.AppendLine();
+                sb.AppendLine(content);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static void RemoveNonYamlFiles(Dictionary<string, byte[]> yamlFiles)
+    {
+        var nonYamlKeys = yamlFiles.Keys.Where(k => !IsYamlFile(k)).ToList();
+
+        foreach (var key in nonYamlKeys)
+            yamlFiles.Remove(key);
+    }
+
+    private static bool IsYamlFile(string fileName)
+        => fileName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
+           || fileName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsShellScript(string fileName)
+        => fileName.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string> GenerateFeedSecretAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
@@ -214,13 +274,15 @@ public class KubernetesYamlActionHandler : IActionHandler
     public static string GenerateSecretYaml(string secretName, string namespaceName, string dockerConfigJson)
     {
         var encodedConfig = Convert.ToBase64String(Encoding.UTF8.GetBytes(dockerConfigJson));
+        var escapedName = YamlSafeScalar.Escape(secretName);
+        var escapedNamespace = YamlSafeScalar.Escape(namespaceName);
 
         return $"""
             apiVersion: v1
             kind: Secret
             metadata:
-              name: {secretName}
-              namespace: {namespaceName}
+              name: {escapedName}
+              namespace: {escapedNamespace}
             type: kubernetes.io/dockerconfigjson
             data:
               .dockerconfigjson: {encodedConfig}

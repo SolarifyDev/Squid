@@ -6,11 +6,17 @@ namespace Squid.Core.Services.Deployments.Account;
 
 public static class DeploymentAccountCredentialsConverter
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
     public static string Serialize(object credentials)
     {
         if (credentials == null) return null;
 
-        return JsonSerializer.Serialize(credentials, credentials.GetType());
+        return JsonSerializer.Serialize(credentials, credentials.GetType(), JsonOptions);
     }
 
     public static object Deserialize(AccountType accountType, string json)
@@ -19,7 +25,7 @@ public static class DeploymentAccountCredentialsConverter
 
         var type = GetCredentialsType(accountType);
 
-        return type == null ? null : JsonSerializer.Deserialize(json, type);
+        return type == null ? null : JsonSerializer.Deserialize(json, type, JsonOptions);
     }
 
     public static object Deserialize(AccountType accountType, JsonElement? json)
@@ -28,7 +34,7 @@ public static class DeploymentAccountCredentialsConverter
 
         var type = GetCredentialsType(accountType);
 
-        return type == null ? null : json.Value.Deserialize(type);
+        return type == null ? null : json.Value.Deserialize(type, JsonOptions);
     }
 
     private static Type GetCredentialsType(AccountType accountType)

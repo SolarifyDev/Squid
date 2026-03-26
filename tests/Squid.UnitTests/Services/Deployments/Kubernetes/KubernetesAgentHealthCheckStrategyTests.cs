@@ -27,6 +27,8 @@ public class KubernetesAgentHealthCheckStrategyTests
     public void DefaultHealthCheckScript_ContainsKubectlGetPods()
     {
         _strategy.DefaultHealthCheckScript.ShouldContain("kubectl get pods");
+        _strategy.DefaultHealthCheckScript.ShouldContain("set -e");
+        _strategy.DefaultHealthCheckScript.ShouldNotContain("exit 0");
     }
 
     // ========================================================================

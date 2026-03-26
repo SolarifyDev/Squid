@@ -792,6 +792,41 @@ public class KubernetesContainersActionYamlGeneratorTests
         deploymentYaml.ShouldContain("\"squid-api-config-variables-deployments-100\"");
     }
 
+    // === Resource Type Routing ===
+
+    [Theory]
+    [InlineData("StatefulSet", "statefulset.yaml")]
+    [InlineData("DaemonSet", "daemonset.yaml")]
+    [InlineData("Job", "job.yaml")]
+    public async Task GenerateAsync_ResourceType_RoutesToCorrectGenerator(string resourceType, string expectedFileName)
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.DeploymentResourceType", resourceType);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey(expectedFileName);
+        result.ShouldNotContainKey("deployment.yaml");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("Deployment")]
+    public async Task GenerateAsync_ResourceTypeDefaultOrDeployment_GeneratesDeploymentYaml(string resourceType)
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+
+        if (!string.IsNullOrEmpty(resourceType))
+            AddProperty(action, "Squid.Action.KubernetesContainers.DeploymentResourceType", resourceType);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey("deployment.yaml");
+        result.ShouldNotContainKey("statefulset.yaml");
+        result.ShouldNotContainKey("daemonset.yaml");
+        result.ShouldNotContainKey("job.yaml");
+    }
+
     // === Helpers ===
 
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateFrontendScenario()

@@ -29,13 +29,12 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
 
     public string DefaultHealthCheckScript => """
                                               #!/bin/bash
+                                              set -e
                                               echo "Health check started (KubernetesApi)"
                                               echo "Hostname: $(hostname)"
                                               echo "Date: $(date -u)"
-                                              kubectl cluster-info 2>&1
-                                              kubectl get nodes -o wide 2>&1
+                                              kubectl version 2>&1
                                               echo "Health check completed"
-                                              exit 0
                                               """;
 
     public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)

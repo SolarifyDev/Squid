@@ -127,6 +127,8 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
             if (string.IsNullOrEmpty(script))
                 return await healthChecker.CheckConnectivityAsync(tc.Machine, null, ct).ConfigureAwait(false);
 
+            script = WrapWithContextIfApplicable(script, tc);
+
             var request = new ScriptExecutionRequest
             {
                 ScriptBody = script,
@@ -148,6 +150,21 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
             Log.Warning(ex, "[Deploy] Full health check threw for {MachineName}", tc.Machine.Name);
             return new HealthCheckResult(false, $"Full health check exception: {ex.Message}");
         }
+    }
+
+    private static string WrapWithContextIfApplicable(string script, DeploymentTargetContext tc)
+    {
+        var wrapper = tc.Transport?.ScriptWrapper;
+
+        if (wrapper == null) return script;
+
+        var scriptContext = new ScriptContext
+        {
+            Endpoint = tc.EndpointContext,
+            Syntax = ScriptSyntax.Bash
+        };
+
+        return wrapper.WrapScript(script, scriptContext);
     }
 
     private async Task IncludeNewTargetsAsync(DeploymentTaskContext deployCtx, DeploymentStepDto step, CancellationToken ct)

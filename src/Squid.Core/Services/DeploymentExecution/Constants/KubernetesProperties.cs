@@ -382,6 +382,14 @@ internal static class KubernetesJsonLiterals
     internal const string EmptyObject = "{}";
 }
 
+internal static class KubernetesResourceTypeValues
+{
+    internal const string Deployment = "Deployment";
+    internal const string StatefulSet = "StatefulSet";
+    internal const string DaemonSet = "DaemonSet";
+    internal const string Job = "Job";
+}
+
 internal static class KubernetesDeploymentStrategyValues
 {
     internal const string Recreate = "Recreate";
