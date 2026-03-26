@@ -27,7 +27,6 @@ public class MachineHealthCheckService : IMachineHealthCheckService
                                                      echo "Date: $(date -u)"
                                                      echo "Uptime: $(uptime)"
                                                      echo "Health check completed"
-                                                     exit 0
                                                      """;
 
     internal const int DefaultIntervalSeconds = 3600;

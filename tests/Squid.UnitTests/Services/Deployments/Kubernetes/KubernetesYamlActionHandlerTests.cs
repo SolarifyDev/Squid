@@ -76,7 +76,7 @@ public class KubernetesYamlActionHandlerTests
     // === PrepareAsync Tests ===
 
     [Fact]
-    public async Task PrepareAsync_GeneratorFound_ReturnsCalamariResult()
+    public async Task PrepareAsync_GeneratorFound_ReturnsDirectScriptResult()
     {
         var yamlFiles = new Dictionary<string, byte[]>
         {
@@ -91,12 +91,12 @@ public class KubernetesYamlActionHandlerTests
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.CalamariCommand.ShouldBe("calamari-kubernetes-deploy");
-        result.ExecutionMode.ShouldBe(ExecutionMode.PackagedPayload);
-        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Unspecified);
-        result.ResolveContextPreparationPolicy().ShouldBe(ContextPreparationPolicy.Skip);
-        result.PayloadKind.ShouldBe(PayloadKind.YamlBundle);
+        result.CalamariCommand.ShouldBeNull();
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
+        result.PayloadKind.ShouldBe(PayloadKind.None);
         result.Files.ShouldContainKey("deployment.yaml");
+        result.ScriptBody.ShouldContain("kubectl apply");
         result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 
@@ -221,5 +221,90 @@ public class KubernetesYamlActionHandlerTests
         await handler.PrepareAsync(ctx, CancellationToken.None);
 
         action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Internal.DeploymentIdSuffix");
+    }
+
+    // === DirectScript Mode Tests ===
+
+    [Fact]
+    public async Task PrepareAsync_MultipleYamlFiles_AllApplied()
+    {
+        var yamlFiles = new Dictionary<string, byte[]>
+        {
+            ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("kind: Deployment"),
+            ["service.yaml"] = System.Text.Encoding.UTF8.GetBytes("kind: Service"),
+            ["configmap.yaml"] = System.Text.Encoding.UTF8.GetBytes("kind: ConfigMap")
+        };
+        var generator = CreateMockGenerator(canHandle: true, yamlFiles: yamlFiles);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object });
+
+        var result = await handler.PrepareAsync(CreateContext(CreateAction()), CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("./configmap.yaml");
+        result.ScriptBody.ShouldContain("./deployment.yaml");
+        result.ScriptBody.ShouldContain("./service.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_BlueGreen_ScriptBodyContainsShellCommands()
+    {
+        var yamlFiles = new Dictionary<string, byte[]>
+        {
+            ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("kind: Deployment"),
+            ["bluegreen-switch.sh"] = System.Text.Encoding.UTF8.GetBytes("kubectl patch service"),
+            ["bluegreen-scaledown.sh"] = System.Text.Encoding.UTF8.GetBytes("kubectl scale deployment")
+        };
+        var generator = CreateMockGenerator(canHandle: true, yamlFiles: yamlFiles);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object });
+
+        var result = await handler.PrepareAsync(CreateContext(CreateAction()), CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("kubectl patch service");
+        result.ScriptBody.ShouldContain("kubectl scale deployment");
+        result.Files.ShouldNotContainKey("bluegreen-switch.sh");
+        result.Files.ShouldNotContainKey("bluegreen-scaledown.sh");
+        result.Files.ShouldContainKey("deployment.yaml");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_ObjectStatusCheck_ScriptBodyContainsWaitCommands()
+    {
+        var yamlFiles = new Dictionary<string, byte[]>
+        {
+            ["deployment.yaml"] = System.Text.Encoding.UTF8.GetBytes("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: test-deploy")
+        };
+        var generator = CreateMockGenerator(canHandle: true, yamlFiles: yamlFiles);
+        var handler = new KubernetesYamlActionHandler(new[] { generator.Object });
+
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.KubernetesContainers.ObjectStatusCheck",
+            PropertyValue = "True"
+        });
+
+        var result = await handler.PrepareAsync(CreateContext(action), CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("kubectl rollout status");
+        result.ScriptBody.ShouldContain("test-deploy");
+    }
+
+    // === GenerateSecretYaml Escaping Tests ===
+
+    [Fact]
+    public void GenerateSecretYaml_SpecialCharsInName_Escaped()
+    {
+        var yaml = KubernetesYamlActionHandler.GenerateSecretYaml("my \"secret\"", "ns: test", "{\"auth\":{}}");
+
+        yaml.ShouldContain("name: \"my \\\"secret\\\"\"");
+        yaml.ShouldContain("namespace: \"ns: test\"");
+    }
+
+    [Fact]
+    public void GenerateSecretYaml_NormalValues_Escaped()
+    {
+        var yaml = KubernetesYamlActionHandler.GenerateSecretYaml("my-secret", "default", "{\"auth\":{}}");
+
+        yaml.ShouldContain("name: \"my-secret\"");
+        yaml.ShouldContain("namespace: \"default\"");
     }
 }

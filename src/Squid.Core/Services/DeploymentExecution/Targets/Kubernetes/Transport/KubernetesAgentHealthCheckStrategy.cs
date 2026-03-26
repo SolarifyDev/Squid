@@ -19,12 +19,13 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
 
     public string DefaultHealthCheckScript => """
                                               #!/bin/bash
+                                              set -e
                                               echo "Health check started (KubernetesAgent)"
                                               echo "Hostname: $(hostname)"
                                               echo "Date: $(date -u)"
+                                              kubectl version 2>&1
                                               kubectl get pods --namespace=${NAMESPACE:-default} -o name 2>&1 | head -5
                                               echo "Health check completed"
-                                              exit 0
                                               """;
 
     public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)

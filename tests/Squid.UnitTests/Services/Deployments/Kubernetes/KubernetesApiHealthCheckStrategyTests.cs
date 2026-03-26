@@ -28,9 +28,11 @@ public class KubernetesApiHealthCheckStrategyTests
     // ========================================================================
 
     [Fact]
-    public void DefaultHealthCheckScript_ContainsKubectlClusterInfo()
+    public void DefaultHealthCheckScript_ContainsKubectlVersion()
     {
-        _strategy.DefaultHealthCheckScript.ShouldContain("kubectl cluster-info");
+        _strategy.DefaultHealthCheckScript.ShouldContain("kubectl version");
+        _strategy.DefaultHealthCheckScript.ShouldContain("set -e");
+        _strategy.DefaultHealthCheckScript.ShouldNotContain("exit 0");
     }
 
     // ========================================================================

@@ -276,8 +276,8 @@ public class FeedSecretGenerationTests
             "my-secret", "production", dockerConfigJson);
 
         result.ShouldContain("kind: Secret");
-        result.ShouldContain("name: my-secret");
-        result.ShouldContain("namespace: production");
+        result.ShouldContain("name: \"my-secret\"");
+        result.ShouldContain("namespace: \"production\"");
         result.ShouldContain("type: kubernetes.io/dockerconfigjson");
 
         var expectedData = Convert.ToBase64String(Encoding.UTF8.GetBytes(dockerConfigJson));
@@ -395,8 +395,8 @@ public class FeedSecretGenerationTests
 
         var secretYaml = Encoding.UTF8.GetString(result.Files["feedsecrets.yaml"]);
         secretYaml.ShouldContain("kind: Secret");
-        secretYaml.ShouldContain("name: myregistry-registry-secret");
-        secretYaml.ShouldContain("namespace: staging");
+        secretYaml.ShouldContain("name: \"myregistry-registry-secret\"");
+        secretYaml.ShouldContain("namespace: \"staging\"");
 
         var pullSecretsProp = action.Properties
             .FirstOrDefault(p => p.PropertyName == "Squid.Action.KubernetesContainers.PodSecurityImagePullSecrets");

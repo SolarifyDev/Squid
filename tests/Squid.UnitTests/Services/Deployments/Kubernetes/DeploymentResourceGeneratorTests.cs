@@ -1400,6 +1400,39 @@ public class DeploymentResourceGeneratorTests
         return Encoding.UTF8.GetString(result["deployment.yaml"]);
     }
 
+    // === Replicas Zero Fix (P1-1) ===
+
+    [Fact]
+    public async Task Generate_ReplicasZero_GeneratesReplicasZero()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Replicas", "0");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("replicas: 0");
+    }
+
+    // === Resource Type — Default still Deployment ===
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Deployment")]
+    public async Task Generate_ResourceTypeDefaultOrDeployment_GeneratesDeploymentKind(string resourceType)
+    {
+        var (step, action) = CreateMinimal();
+
+        if (resourceType != null)
+            Add(action, "Squid.Action.KubernetesContainers.DeploymentResourceType", resourceType);
+
+        var result = await _compositor.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey("deployment.yaml");
+        var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
+        yaml.ShouldContain("kind: Deployment");
+    }
+
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateMinimal()
     {
         var step = new DeploymentStepDto { Id = 1, Name = "test" };
