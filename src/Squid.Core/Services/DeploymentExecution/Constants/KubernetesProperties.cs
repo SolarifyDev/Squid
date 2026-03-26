@@ -482,6 +482,8 @@ internal static class KubernetesHelmProperties
     internal const string WaitForJobs = "Squid.Action.Helm.WaitForJobs";
     internal const string Timeout = "Squid.Action.Helm.Timeout";
     internal const string ValueSources = "Squid.Action.Helm.ValueSources";
+    internal const string ChartFeedId = "Squid.Action.Package.FeedId";
+    internal const string ChartPackageId = "Squid.Action.Package.PackageId";
 }
 
 internal static class KubernetesKustomizeProperties

@@ -46,7 +46,7 @@ internal static class PodTemplateYamlBuilder
                 AppendVolumeYaml(sb, specIndent, volume);
         }
 
-        KubernetesPropertyParser.AppendJsonFromProperty(sb, specIndent, "tolerations", properties, KubernetesProperties.Tolerations);
+        AppendTolerationsIfPresent(sb, specIndent, properties);
 
         AppendAffinityIfPresent(sb, specIndent, properties);
         AppendDnsConfigIfPresent(sb, specIndent, properties);
@@ -413,6 +413,91 @@ internal static class PodTemplateYamlBuilder
 
         foreach (var gate in gates)
             sb.AppendLine($"{indent}- {KubernetesReadinessGatePayloadProperties.ConditionType}: {YamlSafeScalar.Escape(gate)}");
+    }
+
+    private static void AppendTolerationsIfPresent(StringBuilder sb, string indent, Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue(KubernetesProperties.Tolerations, out var raw) || string.IsNullOrWhiteSpace(raw))
+            return;
+
+        raw = raw.Trim();
+
+        if (raw == "[]")
+            return;
+
+        properties = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase)
+        {
+            [KubernetesProperties.Tolerations] = SanitizeTolerations(raw)
+        };
+
+        KubernetesPropertyParser.AppendJsonFromProperty(sb, indent, "tolerations", properties, KubernetesProperties.Tolerations);
+    }
+
+    internal static string SanitizeTolerations(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return raw;
+
+            var needsSanitization = false;
+
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (!IsExistsOperator(item)) continue;
+                if (!item.TryGetProperty("value", out var val)) continue;
+
+                var valStr = val.ValueKind == JsonValueKind.String ? val.GetString() : val.GetRawText();
+
+                if (!string.IsNullOrEmpty(valStr))
+                {
+                    needsSanitization = true;
+                    break;
+                }
+            }
+
+            if (!needsSanitization)
+                return raw;
+
+            var sanitized = new List<Dictionary<string, JsonElement>>();
+
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var obj = new Dictionary<string, JsonElement>();
+
+                foreach (var prop in item.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "value", StringComparison.OrdinalIgnoreCase) && IsExistsOperator(item))
+                        continue;
+
+                    obj[prop.Name] = prop.Value.Clone();
+                }
+
+                sanitized.Add(obj);
+            }
+
+            return JsonSerializer.Serialize(sanitized);
+        }
+        catch
+        {
+            return raw;
+        }
+    }
+
+    private static bool IsExistsOperator(JsonElement obj)
+    {
+        if (!obj.TryGetProperty("operator", out var op))
+            return false;
+
+        var opStr = op.ValueKind == JsonValueKind.String ? op.GetString() : null;
+
+        return string.Equals(opStr, "Exists", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AppendAffinityIfPresent(StringBuilder sb, string indent, Dictionary<string, string> properties)

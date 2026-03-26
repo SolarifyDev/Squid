@@ -649,6 +649,74 @@ public class DeploymentResourceGeneratorTests
     }
 
     [Fact]
+    public async Task Generate_Tolerations_ExistsOperator_OmitsValueField()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Exists","value":"1","effect":""}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- key: test");
+        yaml.ShouldContain("operator: Exists");
+        yaml.ShouldContain("effect: ''");
+        yaml.ShouldNotContain("value:");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_ExistsOperatorCaseInsensitive_OmitsValueField()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"node-role","operator":"exists","value":"something","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("operator: exists");
+        yaml.ShouldNotContain("value:");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_EqualOperator_KeepsValueField()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Equal","value":"1","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("value: '1'");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_MixedOperators_OnlyExistsOmitsValue()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"k1","operator":"Equal","value":"v1","effect":"NoSchedule"},{"key":"k2","operator":"Exists","value":"should-be-removed","effect":"NoExecute"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("value: v1");
+        var tolerationsSection = yaml[yaml.IndexOf("tolerations:", StringComparison.Ordinal)..];
+        var k2Section = tolerationsSection[tolerationsSection.IndexOf("k2", StringComparison.Ordinal)..];
+        k2Section.ShouldNotContain("should-be-removed");
+    }
+
+    [Fact]
+    public async Task Generate_Tolerations_ExistsWithEmptyValue_StillOmitsValueField()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.Tolerations",
+            """[{"key":"test","operator":"Exists","value":"","effect":"NoSchedule"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("operator: Exists");
+        // Empty value with Exists is harmless but cleaner to omit
+    }
+
+    [Fact]
     public async Task Generate_HostAliases_SpaceSeparatedString_GeneratesList()
     {
         // Frontend sends hostnames as a space-separated string
