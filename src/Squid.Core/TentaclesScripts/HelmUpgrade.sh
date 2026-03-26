@@ -11,6 +11,9 @@ RESET_VALUES="$(b64d '{{ResetValues}}')"
 HELM_WAIT="$(b64d '{{HelmWait}}')"
 ADDITIONAL_ARGS="$(b64d '{{AdditionalArgs}}')"
 
+# Helm repo setup (populated when chart is sourced from a feed)
+{{RepoSetupBlock}}
+
 if [ -z "$HELM_EXE" ]; then
     HELM_EXE="helm"
 fi
@@ -33,6 +36,11 @@ fi
 HELM_TIMEOUT="$(b64d '{{Timeout}}')"
 if [ -n "$HELM_TIMEOUT" ]; then
     HELM_CMD+=("--timeout" "$HELM_TIMEOUT")
+fi
+
+CHART_VERSION="$(b64d '{{ChartVersion}}')"
+if [ -n "$CHART_VERSION" ]; then
+    HELM_CMD+=("--version" "$CHART_VERSION")
 fi
 
 # Values files

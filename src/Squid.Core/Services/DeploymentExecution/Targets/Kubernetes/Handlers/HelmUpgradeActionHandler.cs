@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Common;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -12,20 +13,24 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class HelmUpgradeActionHandler : IActionHandler
 {
+    private readonly IExternalFeedDataProvider _externalFeedDataProvider;
+
+    public HelmUpgradeActionHandler(IExternalFeedDataProvider externalFeedDataProvider = null)
+    {
+        _externalFeedDataProvider = externalFeedDataProvider;
+    }
+
     public string ActionType => SpecialVariables.ActionTypes.HelmChartUpgrade;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var syntaxStr = ctx.Action.GetProperty(SpecialVariables.Action.ScriptSyntax);
-        var syntax = string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
-            ? ScriptSyntax.Bash
-            : ScriptSyntax.PowerShell;
+    private record HelmChartSource(string ChartPath, string RepoSetupBlock, string ChartVersion);
 
-        var templateName = syntax == ScriptSyntax.Bash ? "HelmUpgrade.sh" : "HelmUpgrade.ps1";
-        var template = UtilService.GetEmbeddedScriptContent(templateName);
+    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    {
+        var syntax = ResolveSyntax(ctx.Action);
+        var template = LoadTemplate(syntax);
+        var chartSource = await ResolveChartSourceAsync(ctx, syntax, ct).ConfigureAwait(false);
 
         var releaseName = ctx.Action.GetProperty(KubernetesHelmProperties.ReleaseName) ?? ctx.Action.Name ?? "release";
-        var chartPath = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
         var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
         var helmExe = ctx.Action.GetProperty(KubernetesHelmProperties.CustomHelmExecutable) ?? string.Empty;
         var resetValues = ctx.Action.GetProperty(KubernetesHelmProperties.ResetValues) ?? KubernetesBooleanValues.True;
@@ -43,7 +48,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
         var scriptBody = template
             .Replace("{{ReleaseName}}", B64(releaseName), StringComparison.Ordinal)
-            .Replace("{{ChartPath}}", B64(chartPath), StringComparison.Ordinal)
+            .Replace("{{ChartPath}}", B64(chartSource.ChartPath), StringComparison.Ordinal)
             .Replace("{{Namespace}}", B64(namespace_), StringComparison.Ordinal)
             .Replace("{{HelmExe}}", B64(helmExe), StringComparison.Ordinal)
             .Replace("{{ResetValues}}", B64(resetValues), StringComparison.Ordinal)
@@ -51,10 +56,12 @@ public class HelmUpgradeActionHandler : IActionHandler
             .Replace("{{WaitForJobs}}", B64(waitForJobs), StringComparison.Ordinal)
             .Replace("{{Timeout}}", B64(timeout), StringComparison.Ordinal)
             .Replace("{{AdditionalArgs}}", B64(additionalArgs), StringComparison.Ordinal)
+            .Replace("{{ChartVersion}}", B64(chartSource.ChartVersion), StringComparison.Ordinal)
+            .Replace("{{RepoSetupBlock}}", chartSource.RepoSetupBlock, StringComparison.Ordinal)
             .Replace("{{ValuesFilesBlock}}", valuesFilesBlock, StringComparison.Ordinal)
             .Replace("{{SetValuesBlock}}", setValuesBlock, StringComparison.Ordinal);
 
-        var result = new ActionExecutionResult
+        return new ActionExecutionResult
         {
             ScriptBody = scriptBody,
             Files = files,
@@ -64,8 +71,122 @@ public class HelmUpgradeActionHandler : IActionHandler
             PayloadKind = PayloadKind.None,
             Syntax = syntax
         };
+    }
 
-        return Task.FromResult(result);
+    private static ScriptSyntax ResolveSyntax(DeploymentActionDto action)
+    {
+        var syntaxStr = action.GetProperty(SpecialVariables.Action.ScriptSyntax);
+
+        return string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
+            ? ScriptSyntax.Bash
+            : ScriptSyntax.PowerShell;
+    }
+
+    private static string LoadTemplate(ScriptSyntax syntax)
+    {
+        var templateName = syntax == ScriptSyntax.Bash ? "HelmUpgrade.sh" : "HelmUpgrade.ps1";
+        return UtilService.GetEmbeddedScriptContent(templateName);
+    }
+
+    private async Task<HelmChartSource> ResolveChartSourceAsync(ActionExecutionContext ctx, ScriptSyntax syntax, CancellationToken ct)
+    {
+        var feedIdStr = ctx.Action.GetProperty(KubernetesHelmProperties.ChartFeedId);
+
+        if (string.IsNullOrWhiteSpace(feedIdStr) || !int.TryParse(feedIdStr, out var feedId) || _externalFeedDataProvider == null)
+            return DefaultChartSource(ctx);
+
+        var packageId = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPackageId);
+
+        if (string.IsNullOrWhiteSpace(packageId))
+            return DefaultChartSource(ctx);
+
+        var feed = await _externalFeedDataProvider.GetFeedByIdAsync(feedId, ct).ConfigureAwait(false);
+
+        if (feed == null)
+            return DefaultChartSource(ctx);
+
+        var chartPath = $"squid-helm-repo/{packageId}";
+        var repoSetupBlock = BuildRepoSetupBlock(feed, syntax);
+        var chartVersion = ResolveChartVersion(ctx);
+
+        return new HelmChartSource(chartPath, repoSetupBlock, chartVersion);
+    }
+
+    private static HelmChartSource DefaultChartSource(ActionExecutionContext ctx)
+    {
+        var chartPath = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
+        return new HelmChartSource(chartPath, string.Empty, string.Empty);
+    }
+
+    private static string ResolveChartVersion(ActionExecutionContext ctx)
+    {
+        var match = ctx.SelectedPackages?.FirstOrDefault(sp => string.Equals(sp.ActionName, ctx.Action.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (match != null && !string.IsNullOrWhiteSpace(match.Version))
+            return match.Version;
+
+        var versionVar = ctx.Variables?.FirstOrDefault(v => string.Equals(v.Name, SpecialVariables.Action.PackageVersion, StringComparison.OrdinalIgnoreCase));
+
+        if (versionVar != null && !string.IsNullOrWhiteSpace(versionVar.Value))
+            return versionVar.Value;
+
+        return string.Empty;
+    }
+
+    private static string BuildRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, ScriptSyntax syntax)
+    {
+        var hasCredentials = !string.IsNullOrWhiteSpace(feed.Username) && !string.IsNullOrWhiteSpace(feed.Password);
+
+        return syntax == ScriptSyntax.Bash
+            ? BuildBashRepoSetupBlock(feed, hasCredentials)
+            : BuildPowerShellRepoSetupBlock(feed, hasCredentials);
+    }
+
+    private static string BuildBashRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, bool hasCredentials)
+    {
+        string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"SQUID_REPO_URL=\"$(b64d '{B64(feed.FeedUri)}')\"");
+
+        if (hasCredentials)
+        {
+            sb.AppendLine($"SQUID_REPO_USER=\"$(b64d '{B64(feed.Username)}')\"");
+            sb.AppendLine($"SQUID_REPO_PASS=\"$(b64d '{B64(feed.Password)}')\"");
+            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --username \"$SQUID_REPO_USER\" --password \"$SQUID_REPO_PASS\" --force-update 2>/dev/null");
+        }
+        else
+        {
+            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --force-update 2>/dev/null");
+        }
+
+        sb.AppendLine("\"$HELM_EXE\" repo update squid-helm-repo 2>/dev/null");
+
+        return sb.ToString();
+    }
+
+    private static string BuildPowerShellRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, bool hasCredentials)
+    {
+        var sb = new StringBuilder();
+        var repoUrl = EscapePowerShellValue(feed.FeedUri ?? string.Empty);
+        sb.AppendLine($"$squidRepoUrl = \"{repoUrl}\"");
+
+        if (hasCredentials)
+        {
+            var repoUser = EscapePowerShellValue(feed.Username ?? string.Empty);
+            var repoPass = EscapePowerShellValue(feed.Password ?? string.Empty);
+            sb.AppendLine($"$squidRepoUser = \"{repoUser}\"");
+            sb.AppendLine($"$squidRepoPass = \"{repoPass}\"");
+            sb.AppendLine("& $helmExe repo add squid-helm-repo $squidRepoUrl --username $squidRepoUser --password $squidRepoPass --force-update 2>$null");
+        }
+        else
+        {
+            sb.AppendLine("& $helmExe repo add squid-helm-repo $squidRepoUrl --force-update 2>$null");
+        }
+
+        sb.AppendLine("& $helmExe repo update squid-helm-repo 2>$null");
+
+        return sb.ToString();
     }
 
     private static string BuildValuesFilesBlock(DeploymentActionDto action, ScriptSyntax syntax, Dictionary<string, byte[]> files)

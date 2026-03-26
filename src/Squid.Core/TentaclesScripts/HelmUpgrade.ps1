@@ -9,6 +9,9 @@ $resetValues = "{{ResetValues}}"
 $helmWait = "{{HelmWait}}"
 $additionalArgs = "{{AdditionalArgs}}"
 
+# Helm repo setup (populated when chart is sourced from a feed)
+{{RepoSetupBlock}}
+
 if ([string]::IsNullOrEmpty($helmExe)) {
     $helmExe = "helm"
 }
@@ -32,6 +35,12 @@ $helmTimeout = "{{Timeout}}"
 if ($helmTimeout -ne "") {
     $helmArgs += "--timeout"
     $helmArgs += $helmTimeout
+}
+
+$chartVersion = "{{ChartVersion}}"
+if ($chartVersion -ne "") {
+    $helmArgs += "--version"
+    $helmArgs += $chartVersion
 }
 
 # Values files

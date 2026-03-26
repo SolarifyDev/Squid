@@ -1,12 +1,16 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Release;
+using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -862,5 +866,441 @@ public class HelmUpgradeActionHandlerTests
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.Files.ShouldNotContainKey("rawYamlValues.yaml");
+    }
+
+    // === Feed Integration — Backward Compatibility ===
+
+    private static HelmUpgradeActionHandler CreateHandlerWithFeed(ExternalFeed feed)
+    {
+        var mock = new Mock<IExternalFeedDataProvider>();
+        mock.Setup(f => f.GetFeedByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(feed);
+        return new HelmUpgradeActionHandler(mock.Object);
+    }
+
+    private static ExternalFeed CreateHelmFeed(int id = 1, string feedUri = "https://charts.example.com", string username = null, string password = null)
+    {
+        return new ExternalFeed { Id = id, FeedUri = feedUri, Username = username, Password = password };
+    }
+
+    private static ActionExecutionContext CreateContextWithFeed(DeploymentActionDto action, string version = null)
+    {
+        var ctx = new ActionExecutionContext { Action = action };
+
+        if (version != null)
+        {
+            ctx.SelectedPackages = new List<SelectedPackageDto>
+            {
+                new() { ActionName = action.Name, Version = version }
+            };
+        }
+
+        return ctx;
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoFeedId_UsesChartPath()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Helm.ChartPath"] = "./local-chart"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./local-chart"));
+        result.ScriptBody.ShouldNotContain("squid-helm-repo");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_EmptyFeedId_UsesChartPath()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "",
+            ["Squid.Action.Helm.ChartPath"] = "./local-chart"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./local-chart"));
+        result.ScriptBody.ShouldNotContain("squid-helm-repo");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_InvalidFeedId_UsesChartPath()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "not-a-number",
+            ["Squid.Action.Helm.ChartPath"] = "./local-chart"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./local-chart"));
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NullProvider_UsesChartPath()
+    {
+        var handler = new HelmUpgradeActionHandler(null);
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "mychart",
+            ["Squid.Action.Helm.ChartPath"] = "./local-chart"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./local-chart"));
+        result.ScriptBody.ShouldNotContain("squid-helm-repo");
+    }
+
+    // === Feed Integration — Happy Path ===
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithPackage_Bash_GeneratesRepoAddAndChartRef()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(feedUri: "https://charts.example.com"));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("squid-helm-repo/openclaw"));
+        result.ScriptBody.ShouldContain("repo add squid-helm-repo");
+        result.ScriptBody.ShouldContain(B64("https://charts.example.com"));
+        result.ScriptBody.ShouldContain("repo update squid-helm-repo");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithPackage_PowerShell_GeneratesRepoAddAndChartRef()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(feedUri: "https://charts.example.com"));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "PowerShell",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("squid-helm-repo/openclaw"));
+        result.ScriptBody.ShouldContain("repo add squid-helm-repo");
+        result.ScriptBody.ShouldContain("repo update squid-helm-repo");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedOverridesChartPath()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw",
+            ["Squid.Action.Helm.ChartPath"] = "./should-be-ignored"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("squid-helm-repo/openclaw"));
+        result.ScriptBody.ShouldNotContain(B64("./should-be-ignored"));
+    }
+
+    // === Feed Integration — Version Pinning ===
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithSelectedPackageVersion_Bash_AddsVersionFlag()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action, version: "2.1.0");
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("2.1.0"));
+        result.ScriptBody.ShouldContain("--version");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithVariableVersion_FallsBackToVariable()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+        ctx.Variables = new List<VariableDto>
+        {
+            new() { Name = "Squid.Action.Package.PackageVersion", Value = "3.0.0" }
+        };
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("3.0.0"));
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithNoVersion_EmptyChartVersion()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        // ChartVersion placeholder is replaced with empty B64 — runtime conditional won't fire
+        result.ScriptBody.ShouldContain("b64d ''");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_NoFeed_EmptyChartVersion()
+    {
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash"
+        });
+        var ctx = CreateContext(action);
+
+        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+
+        // ChartVersion placeholder is replaced with empty B64 — runtime conditional won't fire
+        result.ScriptBody.ShouldContain("b64d ''");
+    }
+
+    // === Feed Integration — Credentials ===
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithCredentials_Bash_IncludesAuthFlags()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(username: "admin", password: "s3cret"));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("admin"));
+        result.ScriptBody.ShouldContain(B64("s3cret"));
+        result.ScriptBody.ShouldContain("--username");
+        result.ScriptBody.ShouldContain("--password");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithCredentials_PowerShell_IncludesAuthFlags()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(username: "admin", password: "s3cret"));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "PowerShell",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain("--username");
+        result.ScriptBody.ShouldContain("--password");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_PublicFeed_NoAuthFlags()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldNotContain("--username");
+        result.ScriptBody.ShouldNotContain("--password");
+    }
+
+    // === Feed Integration — Error Handling ===
+
+    [Fact]
+    public async Task PrepareAsync_FeedNotFound_FallsBackToChartPath()
+    {
+        var mock = new Mock<IExternalFeedDataProvider>();
+        mock.Setup(f => f.GetFeedByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync((ExternalFeed)null);
+        var handler = new HelmUpgradeActionHandler(mock.Object);
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "999",
+            ["Squid.Action.Package.PackageId"] = "openclaw",
+            ["Squid.Action.Helm.ChartPath"] = "./fallback"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./fallback"));
+        result.ScriptBody.ShouldNotContain("squid-helm-repo");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FeedIdButNoPackageId_FallsBackToChartPath()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Helm.ChartPath"] = "./fallback"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("./fallback"));
+        result.ScriptBody.ShouldNotContain("squid-helm-repo");
+    }
+
+    // === Feed Integration — Combined ===
+
+    [Fact]
+    public async Task PrepareAsync_FeedWithYamlValues_BothCoexist()
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw",
+            ["Squid.Action.Helm.YamlValues"] = "replicas: 3"
+        });
+        var ctx = CreateContextWithFeed(action, version: "1.0.0");
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64("squid-helm-repo/openclaw"));
+        result.ScriptBody.ShouldContain("--version");
+        result.Files.ShouldContainKey("rawYamlValues.yaml");
+        result.ScriptBody.ShouldContain("--values");
+    }
+
+    [Theory]
+    [InlineData("Bash")]
+    [InlineData("PowerShell")]
+    public async Task PrepareAsync_FeedWithPackage_NoUnreplacedPlaceholders(string syntaxStr)
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(username: "user", password: "pass"));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = syntaxStr,
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw",
+            ["Squid.Action.Helm.ReleaseName"] = "my-release",
+            ["Squid.Action.Kubernetes.Namespace"] = "prod"
+        });
+        var ctx = CreateContextWithFeed(action, version: "2.0.0");
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldNotContain("{{");
+        result.ScriptBody.ShouldNotContain("}}");
+    }
+
+    // === Feed Integration — Theory: Source Resolution ===
+
+    [Theory]
+    [InlineData(true, true, "squid-helm-repo/mychart")]
+    [InlineData(true, false, ".")]
+    [InlineData(false, true, ".")]
+    [InlineData(false, false, "./custom")]
+    public async Task PrepareAsync_ChartSourceResolution(bool hasFeedId, bool hasPackageId, string expectedChartPath)
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed());
+        var props = new Dictionary<string, string> { ["Squid.Action.Script.Syntax"] = "Bash" };
+
+        if (hasFeedId) props["Squid.Action.Package.FeedId"] = "1";
+        if (hasPackageId) props["Squid.Action.Package.PackageId"] = "mychart";
+        if (!hasFeedId && !hasPackageId) props["Squid.Action.Helm.ChartPath"] = "./custom";
+
+        var action = CreateAction(properties: props);
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ScriptBody.ShouldContain(B64(expectedChartPath));
+    }
+
+    // === Feed Integration — Theory: Credential Combos ===
+
+    [Theory]
+    [InlineData("admin", "pass", true)]
+    [InlineData("admin", "", false)]
+    [InlineData("admin", null, false)]
+    [InlineData("", "pass", false)]
+    [InlineData(null, "pass", false)]
+    [InlineData(null, null, false)]
+    public async Task PrepareAsync_CredentialCombinations(string username, string password, bool expectAuth)
+    {
+        var handler = CreateHandlerWithFeed(CreateHelmFeed(username: username, password: password));
+        var action = CreateAction(properties: new Dictionary<string, string>
+        {
+            ["Squid.Action.Script.Syntax"] = "Bash",
+            ["Squid.Action.Package.FeedId"] = "1",
+            ["Squid.Action.Package.PackageId"] = "openclaw"
+        });
+        var ctx = CreateContextWithFeed(action);
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        if (expectAuth)
+        {
+            result.ScriptBody.ShouldContain("--username");
+            result.ScriptBody.ShouldContain("--password");
+        }
+        else
+        {
+            result.ScriptBody.ShouldNotContain("--username");
+            result.ScriptBody.ShouldNotContain("--password");
+        }
     }
 }
