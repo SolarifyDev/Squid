@@ -16,6 +16,7 @@ public interface ITeamDataProvider : IScopedDependency
     Task AddMemberAsync(TeamMember member, bool forceSave = true, CancellationToken ct = default);
     Task RemoveMemberAsync(TeamMember member, bool forceSave = true, CancellationToken ct = default);
     Task<List<TeamMember>> GetMembersByTeamIdAsync(int teamId, CancellationToken ct = default);
+    Task DeleteMembersByTeamIdAsync(int teamId, CancellationToken ct = default);
 }
 
 public class TeamDataProvider(IUnitOfWork unitOfWork, IRepository repository) : ITeamDataProvider
@@ -32,7 +33,7 @@ public class TeamDataProvider(IUnitOfWork unitOfWork, IRepository repository) : 
 
     public async Task<List<Team>> GetAllBySpaceAsync(int spaceId, CancellationToken ct = default)
     {
-        return await repository.Query<Team>(x => x.SpaceId == spaceId).ToListAsync(ct).ConfigureAwait(false);
+        return await repository.Query<Team>(x => x.SpaceId == spaceId || x.SpaceId == 0).ToListAsync(ct).ConfigureAwait(false);
     }
 
     public async Task AddAsync(Team team, bool forceSave = true, CancellationToken ct = default)
@@ -83,5 +84,10 @@ public class TeamDataProvider(IUnitOfWork unitOfWork, IRepository repository) : 
     public async Task<List<TeamMember>> GetMembersByTeamIdAsync(int teamId, CancellationToken ct = default)
     {
         return await repository.Query<TeamMember>(x => x.TeamId == teamId).ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task DeleteMembersByTeamIdAsync(int teamId, CancellationToken ct = default)
+    {
+        await repository.ExecuteDeleteAsync<TeamMember>(x => x.TeamId == teamId, ct).ConfigureAwait(false);
     }
 }

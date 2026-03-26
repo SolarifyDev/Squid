@@ -1,6 +1,4 @@
-using AutoMapper;
 using Squid.Core.Persistence.Entities.Account;
-using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Authorization;
 using Squid.Message.Enums;
@@ -97,11 +95,25 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
 
     public async Task<ScopedUserRoleDto> AssignRoleToTeamAsync(AssignRoleToTeamCommand command, CancellationToken ct = default)
     {
+        await ValidateRoleScopeAsync(command.UserRoleId, command.SpaceId, ct).ConfigureAwait(false);
+
         var scopedRole = new ScopedUserRole { TeamId = command.TeamId, UserRoleId = command.UserRoleId, SpaceId = command.SpaceId };
 
         await scopedUserRoleDataProvider.AddAsync(scopedRole, ct: ct).ConfigureAwait(false);
 
         return await BuildScopedUserRoleDtoAsync(scopedRole, ct).ConfigureAwait(false);
+    }
+
+    private async Task ValidateRoleScopeAsync(int userRoleId, int? spaceId, CancellationToken ct)
+    {
+        var permissions = await userRoleDataProvider.GetPermissionsAsync(userRoleId, ct).ConfigureAwait(false);
+        var (canSpace, canSystem) = ParsePermissions(permissions).GetRoleScope();
+
+        if (spaceId != null && !canSpace)
+            throw new InvalidOperationException("This role contains only system-level permissions and cannot be assigned at space level");
+
+        if (spaceId == null && !canSystem)
+            throw new InvalidOperationException("This role contains only space-level permissions and cannot be assigned at system level");
     }
 
     public async Task RemoveRoleFromTeamAsync(int scopedUserRoleId, CancellationToken ct = default)
@@ -166,6 +178,8 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
     private async Task<UserRoleDto> BuildUserRoleDtoAsync(UserRole role, CancellationToken ct)
     {
         var permissions = await userRoleDataProvider.GetPermissionsAsync(role.Id, ct).ConfigureAwait(false);
+        var parsedPermissions = ParsePermissions(permissions);
+        var (canSpace, canSystem) = parsedPermissions.GetRoleScope();
 
         return new UserRoleDto
         {
@@ -174,7 +188,17 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
             Description = role.Description,
             IsBuiltIn = role.IsBuiltIn,
             Permissions = permissions,
+            CanApplyAtSpaceLevel = canSpace,
+            CanApplyAtSystemLevel = canSystem,
         };
+    }
+
+    private static List<Permission> ParsePermissions(List<string> permissions)
+    {
+        return permissions
+            .Where(p => Enum.TryParse<Permission>(p, out _))
+            .Select(p => Enum.Parse<Permission>(p))
+            .ToList();
     }
 
     private async Task<ScopedUserRoleDto> BuildScopedUserRoleDtoAsync(ScopedUserRole scopedRole, CancellationToken ct)

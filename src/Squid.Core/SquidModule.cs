@@ -1,10 +1,9 @@
 using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
-using Squid.Core.Services.Authorization;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.Identity;
-using Squid.Core.Services.Machines;
-using Squid.Core.Services.Spaces;
+
 using Squid.Core.Settings.System;
 
 namespace Squid.Core;
@@ -33,9 +32,7 @@ public class SquidModule : Module
         RegisterAutoMapper(builder);
         RegisterDependency(builder);
 
-        builder.RegisterType<BuiltInRoleSeeder>().As<IStartable>().SingleInstance();
-        builder.RegisterType<DefaultSpaceSeeder>().As<IStartable>().SingleInstance();
-        builder.RegisterType<DefaultMachinePolicySeeder>().As<IStartable>().SingleInstance();
+        RegisterDataSeeders(builder);
     }
 
     private void RegisterLogging(ContainerBuilder builder)
@@ -107,6 +104,17 @@ public class SquidModule : Module
             var mapper = container.Resolve<IMapper>();
             AutoMapperConfiguration.Init(mapper.ConfigurationProvider);
         });
+    }
+
+    private static void RegisterDataSeeders(ContainerBuilder builder)
+    {
+        builder.RegisterType<DataSeederRunner>().As<IStartable>().SingleInstance();
+
+        var seederTypes = typeof(SquidModule).Assembly.GetTypes()
+            .Where(t => t.IsClass && !t.IsAbstract && typeof(IDataSeeder).IsAssignableFrom(t))
+            .ToArray();
+
+        builder.RegisterTypes(seederTypes).As<IDataSeeder>().SingleInstance();
     }
 
     private void RegisterDependency(ContainerBuilder builder)

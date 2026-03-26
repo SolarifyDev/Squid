@@ -138,6 +138,84 @@ public class UserRoleServiceTests
     }
 
     [Fact]
+    public async Task GetAll_SpaceOnlyRole_ScopeFlags()
+    {
+        _userRoleDataProvider.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<UserRole>
+        {
+            new() { Id = 1, Name = "Project Deployer", IsBuiltIn = true },
+        });
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "ProjectView", "DeploymentCreate" });
+
+        var result = await _sut.GetAllAsync();
+
+        result[0].CanApplyAtSpaceLevel.ShouldBeTrue();
+        result[0].CanApplyAtSystemLevel.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task GetAll_SystemOnlyRole_ScopeFlags()
+    {
+        _userRoleDataProvider.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<UserRole>
+        {
+            new() { Id = 1, Name = "System Administrator", IsBuiltIn = true },
+        });
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "AdministerSystem", "UserView", "SpaceView" });
+
+        var result = await _sut.GetAllAsync();
+
+        result[0].CanApplyAtSpaceLevel.ShouldBeFalse();
+        result[0].CanApplyAtSystemLevel.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task GetAll_SpaceRoleWithMixedPerms_SpaceOnly()
+    {
+        _userRoleDataProvider.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<UserRole>
+        {
+            new() { Id = 1, Name = "Space Owner", IsBuiltIn = true },
+        });
+        // SpaceOnly + Mixed → role scope determined by SpaceOnly, Mixed doesn't add system scope
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "ProjectView", "TaskView" });
+
+        var result = await _sut.GetAllAsync();
+
+        result[0].CanApplyAtSpaceLevel.ShouldBeTrue();
+        result[0].CanApplyAtSystemLevel.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task GetAll_BothScopePerms_BothScopeFlags()
+    {
+        _userRoleDataProvider.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<UserRole>
+        {
+            new() { Id = 1, Name = "Custom Mixed", IsBuiltIn = false },
+        });
+        // Has both SpaceOnly (AccountView) and SystemOnly (AdministerSystem) → both flags true
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "AccountView", "AdministerSystem" });
+
+        var result = await _sut.GetAllAsync();
+
+        result[0].CanApplyAtSpaceLevel.ShouldBeTrue();
+        result[0].CanApplyAtSystemLevel.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task GetAll_OnlyMixedPerms_BothScopeFlags()
+    {
+        _userRoleDataProvider.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<UserRole>
+        {
+            new() { Id = 1, Name = "Task Only", IsBuiltIn = false },
+        });
+        // Only Mixed permissions → both flags true (fallback)
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "TaskView", "TeamView" });
+
+        var result = await _sut.GetAllAsync();
+
+        result[0].CanApplyAtSpaceLevel.ShouldBeTrue();
+        result[0].CanApplyAtSystemLevel.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task GetById_Found_ReturnsMappedDto()
     {
         _userRoleDataProvider.Setup(x => x.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new UserRole { Id = 1, Name = "Dev", Description = "Developer", IsBuiltIn = false });
@@ -162,10 +240,11 @@ public class UserRoleServiceTests
     }
 
     [Fact]
-    public async Task AssignRoleToTeam_CreatesScoped()
+    public async Task AssignRoleToTeam_SpaceLevel_CreatesScoped()
     {
         var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = 1 };
 
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "ProjectView" });
         _userRoleDataProvider.Setup(x => x.GetByIdAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new UserRole { Id = 50, Name = "Dev" });
         _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
         _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
@@ -177,6 +256,49 @@ public class UserRoleServiceTests
         result.UserRoleId.ShouldBe(50);
         result.SpaceId.ShouldBe(1);
         _scopedUserRoleDataProvider.Verify(x => x.AddAsync(It.Is<ScopedUserRole>(r => r.TeamId == 10 && r.UserRoleId == 50 && r.SpaceId == 1), true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_SystemLevel_CreatesScoped()
+    {
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "AdministerSystem", "UserView" });
+        _userRoleDataProvider.Setup(x => x.GetByIdAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new UserRole { Id = 50, Name = "System Administrator" });
+        _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+        _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+        _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+
+        var result = await _sut.AssignRoleToTeamAsync(command);
+
+        result.SpaceId.ShouldBeNull();
+        _scopedUserRoleDataProvider.Verify(x => x.AddAsync(It.Is<ScopedUserRole>(r => r.SpaceId == null), true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_SystemOnlyRoleAtSpaceLevel_Throws()
+    {
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = 1 };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "AdministerSystem", "UserView", "SpaceView" });
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => _sut.AssignRoleToTeamAsync(command));
+
+        ex.Message.ShouldContain("system-level");
+        _scopedUserRoleDataProvider.Verify(x => x.AddAsync(It.IsAny<ScopedUserRole>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_SpaceOnlyRoleAtSystemLevel_Throws()
+    {
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "ProjectView", "DeploymentCreate" });
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => _sut.AssignRoleToTeamAsync(command));
+
+        ex.Message.ShouldContain("space-level");
+        _scopedUserRoleDataProvider.Verify(x => x.AddAsync(It.IsAny<ScopedUserRole>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

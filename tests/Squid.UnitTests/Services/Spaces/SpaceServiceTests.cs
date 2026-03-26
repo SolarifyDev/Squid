@@ -97,6 +97,8 @@ public class SpaceServiceTests
         var space = new Space { Id = 2 };
 
         _spaceDataProvider.Setup(p => p.GetByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(space);
+        SetupScopedRoleIdsQuery(new List<ScopedUserRole>());
+        SetupSpaceScopedTeamsQuery(new List<Team>());
 
         await _sut.DeleteAsync(2);
 
@@ -345,21 +347,108 @@ public class SpaceServiceTests
         var autoTeam = new Team { Id = 100, Name = "Space Owners (Prod)", IsBuiltIn = true };
         var space = new Space { Id = 2, OwnerTeamId = 100 };
 
-        var existingMembers = new List<TeamMember>
-        {
-            new() { TeamId = 100, UserId = 1 },
-        };
-
         _spaceDataProvider.Setup(p => p.GetByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(space);
-        _teamDataProvider.Setup(p => p.GetMembersByTeamIdAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(existingMembers);
+        SetupScopedRoleIdsQuery(new List<ScopedUserRole>());
+        SetupSpaceScopedTeamsQuery(new List<Team>());
         _teamDataProvider.Setup(p => p.GetByIdAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(autoTeam);
 
         await _sut.DeleteAsync(2);
 
         _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRole>(It.IsAny<Expression<Func<ScopedUserRole, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
-        _teamDataProvider.Verify(p => p.RemoveMemberAsync(It.Is<TeamMember>(m => m.UserId == 1), true, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.DeleteMembersByTeamIdAsync(100, It.IsAny<CancellationToken>()), Times.Once);
         _teamDataProvider.Verify(p => p.DeleteAsync(autoTeam, true, It.IsAny<CancellationToken>()), Times.Once);
         _spaceDataProvider.Verify(p => p.DeleteAsync(space, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Delete_CleansUpScopeRestrictions()
+    {
+        var space = new Space { Id = 2 };
+        var scopedRoles = new List<ScopedUserRole>
+        {
+            new() { Id = 10, TeamId = 3, UserRoleId = 5, SpaceId = 2 },
+            new() { Id = 11, TeamId = 4, UserRoleId = 6, SpaceId = 2 },
+        };
+
+        _spaceDataProvider.Setup(p => p.GetByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(space);
+        SetupScopedRoleIdsQuery(scopedRoles);
+        SetupSpaceScopedTeamsQuery(new List<Team>());
+
+        await _sut.DeleteAsync(2);
+
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleProject>(It.IsAny<Expression<Func<ScopedUserRoleProject, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(It.IsAny<Expression<Func<ScopedUserRoleEnvironment, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(It.IsAny<Expression<Func<ScopedUserRoleProjectGroup, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRole>(It.IsAny<Expression<Func<ScopedUserRole, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Delete_CleansUpSpaceScopedTeams()
+    {
+        var space = new Space { Id = 2 };
+        var spaceScopedTeams = new List<Team>
+        {
+            new() { Id = 50, Name = "Team A", SpaceId = 2 },
+            new() { Id = 51, Name = "Team B", SpaceId = 2 },
+        };
+
+        _spaceDataProvider.Setup(p => p.GetByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(space);
+        SetupScopedRoleIdsQuery(new List<ScopedUserRole>());
+        SetupSpaceScopedTeamsQuery(spaceScopedTeams);
+
+        await _sut.DeleteAsync(2);
+
+        _teamDataProvider.Verify(p => p.DeleteMembersByTeamIdAsync(50, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.DeleteMembersByTeamIdAsync(51, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.DeleteAsync(It.Is<Team>(t => t.Id == 50), true, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.DeleteAsync(It.Is<Team>(t => t.Id == 51), true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_DeleteAutoTeam_DeletesScopeChildrenFirst()
+    {
+        var command = new UpdateSpaceCommand { Id = 1, Name = "Prod", Slug = "prod", OwnerUserIds = new List<int>() };
+        var space = new Space { Id = 1, Name = "Prod", OwnerTeamId = 100 };
+        var dto = new SpaceDto { Id = 1, Name = "Prod" };
+        var autoTeam = new Team { Id = 100, Name = "Space Owners (Prod)", IsBuiltIn = true };
+
+        var existingMembers = new List<TeamMember>
+        {
+            new() { TeamId = 100, UserId = 1 },
+        };
+
+        var autoTeamScopedRoles = new List<ScopedUserRole>
+        {
+            new() { Id = 200, TeamId = 100, UserRoleId = 10, SpaceId = 1 },
+        };
+
+        _spaceDataProvider.Setup(p => p.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(space);
+        _mapper.Setup(m => m.Map(command, space)).Returns(space);
+        _mapper.Setup(m => m.Map<SpaceDto>(space)).Returns(dto);
+        SetupEmptyScopedRoleQuery();
+        _teamDataProvider.Setup(p => p.GetMembersByTeamIdAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(existingMembers);
+        _repository.Setup(r => r.QueryNoTracking<ScopedUserRole>(It.IsAny<Expression<Func<ScopedUserRole, bool>>>()))
+            .Returns(autoTeamScopedRoles.AsQueryable().BuildMock());
+        _teamDataProvider.Setup(p => p.GetByIdAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(autoTeam);
+
+        await _sut.UpdateAsync(command);
+
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleProject>(It.IsAny<Expression<Func<ScopedUserRoleProject, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(It.IsAny<Expression<Func<ScopedUserRoleEnvironment, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(r => r.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(It.IsAny<Expression<Func<ScopedUserRoleProjectGroup, bool>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _scopedUserRoleDataProvider.Verify(p => p.DeleteAsync(200, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private void SetupScopedRoleIdsQuery(List<ScopedUserRole> scopedRoles)
+    {
+        _repository.Setup(r => r.QueryNoTracking<ScopedUserRole>(It.IsAny<Expression<Func<ScopedUserRole, bool>>>()))
+            .Returns(scopedRoles.AsQueryable().BuildMock());
+    }
+
+    private void SetupSpaceScopedTeamsQuery(List<Team> teams)
+    {
+        _repository.Setup(r => r.QueryNoTracking<Team>(It.IsAny<Expression<Func<Team, bool>>>()))
+            .Returns(teams.AsQueryable().BuildMock());
     }
 
     private void SetupEmptyScopedRoleQuery()

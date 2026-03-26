@@ -240,6 +240,15 @@ public class SpaceService(IMapper mapper, ISpaceDataProvider spaceDataProvider, 
             .Where(sr => sr.TeamId == autoTeamId)
             .ToListAsync(ct).ConfigureAwait(false);
 
+        var scopedRoleIds = scopedRoles.Select(sr => sr.Id).ToList();
+
+        if (scopedRoleIds.Count > 0)
+        {
+            await repository.ExecuteDeleteAsync<ScopedUserRoleProject>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+            await repository.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+            await repository.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+        }
+
         foreach (var scopedRole in scopedRoles)
         {
             await scopedUserRoleDataProvider.DeleteAsync(scopedRole.Id, ct).ConfigureAwait(false);
@@ -257,23 +266,47 @@ public class SpaceService(IMapper mapper, ISpaceDataProvider spaceDataProvider, 
 
     private async Task CleanupSpaceManagersAsync(Persistence.Entities.Deployments.Space space, CancellationToken ct)
     {
+        await CleanupScopedRoleChildrenAsync(space.Id, ct).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<ScopedUserRole>(x => x.SpaceId == space.Id, ct).ConfigureAwait(false);
+        await CleanupSpaceScopedTeamsAsync(space, ct).ConfigureAwait(false);
+    }
+
+    private async Task CleanupScopedRoleChildrenAsync(int spaceId, CancellationToken ct)
+    {
+        var scopedRoleIds = await repository.QueryNoTracking<ScopedUserRole>(x => x.SpaceId == spaceId)
+            .Select(x => x.Id).ToListAsync(ct).ConfigureAwait(false);
+
+        if (scopedRoleIds.Count == 0) return;
+
+        await repository.ExecuteDeleteAsync<ScopedUserRoleProject>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+    }
+
+    private async Task CleanupSpaceScopedTeamsAsync(Persistence.Entities.Deployments.Space space, CancellationToken ct)
+    {
+        var spaceScopedTeams = await repository.QueryNoTracking<Team>(x => x.SpaceId == space.Id)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        foreach (var team in spaceScopedTeams)
+        {
+            await teamDataProvider.DeleteMembersByTeamIdAsync(team.Id, ct).ConfigureAwait(false);
+            await teamDataProvider.DeleteAsync(team, ct: ct).ConfigureAwait(false);
+        }
 
         if (space.OwnerTeamId != null)
         {
-            var autoTeamId = space.OwnerTeamId.Value;
+            var ownerAlreadyDeleted = spaceScopedTeams.Any(t => t.Id == space.OwnerTeamId.Value);
 
-            var members = await teamDataProvider.GetMembersByTeamIdAsync(autoTeamId, ct).ConfigureAwait(false);
-
-            foreach (var member in members)
+            if (!ownerAlreadyDeleted)
             {
-                await teamDataProvider.RemoveMemberAsync(member, ct: ct).ConfigureAwait(false);
+                await teamDataProvider.DeleteMembersByTeamIdAsync(space.OwnerTeamId.Value, ct).ConfigureAwait(false);
+
+                var autoTeam = await teamDataProvider.GetByIdAsync(space.OwnerTeamId.Value, ct).ConfigureAwait(false);
+
+                if (autoTeam != null)
+                    await teamDataProvider.DeleteAsync(autoTeam, ct: ct).ConfigureAwait(false);
             }
-
-            var team = await teamDataProvider.GetByIdAsync(autoTeamId, ct).ConfigureAwait(false);
-
-            if (team != null)
-                await teamDataProvider.DeleteAsync(team, ct: ct).ConfigureAwait(false);
         }
     }
 }

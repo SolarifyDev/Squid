@@ -4,9 +4,9 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Models.Deployments.Machine;
 
-namespace Squid.Core.Services.Machines;
+namespace Squid.Core.Services.DataSeeding;
 
-public class DefaultMachinePolicySeeder : IStartable
+public class DefaultMachinePolicySeeder : IDataSeeder
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -14,29 +14,10 @@ public class DefaultMachinePolicySeeder : IStartable
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private readonly ILifetimeScope _scope;
+    public int Order => 500;
 
-    public DefaultMachinePolicySeeder(ILifetimeScope scope)
+    public async Task SeedAsync(ILifetimeScope scope)
     {
-        _scope = scope;
-    }
-
-    public void Start()
-    {
-        try
-        {
-            SeedAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Default machine policy seeding failed — will retry on next startup");
-        }
-    }
-
-    private async Task SeedAsync()
-    {
-        await using var scope = _scope.BeginLifetimeScope();
-
         var repository = scope.Resolve<IRepository>();
         var unitOfWork = scope.Resolve<IUnitOfWork>();
 

@@ -1,47 +1,21 @@
-using Microsoft.AspNetCore.Identity;
-using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
-using Squid.Core.Services.Teams;
-using Squid.Message.Constants;
+using Squid.Core.Services.Authorization;
 using Squid.Message.Enums;
 
-namespace Squid.Core.Services.Authorization;
+namespace Squid.Core.Services.DataSeeding;
 
-public class BuiltInRoleSeeder : IStartable
+public class BuiltInRoleSeeder : IDataSeeder
 {
-    private readonly ILifetimeScope _scope;
+    public int Order => 100;
 
-    public BuiltInRoleSeeder(ILifetimeScope scope)
+    public async Task SeedAsync(ILifetimeScope scope)
     {
-        _scope = scope;
-    }
-
-    public void Start()
-    {
-        try
-        {
-            SeedAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Built-in role seeding failed — will retry on next startup");
-        }
-    }
-
-    private async Task SeedAsync()
-    {
-        await using var scope = _scope.BeginLifetimeScope();
-
         var roleProvider = scope.Resolve<IUserRoleDataProvider>();
-        var teamProvider = scope.Resolve<ITeamDataProvider>();
 
         foreach (var definition in BuiltInRoles.All)
         {
             await SeedRoleAsync(roleProvider, definition).ConfigureAwait(false);
         }
-
-        await SeedDefaultTeamsAsync(teamProvider, roleProvider, scope.Resolve<IScopedUserRoleDataProvider>()).ConfigureAwait(false);
-        await SeedAdminUserAsync(scope.Resolve<IRepository>(), scope.Resolve<IUnitOfWork>(), teamProvider).ConfigureAwait(false);
 
         Log.Information("Built-in role seeding complete");
     }
@@ -76,108 +50,6 @@ public class BuiltInRoleSeeder : IStartable
 
             Log.Debug("Updated permissions for built-in role {RoleName}", definition.Name);
         }
-    }
-
-    private static async Task SeedDefaultTeamsAsync(ITeamDataProvider teamProvider, IUserRoleDataProvider roleProvider, IScopedUserRoleDataProvider scopedRoleProvider)
-    {
-        await SeedTeamWithRoleAsync(teamProvider, roleProvider, scopedRoleProvider, "Squid Administrators", "Built-in administrators team", BuiltInRoles.SystemAdministrator.Name).ConfigureAwait(false);
-        await SeedTeamAsync(teamProvider, "Everyone", "All users").ConfigureAwait(false);
-    }
-
-    private static async Task SeedTeamWithRoleAsync(ITeamDataProvider teamProvider, IUserRoleDataProvider roleProvider, IScopedUserRoleDataProvider scopedRoleProvider, string teamName, string description, string roleName)
-    {
-        var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
-        var team = teams.FirstOrDefault(t => t.Name == teamName);
-
-        if (team == null)
-        {
-            team = new Team { Name = teamName, Description = description, SpaceId = 0, IsBuiltIn = true };
-            await teamProvider.AddAsync(team).ConfigureAwait(false);
-
-            Log.Information("Seeded default team {TeamName}", teamName);
-        }
-
-        var role = await roleProvider.GetByNameAsync(roleName).ConfigureAwait(false);
-        if (role == null) return;
-
-        var existingScopedRoles = await scopedRoleProvider.GetByTeamIdsAsync(new List<int> { team.Id }).ConfigureAwait(false);
-
-        if (existingScopedRoles.Any(sr => sr.UserRoleId == role.Id))
-            return;
-
-        await scopedRoleProvider.AddAsync(new ScopedUserRole { TeamId = team.Id, UserRoleId = role.Id, SpaceId = null }).ConfigureAwait(false);
-
-        Log.Information("Assigned role {RoleName} to team {TeamName}", roleName, teamName);
-    }
-
-    private static async Task SeedTeamAsync(ITeamDataProvider teamProvider, string teamName, string description)
-    {
-        var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
-
-        if (teams.Any(t => t.Name == teamName))
-            return;
-
-        await teamProvider.AddAsync(new Team { Name = teamName, Description = description, SpaceId = 0, IsBuiltIn = true }).ConfigureAwait(false);
-
-        Log.Information("Seeded default team {TeamName}", teamName);
-    }
-
-    private static async Task SeedAdminUserAsync(IRepository repository, IUnitOfWork unitOfWork, ITeamDataProvider teamProvider)
-    {
-        var normalizedUserName = CurrentUsers.AdminUser.UserName.ToUpperInvariant();
-        var existing = await repository.FirstOrDefaultAsync<UserAccount>(x => x.NormalizedUserName == normalizedUserName).ConfigureAwait(false);
-
-        if (existing == null)
-        {
-            try
-            {
-                var passwordHasher = new PasswordHasher<UserAccount>();
-                var user = new UserAccount
-                {
-                    UserName = CurrentUsers.AdminUser.UserName,
-                    NormalizedUserName = normalizedUserName,
-                    DisplayName = CurrentUsers.AdminUser.DisplayName,
-                    IsDisabled = false,
-                    IsSystem = false,
-                    MustChangePassword = true,
-                    CreatedDate = DateTime.UtcNow,
-                    LastModifiedDate = DateTime.UtcNow
-                };
-
-                user.PasswordHash = passwordHasher.HashPassword(user, CurrentUsers.AdminUser.DefaultPassword);
-
-                await repository.InsertAsync(user).ConfigureAwait(false);
-                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
-
-                await AddUserToTeamAsync(teamProvider, user.Id, "Squid Administrators").ConfigureAwait(false);
-                await AddUserToTeamAsync(teamProvider, user.Id, "Everyone").ConfigureAwait(false);
-
-                Log.Information("Seeded admin user {UserName}", CurrentUsers.AdminUser.UserName);
-            }
-            catch (Exception ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                Log.Debug("Admin user was already created by another instance");
-            }
-        }
-        else
-        {
-            await AddUserToTeamAsync(teamProvider, existing.Id, "Squid Administrators").ConfigureAwait(false);
-            await AddUserToTeamAsync(teamProvider, existing.Id, "Everyone").ConfigureAwait(false);
-        }
-    }
-
-    private static async Task AddUserToTeamAsync(ITeamDataProvider teamProvider, int userId, string teamName)
-    {
-        var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
-        var team = teams.FirstOrDefault(t => t.Name == teamName);
-
-        if (team == null) return;
-
-        var members = await teamProvider.GetMembersByTeamIdAsync(team.Id).ConfigureAwait(false);
-
-        if (members.Any(m => m.UserId == userId)) return;
-
-        await teamProvider.AddMemberAsync(new TeamMember { TeamId = team.Id, UserId = userId }).ConfigureAwait(false);
     }
 }
 

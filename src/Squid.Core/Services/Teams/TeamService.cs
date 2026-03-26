@@ -2,6 +2,7 @@ using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Core.Services.Authorization;
 using Squid.Message.Commands.Teams;
 using Squid.Message.Models.Teams;
 
@@ -19,7 +20,7 @@ public interface ITeamService : IScopedDependency
     Task<List<TeamMemberDto>> GetMembersAsync(int teamId, CancellationToken ct = default);
 }
 
-public class TeamService(IMapper mapper, ITeamDataProvider teamDataProvider, IRepository repository) : ITeamService
+public class TeamService(IMapper mapper, ITeamDataProvider teamDataProvider, IRepository repository, IScopedUserRoleDataProvider scopedUserRoleDataProvider) : ITeamService
 {
     public async Task<TeamDto> CreateAsync(CreateTeamCommand command, CancellationToken ct = default)
     {
@@ -57,7 +58,24 @@ public class TeamService(IMapper mapper, ITeamDataProvider teamDataProvider, IRe
         if (team.IsBuiltIn)
             throw new InvalidOperationException("Cannot delete a built-in team");
 
+        await CascadeDeleteTeamDependenciesAsync(id, ct).ConfigureAwait(false);
         await teamDataProvider.DeleteAsync(team, ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task CascadeDeleteTeamDependenciesAsync(int teamId, CancellationToken ct)
+    {
+        var scopedRoles = await scopedUserRoleDataProvider.GetByTeamIdsAsync(new List<int> { teamId }, ct).ConfigureAwait(false);
+        var scopedRoleIds = scopedRoles.Select(sr => sr.Id).ToList();
+
+        if (scopedRoleIds.Count > 0)
+        {
+            await repository.ExecuteDeleteAsync<ScopedUserRoleProject>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+            await repository.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+            await repository.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(x => scopedRoleIds.Contains(x.ScopedUserRoleId), ct).ConfigureAwait(false);
+        }
+
+        await repository.ExecuteDeleteAsync<ScopedUserRole>(x => x.TeamId == teamId, ct).ConfigureAwait(false);
+        await teamDataProvider.DeleteMembersByTeamIdAsync(teamId, ct).ConfigureAwait(false);
     }
 
     public async Task<TeamDto> GetByIdAsync(int id, CancellationToken ct = default)
@@ -79,11 +97,27 @@ public class TeamService(IMapper mapper, ITeamDataProvider teamDataProvider, IRe
 
     public async Task AddMemberAsync(int teamId, int userId, CancellationToken ct = default)
     {
+        var team = await teamDataProvider.GetByIdAsync(teamId, ct).ConfigureAwait(false);
+
+        if (team == null)
+            throw new InvalidOperationException($"Team {teamId} not found");
+
+        if (team.IsBuiltIn && team.Name == "Everyone")
+            throw new InvalidOperationException("Cannot manually add members to the Everyone team");
+
         await teamDataProvider.AddMemberAsync(new TeamMember { TeamId = teamId, UserId = userId }, ct: ct).ConfigureAwait(false);
     }
 
     public async Task RemoveMemberAsync(int teamId, int userId, CancellationToken ct = default)
     {
+        var team = await teamDataProvider.GetByIdAsync(teamId, ct).ConfigureAwait(false);
+
+        if (team == null)
+            throw new InvalidOperationException($"Team {teamId} not found");
+
+        if (team.IsBuiltIn && team.Name == "Everyone")
+            throw new InvalidOperationException("Cannot manually remove members from the Everyone team");
+
         await teamDataProvider.RemoveMemberAsync(new TeamMember { TeamId = teamId, UserId = userId }, ct: ct).ConfigureAwait(false);
     }
 
