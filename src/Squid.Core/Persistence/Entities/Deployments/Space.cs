@@ -10,11 +10,11 @@ public class Space : IEntity<int>, IAuditable
 
     public bool IsDefault { get; set; }
 
-    public string Json { get; set; }
+    public string Json { get; set; } = "{}";
 
     public bool TaskQueueStopped { get; set; }
 
-    public string Description { get; set; }
+    public string Description { get; set; } = string.Empty;
 
     public bool IsPrivate { get; set; }
 

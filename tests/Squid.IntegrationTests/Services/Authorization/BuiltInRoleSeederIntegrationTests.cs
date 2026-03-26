@@ -1,6 +1,8 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.Teams;
 using Squid.Message.Constants;
 
@@ -14,23 +16,30 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     }
 
     [Fact]
-    public void BuiltInRoleSeeder_RegisteredAsStartable()
+    public void DataSeederRunner_RegisteredAsStartable()
     {
         var startables = CurrentScope.Resolve<IEnumerable<IStartable>>();
 
-        startables.OfType<BuiltInRoleSeeder>().ShouldNotBeEmpty("BuiltInRoleSeeder must be registered as IStartable in the DI container");
+        startables.OfType<DataSeederRunner>().ShouldNotBeEmpty("DataSeederRunner must be registered as IStartable in the DI container");
+    }
+
+    [Fact]
+    public void AllDataSeeders_RegisteredInCorrectOrder()
+    {
+        var seeders = CurrentScope.Resolve<IEnumerable<IDataSeeder>>().OrderBy(s => s.Order).ToList();
+
+        seeders.Count.ShouldBeGreaterThanOrEqualTo(5);
+        seeders[0].Order.ShouldBe(100);
+        seeders[1].Order.ShouldBe(200);
+        seeders[2].Order.ShouldBe(300);
+        seeders[3].Order.ShouldBe(400);
+        seeders[4].Order.ShouldBe(500);
     }
 
     [Fact]
     public async Task SeedRoles_CreatesAllBuiltInRoles()
     {
-        await Run<ILifetimeScope>(async scope =>
-        {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
-
-            await Task.CompletedTask;
-        }).ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
 
         await Run<IUserRoleDataProvider>(async provider =>
         {
@@ -52,14 +61,8 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     [Fact]
     public async Task SeedRoles_Idempotent_DoesNotDuplicate()
     {
-        await Run<ILifetimeScope>(async scope =>
-        {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
-            seeder.Start();
-
-            await Task.CompletedTask;
-        }).ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
 
         await Run<IUserRoleDataProvider>(async provider =>
         {
@@ -72,13 +75,7 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     [Fact]
     public async Task SeedRoles_CreatesDefaultTeams()
     {
-        await Run<ILifetimeScope>(async scope =>
-        {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
-
-            await Task.CompletedTask;
-        }).ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
 
         await Run<ITeamDataProvider, IScopedUserRoleDataProvider>(async (teamProvider, scopedProvider) =>
         {
@@ -103,13 +100,7 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     [Fact]
     public async Task SeedRoles_CreatesAdminUser()
     {
-        await Run<ILifetimeScope>(async scope =>
-        {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
-
-            await Task.CompletedTask;
-        }).ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
 
         await Run<IRepository>(async repository =>
         {
@@ -125,13 +116,7 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     [Fact]
     public async Task SeedRoles_AdminInAdministratorsAndEveryoneTeams()
     {
-        await Run<ILifetimeScope>(async scope =>
-        {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
-
-            await Task.CompletedTask;
-        }).ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
 
         await Run<IRepository, ITeamDataProvider>(async (repository, teamProvider) =>
         {
@@ -149,6 +134,80 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
             var everyoneTeam = teams.First(t => t.Name == "Everyone");
             var everyoneMembers = await teamProvider.GetMembersByTeamIdAsync(everyoneTeam.Id).ConfigureAwait(false);
             everyoneMembers.ShouldContain(m => m.UserId == admin.Id, "Admin should be in Everyone team");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SeedRoles_CreatesDefaultSpaceWithOwnerTeam()
+    {
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<IRepository, ITeamDataProvider>(async (repository, teamProvider) =>
+        {
+            var defaultSpace = await repository.FirstOrDefaultAsync<Space>(s => s.IsDefault).ConfigureAwait(false);
+
+            defaultSpace.ShouldNotBeNull("Default space should exist after seeding");
+            defaultSpace.Name.ShouldBe("Default");
+
+            var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
+            var adminTeam = teams.First(t => t.Name == "Squid Administrators");
+
+            defaultSpace.OwnerTeamId.ShouldBe(adminTeam.Id, "Default space OwnerTeamId should point to Administrators team");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SeedRoles_AdminTeamHasSpaceOwnerInDefaultSpace()
+    {
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<ITeamDataProvider, IUserRoleDataProvider, IScopedUserRoleDataProvider, IRepository>(async (teamProvider, roleProvider, scopedProvider, repository) =>
+        {
+            var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
+            var adminTeam = teams.First(t => t.Name == "Squid Administrators");
+
+            var spaceOwnerRole = await roleProvider.GetByNameAsync("Space Owner").ConfigureAwait(false);
+            spaceOwnerRole.ShouldNotBeNull();
+
+            var defaultSpace = await repository.FirstOrDefaultAsync<Space>(s => s.IsDefault).ConfigureAwait(false);
+            defaultSpace.ShouldNotBeNull();
+
+            var adminScopedRoles = await scopedProvider.GetByTeamIdsAsync(new List<int> { adminTeam.Id }).ConfigureAwait(false);
+            adminScopedRoles.ShouldContain(sr => sr.UserRoleId == spaceOwnerRole.Id && sr.SpaceId == defaultSpace.Id, "Administrators should have Space Owner role scoped to Default Space");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task SeedRoles_Idempotent_NoDuplicateSpaceOwnerAssignment()
+    {
+        await RunDataSeeders().ConfigureAwait(false);
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<ITeamDataProvider, IUserRoleDataProvider, IScopedUserRoleDataProvider, IRepository>(async (teamProvider, roleProvider, scopedProvider, repository) =>
+        {
+            var teams = await teamProvider.GetAllBySpaceAsync(0).ConfigureAwait(false);
+            var adminTeam = teams.First(t => t.Name == "Squid Administrators");
+
+            var spaceOwnerRole = await roleProvider.GetByNameAsync("Space Owner").ConfigureAwait(false);
+            spaceOwnerRole.ShouldNotBeNull();
+
+            var defaultSpace = await repository.FirstOrDefaultAsync<Space>(s => s.IsDefault).ConfigureAwait(false);
+            defaultSpace.ShouldNotBeNull();
+
+            var adminScopedRoles = await scopedProvider.GetByTeamIdsAsync(new List<int> { adminTeam.Id }).ConfigureAwait(false);
+            var spaceOwnerCount = adminScopedRoles.Count(sr => sr.UserRoleId == spaceOwnerRole.Id && sr.SpaceId == defaultSpace.Id);
+            spaceOwnerCount.ShouldBe(1, "Running seed twice should not create duplicate Space Owner assignments");
+        }).ConfigureAwait(false);
+    }
+
+    private async Task RunDataSeeders()
+    {
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var runner = new DataSeederRunner(scope);
+            runner.Start();
+
+            await Task.CompletedTask;
         }).ConfigureAwait(false);
     }
 }

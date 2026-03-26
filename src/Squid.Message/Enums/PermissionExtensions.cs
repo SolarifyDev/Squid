@@ -26,6 +26,27 @@ public static class PermissionExtensions
         return scope is PermissionScope.SystemOnly or PermissionScope.Mixed;
     }
 
+    public static (bool CanApplyAtSpaceLevel, bool CanApplyAtSystemLevel) GetRoleScope(this IEnumerable<Permission> permissions)
+    {
+        var hasSpaceOnly = false;
+        var hasSystemOnly = false;
+        var hasMixed = false;
+
+        foreach (var p in permissions)
+        {
+            switch (p.GetScope())
+            {
+                case PermissionScope.SpaceOnly: hasSpaceOnly = true; break;
+                case PermissionScope.SystemOnly: hasSystemOnly = true; break;
+                case PermissionScope.Mixed: hasMixed = true; break;
+            }
+        }
+
+        var onlyMixed = !hasSpaceOnly && !hasSystemOnly && hasMixed;
+
+        return (hasSpaceOnly || onlyMixed, hasSystemOnly || onlyMixed);
+    }
+
     private static FrozenDictionary<Permission, PermissionScope> BuildScopeCache()
     {
         var dict = new Dictionary<Permission, PermissionScope>();

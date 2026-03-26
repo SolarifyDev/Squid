@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
-using Squid.Core.Services.Authorization;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.Teams;
 
 namespace Squid.IntegrationTests.Services.Account;
@@ -19,8 +19,8 @@ public class AccountServiceRegistrationTests : TestBase
         // Seed built-in teams first
         await Run<ILifetimeScope>(async scope =>
         {
-            var seeder = new BuiltInRoleSeeder(scope);
-            seeder.Start();
+            var runner = new DataSeederRunner(scope);
+            runner.Start();
 
             await Task.CompletedTask;
         }).ConfigureAwait(false);

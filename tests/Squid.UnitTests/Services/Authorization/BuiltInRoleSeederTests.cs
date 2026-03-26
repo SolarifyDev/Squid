@@ -1,6 +1,6 @@
 using System;
 using System.Linq;
-using Squid.Core.Services.Authorization;
+using Squid.Core.Services.DataSeeding;
 using Squid.Message.Enums;
 
 namespace Squid.UnitTests.Services.Authorization;

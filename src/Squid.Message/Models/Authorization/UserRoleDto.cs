@@ -7,4 +7,6 @@ public class UserRoleDto
     public string Description { get; set; }
     public bool IsBuiltIn { get; set; }
     public List<string> Permissions { get; set; } = new();
+    public bool CanApplyAtSpaceLevel { get; set; }
+    public bool CanApplyAtSystemLevel { get; set; }
 }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
