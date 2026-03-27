@@ -32,6 +32,8 @@ public class ActionExecutionResult
 
     public string ManualInterventionInstructions { get; set; }
 
+    public List<string> Warnings { get; set; } = new();
+
     public ExecutionMode ResolveExecutionMode()
     {
         if (ExecutionMode == ExecutionMode.Unspecified)

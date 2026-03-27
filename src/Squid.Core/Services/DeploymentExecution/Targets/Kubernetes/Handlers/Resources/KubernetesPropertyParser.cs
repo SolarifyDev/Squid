@@ -30,6 +30,31 @@ internal static class KubernetesPropertyParser
         return string.Empty;
     }
 
+    internal static bool HasNonEmptyJsonValue(Dictionary<string, string> properties, string name)
+    {
+        var value = GetProperty(properties, name);
+
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(value);
+            return doc.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => doc.RootElement.GetArrayLength() > 0,
+                JsonValueKind.Object => doc.RootElement.EnumerateObject().Any(),
+                JsonValueKind.Null or JsonValueKind.Undefined => false,
+                _ => true
+            };
+        }
+        catch
+        {
+            // Unparseable JSON — still counts as "configured" (user provided something, it's just broken)
+            return true;
+        }
+    }
+
     internal static string GetNamespace(Dictionary<string, string> properties)
     {
         var ns = GetProperty(properties, KubernetesProperties.Namespace);

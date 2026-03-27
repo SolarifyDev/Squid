@@ -5,6 +5,14 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 internal sealed class ServiceResourceGenerator : IKubernetesResourceGenerator
 {
+    public bool IsConfigured(Dictionary<string, string> properties)
+    {
+        var serviceName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ServiceName);
+
+        return !string.IsNullOrWhiteSpace(serviceName)
+            && KubernetesPropertyParser.HasNonEmptyJsonValue(properties, KubernetesProperties.ServicePorts);
+    }
+
     public bool CanGenerate(Dictionary<string, string> properties)
     {
         var serviceName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ServiceName);

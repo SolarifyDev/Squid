@@ -85,6 +85,8 @@ public sealed record ActionManuallyExcludedEvent(DeploymentEventContext Context)
 public sealed record ActionSkippedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionNoHandlerEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionRunningEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record ActionPreparationFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record ActionPreparationWarningEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Actions (execution, has own activity node) ===
 public sealed record ActionExecutingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

@@ -5,6 +5,14 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 internal sealed class ConfigMapResourceGenerator : IKubernetesResourceGenerator
 {
+    public bool IsConfigured(Dictionary<string, string> properties)
+    {
+        var configMapName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ConfigMapName);
+
+        return !string.IsNullOrWhiteSpace(configMapName)
+            && KubernetesPropertyParser.HasNonEmptyJsonValue(properties, KubernetesProperties.ConfigMapValues);
+    }
+
     public bool CanGenerate(Dictionary<string, string> properties)
     {
         var configMapName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ConfigMapName);

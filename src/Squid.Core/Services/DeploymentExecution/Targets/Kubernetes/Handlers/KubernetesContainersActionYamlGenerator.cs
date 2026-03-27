@@ -43,6 +43,8 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        var errors = new List<string>();
+
         if (_blueGreen.CanGenerate(properties))
         {
             foreach (var kvp in _blueGreen.GenerateAll(properties))
@@ -50,25 +52,28 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         }
         else if (_statefulSet.CanGenerate(properties))
         {
-            AddResource(result, "statefulset.yaml", _statefulSet, properties);
+            AddResource(result, "statefulset.yaml", _statefulSet, properties, errors);
         }
         else if (_daemonSet.CanGenerate(properties))
         {
-            AddResource(result, "daemonset.yaml", _daemonSet, properties);
+            AddResource(result, "daemonset.yaml", _daemonSet, properties, errors);
         }
         else if (_job.CanGenerate(properties))
         {
-            AddResource(result, "job.yaml", _job, properties);
+            AddResource(result, "job.yaml", _job, properties, errors);
         }
         else
         {
-            AddResource(result, "deployment.yaml", _deployment, properties);
+            AddResource(result, "deployment.yaml", _deployment, properties, errors);
         }
 
-        AddResource(result, "service.yaml", _service, properties);
-        AddResource(result, "configmap.yaml", _configMap, properties);
-        AddResource(result, "ingress.yaml", _ingress, properties);
-        AddResource(result, "secret.yaml", _secret, properties);
+        AddResource(result, "service.yaml", _service, properties, errors);
+        AddResource(result, "configmap.yaml", _configMap, properties, errors);
+        AddResource(result, "ingress.yaml", _ingress, properties, errors);
+        AddResource(result, "secret.yaml", _secret, properties, errors);
+
+        if (errors.Count > 0)
+            throw new ResourceGenerationException(errors);
 
         return Task.FromResult(result);
     }
@@ -269,10 +274,15 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         catch { /* malformed JSON — skip rewriting */ }
     }
 
-    private static void AddResource(Dictionary<string, byte[]> result, string fileName, IKubernetesResourceGenerator generator, Dictionary<string, string> properties)
+    private static void AddResource(Dictionary<string, byte[]> result, string fileName, IKubernetesResourceGenerator generator, Dictionary<string, string> properties, List<string> errors)
     {
         if (!generator.CanGenerate(properties))
+        {
+            if (generator.IsConfigured(properties))
+                errors.Add($"Resource \"{fileName}\" is configured but could not be generated — verify that its property values are valid JSON");
+
             return;
+        }
 
         var yaml = generator.Generate(properties);
 

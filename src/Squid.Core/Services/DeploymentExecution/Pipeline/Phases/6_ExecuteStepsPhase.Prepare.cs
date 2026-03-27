@@ -66,12 +66,45 @@ public sealed partial class ExecuteStepsPhase
                     }).ToList() ?? new()
             };
 
-            var prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
+            ActionExecutionResult prepared;
+
+            try
+            {
+                prepared = await handler.PrepareAsync(context, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[Deploy] Action preparation failed for {ActionName}", action.Name);
+
+                await lifecycle.EmitAsync(new ActionPreparationFailedEvent(new DeploymentEventContext
+                {
+                    StepDisplayOrder = stepDisplayOrder,
+                    ActionName = action.Name,
+                    MachineName = tc.Machine.Name,
+                    Error = ex.Message
+                }), ct).ConfigureAwait(false);
+
+                throw;
+            }
 
             if (prepared != null)
             {
                 prepared.ActionName = action.Name;
                 prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
+
+                if (prepared.Warnings.Count > 0)
+                {
+                    foreach (var warning in prepared.Warnings)
+                    {
+                        await lifecycle.EmitAsync(new ActionPreparationWarningEvent(new DeploymentEventContext
+                        {
+                            StepDisplayOrder = stepDisplayOrder,
+                            ActionName = action.Name,
+                            MachineName = tc.Machine.Name,
+                            Message = warning
+                        }), ct).ConfigureAwait(false);
+                    }
+                }
 
                 var executionMode = prepared.ResolveExecutionMode();
                 var contextPreparationPolicy = ResolveContextPreparationPolicy(prepared, tc);
