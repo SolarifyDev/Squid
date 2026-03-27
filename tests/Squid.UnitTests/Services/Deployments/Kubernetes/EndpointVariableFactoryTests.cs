@@ -42,11 +42,11 @@ public class EndpointVariableFactoryTests
         result.ShouldBeNull();
     }
 
-    [Fact]
-    public void TryDeserialize_ValidJson_ReturnsDeserializedObject()
+    [Theory]
+    [InlineData("""{"Name":"hello","Value":42}""")]
+    [InlineData("""{"name":"hello","value":42}""")]
+    public void TryDeserialize_BothCasings_ReturnsDeserializedObject(string json)
     {
-        var json = """{"Name":"hello","Value":42}""";
-
         var result = EndpointVariableFactory.TryDeserialize<TestDto>(json);
 
         result.ShouldNotBeNull();

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Deployments.Account;
 using Squid.Message.Enums;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Requests.Deployments.Account;
 
@@ -173,7 +174,7 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
     {
         if (string.IsNullOrEmpty(json)) return new();
 
-        try { return JsonSerializer.Deserialize<List<int>>(json); }
+        try { return JsonSerializer.Deserialize<List<int>>(json, SquidJsonDefaults.CaseInsensitive); }
         catch { return new(); }
     }
 }

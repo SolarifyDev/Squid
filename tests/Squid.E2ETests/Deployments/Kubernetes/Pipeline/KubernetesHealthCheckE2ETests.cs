@@ -58,9 +58,154 @@ public class KubernetesHealthCheckE2ETests
         await AssertTaskStateAsync(TaskState.Success);
     }
 
+    [Fact]
+    public async Task HealthCheck_KubernetesApi_WrapsScriptWithCredentials()
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedMultiTargetWithHealthCheckAsync();
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        // Verify the captured requests have endpoint context with credentials
+        ExecutionCapture.CapturedRequests.ShouldNotBeEmpty();
+        var request = ExecutionCapture.CapturedRequests.First();
+
+        request.EndpointContext.ShouldNotBeNull();
+        var accountData = request.EndpointContext.GetAccountData();
+        accountData.ShouldNotBeNull();
+        accountData.AuthenticationAccountType.ShouldBe(AccountType.Token);
+    }
+
+    [Fact]
+    public async Task HealthCheck_KubernetesApi_NoAccount_PipelineStillSucceeds()
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedWithNoAccountReferenceAsync();
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        // Pipeline should complete even without an account (no credential wrapping)
+        await AssertTaskStateAsync(TaskState.Success);
+
+        ExecutionCapture.CapturedRequests.ShouldNotBeEmpty();
+        var request = ExecutionCapture.CapturedRequests.First();
+        request.EndpointContext.ShouldNotBeNull();
+    }
+
     // ========================================================================
     // Seeder
     // ========================================================================
+
+    private async Task<int> SeedWithNoAccountReferenceAsync()
+    {
+        var serverTaskId = 0;
+
+        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
+            var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
+            await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
+            await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
+
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step", "Action", "Success").ConfigureAwait(false);
+            await builder.CreateStepPropertiesAsync(step.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
+
+            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Deploy Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
+            await builder.CreateActionPropertiesAsync(action.Id, ("Squid.Action.Script.ScriptBody", "echo 'deploying'"), ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
+
+            var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync("E2E NoAccount Env").ConfigureAwait(false);
+
+            // Machine with NO account reference in endpoint
+            var endpointJson = JsonSerializer.Serialize(new
+            {
+                CommunicationStyle = "KubernetesApi",
+                ClusterUrl = "https://localhost:6443",
+                SkipTlsVerification = "True",
+                Namespace = "default",
+                ResourceReferences = Array.Empty<object>()
+            });
+
+            var machine = new Machine
+            {
+                Name = "No Account Target",
+                IsDisabled = false,
+                Roles = "k8s",
+                EnvironmentIds = environment.Id.ToString(),
+                Endpoint = endpointJson,
+                HealthStatus = MachineHealthStatus.Healthy,
+                SpaceId = 1,
+                Slug = "e2e-noaccount-target"
+            };
+
+            await repository.InsertAsync(machine).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
+
+            var deployment = new Deployment
+            {
+                Name = "E2E NoAccount Deployment",
+                SpaceId = 1,
+                ChannelId = channel.Id,
+                ProjectId = project.Id,
+                ReleaseId = release.Id,
+                EnvironmentId = environment.Id,
+                DeployedBy = 1,
+                CreatedDate = DateTimeOffset.UtcNow,
+                Json = string.Empty
+            };
+
+            await repository.InsertAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var serverTask = new ServerTask
+            {
+                Name = "E2E NoAccount Task",
+                Description = "E2E test pipeline without account",
+                QueueTime = DateTimeOffset.UtcNow,
+                State = TaskState.Pending,
+                ServerTaskType = "Deploy",
+                ProjectId = project.Id,
+                EnvironmentId = environment.Id,
+                SpaceId = 1,
+                LastModifiedDate = DateTimeOffset.UtcNow,
+                BusinessProcessState = "Queued",
+                StateOrder = 1,
+                Weight = 1,
+                BatchId = 0,
+                JSON = string.Empty,
+                HasWarningsOrErrors = false,
+                ServerNodeId = Guid.NewGuid(),
+                DurationSeconds = 0,
+                DataVersion = Array.Empty<byte>()
+            };
+
+            await repository.InsertAsync(serverTask).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            deployment.TaskId = serverTask.Id;
+            await repository.UpdateAsync(deployment).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            serverTaskId = serverTask.Id;
+        }).ConfigureAwait(false);
+
+        return serverTaskId;
+    }
 
     private async Task<int> SeedMultiTargetWithHealthCheckAsync()
     {

@@ -19,6 +19,10 @@ public class RegisterKubernetesApiCommand : ICommand, ISpaceScoped
     public string Namespace { get; set; } = "default";
     public bool SkipTlsVerification { get; set; }
 
+    // Provider
+    public KubernetesApiEndpointProviderType ProviderType { get; set; }
+    public string ProviderConfig { get; set; }
+
     // Resources — at least one required
     public List<EndpointResourceReference> ResourceReferences { get; set; }
 }

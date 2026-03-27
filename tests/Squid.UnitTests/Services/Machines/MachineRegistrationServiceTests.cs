@@ -382,6 +382,62 @@ public class MachineRegistrationServiceTests
     }
 
     // ========================================================================
+    // KubernetesApi Registration — Provider Config
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterKubernetesApi_WithAwsEks_EndpointJsonContainsProviderConfig()
+    {
+        var providerConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-eks", Region = "us-west-2" });
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesApiAsync(new RegisterKubernetesApiCommand
+        {
+            MachineName = "test-eks",
+            ClusterUrl = "https://eks.example.com",
+            SpaceId = 1,
+            ProviderType = Squid.Message.Enums.KubernetesApiEndpointProviderType.AwsEks,
+            ProviderConfig = providerConfig,
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var endpoint = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(captured.Endpoint);
+        endpoint.ProviderType.ShouldBe(Squid.Message.Enums.KubernetesApiEndpointProviderType.AwsEks);
+        endpoint.ProviderConfig.ShouldNotBeNullOrEmpty();
+
+        var awsConfig = JsonSerializer.Deserialize<KubernetesApiAwsEksConfig>(endpoint.ProviderConfig);
+        awsConfig.ClusterName.ShouldBe("my-eks");
+        awsConfig.Region.ShouldBe("us-west-2");
+    }
+
+    [Fact]
+    public async Task RegisterKubernetesApi_WithoutProvider_ProviderTypeIsNone()
+    {
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterKubernetesApiAsync(new RegisterKubernetesApiCommand
+        {
+            MachineName = "test-basic",
+            ClusterUrl = "https://cluster.local",
+            SpaceId = 1,
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var endpoint = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(captured.Endpoint);
+        endpoint.ProviderType.ShouldBe(Squid.Message.Enums.KubernetesApiEndpointProviderType.None);
+        endpoint.ProviderConfig.ShouldBeNull();
+    }
+
+    // ========================================================================
     // Trust Reconfiguration — Agent Registration
     // ========================================================================
 

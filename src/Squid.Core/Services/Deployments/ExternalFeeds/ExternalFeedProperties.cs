@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Json;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds;
 
@@ -46,7 +47,7 @@ public static class ExternalFeedProperties
 
         try
         {
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(feed.Properties)
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(feed.Properties, SquidJsonDefaults.CaseInsensitive)
                    ?? new Dictionary<string, string>();
         }
         catch (JsonException)

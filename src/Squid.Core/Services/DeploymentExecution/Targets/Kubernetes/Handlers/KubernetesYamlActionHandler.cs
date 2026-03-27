@@ -6,6 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -242,7 +243,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         try
         {
             var secrets = JsonSerializer.Deserialize<List<Dictionary<string, string>>>(
-                existingProp.PropertyValue ?? KubernetesJsonLiterals.EmptyArray) ?? new();
+                existingProp.PropertyValue ?? KubernetesJsonLiterals.EmptyArray, SquidJsonDefaults.CaseInsensitive) ?? new();
 
             if (secrets.Any(s => s.TryGetValue(KubernetesImagePullSecretPayloadProperties.Name, out var n) && n == secretName))
                 return;
@@ -335,7 +336,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         try
         {
-            var containers = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(containersProp.PropertyValue);
+            var containers = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(containersProp.PropertyValue, SquidJsonDefaults.CaseInsensitive);
 
             if (containers == null) return;
 

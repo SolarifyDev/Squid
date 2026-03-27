@@ -21,6 +21,14 @@ public class UpdateMachineCommand : ICommand, ISpaceScoped
     public List<int> EnvironmentIds { get; set; }
 
     public int? MachinePolicyId { get; set; }
+
+    // Endpoint (optional — only processed when at least one is set)
+    public string ClusterUrl { get; set; }
+    public string Namespace { get; set; }
+    public bool? SkipTlsVerification { get; set; }
+    public KubernetesApiEndpointProviderType? ProviderType { get; set; }
+    public string ProviderConfig { get; set; }
+    public List<EndpointResourceReference> ResourceReferences { get; set; }
 }
 
 public class UpdateMachineResponse : SquidResponse<MachineDto>

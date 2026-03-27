@@ -490,6 +490,31 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldContain(ShellEscapeHelper.Base64Encode("us-west-2"));
     }
 
+    [Fact]
+    public void WrapWithContext_AwsAuth_CamelCaseProviderConfig_ContainsClusterNameAndRegion()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = """{"clusterName":"smart-ai-cluster","region":"ap-east-1"}"""
+            })
+        };
+        endpoint.SetAccountData(AccountType.AmazonWebServicesAccount,
+            JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIA123", SecretKey = "secret123" }));
+
+        var ctx = new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash };
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("smart-ai-cluster"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("ap-east-1"));
+    }
+
     // === Security — No eval in Bash Template ===
 
     [Fact]
@@ -895,6 +920,113 @@ public class KubernetesApiContextScriptBuilderTests
     public void WrapWithContext_AwsOidc_Bash_NoUnreplacedPlaceholders()
     {
         var result = _builder.WrapWithContext("echo hi", AwsOidcContext());
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === AWS EC2 Instance Role Tests ===
+
+    private static ScriptContext AwsEc2InstanceRoleContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-eks-cluster", Region = "us-west-2", UseInstanceRole = true })
+            })
+        };
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_AwsEc2InstanceRole_AccountTypeOverridden(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEc2InstanceRoleContext(syntax));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("AwsEc2InstanceRole"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("my-eks-cluster"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("us-west-2"));
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsEc2InstanceRole_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEc2InstanceRoleContext());
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    [Fact]
+    public void WrapWithContext_AwsEc2InstanceRole_PowerShell_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEc2InstanceRoleContext(ScriptSyntax.PowerShell));
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    // === AWS Endpoint-Level Assume Role Tests ===
+
+    private static ScriptContext AwsEndpointAssumeRoleContext(ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://eks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AwsEks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig
+                {
+                    ClusterName = "my-eks-cluster",
+                    Region = "us-west-2",
+                    AssumeRoleArn = "arn:aws:iam::123456789:role/deploy-role",
+                    AssumeRoleSessionDuration = "3600",
+                    AssumeRoleExternalId = "ext-id-123"
+                })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AmazonWebServicesAccount,
+            JsonSerializer.Serialize(new AwsCredentials { AccessKey = "AKIA123", SecretKey = "secret123" }));
+
+        return new ScriptContext { Endpoint = endpoint, Syntax = syntax };
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash)]
+    [InlineData(ScriptSyntax.PowerShell)]
+    public void WrapWithContext_EndpointAssumeRole_TemplateContainsRoleArn(ScriptSyntax syntax)
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEndpointAssumeRoleContext(syntax));
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("arn:aws:iam::123456789:role/deploy-role"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("3600"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("ext-id-123"));
+    }
+
+    [Fact]
+    public void WrapWithContext_EndpointAssumeRole_Bash_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEndpointAssumeRoleContext());
+
+        result.ShouldNotContain("{{");
+        result.ShouldNotContain("}}");
+    }
+
+    [Fact]
+    public void WrapWithContext_EndpointAssumeRole_PowerShell_NoUnreplacedPlaceholders()
+    {
+        var result = _builder.WrapWithContext("echo hi", AwsEndpointAssumeRoleContext(ScriptSyntax.PowerShell));
 
         result.ShouldNotContain("{{");
         result.ShouldNotContain("}}");

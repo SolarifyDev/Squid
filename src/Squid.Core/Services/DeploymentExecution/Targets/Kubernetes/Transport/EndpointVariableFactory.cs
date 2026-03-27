@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -20,7 +21,7 @@ public static class EndpointVariableFactory
     {
         if (string.IsNullOrEmpty(json)) return null;
 
-        try { return JsonSerializer.Deserialize<T>(json); }
+        try { return JsonSerializer.Deserialize<T>(json, SquidJsonDefaults.CaseInsensitive); }
         catch { return null; }
     }
 }

@@ -34,6 +34,8 @@ public class K8sTestDataSeeder
         string communicationStyle = "KubernetesApi",
         string agentSubscriptionId = null,
         string agentThumbprint = null,
+        AccountType accountType = AccountType.Token,
+        object credentials = null,
         CancellationToken ct = default)
     {
         var variableSet = await _builder.CreateVariableSetAsync().ConfigureAwait(false);
@@ -99,7 +101,7 @@ public class K8sTestDataSeeder
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
         if (communicationStyle != "KubernetesAgent")
-            await CreateAccountAsync(ct).ConfigureAwait(false);
+            await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
 
         var feed = new ExternalFeed
         {
@@ -230,21 +232,30 @@ public class K8sTestDataSeeder
         };
     }
 
-    private async Task CreateAccountAsync(CancellationToken ct)
+    private async Task CreateAccountAsync(AccountType accountType, object credentials, CancellationToken ct)
     {
+        var creds = credentials ?? DefaultCredentials(accountType);
+
         var account = new DeploymentAccount
         {
             SpaceId = 1,
             Name = "E2E K8s Account",
             Slug = "e2e-k8s-account",
-            AccountType = AccountType.Token,
-            Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                new TokenCredentials { Token = "e2e-test-token" })
+            AccountType = accountType,
+            Credentials = DeploymentAccountCredentialsConverter.Serialize(creds)
         };
 
         await _repository.InsertAsync(account, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
+
+    private static object DefaultCredentials(AccountType accountType) => accountType switch
+    {
+        AccountType.Token => new TokenCredentials { Token = "e2e-test-token" },
+        AccountType.UsernamePassword => new UsernamePasswordCredentials { Username = "admin", Password = "s3cret" },
+        AccountType.ClientCertificate => new ClientCertificateCredentials { ClientCertificateData = "LS0tLS1CRUdJTg==", ClientCertificateKeyData = "LS0tLS1CRUdJTktFWQ==" },
+        _ => new TokenCredentials { Token = "e2e-test-token" }
+    };
 
     private static string BuildContainerJson(bool createFeedSecrets)
     {

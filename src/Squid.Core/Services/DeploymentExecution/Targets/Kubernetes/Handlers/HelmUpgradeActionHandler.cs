@@ -5,6 +5,7 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -223,7 +224,7 @@ public class HelmUpgradeActionHandler : IActionHandler
     {
         try
         {
-            var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources);
+            var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources, SquidJsonDefaults.CaseInsensitive);
 
             if (sources == null) return;
 
@@ -245,7 +246,7 @@ public class HelmUpgradeActionHandler : IActionHandler
                 }
                 else if (string.Equals(source.Type, "KeyValues", StringComparison.OrdinalIgnoreCase))
                 {
-                    var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(source.Value);
+                    var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(source.Value, SquidJsonDefaults.CaseInsensitive);
 
                     if (keyValues == null) continue;
 
@@ -270,7 +271,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
         try
         {
-            var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(keyValuesRaw);
+            var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(keyValuesRaw, SquidJsonDefaults.CaseInsensitive);
 
             if (keyValues == null) return string.Empty;
 

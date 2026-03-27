@@ -738,6 +738,95 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
+    // EndpointContext content & syntax verification
+    // ========================================================================
+
+    [Fact]
+    public async Task ManualHealthCheck_PassesEndpointContextToExecutionRequest()
+    {
+        var expectedContext = new EndpointContext { EndpointJson = """{"communicationStyle":"KubernetesApi"}""" };
+        expectedContext.SetAccountData(AccountType.Token, """{"token":"test-token"}""");
+
+        _endpointContextBuilder.Setup(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedContext);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.EndpointContext.ShouldBe(expectedContext);
+        capturedRequest.EndpointContext.GetAccountData().ShouldNotBeNull();
+        capturedRequest.EndpointContext.GetAccountData().AuthenticationAccountType.ShouldBe(AccountType.Token);
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_PassesSyntaxFromHealthChecker()
+    {
+        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.PowerShell);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_ScriptWrapperReceivesCorrectSyntax()
+    {
+        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.PowerShell);
+
+        ScriptContext capturedScriptContext = null;
+        var scriptWrapper = new Mock<IScriptContextWrapper>();
+        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
+            .Callback<string, ScriptContext>((_, ctx) => capturedScriptContext = ctx)
+            .Returns((string s, ScriptContext _) => s);
+        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
+
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        capturedScriptContext.ShouldNotBeNull();
+        capturedScriptContext.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task AutoHealthCheck_BuilderCalledPerMachine()
+    {
+        var machine1 = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        var machine2 = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        machine1.Id = 1;
+        machine1.Name = "machine1";
+        machine2.Id = 2;
+        machine2.Name = "machine2";
+
+        SetupMachineList(machine1, machine2);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        _endpointContextBuilder.Verify(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 

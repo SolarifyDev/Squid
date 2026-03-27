@@ -73,6 +73,9 @@ try {
         "AmazonWebServicesAccount" {
             $awsClusterName = B64D "{{AwsClusterName}}"
             $awsRegion = B64D "{{AwsRegion}}"
+            if ([string]::IsNullOrEmpty($awsClusterName) -or [string]::IsNullOrEmpty($awsRegion)) {
+                throw "AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)"
+            }
             $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-aws-$([Guid]::NewGuid().ToString('N'))")
             [System.IO.File]::WriteAllText($credFile, (B64D "{{SecretKey}}"))
             $env:AWS_ACCESS_KEY_ID = B64D "{{AccessKey}}"
@@ -83,9 +86,40 @@ try {
                 --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$awsClusterName" --exec-arg="--region" --exec-arg="$awsRegion"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
+        "AmazonWebServicesRoleAccount" {
+            $awsClusterName = B64D "{{AwsClusterName}}"
+            $awsRegion = B64D "{{AwsRegion}}"
+            if ([string]::IsNullOrEmpty($awsClusterName) -or [string]::IsNullOrEmpty($awsRegion)) {
+                throw "AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)"
+            }
+            $awsRoleArn = B64D "{{AwsAssumeRoleArn}}"
+            $awsSessionDuration = B64D "{{AwsAssumeRoleSessionDuration}}"
+            $awsExternalId = B64D "{{AwsAssumeRoleExternalId}}"
+            $credFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cred-aws-$([Guid]::NewGuid().ToString('N'))")
+            [System.IO.File]::WriteAllText($credFile, (B64D "{{SecretKey}}"))
+            $env:AWS_ACCESS_KEY_ID = B64D "{{AccessKey}}"
+            $env:AWS_SECRET_ACCESS_KEY = [System.IO.File]::ReadAllText($credFile).Trim()
+            $assumeArgs = @("sts", "assume-role", "--role-arn", $awsRoleArn, "--role-session-name", "squid-deploy")
+            if ($awsSessionDuration -ne "") { $assumeArgs += @("--duration-seconds", $awsSessionDuration) }
+            if ($awsExternalId -ne "") { $assumeArgs += @("--external-id", $awsExternalId) }
+            $assumedJson = & aws @assumeArgs
+            if ($LASTEXITCODE -ne 0) { throw "aws sts assume-role failed" }
+            $assumed = $assumedJson | ConvertFrom-Json
+            $env:AWS_ACCESS_KEY_ID = $assumed.Credentials.AccessKeyId
+            $env:AWS_SECRET_ACCESS_KEY = $assumed.Credentials.SecretAccessKey
+            $env:AWS_SESSION_TOKEN = $assumed.Credentials.SessionToken
+            & $kubectlExe config set-credentials $userName `
+                --exec-api-version=client.authentication.k8s.io/v1beta1 `
+                --exec-command=aws `
+                --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$awsClusterName" --exec-arg="--region" --exec-arg="$awsRegion"
+            if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
+        }
         "AmazonWebServicesOidcAccount" {
             $awsClusterName = B64D "{{AwsClusterName}}"
             $awsRegion = B64D "{{AwsRegion}}"
+            if ([string]::IsNullOrEmpty($awsClusterName) -or [string]::IsNullOrEmpty($awsRegion)) {
+                throw "AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)"
+            }
             $awsRoleArn = B64D "{{AwsRoleArn}}"
             $awsWebIdentityFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "aws-token-$([Guid]::NewGuid().ToString('N'))")
             [System.IO.File]::WriteAllText($awsWebIdentityFile, (B64D "{{AwsWebIdentityToken}}"))
@@ -98,6 +132,18 @@ try {
                 --exec-arg="--cluster-name" --exec-arg="$awsClusterName" `
                 --exec-arg="--region" --exec-arg="$awsRegion" `
                 --exec-arg="--role-arn" --exec-arg="$awsRoleArn"
+            if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
+        }
+        "AwsEc2InstanceRole" {
+            $awsClusterName = B64D "{{AwsClusterName}}"
+            $awsRegion = B64D "{{AwsRegion}}"
+            if ([string]::IsNullOrEmpty($awsClusterName) -or [string]::IsNullOrEmpty($awsRegion)) {
+                throw "AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)"
+            }
+            & $kubectlExe config set-credentials $userName `
+                --exec-api-version=client.authentication.k8s.io/v1beta1 `
+                --exec-command=aws `
+                --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$awsClusterName" --exec-arg="--region" --exec-arg="$awsRegion"
             if ($LASTEXITCODE -ne 0) { throw "kubectl config set-credentials failed" }
         }
         "AzureServicePrincipal" {
@@ -156,6 +202,23 @@ try {
             & gcloud @gkeArgs
             if ($LASTEXITCODE -ne 0) { throw "gcloud get-credentials failed" }
         }
+    }
+
+    # --- Endpoint-level role assumption (applies after any AWS auth method) ---
+    $awsEpRoleArn = B64D "{{AwsEndpointAssumeRoleArn}}"
+    if ($awsEpRoleArn -ne "") {
+        $awsEpSessionDuration = B64D "{{AwsEndpointAssumeRoleSessionDuration}}"
+        $awsEpExternalId = B64D "{{AwsEndpointAssumeRoleExternalId}}"
+        $assumeArgs = @("sts", "assume-role", "--role-arn", $awsEpRoleArn, "--role-session-name", "squid-deploy")
+        if ($awsEpSessionDuration -ne "") { $assumeArgs += @("--duration-seconds", $awsEpSessionDuration) }
+        if ($awsEpExternalId -ne "") { $assumeArgs += @("--external-id", $awsEpExternalId) }
+        Write-Host "Assuming endpoint-level AWS role: $awsEpRoleArn"
+        $assumedJson = & aws @assumeArgs
+        if ($LASTEXITCODE -ne 0) { throw "aws sts assume-role failed for endpoint role" }
+        $assumed = $assumedJson | ConvertFrom-Json
+        $env:AWS_ACCESS_KEY_ID = $assumed.Credentials.AccessKeyId
+        $env:AWS_SECRET_ACCESS_KEY = $assumed.Credentials.SecretAccessKey
+        $env:AWS_SESSION_TOKEN = $assumed.Credentials.SessionToken
     }
 
     # --- Proxy configuration ---

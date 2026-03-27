@@ -4,6 +4,10 @@ public class KubernetesApiAwsEksConfig
 {
     public string ClusterName { get; set; }
     public string Region { get; set; }
+    public bool UseInstanceRole { get; set; }
+    public string AssumeRoleArn { get; set; }
+    public string AssumeRoleSessionDuration { get; set; }
+    public string AssumeRoleExternalId { get; set; }
 }
 
 public class KubernetesApiAzureAksConfig

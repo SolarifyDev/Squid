@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Mediator.Net.Pipeline;
 using Squid.Core.Services.Caching;
+using Squid.Message.Json;
 using Squid.Message.Requests;
 
 namespace Squid.Core.Middlewares.RequestCaching;
@@ -31,7 +32,7 @@ public class RequestCachingSpecification<TContext> : IPipeSpecification<TContext
 
         if (!string.IsNullOrEmpty(cachedJson))
         {
-            context.Result = JsonSerializer.Deserialize(cachedJson, context.ResultDataType);
+            context.Result = JsonSerializer.Deserialize(cachedJson, context.ResultDataType, SquidJsonDefaults.CaseInsensitive);
             
             Log.Information("Request result from cached. Cache key: {CacheKey}, Result type: {ResultType}", cacheKey, context.ResultDataType.Name);
             
