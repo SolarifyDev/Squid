@@ -560,6 +560,132 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldContain("path: \"/var/log\"");
     }
 
+    // === LinkedResource volume resolution ===
+
+    [Fact]
+    public async Task Generate_VolumeLinkedConfigMap_ResolvesFromStepConfigMapName()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"cfg-vol","Type":"ConfigMap","ReferenceName":"","ResourceNameMode":"LinkedResource"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- name: \"cfg-vol\"");
+        yaml.ShouldContain("configMap:");
+        yaml.ShouldContain("name: \"my-config\"");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeLinkedConfigMap_WithSuffix_ResolvesAndAppendsSuffix()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        Add(action, "Squid.Internal.DeploymentIdSuffix", "deployments-42");
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"cfg-vol","Type":"ConfigMap","ReferenceName":"","ResourceNameMode":"LinkedResource"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("name: \"my-config-deployments-42\"");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeCustomResource_UsesExplicitReferenceName()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.ConfigMapName", "step-config");
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"ext-vol","Type":"ConfigMap","ReferenceName":"external-cm","ResourceNameMode":"CustomResource"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("name: \"external-cm\"");
+        yaml.ShouldNotContain("step-config");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeLinkedConfigMap_NoConfigMapName_SkipsVolume()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"cfg-vol","Type":"ConfigMap","ReferenceName":"","ResourceNameMode":"LinkedResource"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- name: \"cfg-vol\"");
+        yaml.ShouldNotContain("configMap:");
+    }
+
+    // === ConfigMap volume Items ===
+
+    [Fact]
+    public async Task Generate_VolumeConfigMapWithItems_GeneratesItemsSection()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"cfg-vol","Type":"ConfigMap","ReferenceName":"my-cm","Items":[{"key":".env","path":".env"},{"key":"config.json","path":"app/config.json"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("configMap:");
+        yaml.ShouldContain("name: \"my-cm\"");
+        yaml.ShouldContain("items:");
+        yaml.ShouldContain("- key: \".env\"");
+        yaml.ShouldContain("path: \".env\"");
+        yaml.ShouldContain("- key: \"config.json\"");
+        yaml.ShouldContain("path: \"app/config.json\"");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeConfigMapWithoutItems_OmitsItemsSection()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"cfg-vol","Type":"ConfigMap","ReferenceName":"my-cm"}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("configMap:");
+        yaml.ShouldContain("name: \"my-cm\"");
+        yaml.ShouldNotContain("items:");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeSecretWithItems_GeneratesItemsSection()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"secret-vol","Type":"Secret","ReferenceName":"my-secret","Items":[{"key":"tls.crt","path":"cert.pem"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("secret:");
+        yaml.ShouldContain("secretName: \"my-secret\"");
+        yaml.ShouldContain("items:");
+        yaml.ShouldContain("- key: \"tls.crt\"");
+        yaml.ShouldContain("path: \"cert.pem\"");
+    }
+
+    [Fact]
+    public async Task Generate_VolumeLinkedConfigMapWithItems_ResolvesNameAndIncludesItems()
+    {
+        var (step, action) = CreateMinimal();
+        Add(action, "Squid.Action.KubernetesContainers.ConfigMapName", "configurations-squidweb");
+        Add(action, "Squid.Action.KubernetesContainers.CombinedVolumes",
+            """[{"Name":"squidweb-env","Type":"ConfigMap","ReferenceName":"","ResourceNameMode":"LinkedResource","Items":[{"key":".env","path":".env"}]}]""");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("- name: \"squidweb-env\"");
+        yaml.ShouldContain("configMap:");
+        yaml.ShouldContain("name: \"configurations-squidweb\"");
+        yaml.ShouldContain("items:");
+        yaml.ShouldContain("- key: \".env\"");
+        yaml.ShouldContain("path: \".env\"");
+    }
+
     // === JSON passthrough formatting (tolerations, affinity, hostAliases) ===
 
     [Fact]

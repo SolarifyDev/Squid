@@ -322,11 +322,13 @@ internal static class PodTemplateYamlBuilder
         {
             sb.AppendLine($"{indent}configMap:");
             sb.AppendLine($"{indent}  name: {YamlSafeScalar.Escape(volume.ConfigMapName)}");
+            AppendVolumeItems(sb, indent, volume.Items);
         }
         else if (!string.IsNullOrWhiteSpace(volume.SecretName))
         {
             sb.AppendLine($"{indent}secret:");
             sb.AppendLine($"{indent}  secretName: {YamlSafeScalar.Escape(volume.SecretName)}");
+            AppendVolumeItems(sb, indent, volume.Items);
         }
         else if (volume.EmptyDir)
         {
@@ -341,6 +343,21 @@ internal static class PodTemplateYamlBuilder
         {
             sb.AppendLine($"{indent}hostPath:");
             sb.AppendLine($"{indent}  path: {YamlSafeScalar.Escape(volume.HostPath)}");
+        }
+    }
+
+    private static void AppendVolumeItems(StringBuilder sb, string indent, List<VolumeItemSpec>? items)
+    {
+        if (items is not { Count: > 0 }) return;
+
+        sb.AppendLine($"{indent}  items:");
+
+        foreach (var item in items)
+        {
+            sb.AppendLine($"{indent}  - key: {YamlSafeScalar.Escape(item.Key)}");
+
+            if (!string.IsNullOrWhiteSpace(item.Path))
+                sb.AppendLine($"{indent}    path: {YamlSafeScalar.Escape(item.Path)}");
         }
     }
 
