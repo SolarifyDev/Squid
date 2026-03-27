@@ -38,6 +38,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         var properties = KubernetesPropertyParser.BuildPropertyDictionary(action);
 
         NormalizeDeploymentName(action, properties);
+        ResolveLinkedVolumeReferences(properties);
         AppendDeploymentIdToResourceNames(properties);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -78,6 +79,54 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         if (!properties.TryGetValue(key, out var name) || string.IsNullOrWhiteSpace(name))
             properties[key] = action.Name;
+    }
+
+    private static void ResolveLinkedVolumeReferences(Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue(KubernetesProperties.CombinedVolumes, out var json) || string.IsNullOrWhiteSpace(json))
+            return;
+
+        var configMapName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.ConfigMapName);
+        var secretName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretName);
+
+        try
+        {
+            var volumes = JsonNode.Parse(json)?.AsArray();
+            if (volumes == null) return;
+
+            var modified = false;
+
+            foreach (var volume in volumes)
+            {
+                if (volume == null) continue;
+
+                var mode = volume[KubernetesVolumePayloadProperties.ResourceNameMode]?.GetValue<string>();
+                if (!string.Equals(mode, KubernetesVolumeResourceNameModes.LinkedResource, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var refName = volume[KubernetesVolumePayloadProperties.ReferenceName]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(refName))
+                    continue;
+
+                var type = volume[KubernetesVolumePayloadProperties.Type]?.GetValue<string>();
+                string resolvedName = null;
+
+                if (string.Equals(type, KubernetesVolumeTypeValues.ConfigMap, StringComparison.OrdinalIgnoreCase))
+                    resolvedName = configMapName;
+                else if (string.Equals(type, KubernetesVolumeTypeValues.Secret, StringComparison.OrdinalIgnoreCase))
+                    resolvedName = secretName;
+
+                if (string.IsNullOrWhiteSpace(resolvedName))
+                    continue;
+
+                volume[KubernetesVolumePayloadProperties.ReferenceName] = resolvedName;
+                modified = true;
+            }
+
+            if (modified)
+                properties[KubernetesProperties.CombinedVolumes] = volumes.ToJsonString();
+        }
+        catch { /* malformed JSON — skip resolution */ }
     }
 
     private static void AppendDeploymentIdToResourceNames(Dictionary<string, string> properties)

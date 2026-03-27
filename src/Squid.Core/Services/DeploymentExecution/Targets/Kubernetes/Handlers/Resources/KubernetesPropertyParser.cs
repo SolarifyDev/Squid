@@ -230,9 +230,15 @@ internal static class KubernetesPropertyParser
                 var volume = new VolumeSpec { Name = name };
 
                 if (string.Equals(type, KubernetesVolumeTypeValues.ConfigMap, StringComparison.OrdinalIgnoreCase))
+                {
                     volume.ConfigMapName = referenceName;
+                    volume.Items = ParseVolumeItems(element);
+                }
                 else if (string.Equals(type, KubernetesVolumeTypeValues.Secret, StringComparison.OrdinalIgnoreCase))
+                {
                     volume.SecretName = referenceName;
+                    volume.Items = ParseVolumeItems(element);
+                }
                 else if (string.Equals(type, KubernetesVolumeTypeValues.EmptyDir, StringComparison.OrdinalIgnoreCase))
                     volume.EmptyDir = true;
                 else if (string.Equals(type, KubernetesVolumeTypeValues.PersistentVolumeClaim, StringComparison.OrdinalIgnoreCase))
@@ -249,6 +255,25 @@ internal static class KubernetesPropertyParser
         }
 
         return result;
+    }
+
+    private static List<VolumeItemSpec>? ParseVolumeItems(JsonElement element)
+    {
+        if (!element.TryGetProperty(KubernetesVolumePayloadProperties.Items, out var itemsProp) || itemsProp.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var items = new List<VolumeItemSpec>();
+
+        foreach (var item in itemsProp.EnumerateArray())
+        {
+            var key = item.TryGetProperty(KubernetesVolumeItemPayloadProperties.Key, out var k) ? k.GetString() ?? string.Empty : string.Empty;
+            var path = item.TryGetProperty(KubernetesVolumeItemPayloadProperties.Path, out var p) ? p.GetString() ?? string.Empty : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(key))
+                items.Add(new VolumeItemSpec { Key = key, Path = path });
+        }
+
+        return items.Count > 0 ? items : null;
     }
 
     private static string GetFirstImagePropertyFromContainer(JsonElement containerElement)
@@ -1235,6 +1260,13 @@ internal sealed class VolumeSpec
     public bool EmptyDir { get; set; }
     public string? PvcClaimName { get; set; }
     public string? HostPath { get; set; }
+    public List<VolumeItemSpec>? Items { get; set; }
+}
+
+internal sealed class VolumeItemSpec
+{
+    public string Key { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
 }
 
 internal sealed class ProbeSpec

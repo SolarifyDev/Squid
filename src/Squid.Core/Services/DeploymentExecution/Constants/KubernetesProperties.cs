@@ -282,6 +282,20 @@ internal static class KubernetesVolumePayloadProperties
     internal const string Name = "Name";
     internal const string Type = "Type";
     internal const string ReferenceName = "ReferenceName";
+    internal const string ResourceNameMode = "ResourceNameMode";
+    internal const string Items = "Items";
+}
+
+internal static class KubernetesVolumeResourceNameModes
+{
+    internal const string LinkedResource = "LinkedResource";
+    internal const string CustomResource = "CustomResource";
+}
+
+internal static class KubernetesVolumeItemPayloadProperties
+{
+    internal const string Key = "key";
+    internal const string Path = "path";
 }
 
 /// <summary>
