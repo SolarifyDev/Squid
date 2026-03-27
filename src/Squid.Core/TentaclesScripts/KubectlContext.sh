@@ -4,7 +4,7 @@ umask 077
 b64d() { echo -n "$1" | base64 --decode; }
 
 # --- Configure kubectl context ---
-KUBECONFIG_PATH="$(mktemp /tmp/kubectl-config-XXXXXX.yaml)"
+KUBECONFIG_PATH="$(mktemp /tmp/kubectl-config-XXXXXX)"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
 KUBECTL_EXE="$(b64d '{{KubectlExe}}')"
@@ -51,7 +51,7 @@ fi
 
 CLUSTER_CERTIFICATE="$(b64d '{{ClusterCertificate}}')"
 if [ -n "$CLUSTER_CERTIFICATE" ]; then
-    CERT_PATH="$(mktemp /tmp/ca-cert-XXXXXX.pem)"
+    CERT_PATH="$(mktemp /tmp/ca-cert-XXXXXX)"
     echo "$CLUSTER_CERTIFICATE" > "$CERT_PATH"
     CLUSTER_CMD+=("--certificate-authority=$CERT_PATH")
 fi
@@ -78,8 +78,8 @@ case "$ACCOUNT_TYPE" in
     "ClientCertificate")
         CLIENT_CERT="$(b64d '{{ClientCertificateData}}')"
         CLIENT_KEY="$(b64d '{{ClientCertificateKeyData}}')"
-        CLIENT_CERT_PATH="$(mktemp /tmp/client-cert-XXXXXX.pem)"
-        CLIENT_KEY_PATH="$(mktemp /tmp/client-key-XXXXXX.pem)"
+        CLIENT_CERT_PATH="$(mktemp /tmp/client-cert-XXXXXX)"
+        CLIENT_KEY_PATH="$(mktemp /tmp/client-key-XXXXXX)"
         echo "$CLIENT_CERT" > "$CLIENT_CERT_PATH"
         echo "$CLIENT_KEY" > "$CLIENT_KEY_PATH"
         "$KUBECTL_EXE" config set-credentials "$USER_NAME" --client-certificate="$CLIENT_CERT_PATH" --client-key="$CLIENT_KEY_PATH" \
@@ -178,7 +178,7 @@ case "$ACCOUNT_TYPE" in
         fi
         ;;
     "GoogleCloudAccount")
-        GKE_KEY_FILE="$(mktemp /tmp/gcp-key-XXXXXX.json)"
+        GKE_KEY_FILE="$(mktemp /tmp/gcp-key-XXXXXX)"
         b64d '{{GcpJsonKey}}' > "$GKE_KEY_FILE"
         gcloud auth activate-service-account --key-file="$GKE_KEY_FILE" \
             || { echo "ERROR: gcloud auth failed" >&2; exit 1; }

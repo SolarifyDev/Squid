@@ -27,14 +27,26 @@ RUN HELM_VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/la
     chmod +x /usr/local/bin/helm && \
     rm -rf linux-${HARCH}
 
+# Download AWS CLI v2 matching target architecture
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* && \
+    if [ "$TARGETARCH" = "amd64" ]; then AWSARCH="x86_64"; else AWSARCH="aarch64"; fi && \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWSARCH}.zip" -o /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install --install-dir /opt/aws-cli --bin-dir /usr/local/bin && \
+    rm -rf /tmp/awscliv2.zip /tmp/aws
+
 # Runtime
 FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends groff less && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=build /app .
 COPY --from=build /calamari/ /squid/bin/
 COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=build /usr/local/bin/helm /usr/local/bin/helm
+COPY --from=build /opt/aws-cli /opt/aws-cli
+COPY --from=build /usr/local/bin/aws /usr/local/bin/aws
 
 EXPOSE 8080
 EXPOSE 443
