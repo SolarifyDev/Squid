@@ -167,7 +167,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         try
         {
-            using var doc = JsonDocument.Parse(containersProp.PropertyValue);
+            using var doc = KubernetesPropertyParser.SafeParseJson(containersProp.PropertyValue);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return new List<int>();
 
@@ -200,7 +200,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         try
         {
-            using var doc = JsonDocument.Parse(containersProp.PropertyValue);
+            using var doc = KubernetesPropertyParser.SafeParseJson(containersProp.PropertyValue);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return false;
 

@@ -16,7 +16,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 
         try
         {
-            using var doc = JsonDocument.Parse(rulesJson);
+            using var doc = KubernetesPropertyParser.SafeParseJson(rulesJson);
             return doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0;
         }
         catch
@@ -77,7 +77,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
     {
         try
         {
-            using var doc = JsonDocument.Parse(rulesJson);
+            using var doc = KubernetesPropertyParser.SafeParseJson(rulesJson);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return;
@@ -173,7 +173,7 @@ internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
     {
         try
         {
-            using var doc = JsonDocument.Parse(tlsJson);
+            using var doc = KubernetesPropertyParser.SafeParseJson(tlsJson);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return;

@@ -454,7 +454,7 @@ internal static class PodTemplateYamlBuilder
     {
         try
         {
-            using var doc = JsonDocument.Parse(raw);
+            using var doc = KubernetesPropertyParser.SafeParseJson(raw);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return raw;
@@ -545,7 +545,7 @@ internal static class PodTemplateYamlBuilder
         {
             try
             {
-                using var doc = JsonDocument.Parse(nodeAffinityRaw!);
+                using var doc = KubernetesPropertyParser.SafeParseJson(nodeAffinityRaw!);
                 sb.AppendLine($"{innerIndent}nodeAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, $"{innerIndent}  ", doc.RootElement);
             }
@@ -559,7 +559,7 @@ internal static class PodTemplateYamlBuilder
         {
             try
             {
-                using var doc = JsonDocument.Parse(podAffinityRaw!);
+                using var doc = KubernetesPropertyParser.SafeParseJson(podAffinityRaw!);
                 sb.AppendLine($"{innerIndent}podAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, $"{innerIndent}  ", doc.RootElement);
             }
@@ -573,7 +573,7 @@ internal static class PodTemplateYamlBuilder
         {
             try
             {
-                using var doc = JsonDocument.Parse(podAntiAffinityRaw!);
+                using var doc = KubernetesPropertyParser.SafeParseJson(podAntiAffinityRaw!);
                 sb.AppendLine($"{innerIndent}podAntiAffinity:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, $"{innerIndent}  ", doc.RootElement);
             }
@@ -624,7 +624,7 @@ internal static class PodTemplateYamlBuilder
         {
             try
             {
-                using var doc = JsonDocument.Parse(optionsRaw);
+                using var doc = KubernetesPropertyParser.SafeParseJson(optionsRaw);
                 sb.AppendLine($"{innerIndent}options:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, $"{innerIndent}  ", doc.RootElement);
             }
@@ -705,7 +705,7 @@ internal static class PodTemplateYamlBuilder
         {
             try
             {
-                using var doc = JsonDocument.Parse(sysctlsRaw);
+                using var doc = KubernetesPropertyParser.SafeParseJson(sysctlsRaw);
                 sb.AppendLine($"{innerIndent}sysctls:");
                 KubernetesPropertyParser.AppendJsonElementYaml(sb, $"{innerIndent}  ", doc.RootElement);
             }
@@ -731,7 +731,7 @@ internal static class PodTemplateYamlBuilder
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
+            using var doc = KubernetesPropertyParser.SafeParseJson(raw);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return;
@@ -763,7 +763,7 @@ internal static class PodTemplateYamlBuilder
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
+            using var doc = KubernetesPropertyParser.SafeParseJson(raw);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return;

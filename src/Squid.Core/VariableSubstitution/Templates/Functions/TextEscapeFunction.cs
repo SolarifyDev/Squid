@@ -62,11 +62,11 @@ namespace Squid.Core.VariableSubstitution.Templates.Functions
 
         static readonly IDictionary<char, string> JsonEntityMap = new Dictionary<char, string>
         {
+            { '\\', "\\\\" },
             { '\"', "\\\"" },
-            { '\r', "\\\r" },
-            { '\t', "\\\t" },
-            { '\n', "\\\n" },
-            { '\\', "\\\\" }
+            { '\r', "\\r" },
+            { '\t', "\\t" },
+            { '\n', "\\n" }
         };
     }
 }
