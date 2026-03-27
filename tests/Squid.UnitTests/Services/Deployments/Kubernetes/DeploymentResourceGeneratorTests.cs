@@ -2007,6 +2007,35 @@ public class DeploymentResourceGeneratorTests
         yaml.ShouldNotContain("annotations:");
     }
 
+    [Fact]
+    public async Task Generate_PodAnnotations_WithLiteralNewlineInValue_ParsedSuccessfully()
+    {
+        var (step, action) = CreateMinimal();
+        // Simulate variable expansion injecting a literal newline into a JSON string value
+        Add(action, "Squid.Action.KubernetesContainers.PodAnnotations",
+            "[{\"key\":\"my-annotation\",\"value\":\"line1\nline2\"}]");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("annotations:");
+        yaml.ShouldContain("my-annotation");
+    }
+
+    [Fact]
+    public async Task Generate_EnvironmentVariable_WithLiteralNewlineInValue_ParsedSuccessfully()
+    {
+        var (step, action) = CreateMinimal();
+        action.Properties.RemoveAll(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
+        // Simulate variable expansion injecting a literal newline into env var value
+        Add(action, "Squid.Action.KubernetesContainers.Containers",
+            "[{\"Name\":\"app\",\"Image\":\"nginx:latest\",\"EnvironmentVariables\":[{\"key\":\"CONFIG\",\"value\":\"line1\nline2\"}]}]");
+
+        var yaml = await GetDeploymentYaml(step, action);
+
+        yaml.ShouldContain("env:");
+        yaml.ShouldContain("- name: \"CONFIG\"");
+    }
+
     // === DNS config: options standalone ===
 
     [Fact]

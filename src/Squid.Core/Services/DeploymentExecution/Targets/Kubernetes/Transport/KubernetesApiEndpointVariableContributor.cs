@@ -126,7 +126,7 @@ public class KubernetesApiEndpointVariableContributor : IEndpointVariableContrib
 
             try
             {
-                using var doc = JsonDocument.Parse(containersJson);
+                using var doc = KubernetesPropertyParser.SafeParseJson(containersJson);
 
                 if (doc.RootElement.ValueKind != JsonValueKind.Array) continue;
 

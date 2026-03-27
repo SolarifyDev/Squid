@@ -71,7 +71,7 @@ internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
     {
         var result = new Dictionary<string, string>();
 
-        using var doc = JsonDocument.Parse(json);
+        using var doc = KubernetesPropertyParser.SafeParseJson(json);
 
         if (doc.RootElement.ValueKind == JsonValueKind.Array)
         {

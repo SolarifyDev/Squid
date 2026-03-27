@@ -52,7 +52,7 @@ internal static class KubernetesPropertyParser
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
+            using var doc = SafeParseJson(raw);
 
             if (doc.RootElement.ValueKind == JsonValueKind.Array)
             {
@@ -107,7 +107,7 @@ internal static class KubernetesPropertyParser
 
         try
         {
-            using var doc = JsonDocument.Parse(portsJson);
+            using var doc = SafeParseJson(portsJson);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return result;
@@ -157,7 +157,7 @@ internal static class KubernetesPropertyParser
 
         try
         {
-            using var doc = JsonDocument.Parse(containersJson);
+            using var doc = SafeParseJson(containersJson);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return result;
@@ -213,7 +213,7 @@ internal static class KubernetesPropertyParser
 
         try
         {
-            using var doc = JsonDocument.Parse(combinedVolumesJson);
+            using var doc = SafeParseJson(combinedVolumesJson);
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 return result;
@@ -1042,7 +1042,7 @@ internal static class KubernetesPropertyParser
 
         try
         {
-            using var doc = JsonDocument.Parse(raw);
+            using var doc = SafeParseJson(raw);
 
             sb.Append(indent);
             sb.AppendLine($"{key}:");
@@ -1161,6 +1161,64 @@ internal static class KubernetesPropertyParser
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// Parses a JSON string that may contain literal control characters (newline, carriage return, tab)
+    /// inside string values — typically caused by variable expansion injecting multi-line values
+    /// into JSON property strings. Escapes these characters before parsing.
+    /// </summary>
+    internal static JsonDocument SafeParseJson(string json)
+    {
+        return JsonDocument.Parse(EscapeControlCharsInJsonStrings(json));
+    }
+
+    internal static string EscapeControlCharsInJsonStrings(string json)
+    {
+        if (string.IsNullOrEmpty(json) || (!json.Contains('\n') && !json.Contains('\r') && !json.Contains('\t')))
+            return json;
+
+        var sb = new StringBuilder(json.Length + 16);
+        var inString = false;
+        var prevBackslash = false;
+
+        foreach (var c in json)
+        {
+            if (prevBackslash)
+            {
+                sb.Append(c);
+                prevBackslash = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                sb.Append(c);
+                prevBackslash = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                sb.Append(c);
+                continue;
+            }
+
+            if (inString)
+            {
+                switch (c)
+                {
+                    case '\n': sb.Append("\\n"); continue;
+                    case '\r': sb.Append("\\r"); continue;
+                    case '\t': sb.Append("\\t"); continue;
+                }
+            }
+
+            sb.Append(c);
+        }
+
+        return sb.ToString();
     }
 
     private static void AppendObjectArrayItem(StringBuilder sb, string indent, JsonElement obj)
