@@ -149,18 +149,21 @@ public class HelmUpgradeActionHandler : IActionHandler
         var sb = new StringBuilder();
         sb.AppendLine($"SQUID_REPO_URL=\"$(b64d '{B64(feed.FeedUri)}')\"");
 
+        sb.AppendLine("echo \"Adding Helm repo: $SQUID_REPO_URL\"");
+
         if (hasCredentials)
         {
             sb.AppendLine($"SQUID_REPO_USER=\"$(b64d '{B64(feed.Username)}')\"");
             sb.AppendLine($"SQUID_REPO_PASS=\"$(b64d '{B64(feed.Password)}')\"");
-            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --username \"$SQUID_REPO_USER\" --password \"$SQUID_REPO_PASS\" --force-update 2>/dev/null");
+            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --username \"$SQUID_REPO_USER\" --password \"$SQUID_REPO_PASS\" --force-update");
         }
         else
         {
-            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --force-update 2>/dev/null");
+            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --force-update");
         }
 
-        sb.AppendLine("\"$HELM_EXE\" repo update squid-helm-repo 2>/dev/null");
+        sb.AppendLine("echo \"Updating Helm repo...\"");
+        sb.AppendLine("\"$HELM_EXE\" repo update squid-helm-repo");
 
         return sb.ToString();
     }

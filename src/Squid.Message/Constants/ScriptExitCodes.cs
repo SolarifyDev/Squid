@@ -21,6 +21,12 @@ public static class ScriptExitCodes
         return exitCode switch
         {
             Success => "Success",
+            1 => "General error",
+            2 => "Misuse of shell builtin or invalid argument",
+            126 => "Command found but not executable (permission denied)",
+            127 => "Command not found — check that the required binary (helm, kubectl, etc.) is installed and in PATH",
+            128 => "Invalid exit argument",
+            >= 129 and <= 192 => $"Process killed by signal {exitCode - 128} (SIG{SignalName(exitCode - 128)})",
             UnknownResult => "Unknown result (ticket or process not found)",
             Fatal => "Fatal infrastructure failure",
             PowerShellInvalid => "Invalid PowerShell script",
@@ -31,6 +37,18 @@ public static class ScriptExitCodes
             ContainerTerminated => "Kubernetes container terminated unexpectedly",
             PodStartupFailed => "Kubernetes pod startup failed",
             _ => $"Script exited with code {exitCode}"
+        };
+    }
+
+    private static string SignalName(int signal)
+    {
+        return signal switch
+        {
+            1 => "HUP",
+            2 => "INT",
+            9 => "KILL",
+            15 => "TERM",
+            _ => signal.ToString()
         };
     }
 }

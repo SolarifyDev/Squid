@@ -7,16 +7,24 @@ RELEASE_NAME="$(b64d '{{ReleaseName}}')"
 CHART_PATH="$(b64d '{{ChartPath}}')"
 HELM_NAMESPACE="$(b64d '{{Namespace}}')"
 HELM_EXE="$(b64d '{{HelmExe}}')"
+if [ -z "$HELM_EXE" ]; then
+    HELM_EXE="helm"
+fi
+
+echo "Using Helm executable: $HELM_EXE"
+if ! command -v "$HELM_EXE" &>/dev/null; then
+    echo "ERROR: '$HELM_EXE' not found in PATH. Ensure Helm is installed and accessible." >&2
+    echo "PATH=$PATH" >&2
+    exit 127
+fi
+echo "Helm version: $("$HELM_EXE" version --short 2>&1)"
+
 RESET_VALUES="$(b64d '{{ResetValues}}')"
 HELM_WAIT="$(b64d '{{HelmWait}}')"
 ADDITIONAL_ARGS="$(b64d '{{AdditionalArgs}}')"
 
 # Helm repo setup (populated when chart is sourced from a feed)
 {{RepoSetupBlock}}
-
-if [ -z "$HELM_EXE" ]; then
-    HELM_EXE="helm"
-fi
 
 HELM_CMD=("$HELM_EXE" "upgrade" "--install" "$RELEASE_NAME" "$CHART_PATH" "--namespace" "$HELM_NAMESPACE")
 

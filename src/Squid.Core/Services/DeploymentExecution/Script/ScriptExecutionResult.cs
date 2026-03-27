@@ -1,3 +1,5 @@
+using Squid.Message.Constants;
+
 namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public class ScriptExecutionResult
@@ -9,12 +11,14 @@ public class ScriptExecutionResult
 
     public string BuildErrorSummary(int maxLines = 10)
     {
+        var description = ScriptExitCodes.Describe(ExitCode);
         var stderr = StderrLines.Count > 0 ? StderrLines : LogLines;
         var tail = stderr.Count > maxLines ? stderr.Skip(stderr.Count - maxLines).ToList() : stderr;
         var summary = string.Join(Environment.NewLine, tail);
 
-        return string.IsNullOrWhiteSpace(summary)
-            ? $"Script exited with code {ExitCode}"
-            : $"Script exited with code {ExitCode}:{Environment.NewLine}{summary}";
+        if (string.IsNullOrWhiteSpace(summary))
+            return $"{description} (exit code {ExitCode})";
+
+        return $"{description} (exit code {ExitCode}):{Environment.NewLine}{summary}";
     }
 }

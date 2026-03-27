@@ -11,6 +11,7 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Machines;
 
@@ -28,6 +29,8 @@ public class MachineHealthCheckServiceTests
     private readonly Mock<IExecutionStrategy> _strategy = new();
     private readonly Mock<IDeploymentTransport> _transport = new();
     private readonly Mock<IHealthCheckStrategy> _healthChecker = new();
+    private readonly Mock<IEndpointVariableContributor> _variableContributor = new();
+    private readonly Mock<IEndpointContextBuilder> _endpointContextBuilder = new();
     private readonly MachineHealthCheckService _service;
 
     public MachineHealthCheckServiceTests()
@@ -35,12 +38,15 @@ public class MachineHealthCheckServiceTests
         _transport.Setup(t => t.Strategy).Returns(_strategy.Object);
         _transport.Setup(t => t.HealthChecker).Returns(_healthChecker.Object);
         _transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
+        _transport.Setup(t => t.Variables).Returns(_variableContributor.Object);
         _healthChecker.Setup(h => h.DefaultHealthCheckScript).Returns("#!/bin/bash\nkubectl cluster-info 2>&1");
         _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.Bash);
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
         _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
-        _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object);
+        _endpointContextBuilder.Setup(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string endpoint, IEndpointVariableContributor _, CancellationToken _) => new EndpointContext { EndpointJson = endpoint });
+        _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object, _endpointContextBuilder.Object);
     }
 
     // ========================================================================
@@ -647,6 +653,88 @@ public class MachineHealthCheckServiceTests
 
         machine1.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
         machine2.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+    }
+
+    // ========================================================================
+    // Credential loading + script wrapping
+    // ========================================================================
+
+    [Fact]
+    public async Task ManualHealthCheck_CallsEndpointContextBuilder()
+    {
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        _endpointContextBuilder.Verify(b => b.BuildAsync(machine.Endpoint, It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_WrapsScriptViaTransportWrapper()
+    {
+        var scriptWrapper = new Mock<IScriptContextWrapper>();
+        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
+            .Returns((string s, ScriptContext _) => $"# context setup\n{s}");
+        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldStartWith("# context setup");
+        capturedRequest.EndpointContext.ShouldNotBeNull();
+        scriptWrapper.Verify(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_NullWrapper_ScriptUnchanged()
+    {
+        _transport.Setup(t => t.ScriptWrapper).Returns((IScriptContextWrapper)null);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        await _service.ManualHealthCheckAsync(machine.Id);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
+        capturedRequest.EndpointContext.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task AutoHealthCheck_WrapsScript()
+    {
+        var scriptWrapper = new Mock<IScriptContextWrapper>();
+        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
+            .Returns((string s, ScriptContext _) => $"# wrapped\n{s}");
+        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
+
+        ScriptExecutionRequest capturedRequest = null;
+        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
+
+        var machine = CreateActiveMachine(healthLastChecked: null);
+        SetupMachineList(machine);
+
+        await _service.AutoHealthCheckForAllAsync();
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest.ScriptBody.ShouldStartWith("# wrapped");
+        scriptWrapper.Verify(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()), Times.Once);
     }
 
     // ========================================================================
