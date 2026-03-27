@@ -40,12 +40,14 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly ITransportRegistry _transportRegistry;
+    private readonly IEndpointContextBuilder _endpointContextBuilder;
 
-    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry)
+    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry, IEndpointContextBuilder endpointContextBuilder)
     {
         _machineDataProvider = machineDataProvider;
         _policyDataProvider = policyDataProvider;
         _transportRegistry = transportRegistry;
+        _endpointContextBuilder = endpointContextBuilder;
     }
 
     public async Task ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
@@ -131,14 +133,18 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
     private async Task ExecuteScriptHealthCheckAsync(Machine machine, IDeploymentTransport transport, string scriptBody, CancellationToken cancellationToken)
     {
+        var endpointContext = await _endpointContextBuilder.BuildAsync(machine.Endpoint, transport.Variables, cancellationToken).ConfigureAwait(false);
+        var wrappedScript = WrapHealthCheckScript(scriptBody, transport, endpointContext);
+
         var request = new ScriptExecutionRequest
         {
             Machine = machine,
-            ScriptBody = scriptBody,
+            ScriptBody = wrappedScript,
             ExecutionMode = ExecutionMode.DirectScript,
-            Syntax = ScriptSyntax.Bash,
+            Syntax = transport.HealthChecker?.ScriptSyntax ?? ScriptSyntax.Bash,
             Files = new Dictionary<string, byte[]>(),
-            Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
+            Variables = new List<Message.Models.Deployments.Variable.VariableDto>(),
+            EndpointContext = endpointContext
         };
 
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
@@ -151,6 +157,21 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         await RecordHealthStatusAsync(machine, status, detail, cancellationToken).ConfigureAwait(false);
 
         Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
+    }
+
+    private static string WrapHealthCheckScript(string scriptBody, IDeploymentTransport transport, EndpointContext endpointContext)
+    {
+        var wrapper = transport.ScriptWrapper;
+        if (wrapper == null) return scriptBody;
+
+        var scriptContext = new ScriptContext
+        {
+            Endpoint = endpointContext,
+            Syntax = transport.HealthChecker?.ScriptSyntax ?? ScriptSyntax.Bash,
+            Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
+        };
+
+        return wrapper.WrapScript(scriptBody, scriptContext);
     }
 
     private async Task ExecuteConnectivityCheckAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken cancellationToken)

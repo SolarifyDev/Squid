@@ -2,9 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.Account.Exceptions;
-using Squid.Core.Services.Deployments.Certificates;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -12,8 +10,8 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
 public sealed class PrepareTargetsPhase(
     ITransportRegistry transportRegistry,
-    IDeploymentAccountDataProvider deploymentAccountDataProvider,
-    ICertificateDataProvider certificateDataProvider) : IDeploymentPipelinePhase
+    IEndpointContextBuilder endpointContextBuilder,
+    IDeploymentAccountDataProvider deploymentAccountDataProvider) : IDeploymentPipelinePhase
 {
     public int Order => 400;
 
@@ -23,10 +21,10 @@ public sealed class PrepareTargetsPhase(
         {
             var tc = new DeploymentTargetContext { Machine = target };
 
-            LoadTransportForTarget(tc);
+            await LoadTransportForTargetAsync(tc, ct).ConfigureAwait(false);
 
             if (tc.Transport != null)
-                await LoadAuthenticationAsync(ctx, tc, ct).ConfigureAwait(false);
+                await ValidateAccountScopeAsync(ctx, tc, ct).ConfigureAwait(false);
 
             ContributeEndpointVariablesForTarget(tc);
 
@@ -37,37 +35,27 @@ public sealed class PrepareTargetsPhase(
         }
     }
 
-    private void LoadTransportForTarget(DeploymentTargetContext tc)
+    private async Task LoadTransportForTargetAsync(DeploymentTargetContext tc, CancellationToken ct)
     {
-        tc.EndpointContext = new EndpointContext { EndpointJson = tc.Machine.Endpoint };
-        tc.CommunicationStyle = CommunicationStyleParser.Parse(tc.EndpointContext.EndpointJson);
+        tc.CommunicationStyle = CommunicationStyleParser.Parse(tc.Machine.Endpoint);
         tc.Transport = transportRegistry.Resolve(tc.CommunicationStyle);
+
+        if (tc.Transport != null)
+            tc.EndpointContext = await endpointContextBuilder.BuildAsync(tc.Machine.Endpoint, tc.Transport.Variables, ct).ConfigureAwait(false);
+        else
+            tc.EndpointContext = new EndpointContext { EndpointJson = tc.Machine.Endpoint };
     }
 
-    private async Task LoadAuthenticationAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, CancellationToken ct)
+    private async Task ValidateAccountScopeAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, CancellationToken ct)
     {
         var refs = tc.Transport.Variables.ParseResourceReferences(tc.EndpointContext.EndpointJson);
+        var accountId = refs.FindFirst(EndpointResourceType.AuthenticationAccount);
+        if (!accountId.HasValue) return;
 
-        var authAccountId = refs.FindFirst(EndpointResourceType.AuthenticationAccount);
+        var account = await deploymentAccountDataProvider.GetAccountByIdAsync(accountId.Value, ct).ConfigureAwait(false);
 
-        if (authAccountId.HasValue)
-            await ResolveAccountAsync(ctx, tc, authAccountId.Value, ct).ConfigureAwait(false);
-
-        foreach (var certRef in refs.References.Where(r => r.Type is EndpointResourceType.ClientCertificate or EndpointResourceType.ClusterCertificate))
-        {
-            await ResolveCertificateAsync(tc, certRef, ct).ConfigureAwait(false);
-        }
-    }
-
-    private async Task ResolveAccountAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, int accountId, CancellationToken ct)
-    {
-        var account = await deploymentAccountDataProvider.GetAccountByIdAsync(accountId, ct).ConfigureAwait(false);
-
-        if (account == null) return;
-
-        ValidateAccountEnvironmentScope(account, ctx.Environment);
-
-        tc.EndpointContext.SetAccountData(account.AccountType, account.Credentials);
+        if (account != null)
+            ValidateAccountEnvironmentScope(account, ctx.Environment);
     }
 
     internal static void ValidateAccountEnvironmentScope(DeploymentAccount account, Persistence.Entities.Deployments.Environment environment)
@@ -82,42 +70,6 @@ public sealed class PrepareTargetsPhase(
 
         if (!scopedIds.Contains(environment.Id))
             throw new AccountEnvironmentScopeException(account.Id, account.Name, environment.Id);
-    }
-
-    private async Task ResolveCertificateAsync(DeploymentTargetContext tc, EndpointResourceReference certRef, CancellationToken ct)
-    {
-        var cert = await certificateDataProvider.GetCertificateByIdAsync(certRef.ResourceId, ct).ConfigureAwait(false);
-
-        if (cert == null) return;
-
-        tc.EndpointContext.SetCertificate(certRef.Type, cert.CertificateData);
-
-        if (certRef.Type == EndpointResourceType.ClientCertificate) EnrichCredentialsWithClientCertificate(tc.EndpointContext, cert);
-    }
-
-    private static void EnrichCredentialsWithClientCertificate(EndpointContext ctx, Persistence.Entities.Deployments.Certificate cert)
-    {
-        var accountData = ctx.GetAccountData() ?? new ResolvedAuthenticationAccountData { AuthenticationAccountType = AccountType.ClientCertificate };
-        var creds = DeserializeOrCreateCredentials(accountData);
-
-        creds.ClientCertificateData = cert.CertificateData;
-
-        if (cert.HasPrivateKey)
-            creds.ClientCertificateKeyData = cert.CertificateData;
-
-        ctx.SetAccountData(accountData.AuthenticationAccountType, DeploymentAccountCredentialsConverter.Serialize(creds));
-    }
-
-    private static ClientCertificateCredentials DeserializeOrCreateCredentials(ResolvedAuthenticationAccountData accountData)
-    {
-        if (accountData.AuthenticationAccountType == AccountType.ClientCertificate && !string.IsNullOrEmpty(accountData.CredentialsJson))
-        {
-            var existing = DeploymentAccountCredentialsConverter.Deserialize(AccountType.ClientCertificate, accountData.CredentialsJson);
-
-            if (existing is ClientCertificateCredentials cc) return cc;
-        }
-
-        return new ClientCertificateCredentials();
     }
 
     private static void ContributeEndpointVariablesForTarget(DeploymentTargetContext tc)

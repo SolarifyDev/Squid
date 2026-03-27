@@ -40,18 +40,17 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
     }
 
     /// <summary>
-    /// Parses Helm index.yaml to extract versions for a specific chart.
-    /// Format:
-    ///   entries:
-    ///     chartName:
-    ///     - version: "1.2.3"
-    ///     - version: "1.2.2"
+    /// Parses Helm index.yaml to extract chart versions.
+    /// Handles both compact format ("- version: X") and standard format
+    /// where version is a standalone property at the entry indent level.
+    /// Ignores nested version fields (e.g. inside dependencies).
     /// </summary>
     internal static List<string> ParseChartVersions(string yaml, string chartName, int take)
     {
         var versions = new List<string>();
         var inEntries = false;
         var inTargetChart = false;
+        var entryPropertyIndent = -1;
 
         using var reader = new StringReader(yaml);
 
@@ -65,33 +64,41 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
 
             if (!inEntries) continue;
 
-            // Top-level key outside entries — stop
             if (line.Length > 0 && !char.IsWhiteSpace(line[0]))
                 break;
 
-            // Chart name line: "  chartName:"
-            if (line.Length > 2 && line[0] == ' ' && line[1] == ' ' && !char.IsWhiteSpace(line[2]) && line.EndsWith(":", StringComparison.Ordinal))
+            // Chart name line: "  chartName:" (not a list item like "  - something:")
+            if (line.Length > 2 && line[0] == ' ' && line[1] == ' ' && line[2] != '-' && !char.IsWhiteSpace(line[2]) && line.EndsWith(":", StringComparison.Ordinal))
             {
                 var name = line.TrimStart().TrimEnd(':');
                 inTargetChart = string.Equals(name, chartName, StringComparison.OrdinalIgnoreCase);
+                entryPropertyIndent = -1;
                 continue;
             }
 
             if (!inTargetChart) continue;
 
-            // Version line: "    - version: "1.2.3"" or "      version: 1.2.3"
             var trimmed = line.TrimStart();
+            var leadingSpaces = line.Length - trimmed.Length;
 
-            if (trimmed.StartsWith("- version:", StringComparison.Ordinal) || trimmed.StartsWith("version:", StringComparison.Ordinal))
-            {
-                var colonIndex = trimmed.IndexOf(':', StringComparison.Ordinal);
-                var versionValue = trimmed[(colonIndex + 1)..].Trim().Trim('"').Trim('\'');
+            // Detect entry property indent from the first list item
+            if (entryPropertyIndent < 0 && trimmed.StartsWith("- ", StringComparison.Ordinal))
+                entryPropertyIndent = leadingSpaces + 2;
 
-                if (!string.IsNullOrWhiteSpace(versionValue))
-                    versions.Add(versionValue);
+            if (!trimmed.StartsWith("- version:", StringComparison.Ordinal) && !trimmed.StartsWith("version:", StringComparison.Ordinal))
+                continue;
 
-                if (versions.Count >= take) break;
-            }
+            // Reject nested version fields (e.g. dependency version at deeper indent)
+            if (entryPropertyIndent >= 0 && leadingSpaces > entryPropertyIndent)
+                continue;
+
+            var colonIndex = trimmed.IndexOf(':', StringComparison.Ordinal);
+            var versionValue = trimmed[(colonIndex + 1)..].Trim().Trim('"').Trim('\'');
+
+            if (!string.IsNullOrWhiteSpace(versionValue))
+                versions.Add(versionValue);
+
+            if (versions.Count >= take) break;
         }
 
         return versions;

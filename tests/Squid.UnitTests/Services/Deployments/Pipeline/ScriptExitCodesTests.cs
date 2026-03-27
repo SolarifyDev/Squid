@@ -53,8 +53,19 @@ public class ScriptExitCodesTests
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(127)]
+    [InlineData(1, "General error")]
+    [InlineData(2, "Misuse of shell builtin or invalid argument")]
+    [InlineData(126, "Command found but not executable (permission denied)")]
+    [InlineData(127, "Command not found — check that the required binary (helm, kubectl, etc.) is installed and in PATH")]
+    [InlineData(137, "Process killed by signal 9 (SIGKILL)")]
+    [InlineData(143, "Process killed by signal 15 (SIGTERM)")]
+    public void Describe_WellKnownUnixCodes_ReturnsDescriptiveMessage(int exitCode, string expected)
+    {
+        ScriptExitCodes.Describe(exitCode).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(3)]
     [InlineData(255)]
     public void Describe_UnknownCode_ReturnsGenericDescription(int exitCode)
     {

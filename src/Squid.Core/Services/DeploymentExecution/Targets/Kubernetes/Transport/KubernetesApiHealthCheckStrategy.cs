@@ -81,7 +81,7 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
         {
             using var client = CreateProbeClient(skipTls, authHeader, timeout);
 
-            var healthUrl = $"{clusterUrl.TrimEnd('/')}/healthz";
+            var healthUrl = $"{clusterUrl.TrimEnd('/')}/api";
             var response = await client.GetAsync(healthUrl, ct).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
