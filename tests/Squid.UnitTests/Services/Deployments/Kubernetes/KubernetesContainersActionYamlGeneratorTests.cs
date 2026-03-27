@@ -668,15 +668,16 @@ public class KubernetesContainersActionYamlGeneratorTests
     }
 
     [Fact]
-    public async Task GenerateAsync_MalformedServicePortsJson_NoServiceYaml()
+    public async Task GenerateAsync_MalformedServicePortsJson_ThrowsResourceGenerationException()
     {
         var (step, action) = CreateMinimalDeploymentScenario();
         AddProperty(action, "Squid.Action.KubernetesContainers.ServiceName", "test-svc");
         AddProperty(action, "Squid.Action.KubernetesContainers.ServicePorts", "broken json");
 
-        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+        var ex = await Should.ThrowAsync<ResourceGenerationException>(
+            () => _generator.GenerateAsync(step, action, CancellationToken.None));
 
-        result.ShouldNotContainKey("service.yaml");
+        ex.Errors.ShouldContain(e => e.Contains("service.yaml"));
     }
 
     // === ImagePullSecrets ===
@@ -825,6 +826,106 @@ public class KubernetesContainersActionYamlGeneratorTests
         result.ShouldNotContainKey("statefulset.yaml");
         result.ShouldNotContainKey("daemonset.yaml");
         result.ShouldNotContainKey("job.yaml");
+    }
+
+    // === Resource generation failure detection ===
+
+    [Fact]
+    public async Task GenerateAsync_ConfigMapConfiguredButValuesMalformed_ThrowsResourceGenerationException()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues", "not valid json {{{");
+
+        var ex = await Should.ThrowAsync<ResourceGenerationException>(
+            () => _generator.GenerateAsync(step, action, CancellationToken.None));
+
+        ex.Errors.ShouldContain(e => e.Contains("configmap.yaml"));
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SecretConfiguredButValuesMalformed_ThrowsResourceGenerationException()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretName", "my-secret");
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretValues", "not valid json {{{");
+
+        var ex = await Should.ThrowAsync<ResourceGenerationException>(
+            () => _generator.GenerateAsync(step, action, CancellationToken.None));
+
+        ex.Errors.ShouldContain(e => e.Contains("secret.yaml"));
+    }
+
+    [Fact]
+    public async Task GenerateAsync_ConfigMapNotConfigured_DoesNotThrow()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldNotContainKey("configmap.yaml");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_ConfigMapConfiguredAndValid_GeneratesNormally()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues",
+            """[{"Key":"APP_ENV","Value":"production"}]""");
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey("configmap.yaml");
+        var yaml = Encoding.UTF8.GetString(result["configmap.yaml"]);
+        yaml.ShouldContain("kind: ConfigMap");
+        yaml.ShouldContain("name: \"my-config\"");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void IsConfigured_ConfigMap_RequiresNameAndValues(bool hasValues, bool expected)
+    {
+        var generator = new ConfigMapResourceGenerator();
+        var properties = new Dictionary<string, string>
+        {
+            ["Squid.Action.KubernetesContainers.ConfigMapName"] = "my-config"
+        };
+
+        if (hasValues)
+            properties["Squid.Action.KubernetesContainers.ConfigMapValues"] = """[{"Key":"A","Value":"1"}]""";
+
+        ((IKubernetesResourceGenerator)generator).IsConfigured(properties).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_IngressConfiguredButMalformed_ThrowsResourceGenerationException()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.IngressRules", "not valid json");
+
+        var ex = await Should.ThrowAsync<ResourceGenerationException>(
+            () => _generator.GenerateAsync(step, action, CancellationToken.None));
+
+        ex.Errors.ShouldContain(e => e.Contains("ingress.yaml"));
+    }
+
+    [Fact]
+    public async Task GenerateAsync_MultipleResourcesConfiguredButBroken_CollectsAllErrors()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapName", "my-config");
+        AddProperty(action, "Squid.Action.KubernetesContainers.ConfigMapValues", "broken");
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretName", "my-secret");
+        AddProperty(action, "Squid.Action.KubernetesContainers.SecretValues", "broken");
+
+        var ex = await Should.ThrowAsync<ResourceGenerationException>(
+            () => _generator.GenerateAsync(step, action, CancellationToken.None));
+
+        ex.Errors.Count.ShouldBe(2);
+        ex.Errors.ShouldContain(e => e.Contains("configmap.yaml"));
+        ex.Errors.ShouldContain(e => e.Contains("secret.yaml"));
     }
 
     // === Helpers ===

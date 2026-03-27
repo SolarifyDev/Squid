@@ -309,6 +309,20 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogInfoAsync($"Running action \"{ctx.ActionName}\"{suffix}", SystemSource, ct, stepNodeId);
     }
 
+    protected override Task OnActionPreparationFailedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogErrorAsync($"Failed to prepare action \"{ctx.ActionName}\": {ctx.Error}", SystemSource, ct, stepNodeId);
+    }
+
+    protected override Task OnActionPreparationWarningAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogWarningAsync(ctx.Message, SystemSource, ct, stepNodeId);
+    }
+
     // === Actions (execution) ===
 
     protected override async Task OnActionExecutingAsync(DeploymentEventContext ctx, CancellationToken ct)

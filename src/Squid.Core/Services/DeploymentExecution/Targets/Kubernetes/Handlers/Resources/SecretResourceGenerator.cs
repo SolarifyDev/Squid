@@ -6,6 +6,14 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 internal sealed class SecretResourceGenerator : IKubernetesResourceGenerator
 {
+    public bool IsConfigured(Dictionary<string, string> properties)
+    {
+        var secretName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretName);
+
+        return !string.IsNullOrWhiteSpace(secretName)
+            && KubernetesPropertyParser.HasNonEmptyJsonValue(properties, KubernetesProperties.SecretValues);
+    }
+
     public bool CanGenerate(Dictionary<string, string> properties)
     {
         var secretName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.SecretName);

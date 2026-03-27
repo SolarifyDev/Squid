@@ -7,6 +7,11 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 internal sealed class IngressResourceGenerator : IKubernetesResourceGenerator
 {
+    public bool IsConfigured(Dictionary<string, string> properties)
+    {
+        return KubernetesPropertyParser.HasNonEmptyJsonValue(properties, KubernetesProperties.IngressRules);
+    }
+
     public bool CanGenerate(Dictionary<string, string> properties)
     {
         var rulesJson = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.IngressRules);

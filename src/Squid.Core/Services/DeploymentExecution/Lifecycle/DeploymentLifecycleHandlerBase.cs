@@ -34,6 +34,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         ActionSkippedEvent e => OnActionSkippedAsync(e.Context, ct),
         ActionNoHandlerEvent e => OnActionNoHandlerAsync(e.Context, ct),
         ActionRunningEvent e => OnActionRunningAsync(e.Context, ct),
+        ActionPreparationFailedEvent e => OnActionPreparationFailedAsync(e.Context, ct),
+        ActionPreparationWarningEvent e => OnActionPreparationWarningAsync(e.Context, ct),
         ActionExecutingEvent e => OnActionExecutingAsync(e.Context, ct),
         ActionSucceededEvent e => OnActionSucceededAsync(e.Context, ct),
         ActionFailedEvent e => OnActionFailedAsync(e.Context, ct),
@@ -82,6 +84,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnActionSkippedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnActionNoHandlerAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnActionRunningAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnActionPreparationFailedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnActionPreparationWarningAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
     // === Actions (execution) ===
     protected virtual Task OnActionExecutingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;

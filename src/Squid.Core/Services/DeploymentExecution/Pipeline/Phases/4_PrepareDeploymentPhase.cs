@@ -111,6 +111,9 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.AllTargets = DeploymentTargetFinder.FilterByRoles(ctx.AllTargets, allRoles);
 
+        if (ctx.ExcludedByHealthTargets is { Count: > 0 })
+            ctx.ExcludedByHealthTargets = DeploymentTargetFinder.FilterByRoles(ctx.ExcludedByHealthTargets, allRoles);
+
         if (ctx.AllTargets.Count < before)
             Log.Information("[Deploy] Pre-filtered targets by roles: {Before} -> {After} (roles: {Roles})", before, ctx.AllTargets.Count, string.Join(", ", allRoles));
 
