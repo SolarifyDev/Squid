@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Message.Enums;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -12,9 +13,9 @@ public static class KubernetesApiEndpointProviderConfigConverter
 
         return providerType switch
         {
-            KubernetesApiEndpointProviderType.AwsEks => JsonSerializer.Deserialize<KubernetesApiAwsEksConfig>(json),
-            KubernetesApiEndpointProviderType.AzureAks => JsonSerializer.Deserialize<KubernetesApiAzureAksConfig>(json),
-            KubernetesApiEndpointProviderType.GcpGke => JsonSerializer.Deserialize<KubernetesApiGcpGkeConfig>(json),
+            KubernetesApiEndpointProviderType.AwsEks => JsonSerializer.Deserialize<KubernetesApiAwsEksConfig>(json, SquidJsonDefaults.CaseInsensitive),
+            KubernetesApiEndpointProviderType.AzureAks => JsonSerializer.Deserialize<KubernetesApiAzureAksConfig>(json, SquidJsonDefaults.CaseInsensitive),
+            KubernetesApiEndpointProviderType.GcpGke => JsonSerializer.Deserialize<KubernetesApiGcpGkeConfig>(json, SquidJsonDefaults.CaseInsensitive),
             _ => null
         };
     }

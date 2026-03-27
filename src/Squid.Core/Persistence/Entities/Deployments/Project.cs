@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Message.Json;
 
 namespace Squid.Core.Persistence.Entities.Deployments;
 
@@ -33,7 +34,7 @@ public class Project : IEntity<int>, IAuditable
 
         try
         {
-            return JsonSerializer.Deserialize<List<int>>(IncludedLibraryVariableSetIds) ?? new List<int>();
+            return JsonSerializer.Deserialize<List<int>>(IncludedLibraryVariableSetIds, SquidJsonDefaults.CaseInsensitive) ?? new List<int>();
         }
         catch
         {

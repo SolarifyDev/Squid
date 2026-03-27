@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Squid.Core.Services.Machines;
-using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
+using Squid.Message.Json;
+using Squid.Message.Models.Deployments.Deployment;
 
 namespace Squid.Core.Services.DeploymentExecution.Filtering;
 
@@ -112,7 +113,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
         try
         {
-            return JsonSerializer.Deserialize<DeploymentRequestPayload>(deploymentJson) ?? new DeploymentRequestPayload();
+            return JsonSerializer.Deserialize<DeploymentRequestPayload>(deploymentJson, SquidJsonDefaults.CaseInsensitive) ?? new DeploymentRequestPayload();
         }
         catch
         {
@@ -136,7 +137,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
         try
         {
-            return JsonSerializer.Deserialize<List<int>>(json)?.ToHashSet() ?? new HashSet<int>();
+            return JsonSerializer.Deserialize<List<int>>(json, SquidJsonDefaults.CaseInsensitive)?.ToHashSet() ?? new HashSet<int>();
         }
         catch (JsonException)
         {
@@ -158,7 +159,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 
         try
         {
-            return JsonSerializer.Deserialize<List<string>>(json)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return JsonSerializer.Deserialize<List<string>>(json, SquidJsonDefaults.CaseInsensitive)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
         catch (JsonException)
         {

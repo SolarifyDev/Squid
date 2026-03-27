@@ -59,10 +59,14 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
 
         string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
 
+        var effectiveAccountType = awsEks?.UseInstanceRole == true
+            ? "AwsEc2InstanceRole"
+            : accountData?.AuthenticationAccountType.ToString() ?? "Token";
+
         template = template
             .Replace("{{KubectlExe}}", B64(customKubectlPath), StringComparison.Ordinal)
             .Replace("{{ClusterUrl}}", B64(endpoint?.ClusterUrl), StringComparison.Ordinal)
-            .Replace("{{AccountType}}", B64(accountData?.AuthenticationAccountType.ToString() ?? "Token"), StringComparison.Ordinal)
+            .Replace("{{AccountType}}", B64(effectiveAccountType), StringComparison.Ordinal)
             .Replace("{{SkipTlsVerification}}", B64(endpoint?.SkipTlsVerification ?? KubernetesBooleanValues.False), StringComparison.Ordinal)
             .Replace("{{Namespace}}", B64(ResolveNamespace(context, endpoint)), StringComparison.Ordinal)
             .Replace("{{ClusterCertificate}}", B64(clusterCert), StringComparison.Ordinal)
@@ -85,6 +89,11 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             // AWS OIDC
             .Replace("{{AwsRoleArn}}", B64(awsOidcCreds?.RoleArn), StringComparison.Ordinal)
             .Replace("{{AwsWebIdentityToken}}", B64(awsOidcCreds?.WebIdentityToken), StringComparison.Ordinal)
+            // AWS endpoint-level
+            .Replace("{{AwsUseInstanceRole}}", B64(awsEks?.UseInstanceRole == true ? "True" : ""), StringComparison.Ordinal)
+            .Replace("{{AwsEndpointAssumeRoleArn}}", B64(awsEks?.AssumeRoleArn), StringComparison.Ordinal)
+            .Replace("{{AwsEndpointAssumeRoleSessionDuration}}", B64(awsEks?.AssumeRoleSessionDuration), StringComparison.Ordinal)
+            .Replace("{{AwsEndpointAssumeRoleExternalId}}", B64(awsEks?.AssumeRoleExternalId), StringComparison.Ordinal)
             // Azure
             .Replace("{{AzureClientId}}", B64(azureCreds?.ClientId ?? azureOidcCreds?.ClientId), StringComparison.Ordinal)
             .Replace("{{AzureTenantId}}", B64(azureCreds?.TenantId ?? azureOidcCreds?.TenantId), StringComparison.Ordinal)

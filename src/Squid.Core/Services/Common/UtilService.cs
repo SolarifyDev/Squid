@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Squid.Message.Json;
 
 namespace Squid.Core.Services.Common;
 
@@ -55,7 +56,7 @@ public static class UtilService
 
         var json = sr.ReadToEnd();
 
-        return JsonSerializer.Deserialize<T>(json);
+        return JsonSerializer.Deserialize<T>(json, SquidJsonDefaults.CaseInsensitive);
     }
 
     public static string GetEmbeddedScriptContent(string resourceFileName)

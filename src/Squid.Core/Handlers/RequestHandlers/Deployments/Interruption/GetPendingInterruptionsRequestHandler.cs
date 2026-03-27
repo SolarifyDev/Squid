@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Requests.Deployments.Interruption;
 
@@ -26,7 +27,7 @@ public class GetPendingInterruptionsRequestHandler(
             StepName = i.StepName,
             ActionName = i.ActionName,
             MachineName = i.MachineName,
-            Form = i.FormJson != null ? JsonSerializer.Deserialize<InterruptionForm>(i.FormJson) : null,
+            Form = i.FormJson != null ? JsonSerializer.Deserialize<InterruptionForm>(i.FormJson, SquidJsonDefaults.CaseInsensitive) : null,
             ResponsibleUserId = i.ResponsibleUserId,
             ResponsibleTeamIds = i.ResponsibleTeamIds,
             CanTakeResponsibility = CanUserAct(i.ResponsibleTeamIds, userTeamIds),

@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Squid.Core.Halibut;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Events.Machine;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Requests.Machines;
 
@@ -70,13 +72,46 @@ public class MachineService : IMachineService
             machine.IsDisabled = command.IsDisabled.Value;
 
         if (command.Roles != null)
-            machine.Roles = System.Text.Json.JsonSerializer.Serialize(command.Roles);
+            machine.Roles = JsonSerializer.Serialize(command.Roles);
 
         if (command.EnvironmentIds != null)
-            machine.EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(command.EnvironmentIds);
+            machine.EnvironmentIds = JsonSerializer.Serialize(command.EnvironmentIds);
 
         if (command.MachinePolicyId.HasValue)
             machine.MachinePolicyId = command.MachinePolicyId.Value;
+
+        ApplyEndpointUpdate(machine, command);
+    }
+
+    private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    {
+        if (command.ClusterUrl == null && command.Namespace == null && !command.SkipTlsVerification.HasValue
+            && !command.ProviderType.HasValue && command.ProviderConfig == null && command.ResourceReferences == null)
+            return;
+
+        var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
+            ? JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint, SquidJsonDefaults.CaseInsensitive)
+            : new KubernetesApiEndpointDto();
+
+        if (command.ClusterUrl != null)
+            endpoint.ClusterUrl = command.ClusterUrl;
+
+        if (command.Namespace != null)
+            endpoint.Namespace = command.Namespace;
+
+        if (command.SkipTlsVerification.HasValue)
+            endpoint.SkipTlsVerification = command.SkipTlsVerification.Value.ToString();
+
+        if (command.ProviderType.HasValue)
+            endpoint.ProviderType = command.ProviderType.Value;
+
+        if (command.ProviderConfig != null)
+            endpoint.ProviderConfig = command.ProviderConfig;
+
+        if (command.ResourceReferences != null)
+            endpoint.ResourceReferences = command.ResourceReferences;
+
+        machine.Endpoint = JsonSerializer.Serialize(endpoint);
     }
 
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)

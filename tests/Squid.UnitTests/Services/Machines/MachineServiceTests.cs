@@ -163,6 +163,95 @@ public class MachineServiceTests
     }
 
     // ========================================================================
+    // UpdateMachineAsync — Endpoint Fields
+    // ========================================================================
+
+    [Fact]
+    public async Task UpdateMachine_WithProviderType_EndpointJsonUpdated()
+    {
+        var existingEndpoint = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+        {
+            ClusterUrl = "https://old.cluster.com",
+            Namespace = "default",
+            SkipTlsVerification = "False",
+            CommunicationStyle = "KubernetesApi"
+        });
+
+        var machine = new Machine { Id = 1, Name = "test", Endpoint = existingEndpoint };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var providerConfig = JsonSerializer.Serialize(new KubernetesApiAwsEksConfig { ClusterName = "my-eks", Region = "us-west-2" });
+        var command = new UpdateMachineCommand
+        {
+            MachineId = 1,
+            ProviderType = Squid.Message.Enums.KubernetesApiEndpointProviderType.AwsEks,
+            ProviderConfig = providerConfig,
+        };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var endpoint = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint);
+        endpoint.ProviderType.ShouldBe(Squid.Message.Enums.KubernetesApiEndpointProviderType.AwsEks);
+        endpoint.ProviderConfig.ShouldBe(providerConfig);
+        endpoint.ClusterUrl.ShouldBe("https://old.cluster.com");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_WithoutEndpointFields_EndpointUnchanged()
+    {
+        var existingEndpoint = "{\"ClusterUrl\":\"https://keep.me\"}";
+        var machine = new Machine { Id = 1, Name = "test", Endpoint = existingEndpoint };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        machine.Endpoint.ShouldBe(existingEndpoint);
+    }
+
+    [Fact]
+    public async Task UpdateMachine_WithClusterUrl_OnlyClusterUrlChanges()
+    {
+        var existingEndpoint = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+        {
+            ClusterUrl = "https://old.cluster.com",
+            Namespace = "production",
+            SkipTlsVerification = "True",
+        });
+
+        var machine = new Machine { Id = 1, Name = "test", Endpoint = existingEndpoint };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 1, ClusterUrl = "https://new.cluster.com" };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var endpoint = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint);
+        endpoint.ClusterUrl.ShouldBe("https://new.cluster.com");
+        endpoint.Namespace.ShouldBe("production");
+        endpoint.SkipTlsVerification.ShouldBe("True");
+    }
+
+    [Theory]
+    [InlineData("""{"ClusterUrl":"https://old.k8s","Namespace":"prod","SkipTlsVerification":"True"}""")]
+    [InlineData("""{"clusterUrl":"https://old.k8s","namespace":"prod","skipTlsVerification":"True"}""")]
+    public async Task UpdateMachine_ExistingEndpointBothCasings_MergesCorrectly(string existingEndpoint)
+    {
+        var machine = new Machine { Id = 1, Name = "test", Endpoint = existingEndpoint };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 1, ClusterUrl = "https://new.k8s" };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var endpoint = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint);
+        endpoint.ClusterUrl.ShouldBe("https://new.k8s");
+        endpoint.Namespace.ShouldBe("prod");
+        endpoint.SkipTlsVerification.ShouldBe("True");
+    }
+
+    // ========================================================================
     // DeleteMachinesAsync — Trust Reconfiguration
     // ========================================================================
 
@@ -199,5 +288,14 @@ internal static class TestCertHelper
             "CN=Test", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
         var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddYears(1));
         return (cert.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx, password), password);
+    }
+
+    public static (byte[] derBytes, string password) GenerateSelfSignedDer()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=Test", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddYears(1));
+        return (cert.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Cert), null);
     }
 }

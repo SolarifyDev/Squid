@@ -29,6 +29,8 @@ public partial class MachineRegistrationService
             ClusterUrl = command.ClusterUrl,
             Namespace = command.Namespace,
             SkipTlsVerification = command.SkipTlsVerification.ToString(),
+            ProviderType = command.ProviderType,
+            ProviderConfig = command.ProviderConfig,
             ResourceReferences = command.ResourceReferences,
             CommunicationStyle = nameof(CommunicationStyleEnum.KubernetesApi)
         });

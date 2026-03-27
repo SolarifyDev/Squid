@@ -88,6 +88,10 @@ case "$ACCOUNT_TYPE" in
     "AmazonWebServicesAccount")
         AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
         AWS_REGION="$(b64d '{{AwsRegion}}')"
+        if [ -z "$AWS_CLUSTER_NAME" ] || [ -z "$AWS_REGION" ]; then
+            echo "ERROR: AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)" >&2
+            exit 1
+        fi
         CRED_FILE="$(mktemp /tmp/cred-aws-XXXXXX)"
         b64d '{{SecretKey}}' > "$CRED_FILE"
         export AWS_ACCESS_KEY_ID="$(b64d '{{AccessKey}}')"
@@ -101,6 +105,10 @@ case "$ACCOUNT_TYPE" in
     "AmazonWebServicesRoleAccount")
         AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
         AWS_REGION="$(b64d '{{AwsRegion}}')"
+        if [ -z "$AWS_CLUSTER_NAME" ] || [ -z "$AWS_REGION" ]; then
+            echo "ERROR: AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)" >&2
+            exit 1
+        fi
         AWS_ROLE_ARN="$(b64d '{{AwsAssumeRoleArn}}')"
         AWS_SESSION_DURATION="$(b64d '{{AwsAssumeRoleSessionDuration}}')"
         AWS_EXTERNAL_ID="$(b64d '{{AwsAssumeRoleExternalId}}')"
@@ -124,6 +132,10 @@ case "$ACCOUNT_TYPE" in
     "AmazonWebServicesOidcAccount")
         AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
         AWS_REGION="$(b64d '{{AwsRegion}}')"
+        if [ -z "$AWS_CLUSTER_NAME" ] || [ -z "$AWS_REGION" ]; then
+            echo "ERROR: AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)" >&2
+            exit 1
+        fi
         AWS_ROLE_ARN="$(b64d '{{AwsRoleArn}}')"
         AWS_WEB_IDENTITY_FILE="$(mktemp /tmp/aws-token-XXXXXX)"
         b64d '{{AwsWebIdentityToken}}' > "$AWS_WEB_IDENTITY_FILE"
@@ -136,6 +148,19 @@ case "$ACCOUNT_TYPE" in
             --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" \
             --exec-arg="--region" --exec-arg="$AWS_REGION" \
             --exec-arg="--role-arn" --exec-arg="$AWS_ROLE_ARN" \
+            || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
+        ;;
+    "AwsEc2InstanceRole")
+        AWS_CLUSTER_NAME="$(b64d '{{AwsClusterName}}')"
+        AWS_REGION="$(b64d '{{AwsRegion}}')"
+        if [ -z "$AWS_CLUSTER_NAME" ] || [ -z "$AWS_REGION" ]; then
+            echo "ERROR: AWS EKS cluster name and region must be configured on the Kubernetes target (ProviderType=AwsEks with ClusterName and Region)" >&2
+            exit 1
+        fi
+        "$KUBECTL_EXE" config set-credentials "$USER_NAME" \
+            --exec-api-version=client.authentication.k8s.io/v1beta1 \
+            --exec-command=aws \
+            --exec-arg=eks --exec-arg=get-token --exec-arg="--cluster-name" --exec-arg="$AWS_CLUSTER_NAME" --exec-arg="--region" --exec-arg="$AWS_REGION" \
             || { echo "ERROR: kubectl config set-credentials failed" >&2; exit 1; }
         ;;
     "AzureServicePrincipal")
@@ -194,6 +219,21 @@ case "$ACCOUNT_TYPE" in
         "${GKE_CMD[@]}" || { echo "ERROR: gcloud get-credentials failed" >&2; exit 1; }
         ;;
 esac
+
+# --- Endpoint-level role assumption (applies after any AWS auth method) ---
+AWS_EP_ROLE_ARN="$(b64d '{{AwsEndpointAssumeRoleArn}}')"
+if [ -n "$AWS_EP_ROLE_ARN" ]; then
+    AWS_EP_SESSION_DURATION="$(b64d '{{AwsEndpointAssumeRoleSessionDuration}}')"
+    AWS_EP_EXTERNAL_ID="$(b64d '{{AwsEndpointAssumeRoleExternalId}}')"
+    ASSUME_CMD=(aws sts assume-role --role-arn "$AWS_EP_ROLE_ARN" --role-session-name "squid-deploy")
+    if [ -n "$AWS_EP_SESSION_DURATION" ]; then ASSUME_CMD+=(--duration-seconds "$AWS_EP_SESSION_DURATION"); fi
+    if [ -n "$AWS_EP_EXTERNAL_ID" ]; then ASSUME_CMD+=(--external-id "$AWS_EP_EXTERNAL_ID"); fi
+    echo "Assuming endpoint-level AWS role: $AWS_EP_ROLE_ARN"
+    ASSUMED="$("${ASSUME_CMD[@]}")" || { echo "ERROR: aws sts assume-role failed for endpoint role" >&2; exit 1; }
+    export AWS_ACCESS_KEY_ID="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['AccessKeyId'])")"
+    export AWS_SECRET_ACCESS_KEY="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['SecretAccessKey'])")"
+    export AWS_SESSION_TOKEN="$(echo "$ASSUMED" | python3 -c "import sys,json; print(json.load(sys.stdin)['Credentials']['SessionToken'])")"
+fi
 
 # --- Proxy configuration ---
 PROXY_HOST="$(b64d '{{ProxyHost}}')"

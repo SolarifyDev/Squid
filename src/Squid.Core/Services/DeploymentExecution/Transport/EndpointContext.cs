@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Message.Enums;
+using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -15,7 +16,7 @@ public class EndpointContext
     {
         if (!ResolvedResources.TryGetValue(EndpointResourceType.AuthenticationAccount, out var json)) return null;
 
-        return JsonSerializer.Deserialize<ResolvedAuthenticationAccountData>(json);
+        return JsonSerializer.Deserialize<ResolvedAuthenticationAccountData>(json, SquidJsonDefaults.CaseInsensitive);
     }
 
     public void SetAccountData(AccountType accountType, string credentialsJson)
