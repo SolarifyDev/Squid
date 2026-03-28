@@ -35,16 +35,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf
     /tmp/aws/install --install-dir /opt/aws-cli --bin-dir /opt/aws-cli/bin && \
     rm -rf /tmp/awscliv2.zip /tmp/aws
 
-# Runtime
-FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
+# Download PowerShell matching target architecture
+RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/') && \
+    if [ "$TARGETARCH" = "amd64" ]; then PARCH="x64"; else PARCH="$TARGETARCH"; fi && \
+    mkdir -p /opt/powershell && \
+    curl -fsSL "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-${PARCH}.tar.gz" | tar xz -C /opt/powershell && \
+    chmod +x /opt/powershell/pwsh
 
-# Install PowerShell
-RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transport-https && \
-    . /etc/os-release && \
-    wget -q "https://packages.microsoft.com/config/debian/${VERSION_ID}/packages-microsoft-prod.deb" -O /tmp/packages-microsoft-prod.deb && \
-    dpkg -i /tmp/packages-microsoft-prod.deb && \
-    apt-get update && apt-get install -y --no-install-recommends powershell && \
-    rm -rf /var/lib/apt/lists/* /tmp/packages-microsoft-prod.deb
+# Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0
 
 WORKDIR /app
 COPY --from=build /app .
@@ -52,7 +51,8 @@ COPY --from=build /calamari/ /squid/bin/
 COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=build /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=build /opt/aws-cli /opt/aws-cli
-ENV PATH="/opt/aws-cli/bin:${PATH}"
+COPY --from=build /opt/powershell /opt/powershell
+ENV PATH="/opt/powershell:/opt/aws-cli/bin:${PATH}"
 
 EXPOSE 8080
 EXPOSE 443
