@@ -67,6 +67,7 @@ public static class SpecialVariables
         public const string DeployReleaseProjectId = "Squid.Action.DeployRelease.ProjectId";
         public const string DeployReleaseVersion = "Squid.Action.DeployRelease.Version";
         public const string DeployReleaseChannelId = "Squid.Action.DeployRelease.ChannelId";
+        public const string StructuredConfigurationVariablesEnabled = "Squid.Action.StructuredConfigurationVariables.Enabled";
     }
 
     public static class Step

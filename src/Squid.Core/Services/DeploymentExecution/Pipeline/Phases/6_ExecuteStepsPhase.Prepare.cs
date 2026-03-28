@@ -92,30 +92,20 @@ public sealed partial class ExecuteStepsPhase
                 prepared.ActionName = action.Name;
                 prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
 
-                if (prepared.Warnings.Count > 0)
-                {
-                    foreach (var warning in prepared.Warnings)
-                    {
-                        await lifecycle.EmitAsync(new ActionPreparationWarningEvent(new DeploymentEventContext
-                        {
-                            StepDisplayOrder = stepDisplayOrder,
-                            ActionName = action.Name,
-                            MachineName = tc.Machine.Name,
-                            Message = warning
-                        }), ct).ConfigureAwait(false);
-                    }
-                }
-
                 var executionMode = prepared.ResolveExecutionMode();
                 var contextPreparationPolicy = ResolveContextPreparationPolicy(prepared, tc);
 
                 if (prepared.ScriptBody != null)
                     prepared.ScriptBody = VariableExpander.ExpandString(prepared.ScriptBody, variableDictionary);
 
+                StructuredConfigurationVariableReplacer.ReplaceIfEnabled(prepared, variableDictionary);
+
                 // Direct script can be wrapped here. Packaged payloads are wrapped later after payload template paths are resolved.
                 if (executionMode == ExecutionMode.DirectScript
                     && contextPreparationPolicy == ContextPreparationPolicy.Apply)
                     WrapScriptIfApplicable(prepared, tc, actionEffective);
+
+                await EmitPreparationWarningsAsync(prepared.Warnings, stepDisplayOrder, action.Name, tc.Machine.Name, ct).ConfigureAwait(false);
 
                 stepResults.Add(new PreparedAction(prepared, actionEffective));
             }
@@ -210,6 +200,22 @@ public sealed partial class ExecuteStepsPhase
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return DeploymentTargetFinder.ParseCsvRoles(rolesProp.PropertyValue);
+    }
+
+    private async Task EmitPreparationWarningsAsync(List<string> warnings, int stepDisplayOrder, string actionName, string machineName, CancellationToken ct)
+    {
+        if (warnings.Count == 0) return;
+
+        foreach (var warning in warnings)
+        {
+            await lifecycle.EmitAsync(new ActionPreparationWarningEvent(new DeploymentEventContext
+            {
+                StepDisplayOrder = stepDisplayOrder,
+                ActionName = actionName,
+                MachineName = machineName,
+                Message = warning
+            }), ct).ConfigureAwait(false);
+        }
     }
 
     private static ContextPreparationPolicy ResolveContextPreparationPolicy(ActionExecutionResult actionResult, DeploymentTargetContext tc)
