@@ -382,7 +382,7 @@ public class KubernetesYamlActionHandler : IActionHandler
             ? nameProp.GetString() ?? string.Empty
             : string.Empty;
 
-        var version = ResolvePackageVersion(ctx, containerName);
+        var version = PackageVersionResolver.Resolve(ctx, containerName);
 
         if (string.IsNullOrEmpty(version))
             return null;
@@ -397,20 +397,6 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         var feedUri = KubernetesApiEndpointVariableContributor.ResolveFeedUri(feed);
         return $"{feedUri}/{packageId}:{version}";
-    }
-
-    public static string ResolvePackageVersion(ActionExecutionContext ctx, string containerName)
-    {
-        if (ctx.SelectedPackages != null && ctx.SelectedPackages.Count > 0)
-        {
-            var match = ctx.SelectedPackages.FirstOrDefault(sp =>
-                string.Equals(sp.ActionName, ctx.Action.Name, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(sp.PackageReferenceName, containerName, StringComparison.OrdinalIgnoreCase));
-
-            if (match != null) return match.Version;
-        }
-
-        return ctx.Variables?.FirstOrDefault(v => v.Name == SpecialVariables.Action.PackageVersion)?.Value;
     }
 
     private static bool TryGetFeedId(JsonElement element, out int feedId)

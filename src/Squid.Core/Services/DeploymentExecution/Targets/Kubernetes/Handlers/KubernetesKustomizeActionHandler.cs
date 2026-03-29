@@ -14,10 +14,7 @@ public class KubernetesKustomizeActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var syntaxStr = ctx.Action.GetProperty(SpecialVariables.Action.ScriptSyntax);
-        var syntax = string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
-            ? ScriptSyntax.Bash
-            : ScriptSyntax.PowerShell;
+        var syntax = ScriptSyntaxHelper.ResolveSyntax(ctx.Action);
 
         var templateName = syntax == ScriptSyntax.Bash ? "KubernetesKustomize.sh" : "KubernetesKustomize.ps1";
         var template = UtilService.GetEmbeddedScriptContent(templateName);

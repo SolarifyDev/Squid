@@ -5,6 +5,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
@@ -444,8 +445,8 @@ public class ContainerImageResolutionTests
             }
         };
 
-        KubernetesYamlActionHandler.ResolvePackageVersion(ctx, "worker").ShouldBe("1.5.0");
-        KubernetesYamlActionHandler.ResolvePackageVersion(ctx, "web").ShouldBe("3.0.1");
+        PackageVersionResolver.Resolve(ctx, "worker").ShouldBe("1.5.0");
+        PackageVersionResolver.Resolve(ctx, "web").ShouldBe("3.0.1");
     }
 
     [Fact]
@@ -466,7 +467,7 @@ public class ContainerImageResolutionTests
             }
         };
 
-        KubernetesYamlActionHandler.ResolvePackageVersion(ctx, "web").ShouldBe("1.0.0");
+        PackageVersionResolver.Resolve(ctx, "web").ShouldBe("1.0.0");
     }
 
     [Fact]
@@ -484,7 +485,7 @@ public class ContainerImageResolutionTests
             SelectedPackages = new List<SelectedPackageDto>()
         };
 
-        KubernetesYamlActionHandler.ResolvePackageVersion(ctx, "web").ShouldBe("1.0.0");
+        PackageVersionResolver.Resolve(ctx, "web").ShouldBe("1.0.0");
     }
 
     private static DeploymentActionDto CreateActionWithContainers(string containerJson, string actionName = "Deploy")
