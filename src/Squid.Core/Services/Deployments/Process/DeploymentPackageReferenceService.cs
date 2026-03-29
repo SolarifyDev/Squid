@@ -1,10 +1,12 @@
 using System.Text.Json;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.Deployments.Process;
 
@@ -138,10 +140,38 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
             }
         }
 
+        DetectActionLevelPackageReferences(actions, propertiesDict, feedIds, references);
+
         await EnrichFeedNamesAsync(references, feedIds, ct).ConfigureAwait(false);
         await EnrichLastReleaseVersionsAsync(references, projectId, ct).ConfigureAwait(false);
 
         return references;
+    }
+
+    private static void DetectActionLevelPackageReferences(
+        List<DeploymentAction> actions, Dictionary<int, List<DeploymentActionProperty>> propertiesDict,
+        HashSet<int> feedIds, List<PackageReferenceDto> references)
+    {
+        foreach (var action in actions)
+        {
+            var props = propertiesDict.TryGetValue(action.Id, out var p) ? p : new();
+            var feedIdProp = props.FirstOrDefault(x => x.PropertyName == SpecialVariables.Action.PackageFeedId);
+            var packageIdProp = props.FirstOrDefault(x => x.PropertyName == SpecialVariables.Action.PackageId);
+
+            if (feedIdProp == null || string.IsNullOrWhiteSpace(feedIdProp.PropertyValue)) continue;
+            if (packageIdProp == null || string.IsNullOrWhiteSpace(packageIdProp.PropertyValue)) continue;
+            if (!int.TryParse(feedIdProp.PropertyValue, out var actionFeedId)) continue;
+
+            feedIds.Add(actionFeedId);
+
+            references.Add(new PackageReferenceDto
+            {
+                ActionName = action.Name,
+                PackageReferenceName = string.Empty,
+                PackageId = packageIdProp.PropertyValue,
+                FeedId = actionFeedId
+            });
+        }
     }
 
     private async Task EnrichLastReleaseVersionsAsync(List<PackageReferenceDto> references, int projectId, CancellationToken ct)

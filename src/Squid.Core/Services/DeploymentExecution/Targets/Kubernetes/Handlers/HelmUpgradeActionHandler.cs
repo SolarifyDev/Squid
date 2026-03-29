@@ -27,7 +27,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
     public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var syntax = ResolveSyntax(ctx.Action);
+        var syntax = ScriptSyntaxHelper.ResolveSyntax(ctx.Action);
         var template = LoadTemplate(syntax);
         var chartSource = await ResolveChartSourceAsync(ctx, syntax, ct).ConfigureAwait(false);
 
@@ -74,15 +74,6 @@ public class HelmUpgradeActionHandler : IActionHandler
         };
     }
 
-    private static ScriptSyntax ResolveSyntax(DeploymentActionDto action)
-    {
-        var syntaxStr = action.GetProperty(SpecialVariables.Action.ScriptSyntax);
-
-        return string.Equals(syntaxStr, ScriptSyntax.Bash.ToString(), StringComparison.OrdinalIgnoreCase)
-            ? ScriptSyntax.Bash
-            : ScriptSyntax.PowerShell;
-    }
-
     private static string LoadTemplate(ScriptSyntax syntax)
     {
         var templateName = syntax == ScriptSyntax.Bash ? "HelmUpgrade.sh" : "HelmUpgrade.ps1";
@@ -108,7 +99,7 @@ public class HelmUpgradeActionHandler : IActionHandler
 
         var chartPath = $"squid-helm-repo/{packageId}";
         var repoSetupBlock = BuildRepoSetupBlock(feed, syntax);
-        var chartVersion = ResolveChartVersion(ctx);
+        var chartVersion = PackageVersionResolver.Resolve(ctx);
 
         return new HelmChartSource(chartPath, repoSetupBlock, chartVersion);
     }
@@ -117,21 +108,6 @@ public class HelmUpgradeActionHandler : IActionHandler
     {
         var chartPath = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
         return new HelmChartSource(chartPath, string.Empty, string.Empty);
-    }
-
-    private static string ResolveChartVersion(ActionExecutionContext ctx)
-    {
-        var match = ctx.SelectedPackages?.FirstOrDefault(sp => string.Equals(sp.ActionName, ctx.Action.Name, StringComparison.OrdinalIgnoreCase));
-
-        if (match != null && !string.IsNullOrWhiteSpace(match.Version))
-            return match.Version;
-
-        var versionVar = ctx.Variables?.FirstOrDefault(v => string.Equals(v.Name, SpecialVariables.Action.PackageVersion, StringComparison.OrdinalIgnoreCase));
-
-        if (versionVar != null && !string.IsNullOrWhiteSpace(versionVar.Value))
-            return versionVar.Value;
-
-        return string.Empty;
     }
 
     private static string BuildRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, ScriptSyntax syntax)
@@ -172,13 +148,13 @@ public class HelmUpgradeActionHandler : IActionHandler
     private static string BuildPowerShellRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, bool hasCredentials)
     {
         var sb = new StringBuilder();
-        var repoUrl = EscapePowerShellValue(feed.FeedUri ?? string.Empty);
+        var repoUrl = ShellEscapeHelper.EscapePowerShell(feed.FeedUri ?? string.Empty);
         sb.AppendLine($"$squidRepoUrl = \"{repoUrl}\"");
 
         if (hasCredentials)
         {
-            var repoUser = EscapePowerShellValue(feed.Username ?? string.Empty);
-            var repoPass = EscapePowerShellValue(feed.Password ?? string.Empty);
+            var repoUser = ShellEscapeHelper.EscapePowerShell(feed.Username ?? string.Empty);
+            var repoPass = ShellEscapeHelper.EscapePowerShell(feed.Password ?? string.Empty);
             sb.AppendLine($"$squidRepoUser = \"{repoUser}\"");
             sb.AppendLine($"$squidRepoPass = \"{repoPass}\"");
             sb.AppendLine("& $helmExe repo add squid-helm-repo $squidRepoUrl --username $squidRepoUser --password $squidRepoPass --force-update 2>$null");
@@ -302,7 +278,7 @@ public class HelmUpgradeActionHandler : IActionHandler
         }
         else
         {
-            var escapedValue = EscapePowerShellValue(value);
+            var escapedValue = ShellEscapeHelper.EscapePowerShell(value);
             sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{key}={escapedValue}\"");
         }
     }
@@ -313,7 +289,7 @@ public class HelmUpgradeActionHandler : IActionHandler
             sb.AppendLine($"HELM_CMD+=(\"--set\" \"{setValue}\")");
         else
         {
-            var escapedSetValue = EscapePowerShellValue(setValue);
+            var escapedSetValue = ShellEscapeHelper.EscapePowerShell(setValue);
             sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{escapedSetValue}\"");
         }
     }
@@ -322,15 +298,5 @@ public class HelmUpgradeActionHandler : IActionHandler
     {
         public string Type { get; set; }
         public string Value { get; set; }
-    }
-
-    private static string EscapePowerShellValue(string value)
-    {
-        if (string.IsNullOrEmpty(value)) return value;
-
-        return value
-            .Replace("`", "``", StringComparison.Ordinal)
-            .Replace("\"", "`\"", StringComparison.Ordinal)
-            .Replace("$", "`$", StringComparison.Ordinal);
     }
 }
