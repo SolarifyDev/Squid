@@ -9,6 +9,7 @@ public class GetPackageReferencesRequest : IRequest, ISpaceScoped
 {
     public int? SpaceId { get; set; }
     public int ProjectId { get; set; }
+    public int? ChannelId { get; set; }
 }
 
 public class GetPackageReferencesResponse : SquidResponse<GetPackageReferencesResponseData>
