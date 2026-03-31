@@ -9,10 +9,11 @@ namespace Squid.Message.Requests.Deployments.Channel;
 public class GetChannelsRequest : IPaginatedRequest, ISpaceScoped
 {
     public int? SpaceId { get; set; }
-    public int PageIndex { get; set; }
-    
-    public int PageSize { get; set; }
-    
+    public int? ProjectId { get; set; }
+    public int PageIndex { get; set; } = 1;
+
+    public int PageSize { get; set; } = 20;
+
     public string Keyword { get; set; }
 }
 
