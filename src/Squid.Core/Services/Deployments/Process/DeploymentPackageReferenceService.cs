@@ -12,7 +12,7 @@ namespace Squid.Core.Services.Deployments.Process;
 
 public interface IDeploymentPackageReferenceService : IScopedDependency
 {
-    Task<List<PackageReferenceDto>> GetPackageReferencesAsync(int projectId, CancellationToken ct = default);
+    Task<List<PackageReferenceDto>> GetPackageReferencesAsync(int projectId, int? channelId = null, CancellationToken ct = default);
 }
 
 public class PackageReferenceDto
@@ -32,6 +32,7 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
     private readonly IDeploymentStepDataProvider _stepDataProvider;
     private readonly IDeploymentActionDataProvider _actionDataProvider;
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
+    private readonly IActionChannelDataProvider _actionChannelDataProvider;
     private readonly IExternalFeedDataProvider _externalFeedDataProvider;
     private readonly IReleaseDataProvider _releaseDataProvider;
     private readonly IReleaseSelectedPackageDataProvider _selectedPackageDataProvider;
@@ -42,6 +43,7 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         IDeploymentStepDataProvider stepDataProvider,
         IDeploymentActionDataProvider actionDataProvider,
         IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
+        IActionChannelDataProvider actionChannelDataProvider,
         IExternalFeedDataProvider externalFeedDataProvider,
         IReleaseDataProvider releaseDataProvider,
         IReleaseSelectedPackageDataProvider selectedPackageDataProvider)
@@ -51,12 +53,13 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         _stepDataProvider = stepDataProvider;
         _actionDataProvider = actionDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
+        _actionChannelDataProvider = actionChannelDataProvider;
         _externalFeedDataProvider = externalFeedDataProvider;
         _releaseDataProvider = releaseDataProvider;
         _selectedPackageDataProvider = selectedPackageDataProvider;
     }
 
-    public async Task<List<PackageReferenceDto>> GetPackageReferencesAsync(int projectId, CancellationToken ct = default)
+    public async Task<List<PackageReferenceDto>> GetPackageReferencesAsync(int projectId, int? channelId = null, CancellationToken ct = default)
     {
         var project = await _projectDataProvider.GetProjectByIdAsync(projectId, ct).ConfigureAwait(false);
 
@@ -69,7 +72,8 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(process.Id, ct).ConfigureAwait(false);
         var stepIds = steps.Select(s => s.Id).ToList();
 
-        var actions = await _actionDataProvider.GetDeploymentActionsByStepIdsAsync(stepIds, ct).ConfigureAwait(false);
+        var allActions = await _actionDataProvider.GetDeploymentActionsByStepIdsAsync(stepIds, ct).ConfigureAwait(false);
+        var actions = await FilterEligibleActionsAsync(allActions, channelId, ct).ConfigureAwait(false);
         var actionIds = actions.Select(a => a.Id).ToList();
 
         var allProperties = await _actionPropertyDataProvider
@@ -146,6 +150,28 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         await EnrichLastReleaseVersionsAsync(references, projectId, ct).ConfigureAwait(false);
 
         return references;
+    }
+
+    private async Task<List<DeploymentAction>> FilterEligibleActionsAsync(List<DeploymentAction> actions, int? channelId, CancellationToken ct)
+    {
+        var eligible = actions.Where(a => !a.IsDisabled).ToList();
+
+        if (channelId == null) return eligible;
+
+        var actionIds = eligible.Select(a => a.Id).ToList();
+        var allChannels = await _actionChannelDataProvider.GetActionChannelsByActionIdsAsync(actionIds, ct).ConfigureAwait(false);
+
+        var channelsDict = allChannels.GroupBy(c => c.ActionId).ToDictionary(g => g.Key, g => g.Select(c => c.ChannelId).ToList());
+
+        return eligible.Where(a => MatchesChannel(a.Id, channelsDict, channelId.Value)).ToList();
+    }
+
+    private static bool MatchesChannel(int actionId, Dictionary<int, List<int>> channelsDict, int channelId)
+    {
+        if (!channelsDict.TryGetValue(actionId, out var channels) || channels.Count == 0)
+            return true;
+
+        return channels.Contains(channelId);
     }
 
     private static void DetectActionLevelPackageReferences(

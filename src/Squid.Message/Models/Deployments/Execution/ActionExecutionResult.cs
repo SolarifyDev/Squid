@@ -22,7 +22,7 @@ public class ActionExecutionResult
 
     public RunnerKind RunnerKind { get; set; } = RunnerKind.Unspecified;
 
-    public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
+    public ScriptSyntax Syntax { get; set; } = ScriptSyntax.Bash;
 
     public Dictionary<string, string> ActionProperties { get; set; }
 

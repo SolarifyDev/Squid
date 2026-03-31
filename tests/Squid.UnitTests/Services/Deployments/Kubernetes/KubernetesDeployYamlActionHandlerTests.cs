@@ -221,14 +221,14 @@ public class KubernetesDeployYamlActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_DefaultSyntax_IsPowerShell()
+    public async Task PrepareAsync_DefaultSyntax_IsBash()
     {
         var action = CreateAction(inlineYaml: "apiVersion: v1");
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+        result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 
     [Fact]

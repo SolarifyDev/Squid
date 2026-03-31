@@ -15,7 +15,7 @@ public class GetPackageReferencesRequestHandler : IRequestHandler<GetPackageRefe
     public async Task<GetPackageReferencesResponse> Handle(IReceiveContext<GetPackageReferencesRequest> context, CancellationToken cancellationToken)
     {
         var references = await _packageReferenceService
-            .GetPackageReferencesAsync(context.Message.ProjectId, cancellationToken).ConfigureAwait(false);
+            .GetPackageReferencesAsync(context.Message.ProjectId, context.Message.ChannelId, cancellationToken).ConfigureAwait(false);
 
         return new GetPackageReferencesResponse
         {

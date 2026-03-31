@@ -10,18 +10,33 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public interface IKubernetesApiContextScriptBuilder : IScopedDependency
 {
-    string WrapWithContext(
-        string userScript,
-        ScriptContext context,
-        string customKubectlPath = null);
+    string WrapWithContext(string userScript, ScriptContext context, string customKubectlPath = null);
+
+    string BuildSetupScript(ScriptContext context, string customKubectlPath = null);
 }
 
 public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuilder
 {
-    public string WrapWithContext(
-        string userScript,
-        ScriptContext context,
-        string customKubectlPath = null)
+    public string WrapWithContext(string userScript, ScriptContext context, string customKubectlPath = null)
+    {
+        var syntax = context?.Syntax ?? Message.Models.Deployments.Execution.ScriptSyntax.Bash;
+        var isBash = syntax == Message.Models.Deployments.Execution.ScriptSyntax.Bash;
+        var templateName = isBash ? "KubectlContext.sh" : "KubectlContext.ps1";
+        var template = UtilService.GetEmbeddedScriptContent(templateName);
+
+        var populated = PopulateTemplate(template, context, customKubectlPath);
+
+        return populated.Replace("{{UserScript}}", userScript ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    public string BuildSetupScript(ScriptContext context, string customKubectlPath = null)
+    {
+        var template = UtilService.GetEmbeddedScriptContent("KubectlContextSetup.sh");
+
+        return PopulateTemplate(template, context, customKubectlPath);
+    }
+
+    private static string PopulateTemplate(string template, ScriptContext context, string customKubectlPath)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(context?.Endpoint?.EndpointJson);
 
@@ -52,18 +67,13 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
         var gcpCreds = creds as GcpCredentials;
         var awsOidcCreds = creds as AwsOidcCredentials;
 
-        var syntax = context?.Syntax ?? Message.Models.Deployments.Execution.ScriptSyntax.Bash;
-        var isBash = syntax == Message.Models.Deployments.Execution.ScriptSyntax.Bash;
-        var templateName = isBash ? "KubectlContext.sh" : "KubectlContext.ps1";
-        var template = UtilService.GetEmbeddedScriptContent(templateName);
-
         string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
 
         var effectiveAccountType = awsEks?.UseInstanceRole == true
             ? "AwsEc2InstanceRole"
             : accountData?.AuthenticationAccountType.ToString() ?? "Token";
 
-        template = template
+        return template
             .Replace("{{KubectlExe}}", B64(customKubectlPath), StringComparison.Ordinal)
             .Replace("{{ClusterUrl}}", B64(endpoint?.ClusterUrl), StringComparison.Ordinal)
             .Replace("{{AccountType}}", B64(effectiveAccountType), StringComparison.Ordinal)
@@ -113,11 +123,7 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             .Replace("{{ProxyHost}}", B64(proxy?.Host), StringComparison.Ordinal)
             .Replace("{{ProxyPort}}", B64(proxy?.Port), StringComparison.Ordinal)
             .Replace("{{ProxyUsername}}", B64(proxy?.Username), StringComparison.Ordinal)
-            .Replace("{{ProxyPassword}}", B64(proxy?.Password), StringComparison.Ordinal)
-            // User script (NOT base64 encoded — executable code)
-            .Replace("{{UserScript}}", userScript ?? string.Empty, StringComparison.Ordinal);
-
-        return template;
+            .Replace("{{ProxyPassword}}", B64(proxy?.Password), StringComparison.Ordinal);
     }
 
     private static string ResolveNamespace(ScriptContext context, KubernetesApiEndpointDto endpoint)
