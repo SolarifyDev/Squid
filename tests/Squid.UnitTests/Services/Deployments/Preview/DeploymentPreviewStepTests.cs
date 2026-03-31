@@ -84,6 +84,21 @@ public class DeploymentPreviewStepTests
         };
     }
 
+    private static DeploymentStepDto CreateRunOnServerStep(int id, int stepOrder, string name, List<DeploymentActionDto> actions)
+    {
+        return new DeploymentStepDto
+        {
+            Id = id,
+            StepOrder = stepOrder,
+            Name = name,
+            Properties = new List<DeploymentStepPropertyDto>
+            {
+                new() { StepId = id, PropertyName = SpecialVariables.Step.RunOnServer, PropertyValue = "true" }
+            },
+            Actions = actions
+        };
+    }
+
     private static DeploymentActionDto CreateAction(int id, string actionType, int actionOrder = 1)
     {
         return new DeploymentActionDto
@@ -269,6 +284,72 @@ public class DeploymentPreviewStepTests
         var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
 
         result.Count.ShouldBe(2);
+    }
+
+    // ========== RunOnServer Steps ==========
+
+    [Fact]
+    public void RunOnServerStep_ShouldBeApplicableWithNoMatchedTargets()
+    {
+        var action = CreateAction(10, "Squid.Script");
+        var step = CreateRunOnServerStep(1, 1, "Server Script", [action]);
+        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
+
+        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
+
+        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
+
+        result.IsApplicable.ShouldBeTrue();
+        result.IsRunOnServer.ShouldBeTrue();
+        result.IsStepLevelOnly.ShouldBeFalse();
+        result.MatchedTargets.ShouldBeEmpty();
+        result.RequiredRoles.ShouldBeEmpty();
+        result.Reason.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RunOnServerStep_NoMachines_ShouldStillBeApplicable()
+    {
+        var action = CreateAction(10, "Squid.Script");
+        var step = CreateRunOnServerStep(1, 1, "Server Script", [action]);
+
+        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
+
+        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), []);
+
+        result.IsApplicable.ShouldBeTrue();
+        result.IsRunOnServer.ShouldBeTrue();
+        result.MatchedTargets.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void FilterCandidates_RunOnServerOnlySteps_ReturnsAllMachines()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsRunOnServer = true, StepName = "Server Script" }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void FilterCandidates_MixedRunOnServerAndTarget_FiltersOnlyByTargetRoles()
+    {
+        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"), (3, "node-3", "[\"cache\"]"));
+        var steps = new List<DeploymentPreviewStepResult>
+        {
+            new() { IsApplicable = true, IsRunOnServer = true, StepName = "Server Script" },
+            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] }
+        };
+
+        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+
+        result.Count.ShouldBe(1);
+        result[0].MachineName.ShouldBe("node-1");
     }
 
     [Fact]

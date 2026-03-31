@@ -69,7 +69,7 @@ public class ChannelService : IChannelService
 
     public async Task<GetChannelsResponse> GetChannelsAsync(GetChannelsRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await _channelDataProvider.GetChannelPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, data) = await _channelDataProvider.GetChannelPagingAsync(request.ProjectId, request.SpaceId, request.Keyword, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetChannelsResponse
         {

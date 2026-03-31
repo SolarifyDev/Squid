@@ -11,7 +11,7 @@ public interface IChannelDataProvider : IScopedDependency
 
     Task DeleteChannelsAsync(List<Channel> channels, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Channel>)> GetChannelPagingAsync(int? projectId = null, int? spaceId = null, string keyword = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<Channel>> GetChannelsAsync(List<int> ids, CancellationToken cancellationToken);
 
@@ -45,15 +45,26 @@ public class ChannelDataProvider(IUnitOfWork unitOfWork, IRepository repository)
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Channel>)> GetChannelPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Channel>)> GetChannelPagingAsync(int? projectId = null, int? spaceId = null, string keyword = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = repository.Query<Channel>();
-        
+
+        if (projectId.HasValue)
+            query = query.Where(c => c.ProjectId == projectId.Value);
+
+        if (spaceId.HasValue)
+            query = query.Where(c => c.SpaceId == spaceId.Value);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+            query = query.Where(c => c.Name.Contains(keyword));
+
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
-        
-        if (pageIndex.HasValue && pageSize.HasValue)
+
+        query = query.OrderByDescending(c => c.Id);
+
+        if (pageIndex.HasValue && pageIndex.Value > 0 && pageSize.HasValue && pageSize.Value > 0)
             query = query.Skip((pageIndex.Value - 1) * pageSize.Value).Take(pageSize.Value);
-        
+
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }
 

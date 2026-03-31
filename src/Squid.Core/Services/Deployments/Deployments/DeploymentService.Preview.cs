@@ -45,14 +45,6 @@ public partial class DeploymentService
 
         var selectedMachines = ApplyMachineSelection(machines, context.SpecificMachineIds, context.ExcludedMachineIds);
 
-        if (selectedMachines.Count == 0)
-        {
-            var message = context.SpecificMachineIds.Count > 0 || context.ExcludedMachineIds.Count > 0
-                ? $"No available machines found after applying machine selection constraints in environment {context.EnvironmentId}."
-                : $"No available machines found in environment {context.EnvironmentId}.";
-            blockingReasons.Add(message);
-        }
-
         await PopulateLifecycleValidationAsync(result, release, context, blockingReasons, cancellationToken).ConfigureAwait(false);
 
         var ruleReport = await _deploymentValidationOrchestrator.ValidateAsync(stage, context, cancellationToken).ConfigureAwait(false);
@@ -71,6 +63,14 @@ public partial class DeploymentService
 
         result.CandidateTargets = FilterCandidatesByStepRoles(result.Steps, selectedMachines);
         result.AvailableMachineCount = result.CandidateTargets.Count;
+
+        if (HasTargetLevelSteps(result.Steps) && selectedMachines.Count == 0)
+        {
+            var message = context.SpecificMachineIds.Count > 0 || context.ExcludedMachineIds.Count > 0
+                ? $"No available machines found after applying machine selection constraints in environment {context.EnvironmentId}."
+                : $"No available machines found in environment {context.EnvironmentId}.";
+            blockingReasons.Add(message);
+        }
 
         if (HasNoMatchingTargetsForApplicableSteps(result.Steps))
         {
@@ -172,6 +172,12 @@ public partial class DeploymentService
             return result;
         }
 
+        if (RunOnServerEvaluator.IsRunOnServer(step))
+        {
+            result.IsRunOnServer = true;
+            return result;
+        }
+
         result.RequiredRoles = ExtractRequiredRoles(step);
 
         var matchedMachines = result.RequiredRoles.Count == 0
@@ -214,7 +220,7 @@ public partial class DeploymentService
         if (steps == null || steps.Count == 0)
             return AllMachines();
 
-        var targetLevelSteps = steps.Where(s => s.IsApplicable && !s.IsStepLevelOnly).ToList();
+        var targetLevelSteps = steps.Where(s => s.IsApplicable && !s.IsStepLevelOnly && !s.IsRunOnServer).ToList();
 
         if (targetLevelSteps.Count == 0)
             return AllMachines();
@@ -232,10 +238,15 @@ public partial class DeploymentService
         return filtered.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
     }
 
+    private static bool HasTargetLevelSteps(List<DeploymentPreviewStepResult> steps)
+    {
+        return steps != null && steps.Any(step => step.IsApplicable && !step.IsStepLevelOnly && !step.IsRunOnServer);
+    }
+
     private static bool HasNoMatchingTargetsForApplicableSteps(List<DeploymentPreviewStepResult> steps)
     {
         var targetLevelSteps = steps
-            .Where(step => step.IsApplicable && !step.IsStepLevelOnly)
+            .Where(step => step.IsApplicable && !step.IsStepLevelOnly && !step.IsRunOnServer)
             .ToList();
 
         return targetLevelSteps.Count > 0 && targetLevelSteps.All(step => step.MatchedTargets.Count == 0);
