@@ -71,7 +71,7 @@ public class HelmUpgradeActionHandlerTests
     [Fact]
     public void CanHandle_DifferentActionType_ReturnsFalse()
     {
-        var action = CreateAction("Squid.KubernetesRunScript");
+        var action = CreateAction("Squid.Script");
         ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }
 

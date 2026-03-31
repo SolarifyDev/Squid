@@ -169,7 +169,7 @@ public class DeploymentStepServiceTests : TestBase
 
         var created = await CreateStepAsync(processId, "Original Step",
             properties: [new StepPropertyModel { PropertyName = "OldProp", PropertyValue = "old" }],
-            actions: [new CreateOrUpdateDeploymentActionModel { Name = "Old Action", ActionType = "Squid.KubernetesRunScript" }]);
+            actions: [new CreateOrUpdateDeploymentActionModel { Name = "Old Action", ActionType = "Squid.Script" }]);
 
         var stepId = created.Id;
 

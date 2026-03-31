@@ -3,13 +3,12 @@ using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
-using Squid.Core.Services.DeploymentExecution.Handlers;
 
-namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
+namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
-public class KubernetesRunScriptActionHandler : IActionHandler
+public class RunScriptActionHandler : IActionHandler
 {
-    public string ActionType => SpecialVariables.ActionTypes.KubernetesRunScript;
+    public string ActionType => SpecialVariables.ActionTypes.Script;
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

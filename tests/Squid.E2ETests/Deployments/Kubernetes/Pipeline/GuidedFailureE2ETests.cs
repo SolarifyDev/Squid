@@ -137,7 +137,7 @@ public class GuidedFailureE2ETests
             var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Step", "Action", "Success", isRequired: true).ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
-            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Deploy Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Deploy Action", actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,
                 ("Squid.Action.Script.ScriptBody", "echo 'guided-failure-test'"),

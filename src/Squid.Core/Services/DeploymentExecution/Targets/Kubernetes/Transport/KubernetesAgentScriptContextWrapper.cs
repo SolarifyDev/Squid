@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -10,6 +11,9 @@ public class KubernetesAgentScriptContextWrapper : IScriptContextWrapper
 
     public string WrapScript(string script, ScriptContext context)
     {
+        if (!ScriptSyntaxHelper.IsShellSyntax(context?.Syntax ?? ScriptSyntax.Bash))
+            return script;
+
         var ns = ResolveNamespace(context);
         ValidateKubernetesName(ns);
 

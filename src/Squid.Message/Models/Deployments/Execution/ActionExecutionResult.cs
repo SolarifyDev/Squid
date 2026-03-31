@@ -56,5 +56,8 @@ public class ActionExecutionResult
 public enum ScriptSyntax
 {
     PowerShell = 0,
-    Bash = 1
+    Bash = 1,
+    CSharp = 2,
+    FSharp = 3,
+    Python = 4
 }

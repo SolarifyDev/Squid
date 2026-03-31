@@ -161,6 +161,19 @@ public class KubernetesAgentScriptContextWrapperTests
         Should.NotThrow(() => KubernetesAgentScriptContextWrapper.ValidateKubernetesName("  "));
     }
 
+    // === Non-shell syntax — returns original script ===
+
+    [Theory]
+    [InlineData(ScriptSyntax.CSharp)]
+    [InlineData(ScriptSyntax.FSharp)]
+    [InlineData(ScriptSyntax.Python)]
+    public void WrapScript_NonShellSyntax_ReturnsOriginalScript(ScriptSyntax syntax)
+    {
+        var result = _wrapper.WrapScript("print('hello')", MakeContext(syntax));
+
+        result.ShouldBe("print('hello')");
+    }
+
     // === Helpers ===
 
     private static Dictionary<string, string> MakeActionProperties(string ns)

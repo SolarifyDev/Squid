@@ -51,7 +51,7 @@ public class HealthCheckActionHandlerTests
     public void CanHandle_OtherAction_ReturnsFalse()
     {
         var handler = CreateHandler(out _);
-        var action = new DeploymentActionDto { ActionType = "Squid.KubernetesRunScript" };
+        var action = new DeploymentActionDto { ActionType = "Squid.Script" };
 
         ((IActionHandler)handler).CanHandle(action).ShouldBeFalse();
     }

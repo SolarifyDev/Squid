@@ -175,6 +175,25 @@ public class KubernetesApiScriptContextWrapperTests
         result.ShouldBe("wrapped-null-vars");
     }
 
+    // === WrapScript — non-shell syntax returns original script ===
+
+    [Theory]
+    [InlineData(ScriptSyntax.CSharp)]
+    [InlineData(ScriptSyntax.FSharp)]
+    [InlineData(ScriptSyntax.Python)]
+    public void WrapScript_NonShellSyntax_ReturnsOriginalScript(ScriptSyntax syntax)
+    {
+        var ctx = MakeContext(syntax: syntax);
+
+        var result = _wrapper.WrapScript("print('hello')", ctx);
+
+        result.ShouldBe("print('hello')");
+        _builderMock.Verify(b => b.WrapWithContext(
+            It.IsAny<string>(),
+            It.IsAny<ScriptContext>(),
+            It.IsAny<string>()), Times.Never);
+    }
+
     // === WrapScript — bad input returns original script ===
 
     [Fact]

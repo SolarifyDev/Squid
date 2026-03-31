@@ -249,7 +249,7 @@ public class SquidTentacleE2ETests
         _fixture.LogSink.Clear();
 
         return await SeedDeploymentAsync(
-            "Squid.KubernetesRunScript",
+            "Squid.Script",
             _fixture.TentacleEnvironmentId,
             null,
             ("Squid.Action.Script.ScriptBody", scriptBody),
@@ -277,7 +277,7 @@ public class SquidTentacleE2ETests
         _fixture.LogSink.Clear();
 
         return await SeedDeploymentWithCustomMachineAsync(
-            "Squid.KubernetesRunScript", ns,
+            "Squid.Script", ns,
             ("Squid.Action.Script.ScriptBody", scriptBody),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }

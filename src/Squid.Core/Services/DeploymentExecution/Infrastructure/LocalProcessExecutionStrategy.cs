@@ -149,6 +149,9 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         {
             ScriptSyntax.Bash => ("bash", "\"{{ScriptPath}}\"", "script.sh"),
             ScriptSyntax.PowerShell => ("pwsh", "-NoProfile -NonInteractive -File \"{{ScriptPath}}\"", "script.ps1"),
+            ScriptSyntax.CSharp => ("dotnet-script", "\"{{ScriptPath}}\"", "script.csx"),
+            ScriptSyntax.FSharp => ("dotnet", "fsi \"{{ScriptPath}}\"", "script.fsx"),
+            ScriptSyntax.Python => ("python3", "\"{{ScriptPath}}\"", "script.py"),
             _ => throw new InvalidOperationException($"Unsupported script syntax '{plan.Request.Syntax}'.")
         };
     }

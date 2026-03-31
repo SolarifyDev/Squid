@@ -875,7 +875,7 @@ public class DeploymentTargetFinderTests
     public void CollectAllTargetRoles_StepLevelOnlyStep_NoRoles_SkippedByResolver()
     {
         var manualStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { manualStep, webStep };
 
@@ -889,7 +889,7 @@ public class DeploymentTargetFinderTests
     public void CollectAllTargetRoles_StepLevelOnlyStep_NoRoles_WithoutResolver_DisablesPreFilter()
     {
         var manualStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { manualStep, webStep };
 
@@ -901,8 +901,8 @@ public class DeploymentTargetFinderTests
     [Fact]
     public void CollectAllTargetRoles_MixedScopeStep_NoRoles_StillDisablesPreFilter()
     {
-        var mixedStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"), MakeAction("Squid.KubernetesRunScript"));
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var mixedStep = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"), MakeAction("Squid.Script"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { mixedStep, webStep };
 
@@ -915,7 +915,7 @@ public class DeploymentTargetFinderTests
     public void CollectAllTargetRoles_StepNoActions_NoRoles_StillDisablesPreFilter()
     {
         var emptyStep = MakeStepWithRoles(null);
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { emptyStep, webStep };
 
@@ -928,7 +928,7 @@ public class DeploymentTargetFinderTests
     public void CollectAllTargetRoles_DisabledStepLevelAction_FallsBackToTargetLevel()
     {
         var step = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention", isDisabled: true));
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { step, webStep };
 
@@ -942,8 +942,8 @@ public class DeploymentTargetFinderTests
     {
         var manual1 = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
         var manual2 = MakeStepWithRolesAndActions(null, MakeAction("Squid.ManualIntervention"));
-        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.KubernetesRunScript"));
-        var apiStep = MakeStepWithRolesAndActions("api", MakeAction("Squid.KubernetesRunScript"));
+        var webStep = MakeStepWithRolesAndActions("web", MakeAction("Squid.Script"));
+        var apiStep = MakeStepWithRolesAndActions("api", MakeAction("Squid.Script"));
 
         var steps = new List<DeploymentStepDto> { manual1, manual2, webStep, apiStep };
 

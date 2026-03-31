@@ -44,7 +44,7 @@ public class ManualInterventionActionHandlerTests
     [Fact]
     public void CanHandle_DifferentActionType_ReturnsFalse()
     {
-        var action = new DeploymentActionDto { ActionType = "Squid.KubernetesRunScript" };
+        var action = new DeploymentActionDto { ActionType = "Squid.Script" };
 
         ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }

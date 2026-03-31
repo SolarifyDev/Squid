@@ -172,7 +172,7 @@ public class DeploymentStepServiceActionAssociationTests
         stepProvider.Setup(p => p.GetDeploymentStepByIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DeploymentStep { Id = 1, Name = "Step 1", StepType = "Action", Condition = "Success" });
         actionProvider.Setup(p => p.GetDeploymentActionsByStepIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<DeploymentAction> { new() { Id = 1, StepId = 1, Name = "Action 1", ActionType = "Squid.KubernetesRunScript" } });
+            .ReturnsAsync(new List<DeploymentAction> { new() { Id = 1, StepId = 1, Name = "Action 1", ActionType = "Squid.Script" } });
         actionPropertyProvider.Setup(p => p.GetDeploymentActionPropertiesByActionIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<DeploymentActionProperty>());
         stepPropertyProvider.Setup(p => p.GetDeploymentStepPropertiesByStepIdAsync(1, It.IsAny<CancellationToken>()))
@@ -207,7 +207,7 @@ public class DeploymentStepServiceActionAssociationTests
                     new()
                     {
                         Name = "Run Script",
-                        ActionType = "Squid.KubernetesRunScript",
+                        ActionType = "Squid.Script",
                         Environments = environments ?? new List<int>(),
                         ExcludedEnvironments = excludedEnvironments ?? new List<int>(),
                         Channels = channels ?? new List<int>()

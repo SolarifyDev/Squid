@@ -25,25 +25,18 @@ public class ScriptSyntaxHelperTests
         return action;
     }
 
-    [Fact]
-    public void ResolveSyntax_Bash_ReturnsBash()
+    [Theory]
+    [InlineData("Bash", ScriptSyntax.Bash)]
+    [InlineData("PowerShell", ScriptSyntax.PowerShell)]
+    [InlineData("CSharp", ScriptSyntax.CSharp)]
+    [InlineData("FSharp", ScriptSyntax.FSharp)]
+    [InlineData("Python", ScriptSyntax.Python)]
+    [InlineData("bash", ScriptSyntax.Bash)]
+    [InlineData("csharp", ScriptSyntax.CSharp)]
+    public void ResolveSyntax_KnownLanguages(string input, ScriptSyntax expected)
     {
-        var action = CreateAction("Bash");
-        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.Bash);
-    }
-
-    [Fact]
-    public void ResolveSyntax_PowerShell_ReturnsPowerShell()
-    {
-        var action = CreateAction("PowerShell");
-        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.PowerShell);
-    }
-
-    [Fact]
-    public void ResolveSyntax_CaseInsensitive_Bash()
-    {
-        var action = CreateAction("bash");
-        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.Bash);
+        var action = CreateAction(input);
+        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(expected);
     }
 
     [Fact]
@@ -51,5 +44,23 @@ public class ScriptSyntaxHelperTests
     {
         var action = CreateAction();
         ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public void ResolveSyntax_Unknown_DefaultsPowerShell()
+    {
+        var action = CreateAction("Ruby");
+        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Theory]
+    [InlineData(ScriptSyntax.Bash, true)]
+    [InlineData(ScriptSyntax.PowerShell, true)]
+    [InlineData(ScriptSyntax.CSharp, false)]
+    [InlineData(ScriptSyntax.FSharp, false)]
+    [InlineData(ScriptSyntax.Python, false)]
+    public void IsShellSyntax_Classification(ScriptSyntax syntax, bool expected)
+    {
+        ScriptSyntaxHelper.IsShellSyntax(syntax).ShouldBe(expected);
     }
 }

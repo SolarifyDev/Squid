@@ -85,7 +85,7 @@ public class KubernetesCancellationE2ETests
 
             var action = await builder.CreateDeploymentActionAsync(
                 step.Id, 1, "Long Running Action",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,
