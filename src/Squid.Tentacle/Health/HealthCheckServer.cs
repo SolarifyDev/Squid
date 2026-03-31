@@ -14,7 +14,7 @@ public class HealthCheckServer : IHealthCheckServer
     {
         _readinessCheck = readinessCheck;
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://+:{port}/");
+        _listener.Prefixes.Add($"http://*:{port}/");
     }
 
     public void Start()
@@ -29,7 +29,7 @@ public class HealthCheckServer : IHealthCheckServer
     private int GetPort()
     {
         var prefix = _listener.Prefixes.FirstOrDefault() ?? "";
-        var uri = new Uri(prefix.Replace("+", "localhost"));
+        var uri = new Uri(prefix.Replace("*", "localhost"));
         return uri.Port;
     }
 

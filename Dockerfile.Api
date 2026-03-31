@@ -1,5 +1,6 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG TARGETARCH
+ARG APT_MIRROR
 
 WORKDIR /src
 COPY NuGet.Config .
@@ -28,7 +29,12 @@ RUN HELM_VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/la
     rm -rf linux-${HARCH}
 
 # Download AWS CLI v2 matching target architecture
-RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* && \
+RUN if [ -n "$APT_MIRROR" ]; then \
+        APT_MIRROR=$(echo "$APT_MIRROR" | sed 's|/*$||') && \
+        sed -i "s|https\?://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+        sed -i "s|https\?://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list 2>/dev/null; true; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* && \
     if [ "$TARGETARCH" = "amd64" ]; then AWSARCH="x86_64"; else AWSARCH="aarch64"; fi && \
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWSARCH}.zip" -o /tmp/awscliv2.zip && \
     unzip -q /tmp/awscliv2.zip -d /tmp && \
@@ -46,9 +52,15 @@ RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell
     chmod +x /opt/powershell/pwsh
 
 # Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
+ARG APT_MIRROR
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "$APT_MIRROR" ]; then \
+        APT_MIRROR=$(echo "$APT_MIRROR" | sed 's|/*$||') && \
+        sed -i "s|https\?://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+        sed -i "s|https\?://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list 2>/dev/null; true; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=build /app .
