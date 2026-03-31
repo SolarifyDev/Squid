@@ -258,11 +258,11 @@ Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, Cancellatio
 
 `ActionHandlerRegistry` resolves via `_handlers.FirstOrDefault(h => h.CanHandle(action))`.
 
-### Kubernetes Handlers
+### Handlers
 
 | Handler | ActionType | ScriptBody | Files | CalamariCommand |
 |---------|-----------|------------|-------|-----------------|
-| `KubernetesRunScriptActionHandler` | `Squid.KubernetesRunScript` | User script from properties | Empty | `null` |
+| `RunScriptActionHandler` | `Squid.Script` | User script from properties | Empty | `null` |
 | `KubernetesDeployYamlActionHandler` | `Squid.KubernetesDeployRawYaml` | `kubectl apply -f inline-deployment.yaml` | `{"inline-deployment.yaml": yamlBytes}` | `null` |
 | `HelmUpgradeActionHandler` | `Squid.HelmChartUpgrade` | `helm upgrade --install ...` | `{"rawYamlValues.yaml": valuesBytes}` (if values) | `null` |
 | `KubernetesDeployContainersActionHandler` | `Squid.KubernetesDeployContainers` | `kubectl apply -f .` | `{deployment.yaml, service.yaml, configmap.yaml, ...}` | `null` |
@@ -363,7 +363,7 @@ Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, Cancellatio
 | `Services/DeploymentExecution/Kubernetes/KubernetesApiExecutionStrategy.cs` | Local script execution in temp dir |
 | `Services/DeploymentExecution/Kubernetes/KubernetesApiEndpointVariableContributor.cs` | 13+ K8s variables from endpoint JSON |
 | `Services/DeploymentExecution/Kubernetes/KubernetesApiScriptContextWrapper.cs` | kubectl context wrapping (only for KubernetesApi) |
-| `Services/DeploymentExecution/Kubernetes/KubernetesRunScriptActionHandler.cs` | Returns user script, no files |
+| `Services/DeploymentExecution/Handlers/RunScriptActionHandler.cs` | Returns user script, no files |
 | `Services/DeploymentExecution/Kubernetes/KubernetesDeployYamlActionHandler.cs` | Inline YAML → files dict + kubectl apply |
 | `Halibut/HalibutModule.cs` | Server HalibutRuntime builder + polling listener |
 | `Halibut/HalibutTrustInitializer.cs` | Startup: trust all polling machine thumbprints |
