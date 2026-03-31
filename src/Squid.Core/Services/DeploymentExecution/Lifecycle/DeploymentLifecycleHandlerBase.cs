@@ -14,6 +14,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         DeploymentResumingEvent e => OnDeploymentResumingAsync(e.Context, ct),
         DeploymentSucceededEvent e => OnDeploymentSucceededAsync(e.Context, ct),
         DeploymentFailedEvent e => OnDeploymentFailedAsync(e.Context, ct),
+        ServerOnlyDeploymentDetectedEvent e => OnServerOnlyDeploymentDetectedAsync(e.Context, ct),
+        RunOnServerExecutingEvent e => OnRunOnServerExecutingAsync(e.Context, ct),
         TargetsResolvedEvent e => OnTargetsResolvedAsync(e.Context, ct),
         UnhealthyTargetsExcludedEvent e => OnUnhealthyTargetsExcludedAsync(e.Context, ct),
         TargetPreparingEvent e => OnTargetPreparingAsync(e.Context, ct),
@@ -54,6 +56,10 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnDeploymentResumingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnDeploymentSucceededAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnDeploymentFailedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+
+    // === Server-Only ===
+    protected virtual Task OnServerOnlyDeploymentDetectedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnRunOnServerExecutingAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
     // === Target Preparation ===
     protected virtual Task OnTargetsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;

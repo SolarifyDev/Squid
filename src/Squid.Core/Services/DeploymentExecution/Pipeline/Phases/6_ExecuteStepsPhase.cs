@@ -7,10 +7,11 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
-public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService, IServerTaskService serverTaskService) : IDeploymentPipelinePhase
+public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService, IServerTaskService serverTaskService, ITransportRegistry transportRegistry) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 

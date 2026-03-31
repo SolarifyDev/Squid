@@ -53,7 +53,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -87,7 +87,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         var transport = new TestTransport(strategy, wrapper);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -126,7 +126,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -168,7 +168,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle((nodeType, name) => createdNodes.Add((nodeType, name)));
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -197,7 +197,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             .Callback<int, long, ServerTaskLogCategory, string, string, long?, DateTimeOffset?, CancellationToken>((_, _, _, msg, _, _, _, _) => logMessages.Add(msg))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         ctx.SelectedPackages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy Web", Version = "1.2.3" } };
         lifecycle.Initialize(ctx);
@@ -229,7 +229,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -271,7 +271,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -302,7 +302,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 
@@ -330,7 +330,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
         var transport = new TestTransport(strategy, scriptWrapper: null);
         var (lifecycle, _) = CreateLifecycle();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext();
         lifecycle.Initialize(ctx);
 

@@ -954,6 +954,50 @@ public class DeploymentTargetFinderTests
         result.ShouldContain("api");
     }
 
+    // ============================
+    // CollectAllTargetRoles with RunOnServer exclusion
+    // ============================
+
+    [Fact]
+    public void CollectAllTargetRoles_RunOnServerStep_ExcludedFromCollection()
+    {
+        var runOnServerStep = MakeStepWithRoles(null);
+        runOnServerStep.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = SpecialVariables.Step.RunOnServer, PropertyValue = "true"
+        });
+
+        var webStep = MakeStepWithRoles("web");
+
+        var steps = new List<DeploymentStepDto> { runOnServerStep, webStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(1);
+        result.ShouldContain("web");
+    }
+
+    [Fact]
+    public void CollectAllTargetRoles_MixedSteps_OnlyCollectsTargetStepRoles()
+    {
+        var serverStep = MakeStepWithRoles("some-role");
+        serverStep.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = 1, PropertyName = SpecialVariables.Step.RunOnServer, PropertyValue = "true"
+        });
+
+        var targetStep = MakeStepWithRoles("k8s,web");
+
+        var steps = new List<DeploymentStepDto> { serverStep, targetStep };
+
+        var result = DeploymentTargetFinder.CollectAllTargetRoles(steps);
+
+        result.Count.ShouldBe(2);
+        result.ShouldContain("k8s");
+        result.ShouldContain("web");
+        result.ShouldNotContain("some-role");
+    }
+
     private static Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope StepLevelResolver(DeploymentActionDto action)
     {
         if (action.ActionType == "Squid.ManualIntervention")

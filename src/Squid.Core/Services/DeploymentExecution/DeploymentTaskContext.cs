@@ -35,6 +35,9 @@ public class DeploymentTaskContext
     public bool FailureEncountered { get; set; }
     public bool UseGuidedFailure { get; set; }
 
+    // Server-only execution
+    public bool IsServerOnlyDeployment { get; set; }
+
     // Resume
     public bool IsResume { get; set; }
     public int? ResumeFromBatchIndex { get; set; }

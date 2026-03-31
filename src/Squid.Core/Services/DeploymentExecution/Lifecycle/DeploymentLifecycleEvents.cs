@@ -61,6 +61,10 @@ public sealed record DeploymentResumingEvent(DeploymentEventContext Context) : D
 public sealed record DeploymentSucceededEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record DeploymentFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
+// === Server-Only ===
+public sealed record ServerOnlyDeploymentDetectedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record RunOnServerExecutingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+
 // === Target Preparation ===
 public sealed record TargetsResolvedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record UnhealthyTargetsExcludedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
