@@ -46,7 +46,7 @@ RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell
     chmod +x /opt/powershell/pwsh
 
 # Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 
