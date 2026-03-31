@@ -741,7 +741,7 @@ public class DeploymentExecutionLoggingTests
             Id = name.GetHashCode(),
             Name = name,
             ActionOrder = 1,
-            ActionType = "Squid.KubernetesRunScript",
+            ActionType = "Squid.Script",
             IsRequired = true,
             IsDisabled = false,
             Properties = new List<DeploymentActionPropertyDto>(),
@@ -814,7 +814,7 @@ public class DeploymentExecutionLoggingTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public string ActionType => "Squid.KubernetesRunScript";
+        public string ActionType => "Squid.Script";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {

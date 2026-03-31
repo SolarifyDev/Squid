@@ -44,7 +44,7 @@ public class KubernetesKustomizeActionHandlerTests
     public void CanHandle_NonMatchingType_ReturnsFalse()
     {
         var action = CreateAction();
-        action.ActionType = "Squid.KubernetesRunScript";
+        action.ActionType = "Squid.Script";
         ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }
 

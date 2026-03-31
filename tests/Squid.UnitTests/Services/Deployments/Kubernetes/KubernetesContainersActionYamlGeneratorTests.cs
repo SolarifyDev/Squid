@@ -30,7 +30,7 @@ public class KubernetesContainersActionYamlGeneratorTests
     [Fact]
     public void CanHandle_WrongActionType_ReturnsFalse()
     {
-        var action = new DeploymentActionDto { ActionType = "Squid.KubernetesRunScript" };
+        var action = new DeploymentActionDto { ActionType = "Squid.Script" };
         _generator.CanHandle(action).ShouldBeFalse();
     }
 

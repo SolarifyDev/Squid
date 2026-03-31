@@ -5,7 +5,6 @@ public static class SpecialVariables
     public static class ActionTypes
     {
         public const string Script = "Squid.Script";
-        public const string KubernetesRunScript = "Squid.KubernetesRunScript";
         public const string KubernetesDeployRawYaml = "Squid.KubernetesDeployRawYaml";
         public const string KubernetesDeployContainers = "Squid.KubernetesDeployContainers";
         public const string HelmChartUpgrade = "Squid.HelmChartUpgrade";

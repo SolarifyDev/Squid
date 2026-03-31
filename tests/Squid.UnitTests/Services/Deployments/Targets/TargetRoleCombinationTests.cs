@@ -320,8 +320,8 @@ public class TargetRoleCombinationTests
         var steps = new List<DeploymentStepDto>
         {
             MakeStepWithAction(1, "Manual Intervention", targetRoles: null, actionType: "Squid.ManualIntervention"),
-            MakeStepWithAction(2, "Deploy web", targetRoles: "k8s-api-local", actionType: "Squid.KubernetesRunScript"),
-            MakeStepWithAction(3, "Deploy web config", targetRoles: "k8s-api-local", actionType: "Squid.KubernetesRunScript")
+            MakeStepWithAction(2, "Deploy web", targetRoles: "k8s-api-local", actionType: "Squid.Script"),
+            MakeStepWithAction(3, "Deploy web config", targetRoles: "k8s-api-local", actionType: "Squid.Script")
         };
 
         Squid.Core.Services.DeploymentExecution.Handlers.ExecutionScope ScopeResolver(DeploymentActionDto a) =>
@@ -545,13 +545,13 @@ public class TargetRoleCombinationTests
         var steps = new List<DeploymentStepDto>
         {
             MakeStepWithAction(1, "Acquire Packages", targetRoles: null, actionType: "Squid.TentaclePackage"),
-            MakeStepWithAction(2, "Deploy Web", targetRoles: "web", actionType: "Squid.KubernetesRunScript")
+            MakeStepWithAction(2, "Deploy Web", targetRoles: "web", actionType: "Squid.Script")
         };
 
         // No handler for TentaclePackage → StepLevel (default for unknown)
-        // KubernetesRunScript → TargetLevel (known handler)
+        // Script → TargetLevel (known handler)
         ExecutionScope ScopeResolver(DeploymentActionDto a) =>
-            a.ActionType == "Squid.KubernetesRunScript"
+            a.ActionType == "Squid.Script"
                 ? ExecutionScope.TargetLevel
                 : ExecutionScope.StepLevel;
 

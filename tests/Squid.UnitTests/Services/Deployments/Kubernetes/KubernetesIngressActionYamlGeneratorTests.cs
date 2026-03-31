@@ -51,7 +51,7 @@ public class KubernetesIngressActionYamlGeneratorTests
     [Fact]
     public async Task GenerateAsync_WrongActionType_ReturnsEmptyDictionary()
     {
-        var action = new DeploymentActionDto { ActionType = "Squid.KubernetesRunScript" };
+        var action = new DeploymentActionDto { ActionType = "Squid.Script" };
         var step = new DeploymentStepDto();
 
         var result = await _generator.GenerateAsync(step, action, CancellationToken.None);

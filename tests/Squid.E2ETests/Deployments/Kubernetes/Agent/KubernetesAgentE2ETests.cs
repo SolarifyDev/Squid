@@ -239,7 +239,7 @@ public class KubernetesAgentE2ETests
         _fixture.LogSink.Clear();
 
         return await SeedDeploymentAsync(
-            "Squid.KubernetesRunScript",
+            "Squid.Script",
             ("Squid.Action.Script.ScriptBody", scriptBody),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }
@@ -259,7 +259,7 @@ public class KubernetesAgentE2ETests
         _fixture.LogSink.Clear();
 
         return await SeedDeploymentAsync(
-            "Squid.KubernetesRunScript", ns,
+            "Squid.Script", ns,
             ("Squid.Action.Script.ScriptBody", scriptBody),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }

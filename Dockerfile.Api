@@ -35,6 +35,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf
     /tmp/aws/install --install-dir /opt/aws-cli --bin-dir /opt/aws-cli/bin && \
     rm -rf /tmp/awscliv2.zip /tmp/aws
 
+# Install dotnet-script global tool (for C# scripting)
+RUN dotnet tool install -g dotnet-script
+
 # Download PowerShell matching target architecture
 RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/') && \
     if [ "$TARGETARCH" = "amd64" ]; then PARCH="x64"; else PARCH="$TARGETARCH"; fi && \
@@ -45,6 +48,8 @@ RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell
 # Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
 
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --from=build /app .
 COPY --from=build /calamari/ /squid/bin/
@@ -52,7 +57,9 @@ COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=build /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=build /opt/aws-cli /opt/aws-cli
 COPY --from=build /opt/powershell /opt/powershell
-ENV PATH="/opt/powershell:/opt/aws-cli/bin:${PATH}"
+COPY --from=build /usr/share/dotnet/sdk /usr/share/dotnet/sdk
+COPY --from=build /root/.dotnet/tools /root/.dotnet/tools
+ENV PATH="/root/.dotnet/tools:/opt/powershell:/opt/aws-cli/bin:${PATH}"
 
 EXPOSE 8080
 EXPOSE 443

@@ -118,7 +118,7 @@ public class DeploymentPreviewStepTests
     public void MixedStep_ManualInterventionAndTargetLevel_ShouldMatchTargetsNormally()
     {
         var manualAction = CreateAction(10, "Squid.Manual", 1);
-        var scriptAction = CreateAction(11, "Squid.KubernetesRunScript", 2);
+        var scriptAction = CreateAction(11, "Squid.Script", 2);
         var step = CreateStep(1, 1, "Mixed Step", false, "web-server", [manualAction, scriptAction]);
         var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
 
@@ -136,7 +136,7 @@ public class DeploymentPreviewStepTests
     [Fact]
     public void NormalStepWithRoles_ShouldFilterByRoles()
     {
-        var action = CreateAction(10, "Squid.KubernetesRunScript");
+        var action = CreateAction(10, "Squid.Script");
         var step = CreateStep(1, 1, "Deploy", false, "web-server", [action]);
         var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
 
@@ -154,7 +154,7 @@ public class DeploymentPreviewStepTests
     [Fact]
     public void NormalStepWithoutRoles_ShouldMatchAllMachines()
     {
-        var action = CreateAction(10, "Squid.KubernetesRunScript");
+        var action = CreateAction(10, "Squid.Script");
         var step = CreateStep(1, 1, "Deploy", false, null, [action]);
         var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
 
@@ -172,7 +172,7 @@ public class DeploymentPreviewStepTests
     [InlineData(3)]
     public void StepNumbering_ShouldUseStepOrderDirectly(int stepOrder)
     {
-        var action = CreateAction(10, "Squid.KubernetesRunScript");
+        var action = CreateAction(10, "Squid.Script");
         var step = CreateStep(1, stepOrder, "Deploy", false, null, [action]);
         var machines = CreateMachines((1, "k8s-node-1", "web-server"));
 
@@ -199,7 +199,7 @@ public class DeploymentPreviewStepTests
     [Fact]
     public void NoRunnableActions_ShouldNotBeApplicable()
     {
-        var action = CreateAction(10, "Squid.KubernetesRunScript");
+        var action = CreateAction(10, "Squid.Script");
         action.IsDisabled = true;
         var step = CreateStep(1, 1, "Deploy", false, null, [action]);
 

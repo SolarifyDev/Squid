@@ -1,19 +1,18 @@
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
-using Squid.Core.Services.DeploymentExecution.Handlers;
 
-namespace Squid.UnitTests.Services.Deployments.Kubernetes;
+namespace Squid.UnitTests.Services.Deployments.Handlers;
 
-public class KubernetesRunScriptActionHandlerTests
+public class RunScriptActionHandlerTests
 {
-    private readonly KubernetesRunScriptActionHandler _handler = new();
+    private readonly RunScriptActionHandler _handler = new();
 
     private static DeploymentActionDto CreateAction(
-        string actionType = "Squid.KubernetesRunScript",
+        string actionType = "Squid.Script",
         string scriptBody = null,
         string syntax = null)
     {
@@ -54,14 +53,14 @@ public class KubernetesRunScriptActionHandlerTests
     [Fact]
     public void CanHandle_MatchingActionType_ReturnsTrue()
     {
-        var action = CreateAction("Squid.KubernetesRunScript");
+        var action = CreateAction("Squid.Script");
         ((IActionHandler)_handler).CanHandle(action).ShouldBeTrue();
     }
 
     [Fact]
     public void CanHandle_CaseInsensitive_ReturnsTrue()
     {
-        var action = CreateAction("squid.kubernetesrunscript");
+        var action = CreateAction("squid.script");
         ((IActionHandler)_handler).CanHandle(action).ShouldBeTrue();
     }
 
@@ -88,7 +87,7 @@ public class KubernetesRunScriptActionHandlerTests
     [Fact]
     public void ActionType_ReturnsExpectedValue()
     {
-        _handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesRunScript);
+        _handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
     }
 
     // === PrepareAsync Tests ===
@@ -105,21 +104,26 @@ public class KubernetesRunScriptActionHandlerTests
         result.ScriptBody.ShouldBe("kubectl get pods -n production");
     }
 
-    [Fact]
-    public async Task PrepareAsync_BashSyntax_SetsSyntaxToBash()
+    [Theory]
+    [InlineData("Bash", ScriptSyntax.Bash)]
+    [InlineData("PowerShell", ScriptSyntax.PowerShell)]
+    [InlineData("CSharp", ScriptSyntax.CSharp)]
+    [InlineData("FSharp", ScriptSyntax.FSharp)]
+    [InlineData("Python", ScriptSyntax.Python)]
+    public async Task PrepareAsync_Syntax_ResolvedCorrectly(string input, ScriptSyntax expected)
     {
-        var action = CreateAction(scriptBody: "echo hi", syntax: "Bash");
+        var action = CreateAction(scriptBody: "echo hi", syntax: input);
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Syntax.ShouldBe(ScriptSyntax.Bash);
+        result.Syntax.ShouldBe(expected);
     }
 
     [Fact]
-    public async Task PrepareAsync_PowerShellSyntax_SetsSyntaxToPowerShell()
+    public async Task PrepareAsync_NoSyntaxSpecified_DefaultsToPowerShell()
     {
-        var action = CreateAction(scriptBody: "Write-Host hi", syntax: "PowerShell");
+        var action = CreateAction(scriptBody: "echo hi");
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
@@ -128,9 +132,9 @@ public class KubernetesRunScriptActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_NoSyntaxSpecified_DefaultsToPowerShell()
+    public async Task PrepareAsync_UnknownSyntax_DefaultsToPowerShell()
     {
-        var action = CreateAction(scriptBody: "echo hi");
+        var action = CreateAction(scriptBody: "echo hi", syntax: "Ruby");
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
@@ -187,17 +191,6 @@ public class KubernetesRunScriptActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_UnknownSyntax_DefaultsToPowerShell()
-    {
-        var action = CreateAction(scriptBody: "echo hi", syntax: "Python");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
-    }
-
-    [Fact]
     public async Task PrepareAsync_FilesAlwaysEmpty()
     {
         var action = CreateAction(scriptBody: "kubectl get pods");
@@ -213,7 +206,7 @@ public class KubernetesRunScriptActionHandlerTests
     {
         var action = new DeploymentActionDto
         {
-            ActionType = "Squid.KubernetesRunScript",
+            ActionType = "Squid.Script",
             Properties = null
         };
         var ctx = CreateContext(action);

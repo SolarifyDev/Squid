@@ -210,7 +210,7 @@ public class ManualInterventionE2ETests
             var step1 = await builder.CreateDeploymentStepAsync(process.Id, 1, "Pre Step", "Action", "Success").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step1.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
-            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Pre Script", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Pre Script", actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action1.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action1.Id,
                 ("Squid.Action.Script.ScriptBody", preStepScript),
@@ -229,7 +229,7 @@ public class ManualInterventionE2ETests
             var step3 = await builder.CreateDeploymentStepAsync(process.Id, 3, "Post Step", "Action", "Success").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step3.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
-            var action3 = await builder.CreateDeploymentActionAsync(step3.Id, 1, "Post Script", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            var action3 = await builder.CreateDeploymentActionAsync(step3.Id, 1, "Post Script", actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action3.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action3.Id,
                 ("Squid.Action.Script.ScriptBody", postStepScript),

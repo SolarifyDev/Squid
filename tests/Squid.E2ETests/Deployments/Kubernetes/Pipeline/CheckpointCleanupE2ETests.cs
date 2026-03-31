@@ -94,7 +94,7 @@ public class CheckpointCleanupE2ETests
             var step1 = await builder.CreateDeploymentStepAsync(process.Id, 1, "Step 1", "Action", "Success", isRequired: true).ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step1.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
-            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Step 1 Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            var action1 = await builder.CreateDeploymentActionAsync(step1.Id, 1, "Step 1 Action", actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action1.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action1.Id,
                 ("Squid.Action.Script.ScriptBody", "echo 'step-1-script'"),
@@ -104,7 +104,7 @@ public class CheckpointCleanupE2ETests
             var step2 = await builder.CreateDeploymentStepAsync(process.Id, 2, "Step 2", "Action", "Success", isRequired: false).ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step2.Id, ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
-            var action2 = await builder.CreateDeploymentActionAsync(step2.Id, 1, "Step 2 Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+            var action2 = await builder.CreateDeploymentActionAsync(step2.Id, 1, "Step 2 Action", actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action2.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action2.Id,
                 ("Squid.Action.Script.ScriptBody", "echo 'step-2-script'"),

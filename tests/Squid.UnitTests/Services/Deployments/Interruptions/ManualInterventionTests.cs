@@ -33,7 +33,7 @@ public class ManualInterventionTests
     }
 
     [Theory]
-    [InlineData("Squid.KubernetesRunScript")]
+    [InlineData("Squid.Script")]
     [InlineData("Squid.KubernetesDeployRawYaml")]
     [InlineData(null)]
     [InlineData("")]

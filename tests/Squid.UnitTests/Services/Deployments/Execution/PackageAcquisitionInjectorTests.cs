@@ -137,7 +137,7 @@ public class PackageAcquisitionInjectorTests
 
     // === Helpers ===
 
-    private static DeploymentStepDto BuildStep(string name, string actionName, string actionType = "Squid.KubernetesRunScript", string packageRequirement = "", int stepOrder = 1)
+    private static DeploymentStepDto BuildStep(string name, string actionName, string actionType = "Squid.Script", string packageRequirement = "", int stepOrder = 1)
     {
         return new DeploymentStepDto
         {

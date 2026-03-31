@@ -154,7 +154,7 @@ public class KubernetesMultiTargetE2ETests
 
             var action = await builder.CreateDeploymentActionAsync(
                 step.Id, 1, "Run Script",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action.Id, role).ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,
@@ -243,7 +243,7 @@ public class KubernetesMultiTargetE2ETests
 
             var action = await builder.CreateDeploymentActionAsync(
                 step.Id, 1, "Run Web Script",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action.Id, "web").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,

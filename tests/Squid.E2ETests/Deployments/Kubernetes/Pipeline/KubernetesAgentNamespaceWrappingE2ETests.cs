@@ -158,7 +158,7 @@ data:
         if (ns != null)
             props.Add(("Squid.Action.KubernetesContainers.Namespace", ns));
 
-        return SeedActionAsync("Squid.KubernetesRunScript", ns, communicationStyle, props.ToArray());
+        return SeedActionAsync("Squid.Script", ns, communicationStyle, props.ToArray());
     }
 
     private async Task<int> SeedRunScriptWithVariableNamespaceAsync(
@@ -187,7 +187,7 @@ data:
                 ("Squid.Action.TargetRoles", "k8s")).ConfigureAwait(false);
 
             var action = await builder.CreateDeploymentActionAsync(
-                step.Id, 1, "Test Action", actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                step.Id, 1, "Test Action", actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,

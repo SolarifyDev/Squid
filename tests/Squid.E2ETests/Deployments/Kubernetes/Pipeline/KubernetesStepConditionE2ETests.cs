@@ -192,7 +192,7 @@ public class KubernetesStepConditionE2ETests
 
             var action1 = await builder.CreateDeploymentActionAsync(
                 step1.Id, 1, "Step 1 Action",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action1.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action1.Id,
@@ -208,7 +208,7 @@ public class KubernetesStepConditionE2ETests
 
             var action2 = await builder.CreateDeploymentActionAsync(
                 step2.Id, 1, "Step 2 Action",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action2.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action2.Id,
@@ -354,7 +354,7 @@ public class KubernetesStepConditionE2ETests
 
             var action1 = await builder.CreateDeploymentActionAsync(
                 step1.Id, 1, "Step 1 Action",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action1.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action1.Id,
@@ -370,7 +370,7 @@ public class KubernetesStepConditionE2ETests
             var step2ScriptMarker = step2Condition.ToLowerInvariant();
             var action2 = await builder.CreateDeploymentActionAsync(
                 step2.Id, 1, "Step 2 Action",
-                actionType: "Squid.KubernetesRunScript").ConfigureAwait(false);
+                actionType: "Squid.Script").ConfigureAwait(false);
 
             await builder.CreateActionMachineRolesAsync(action2.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action2.Id,

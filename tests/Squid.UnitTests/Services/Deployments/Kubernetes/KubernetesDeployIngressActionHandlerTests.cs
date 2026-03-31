@@ -109,7 +109,7 @@ public class KubernetesDeployIngressActionHandlerTests
     [Fact]
     public void CanHandle_DifferentActionType_ReturnsFalse()
     {
-        var action = CreateAction(actionType: "Squid.KubernetesRunScript");
+        var action = CreateAction(actionType: "Squid.Script");
         ((IActionHandler)_handler).CanHandle(action).ShouldBeFalse();
     }
 

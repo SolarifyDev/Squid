@@ -477,7 +477,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             Id = name.GetHashCode(),
             Name = name,
             ActionOrder = 1,
-            ActionType = "Squid.KubernetesRunScript",
+            ActionType = "Squid.Script",
             IsRequired = true,
             IsDisabled = false,
             Properties = new List<DeploymentActionPropertyDto>()
@@ -542,7 +542,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
             _barrier = barrier;
         }
 
-        public string ActionType => "Squid.KubernetesRunScript";
+        public string ActionType => "Squid.Script";
 
         public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
@@ -563,7 +563,7 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
-        public string ActionType => "Squid.KubernetesRunScript";
+        public string ActionType => "Squid.Script";
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
