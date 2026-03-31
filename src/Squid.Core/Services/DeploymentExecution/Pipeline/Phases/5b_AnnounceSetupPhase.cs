@@ -19,6 +19,13 @@ public sealed class AnnounceSetupPhase(IDeploymentLifecycle lifecycle) : IDeploy
     private async Task AnnounceFreshDeployAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), ct).ConfigureAwait(false);
+
+        if (ctx.IsServerOnlyDeployment)
+        {
+            await lifecycle.EmitAsync(new ServerOnlyDeploymentDetectedEvent(new DeploymentEventContext()), ct).ConfigureAwait(false);
+            return;
+        }
+
         await lifecycle.EmitAsync(new MachineConstraintsResolvedEvent(new DeploymentEventContext { Targets = ctx.AllTargets }), ct).ConfigureAwait(false);
         await lifecycle.EmitAsync(new TargetsResolvedEvent(new DeploymentEventContext { Targets = ctx.AllTargets }), ct).ConfigureAwait(false);
 
@@ -29,7 +36,6 @@ public sealed class AnnounceSetupPhase(IDeploymentLifecycle lifecycle) : IDeploy
             if (tc.Transport == null)
                 await lifecycle.EmitAsync(new TargetTransportMissingEvent(new DeploymentEventContext { MachineName = tc.Machine.Name, CommunicationStyle = tc.CommunicationStyle }), ct).ConfigureAwait(false);
         }
-
     }
 
     private async Task AnnounceResumeAsync(DeploymentTaskContext ctx, CancellationToken ct)

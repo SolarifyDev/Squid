@@ -222,6 +222,7 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
         foreach (var step in steps)
         {
             if (step.IsDisabled) continue;
+            if (RunOnServerEvaluator.IsRunOnServer(step)) continue;
             if (scopeResolver != null && IsStepLevelOnly(step, scopeResolver)) continue;
 
             var rolesProp = step.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);

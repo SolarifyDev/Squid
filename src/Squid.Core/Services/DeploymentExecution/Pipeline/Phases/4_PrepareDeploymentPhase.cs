@@ -5,6 +5,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -24,11 +25,16 @@ public sealed class PrepareDeploymentPhase(
         await ResolveVariablesAsync(ctx, ct).ConfigureAwait(false);
         ValidatePromptedVariables(ctx);
         MergePromptedVariables(ctx);
-        await FindTargetsAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
         InjectPackageAcquisitionSteps(ctx);
-        PreFilterTargetsByRoles(ctx);
+        DetectServerOnlyDeployment(ctx);
+
+        if (!ctx.IsServerOnlyDeployment)
+        {
+            await FindTargetsAsync(ctx, ct).ConfigureAwait(false);
+            PreFilterTargetsByRoles(ctx);
+        }
     }
 
     private async Task LoadOrSnapshotAsync(DeploymentTaskContext ctx, CancellationToken ct)
@@ -71,6 +77,14 @@ public sealed class PrepareDeploymentPhase(
         var formValues = ctx.Deployment?.DeploymentRequestPayload?.FormValues;
 
         PromptedVariableMerger.MergePromptedValues(ctx.Variables, formValues);
+    }
+
+    private void DetectServerOnlyDeployment(DeploymentTaskContext ctx)
+    {
+        ctx.IsServerOnlyDeployment = RunOnServerEvaluator.IsEntireDeploymentServerOnly(ctx.Steps, actionHandlerRegistry.ResolveScope);
+
+        if (ctx.IsServerOnlyDeployment)
+            Log.Information("[Deploy] All steps are RunOnServer — no target machines required for deployment {DeploymentId}", ctx.Deployment.Id);
     }
 
     private async Task FindTargetsAsync(DeploymentTaskContext ctx, CancellationToken ct)

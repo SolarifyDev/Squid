@@ -1,5 +1,8 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -36,38 +39,46 @@ public sealed partial class ExecuteStepsPhase
 
         if (HasTargetLevelActions(eligibleActions))
         {
-            var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
-
-            matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
-
-            if (matchingTargets.Count == 0)
+            if (RunOnServerEvaluator.IsRunOnServer(step))
             {
-                await lifecycle.EmitAsync(new StepNoMatchingTargetsEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Roles = ExtractStepRoles(step) }), ct).ConfigureAwait(false);
-                return stepResult;
+                var serverResult = await ExecuteStepOnServerAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
+                stepResult.Absorb(serverResult);
             }
+            else
+            {
+                var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
 
-            var maxParallelism = TargetParallelExecutor.ParseMaxParallelism(step);
+                matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
 
-            using var failFastCts = step.IsRequired ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
-            var effectiveCt = failFastCts?.Token ?? ct;
-
-            var targetResults = await TargetParallelExecutor.ExecuteAsync(
-                matchingTargets, maxParallelism,
-                async (tc, targetCt) =>
+                if (matchingTargets.Count == 0)
                 {
-                    try
-                    {
-                        return await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
-                    }
-                    catch when (step.IsRequired)
-                    {
-                        failFastCts?.Cancel();
-                        throw;
-                    }
-                }, effectiveCt).ConfigureAwait(false);
+                    await lifecycle.EmitAsync(new StepNoMatchingTargetsEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Roles = ExtractStepRoles(step) }), ct).ConfigureAwait(false);
+                    return stepResult;
+                }
 
-            foreach (var result in targetResults)
-                stepResult.Absorb(result);
+                var maxParallelism = TargetParallelExecutor.ParseMaxParallelism(step);
+
+                using var failFastCts = step.IsRequired ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+                var effectiveCt = failFastCts?.Token ?? ct;
+
+                var targetResults = await TargetParallelExecutor.ExecuteAsync(
+                    matchingTargets, maxParallelism,
+                    async (tc, targetCt) =>
+                    {
+                        try
+                        {
+                            return await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
+                        }
+                        catch when (step.IsRequired)
+                        {
+                            failFastCts?.Cancel();
+                            throw;
+                        }
+                    }, effectiveCt).ConfigureAwait(false);
+
+                foreach (var result in targetResults)
+                    stepResult.Absorb(result);
+            }
         }
 
         var skipped = !stepResult.Executed && !stepResult.Failed;
@@ -115,6 +126,63 @@ public sealed partial class ExecuteStepsPhase
             MachineId = tc.Machine.Id,
             MachineName = tc.Machine.Name,
             Roles = targetRoles,
+            ChannelId = _ctx.Deployment.ChannelId,
+            ChannelName = _ctx.Channel?.Name,
+            ProcessId = _ctx.ProcessSnapshot?.OriginalProcessId,
+        };
+    }
+
+    private async Task<StepExecutionResult> ExecuteStepOnServerAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepSortOrder, CancellationToken ct)
+    {
+        var serverTc = CreateServerTargetContext();
+        var scopeContext = BuildServerScopeContext();
+        var effectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, serverTc, scopeContext);
+
+        var eligibility = StepEligibilityEvaluator.EvaluateStep(step, targetRoles: null, previousStepSucceeded: !_ctx.FailureEncountered, effectiveVars);
+
+        if (!eligibility.ShouldExecute)
+        {
+            await lifecycle.EmitAsync(new StepSkippedOnTargetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, StepEligibility = eligibility, MachineName = serverTc.Machine.Name }), ct).ConfigureAwait(false);
+
+            return new StepExecutionResult();
+        }
+
+        if (eligibility.Message != null)
+            await lifecycle.EmitAsync(new StepConditionMetEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, Message = eligibility.Message }), ct).ConfigureAwait(false);
+
+        await lifecycle.EmitAsync(new RunOnServerExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name }), ct).ConfigureAwait(false);
+
+        var actions = await PrepareStepActionsAsync(step, eligibleActions, scopeContext, serverTc, stepSortOrder, ct).ConfigureAwait(false);
+        var timeout = StepTimeoutParser.ParseTimeout(step);
+
+        var result = new StepExecutionResult { Executed = true };
+        await ExecuteActionResultsAsync(actions, step, stepSortOrder, result, serverTc, timeout, ct).ConfigureAwait(false);
+
+        return result;
+    }
+
+    private DeploymentTargetContext CreateServerTargetContext()
+    {
+        var transport = transportRegistry.Resolve(CommunicationStyle.None);
+
+        return new DeploymentTargetContext
+        {
+            Machine = new Machine { Id = 0, Name = "Squid Server" },
+            CommunicationStyle = CommunicationStyle.None,
+            Transport = transport,
+            EndpointContext = new EndpointContext()
+        };
+    }
+
+    private VariableScopeContext BuildServerScopeContext()
+    {
+        return new VariableScopeContext
+        {
+            EnvironmentId = _ctx.Deployment.EnvironmentId,
+            EnvironmentName = _ctx.Environment?.Name,
+            MachineId = 0,
+            MachineName = "Squid Server",
+            Roles = null,
             ChannelId = _ctx.Deployment.ChannelId,
             ChannelName = _ctx.Channel?.Name,
             ProcessId = _ctx.ProcessSnapshot?.OriginalProcessId,

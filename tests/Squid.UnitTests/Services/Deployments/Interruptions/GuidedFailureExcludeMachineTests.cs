@@ -64,7 +64,7 @@ public class GuidedFailureExcludeMachineTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -94,7 +94,7 @@ public class GuidedFailureExcludeMachineTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContextMultiTarget(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -128,7 +128,7 @@ public class GuidedFailureExcludeMachineTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContextMultiTarget(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -159,7 +159,7 @@ public class GuidedFailureExcludeMachineTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
         var ctx = CreateBaseContextMultiTarget(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 

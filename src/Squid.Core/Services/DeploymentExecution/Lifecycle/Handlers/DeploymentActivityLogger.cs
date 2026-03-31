@@ -97,6 +97,18 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         await FlushLogWriterAsync(ct).ConfigureAwait(false);
     }
 
+    // === Server-Only ===
+
+    protected override Task OnServerOnlyDeploymentDetectedAsync(DeploymentEventContext ctx, CancellationToken ct)
+        => LogInfoAsync("All steps configured to run on server — no target machines required", SystemSource, ct);
+
+    protected override Task OnRunOnServerExecutingAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogInfoAsync($"Executing step \"{ctx.StepName}\" on server", SystemSource, ct, stepNodeId);
+    }
+
     // === Target Preparation ===
 
     protected override Task OnTargetsResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)

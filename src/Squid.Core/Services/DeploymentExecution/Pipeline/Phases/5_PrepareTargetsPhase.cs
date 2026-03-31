@@ -17,6 +17,8 @@ public sealed class PrepareTargetsPhase(
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
+        if (ctx.AllTargets.Count == 0) return;
+
         foreach (var target in ctx.AllTargets)
         {
             var tc = new DeploymentTargetContext { Machine = target };
