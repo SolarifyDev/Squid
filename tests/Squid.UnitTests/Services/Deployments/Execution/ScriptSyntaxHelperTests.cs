@@ -40,17 +40,28 @@ public class ScriptSyntaxHelperTests
     }
 
     [Fact]
-    public void ResolveSyntax_NullProperty_DefaultsPowerShell()
+    public void ResolveSyntax_NullProperty_DefaultsBash()
     {
         var action = CreateAction();
-        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.PowerShell);
+        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.Bash);
     }
 
     [Fact]
-    public void ResolveSyntax_Unknown_DefaultsPowerShell()
+    public void ResolveSyntax_Unknown_DefaultsBash()
     {
         var action = CreateAction("Ruby");
-        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.PowerShell);
+        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.Bash);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("2")]
+    [InlineData("99")]
+    public void ResolveSyntax_NumericString_DefaultsBash(string numericValue)
+    {
+        var action = CreateAction(numericValue);
+        ScriptSyntaxHelper.ResolveSyntax(action).ShouldBe(ScriptSyntax.Bash);
     }
 
     [Theory]

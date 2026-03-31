@@ -11,11 +11,19 @@ internal static class ScriptSyntaxHelper
     {
         var syntaxStr = action.GetProperty(SpecialVariables.Action.ScriptSyntax);
 
-        if (string.IsNullOrEmpty(syntaxStr)) return ScriptSyntax.PowerShell;
+        if (string.IsNullOrEmpty(syntaxStr)) return ScriptSyntax.Bash;
 
-        return Enum.TryParse<ScriptSyntax>(syntaxStr, ignoreCase: true, out var parsed)
-            ? parsed
-            : ScriptSyntax.PowerShell;
+        if (int.TryParse(syntaxStr, out _))
+        {
+            Log.Warning("Numeric ScriptSyntax value '{SyntaxValue}' is not supported — defaulting to Bash. Use string names: Bash, PowerShell, CSharp, FSharp, Python", syntaxStr);
+            return ScriptSyntax.Bash;
+        }
+
+        if (Enum.TryParse<ScriptSyntax>(syntaxStr, ignoreCase: true, out var parsed))
+            return parsed;
+
+        Log.Warning("Unknown ScriptSyntax value '{SyntaxValue}' — defaulting to Bash", syntaxStr);
+        return ScriptSyntax.Bash;
     }
 
     internal static bool IsShellSyntax(ScriptSyntax syntax)

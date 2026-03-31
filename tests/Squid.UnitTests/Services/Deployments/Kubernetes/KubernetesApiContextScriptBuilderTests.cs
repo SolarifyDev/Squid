@@ -1219,4 +1219,60 @@ public class KubernetesApiContextScriptBuilderTests
         // The raw token should NOT appear in the script
         result.ShouldNotContain("'test-token-123'");
     }
+
+    // === BuildSetupScript Tests ===
+
+    [Fact]
+    public void BuildSetupScript_PopulatesTemplate_WithSamePlaceholders()
+    {
+        var result = _builder.BuildSetupScript(TokenContext());
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("https://k8s.example.com:6443"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("Token"));
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("test-token-123"));
+    }
+
+    [Fact]
+    public void BuildSetupScript_NoUserScriptTag()
+    {
+        var result = _builder.BuildSetupScript(TokenContext());
+
+        result.ShouldNotContain("{{UserScript}}");
+    }
+
+    [Fact]
+    public void BuildSetupScript_OutputsKubeconfigPath()
+    {
+        var result = _builder.BuildSetupScript(TokenContext());
+
+        result.ShouldContain("SQUID_KUBECONFIG=");
+    }
+
+    [Fact]
+    public void BuildSetupScript_NoTrapCleanup()
+    {
+        var result = _builder.BuildSetupScript(TokenContext());
+
+        result.ShouldNotContain("trap cleanup EXIT");
+    }
+
+    [Fact]
+    public void BuildSetupScript_ContainsProxyOutputSection()
+    {
+        var result = _builder.BuildSetupScript(TokenContext());
+
+        result.ShouldContain("SQUID_HTTPS_PROXY");
+        result.ShouldContain("SQUID_HTTP_PROXY");
+    }
+
+    [Fact]
+    public void WrapWithContext_ExistingBehavior_Unchanged()
+    {
+        var result = _builder.WrapWithContext("kubectl get pods", TokenContext());
+
+        // Existing behavior: contains user script, trap cleanup, and kubectl context setup
+        result.ShouldContain("kubectl get pods");
+        result.ShouldContain("trap cleanup EXIT");
+        result.ShouldContain("KUBECONFIG_PATH=");
+    }
 }

@@ -8,7 +8,7 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 public sealed class LocalProcessRunner : ILocalProcessRunner
 {
     public async Task<ScriptExecutionResult> RunAsync(
-        string executable, string arguments, string workDir, CancellationToken ct, TimeSpan? timeout = null, SensitiveValueMasker masker = null)
+        string executable, string arguments, string workDir, CancellationToken ct, TimeSpan? timeout = null, SensitiveValueMasker masker = null, Dictionary<string, string> environmentVariables = null)
     {
         var logLines = new List<string>();
         var stderrLines = new List<string>();
@@ -24,6 +24,12 @@ public sealed class LocalProcessRunner : ILocalProcessRunner
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        if (environmentVariables != null)
+        {
+            foreach (var (key, value) in environmentVariables)
+                psi.Environment[key] = value;
+        }
 
         using var process = new Process { StartInfo = psi };
 

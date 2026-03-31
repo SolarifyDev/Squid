@@ -121,25 +121,25 @@ public class RunScriptActionHandlerTests
     }
 
     [Fact]
-    public async Task PrepareAsync_NoSyntaxSpecified_DefaultsToPowerShell()
+    public async Task PrepareAsync_NoSyntaxSpecified_DefaultsToBash()
     {
         var action = CreateAction(scriptBody: "echo hi");
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+        result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 
     [Fact]
-    public async Task PrepareAsync_UnknownSyntax_DefaultsToPowerShell()
+    public async Task PrepareAsync_UnknownSyntax_DefaultsToBash()
     {
         var action = CreateAction(scriptBody: "echo hi", syntax: "Ruby");
         var ctx = CreateContext(action);
 
         var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+        result.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
 
     [Fact]
