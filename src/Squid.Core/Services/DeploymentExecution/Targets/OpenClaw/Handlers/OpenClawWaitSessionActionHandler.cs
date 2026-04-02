@@ -11,31 +11,13 @@ public class OpenClawWaitSessionActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var sessionKey = ctx.Action.GetProperty("Squid.Action.OpenClaw.SessionKey");
-        var successPattern = ctx.Action.GetProperty("Squid.Action.OpenClaw.SuccessPattern");
-        var failPattern = ctx.Action.GetProperty("Squid.Action.OpenClaw.FailPattern");
-        var maxWaitSeconds = ctx.Action.GetProperty("Squid.Action.OpenClaw.MaxWaitSeconds");
-        var pollSeconds = ctx.Action.GetProperty("Squid.Action.OpenClaw.PollSeconds");
-
-        var result = new ActionExecutionResult
+        return Task.FromResult(new ActionExecutionResult
         {
-            ActionName = ctx.Action.Name,
-            ScriptBody = $"# OpenClaw WaitSession: {sessionKey}",
+            ScriptBody = $"# OpenClaw WaitSession: {ctx.Action.GetProperty(SpecialVariables.OpenClaw.PropSessionKey)}",
             ExecutionMode = ExecutionMode.DirectScript,
             ContextPreparationPolicy = ContextPreparationPolicy.Skip,
             PayloadKind = PayloadKind.None,
-            Syntax = ScriptSyntax.Bash,
-            ActionProperties = new Dictionary<string, string>
-            {
-                ["OpenClaw.ActionKind"] = "WaitSession",
-                ["OpenClaw.SessionKey"] = sessionKey ?? string.Empty,
-                ["OpenClaw.SuccessPattern"] = successPattern ?? string.Empty,
-                ["OpenClaw.FailPattern"] = failPattern ?? string.Empty,
-                ["OpenClaw.MaxWaitSeconds"] = maxWaitSeconds ?? "120",
-                ["OpenClaw.PollSeconds"] = pollSeconds ?? "5"
-            }
-        };
-
-        return Task.FromResult(result);
+            Syntax = ScriptSyntax.Bash
+        });
     }
 }

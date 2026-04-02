@@ -11,27 +11,13 @@ public class OpenClawWakeActionHandler : IActionHandler
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var text = ctx.Action.GetProperty("Squid.Action.OpenClaw.WakeText") ?? string.Empty;
-        var mode = ctx.Action.GetProperty("Squid.Action.OpenClaw.WakeMode");
-        var timeoutSeconds = ctx.Action.GetProperty("Squid.Action.OpenClaw.TimeoutSeconds");
-
-        var result = new ActionExecutionResult
+        return Task.FromResult(new ActionExecutionResult
         {
-            ActionName = ctx.Action.Name,
-            ScriptBody = $"# OpenClaw Wake: {text}",
+            ScriptBody = $"# OpenClaw Wake: {ctx.Action.GetProperty(SpecialVariables.OpenClaw.PropWakeText)}",
             ExecutionMode = ExecutionMode.DirectScript,
             ContextPreparationPolicy = ContextPreparationPolicy.Skip,
             PayloadKind = PayloadKind.None,
-            Syntax = ScriptSyntax.Bash,
-            ActionProperties = new Dictionary<string, string>
-            {
-                ["OpenClaw.ActionKind"] = "Wake",
-                ["OpenClaw.WakeText"] = text,
-                ["OpenClaw.WakeMode"] = mode ?? "now",
-                ["OpenClaw.TimeoutSeconds"] = timeoutSeconds ?? string.Empty
-            }
-        };
-
-        return Task.FromResult(result);
+            Syntax = ScriptSyntax.Bash
+        });
     }
 }

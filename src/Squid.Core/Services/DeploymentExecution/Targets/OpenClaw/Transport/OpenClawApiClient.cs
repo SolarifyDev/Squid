@@ -23,7 +23,7 @@ internal class OpenClawApiClient
 
         try
         {
-            var response = await _httpClientFactory.PostAsJsonAsync<JsonElement>(url, body, ct, timeout: timeout, headers: headers, shouldLogError: false).ConfigureAwait(false);
+            var response = await _httpClientFactory.PostAsJsonAsync<JsonElement>(url, body, ct, timeout: timeout, headers: headers, shouldLogError: false, isNeedToReadErrorContent: true).ConfigureAwait(false);
             return ParseToolResponse(response);
         }
         catch (Exception ex)
@@ -40,7 +40,7 @@ internal class OpenClawApiClient
 
         try
         {
-            await _httpClientFactory.PostAsJsonAsync<string>(url, requestBody, ct, timeout: timeout, headers: headers, shouldLogError: false).ConfigureAwait(false);
+            await _httpClientFactory.PostAsJsonAsync<string>(url, requestBody, ct, timeout: timeout, headers: headers, shouldLogError: false, isNeedToReadErrorContent: true).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -58,7 +58,7 @@ internal class OpenClawApiClient
 
         try
         {
-            await _httpClientFactory.PostAsJsonAsync<string>(url, body, ct, timeout: timeout, headers: headers, shouldLogError: false).ConfigureAwait(false);
+            await _httpClientFactory.PostAsJsonAsync<string>(url, body, ct, timeout: timeout, headers: headers, shouldLogError: false, isNeedToReadErrorContent: true).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)

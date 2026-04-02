@@ -17,6 +17,7 @@ public class ScriptExecutionRequest
     public PayloadKind PayloadKind { get; set; } = PayloadKind.Unspecified;
     public RunnerKind RunnerKind { get; set; } = RunnerKind.Unspecified;
     public ScriptSyntax Syntax { get; set; } = ScriptSyntax.PowerShell;
+    public string ActionType { get; set; }
     public Dictionary<string, string> ActionProperties { get; set; }
     public EndpointContext EndpointContext { get; set; }
     public List<VariableDto> Variables { get; set; }

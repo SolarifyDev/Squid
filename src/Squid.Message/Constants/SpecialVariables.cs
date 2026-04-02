@@ -185,14 +185,41 @@ public static class SpecialVariables
 
     public static class OpenClaw
     {
+        // Endpoint variables (contributed by OpenClawEndpointVariableContributor)
         public const string BaseUrl = "Squid.Action.OpenClaw.BaseUrl";
         public const string GatewayToken = "Squid.Action.OpenClaw.GatewayToken";
         public const string HooksToken = "Squid.Action.OpenClaw.HooksToken";
+        public const string SessionKey = "Squid.Action.OpenClaw.SessionKey";
+
+        // Output variables (emitted by execution strategy)
         public const string ResultJson = "OpenClaw.ResultJson";
         public const string Ok = "OpenClaw.Ok";
         public const string Accepted = "OpenClaw.Accepted";
         public const string Status = "OpenClaw.Status";
         public const string Summary = "OpenClaw.Summary";
+
+        // Action properties (DB keys — read from ActionProperties dictionary)
+        public const string PropTool = "Squid.Action.OpenClaw.Tool";
+        public const string PropToolAction = "Squid.Action.OpenClaw.ToolAction";
+        public const string PropArgsJson = "Squid.Action.OpenClaw.ArgsJson";
+        public const string PropSessionKey = "Squid.Action.OpenClaw.SessionKey";
+        public const string PropTimeoutSeconds = "Squid.Action.OpenClaw.TimeoutSeconds";
+        public const string PropMessage = "Squid.Action.OpenClaw.Message";
+        public const string PropAgentId = "Squid.Action.OpenClaw.AgentId";
+        public const string PropWakeMode = "Squid.Action.OpenClaw.WakeMode";
+        public const string PropDeliver = "Squid.Action.OpenClaw.Deliver";
+        public const string PropChannel = "Squid.Action.OpenClaw.Channel";
+        public const string PropTo = "Squid.Action.OpenClaw.To";
+        public const string PropWakeText = "Squid.Action.OpenClaw.WakeText";
+        public const string PropSuccessPattern = "Squid.Action.OpenClaw.SuccessPattern";
+        public const string PropFailPattern = "Squid.Action.OpenClaw.FailPattern";
+        public const string PropMaxWaitSeconds = "Squid.Action.OpenClaw.MaxWaitSeconds";
+        public const string PropPollSeconds = "Squid.Action.OpenClaw.PollSeconds";
+        public const string PropJsonPath = "Squid.Action.OpenClaw.JsonPath";
+        public const string PropOperator = "Squid.Action.OpenClaw.Operator";
+        public const string PropExpected = "Squid.Action.OpenClaw.Expected";
+        public const string PropSourceVariable = "Squid.Action.OpenClaw.SourceVariable";
+        public const string PropFieldMappings = "Squid.Action.OpenClaw.FieldMappings";
     }
 
     public static class Output

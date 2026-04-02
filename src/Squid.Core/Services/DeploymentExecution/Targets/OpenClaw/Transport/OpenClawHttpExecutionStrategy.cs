@@ -22,18 +22,15 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
     {
         var props = request.ActionProperties ?? new Dictionary<string, string>();
 
-        if (!props.TryGetValue("OpenClaw.ActionKind", out var actionKind))
-            return Fail("Missing OpenClaw.ActionKind in ActionProperties");
-
-        return actionKind switch
+        return request.ActionType switch
         {
-            "InvokeTool" => await ExecuteInvokeToolAsync(request, props, ct).ConfigureAwait(false),
-            "RunAgent" => await ExecuteRunAgentAsync(request, props, ct).ConfigureAwait(false),
-            "Wake" => await ExecuteWakeAsync(request, props, ct).ConfigureAwait(false),
-            "WaitSession" => await ExecuteWaitSessionAsync(request, props, ct).ConfigureAwait(false),
-            "Assert" => ExecuteAssert(request, props),
-            "FetchResult" => ExecuteFetchResult(request, props),
-            _ => Fail($"Unknown OpenClaw action kind: {actionKind}")
+            SpecialVariables.ActionTypes.OpenClawInvokeTool => await ExecuteInvokeToolAsync(request, props, ct).ConfigureAwait(false),
+            SpecialVariables.ActionTypes.OpenClawRunAgent => await ExecuteRunAgentAsync(request, props, ct).ConfigureAwait(false),
+            SpecialVariables.ActionTypes.OpenClawWake => await ExecuteWakeAsync(request, props, ct).ConfigureAwait(false),
+            SpecialVariables.ActionTypes.OpenClawWaitSession => await ExecuteWaitSessionAsync(request, props, ct).ConfigureAwait(false),
+            SpecialVariables.ActionTypes.OpenClawAssert => ExecuteAssert(request, props),
+            SpecialVariables.ActionTypes.OpenClawFetchResult => ExecuteFetchResult(request, props),
+            _ => Fail($"Unknown OpenClaw action type: {request.ActionType}")
         };
     }
 
@@ -41,10 +38,10 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
     {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
         var token = ResolveVariable(request, SpecialVariables.OpenClaw.GatewayToken);
-        var tool = GetProp(props, "OpenClaw.Tool");
-        var action = GetProp(props, "OpenClaw.ToolAction");
-        var argsJson = GetProp(props, "OpenClaw.ArgsJson");
-        var sessionKey = GetProp(props, "OpenClaw.SessionKey") ?? string.Empty;
+        var tool = GetProp(props, SpecialVariables.OpenClaw.PropTool);
+        var action = GetProp(props, SpecialVariables.OpenClaw.PropToolAction);
+        var argsJson = GetProp(props, SpecialVariables.OpenClaw.PropArgsJson);
+        var sessionKey = GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey);
         var timeout = ResolveTimeout(props, request);
 
         Log.Information("[OpenClaw] InvokeTool: {Tool} action={Action} session={SessionKey}", tool, action, sessionKey);
@@ -78,15 +75,15 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
         var timeout = ResolveTimeout(props, request);
 
         var body = new Dictionary<string, object>();
-        AddIfPresent(body, "message", GetProp(props, "OpenClaw.Message"));
-        AddIfPresent(body, "agentId", GetProp(props, "OpenClaw.AgentId"));
-        AddIfPresent(body, "sessionKey", GetProp(props, "OpenClaw.SessionKey") ?? string.Empty);
-        AddIfPresent(body, "wakeMode", GetProp(props, "OpenClaw.WakeMode"));
-        AddBoolIfPresent(body, "deliver", GetProp(props, "OpenClaw.Deliver"));
-        AddIfPresent(body, "channel", GetProp(props, "OpenClaw.Channel"));
-        AddIfPresent(body, "to", GetProp(props, "OpenClaw.To"));
+        AddIfPresent(body, "message", GetProp(props, SpecialVariables.OpenClaw.PropMessage));
+        AddIfPresent(body, "agentId", GetProp(props, SpecialVariables.OpenClaw.PropAgentId));
+        AddIfPresent(body, "sessionKey", GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey));
+        AddIfPresent(body, "wakeMode", GetProp(props, SpecialVariables.OpenClaw.PropWakeMode));
+        AddBoolIfPresent(body, "deliver", GetProp(props, SpecialVariables.OpenClaw.PropDeliver));
+        AddIfPresent(body, "channel", GetProp(props, SpecialVariables.OpenClaw.PropChannel));
+        AddIfPresent(body, "to", GetProp(props, SpecialVariables.OpenClaw.PropTo));
 
-        Log.Information("[OpenClaw] RunAgent: message={Message} agentId={AgentId}", GetProp(props, "OpenClaw.Message"), GetProp(props, "OpenClaw.AgentId"));
+        Log.Information("[OpenClaw] RunAgent: message={Message} agentId={AgentId}", GetProp(props, SpecialVariables.OpenClaw.PropMessage), GetProp(props, SpecialVariables.OpenClaw.PropAgentId));
 
         var accepted = await _client.RunAgentAsync(baseUrl, token, body, timeout, ct).ConfigureAwait(false);
 
@@ -105,8 +102,8 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
     {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
         var token = ResolveVariable(request, SpecialVariables.OpenClaw.HooksToken);
-        var text = GetProp(props, "OpenClaw.WakeText") ?? string.Empty;
-        var mode = GetProp(props, "OpenClaw.WakeMode");
+        var text = GetProp(props, SpecialVariables.OpenClaw.PropWakeText) ?? string.Empty;
+        var mode = GetProp(props, SpecialVariables.OpenClaw.PropWakeMode);
         var timeout = ResolveTimeout(props, request);
 
         Log.Information("[OpenClaw] Wake: text={Text} mode={Mode}", text, mode);
@@ -128,11 +125,11 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
     {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
         var token = ResolveVariable(request, SpecialVariables.OpenClaw.GatewayToken);
-        var sessionKey = GetProp(props, "OpenClaw.SessionKey") ?? string.Empty;
-        var successPattern = GetProp(props, "OpenClaw.SuccessPattern");
-        var failPattern = GetProp(props, "OpenClaw.FailPattern");
-        var maxWaitSeconds = int.TryParse(GetProp(props, "OpenClaw.MaxWaitSeconds"), out var mw) ? mw : 120;
-        var pollSeconds = int.TryParse(GetProp(props, "OpenClaw.PollSeconds"), out var ps) ? ps : 5;
+        var sessionKey = GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey);
+        var successPattern = GetProp(props, SpecialVariables.OpenClaw.PropSuccessPattern);
+        var failPattern = GetProp(props, SpecialVariables.OpenClaw.PropFailPattern);
+        var maxWaitSeconds = int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropMaxWaitSeconds), out var mw) ? mw : 120;
+        var pollSeconds = int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropPollSeconds), out var ps) ? ps : 5;
 
         Log.Information("[OpenClaw] WaitSession: sessionKey={SessionKey} maxWait={MaxWait}s poll={Poll}s", sessionKey, maxWaitSeconds, pollSeconds);
 
@@ -192,10 +189,10 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
 
     private static ScriptExecutionResult ExecuteAssert(ScriptExecutionRequest request, Dictionary<string, string> props)
     {
-        var jsonPath = GetProp(props, "OpenClaw.JsonPath");
-        var op = GetProp(props, "OpenClaw.Operator") ?? "equals";
-        var expected = GetProp(props, "OpenClaw.Expected") ?? string.Empty;
-        var sourceVar = GetProp(props, "OpenClaw.SourceVariable") ?? SpecialVariables.OpenClaw.ResultJson;
+        var jsonPath = GetProp(props, SpecialVariables.OpenClaw.PropJsonPath);
+        var op = GetProp(props, SpecialVariables.OpenClaw.PropOperator) ?? "equals";
+        var expected = GetProp(props, SpecialVariables.OpenClaw.PropExpected) ?? string.Empty;
+        var sourceVar = GetProp(props, SpecialVariables.OpenClaw.PropSourceVariable) ?? SpecialVariables.OpenClaw.ResultJson;
 
         var sourceJson = ResolveVariable(request, sourceVar);
         var actual = ExtractJsonPath(sourceJson, jsonPath);
@@ -218,8 +215,8 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
 
     private static ScriptExecutionResult ExecuteFetchResult(ScriptExecutionRequest request, Dictionary<string, string> props)
     {
-        var sourceVar = GetProp(props, "OpenClaw.SourceVariable") ?? SpecialVariables.OpenClaw.ResultJson;
-        var mappingsJson = GetProp(props, "OpenClaw.FieldMappings");
+        var sourceVar = GetProp(props, SpecialVariables.OpenClaw.PropSourceVariable) ?? SpecialVariables.OpenClaw.ResultJson;
+        var mappingsJson = GetProp(props, SpecialVariables.OpenClaw.PropFieldMappings);
 
         var sourceJson = ResolveVariable(request, sourceVar);
         var lines = new List<string> { $"FetchResult from variable '{sourceVar}'" };
@@ -264,7 +261,7 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
 
     private static TimeSpan ResolveTimeout(Dictionary<string, string> props, ScriptExecutionRequest request)
     {
-        if (int.TryParse(GetProp(props, "OpenClaw.TimeoutSeconds"), out var seconds))
+        if (int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropTimeoutSeconds), out var seconds))
             return TimeSpan.FromSeconds(seconds);
 
         return request.Timeout ?? TimeSpan.FromSeconds(30);

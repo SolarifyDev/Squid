@@ -36,25 +36,20 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task InvokeTool_SetsActionKindAndTool()
+    public async Task InvokeTool_SetsExecutionSemantics()
     {
         var handler = new OpenClawInvokeToolActionHandler();
         var ctx = MakeContext(new()
         {
-            ["Squid.Action.OpenClaw.Tool"] = "sessions_list",
-            ["Squid.Action.OpenClaw.ToolAction"] = "json",
-            ["Squid.Action.OpenClaw.ArgsJson"] = """{"key":"value"}""",
-            ["Squid.Action.OpenClaw.SessionKey"] = "main"
+            [SpecialVariables.OpenClaw.PropTool] = "sessions_list",
+            [SpecialVariables.OpenClaw.PropToolAction] = "json"
         });
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
         result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("InvokeTool");
-        result.ActionProperties["OpenClaw.Tool"].ShouldBe("sessions_list");
-        result.ActionProperties["OpenClaw.ToolAction"].ShouldBe("json");
-        result.ActionProperties["OpenClaw.SessionKey"].ShouldBe("main");
+        result.ScriptBody.ShouldContain("sessions_list");
     }
 
     [Fact]
@@ -68,28 +63,19 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task RunAgent_SetsAllProperties()
+    public async Task RunAgent_SetsExecutionSemantics()
     {
         var handler = new OpenClawRunAgentActionHandler();
         var ctx = MakeContext(new()
         {
-            ["Squid.Action.OpenClaw.Message"] = "Run task",
-            ["Squid.Action.OpenClaw.AgentId"] = "hooks",
-            ["Squid.Action.OpenClaw.SessionKey"] = "hook:test",
-            ["Squid.Action.OpenClaw.WakeMode"] = "now",
-            ["Squid.Action.OpenClaw.Deliver"] = "true",
-            ["Squid.Action.OpenClaw.Channel"] = "last",
-            ["Squid.Action.OpenClaw.To"] = "+15551234567"
+            [SpecialVariables.OpenClaw.PropMessage] = "Run task"
         });
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("RunAgent");
-        result.ActionProperties["OpenClaw.Message"].ShouldBe("Run task");
-        result.ActionProperties["OpenClaw.AgentId"].ShouldBe("hooks");
-        result.ActionProperties["OpenClaw.Deliver"].ShouldBe("true");
-        result.ActionProperties["OpenClaw.Channel"].ShouldBe("last");
-        result.ActionProperties["OpenClaw.To"].ShouldBe("+15551234567");
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
+        result.ScriptBody.ShouldContain("Run task");
     }
 
     [Fact]
@@ -103,20 +89,19 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task Wake_SetsTextAndMode()
+    public async Task Wake_SetsExecutionSemantics()
     {
         var handler = new OpenClawWakeActionHandler();
         var ctx = MakeContext(new()
         {
-            ["Squid.Action.OpenClaw.WakeText"] = "System event",
-            ["Squid.Action.OpenClaw.WakeMode"] = "next-heartbeat"
+            [SpecialVariables.OpenClaw.PropWakeText] = "System event"
         });
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("Wake");
-        result.ActionProperties["OpenClaw.WakeText"].ShouldBe("System event");
-        result.ActionProperties["OpenClaw.WakeMode"].ShouldBe("next-heartbeat");
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
+        result.ScriptBody.ShouldContain("System event");
     }
 
     [Fact]
@@ -130,37 +115,19 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task WaitSession_SetsPollingConfig()
+    public async Task WaitSession_SetsExecutionSemantics()
     {
         var handler = new OpenClawWaitSessionActionHandler();
         var ctx = MakeContext(new()
         {
-            ["Squid.Action.OpenClaw.SessionKey"] = "hook:test",
-            ["Squid.Action.OpenClaw.SuccessPattern"] = "completed",
-            ["Squid.Action.OpenClaw.FailPattern"] = "error",
-            ["Squid.Action.OpenClaw.MaxWaitSeconds"] = "60",
-            ["Squid.Action.OpenClaw.PollSeconds"] = "10"
+            [SpecialVariables.OpenClaw.PropSessionKey] = "hook:test"
         });
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("WaitSession");
-        result.ActionProperties["OpenClaw.SessionKey"].ShouldBe("hook:test");
-        result.ActionProperties["OpenClaw.SuccessPattern"].ShouldBe("completed");
-        result.ActionProperties["OpenClaw.MaxWaitSeconds"].ShouldBe("60");
-        result.ActionProperties["OpenClaw.PollSeconds"].ShouldBe("10");
-    }
-
-    [Fact]
-    public async Task WaitSession_DefaultsPollingValues()
-    {
-        var handler = new OpenClawWaitSessionActionHandler();
-        var ctx = MakeContext(new() { ["Squid.Action.OpenClaw.SessionKey"] = "test" });
-
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ActionProperties["OpenClaw.MaxWaitSeconds"].ShouldBe("120");
-        result.ActionProperties["OpenClaw.PollSeconds"].ShouldBe("5");
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
+        result.ScriptBody.ShouldContain("hook:test");
     }
 
     [Fact]
@@ -174,33 +141,15 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task Assert_SetsAssertionConfig()
+    public async Task Assert_SetsExecutionSemantics()
     {
         var handler = new OpenClawAssertActionHandler();
-        var ctx = MakeContext(new()
-        {
-            ["Squid.Action.OpenClaw.JsonPath"] = "$.result.ok",
-            ["Squid.Action.OpenClaw.Operator"] = "equals",
-            ["Squid.Action.OpenClaw.Expected"] = "true"
-        });
+        var ctx = MakeContext();
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("Assert");
-        result.ActionProperties["OpenClaw.JsonPath"].ShouldBe("$.result.ok");
-        result.ActionProperties["OpenClaw.Operator"].ShouldBe("equals");
-        result.ActionProperties["OpenClaw.Expected"].ShouldBe("true");
-    }
-
-    [Fact]
-    public async Task Assert_DefaultsToResultJsonSource()
-    {
-        var handler = new OpenClawAssertActionHandler();
-        var ctx = MakeContext(new() { ["Squid.Action.OpenClaw.JsonPath"] = "$.ok" });
-
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ActionProperties["OpenClaw.SourceVariable"].ShouldBe(SpecialVariables.OpenClaw.ResultJson);
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
     }
 
     [Fact]
@@ -214,20 +163,15 @@ public class OpenClawActionHandlerTests
     // ========================================================================
 
     [Fact]
-    public async Task FetchResult_SetsFieldMappings()
+    public async Task FetchResult_SetsExecutionSemantics()
     {
         var handler = new OpenClawFetchResultActionHandler();
-        var mappings = """[{"jsonPath":"$.result.summary","outputName":"Summary"}]""";
-        var ctx = MakeContext(new()
-        {
-            ["Squid.Action.OpenClaw.FieldMappings"] = mappings
-        });
+        var ctx = MakeContext();
 
         var result = await handler.PrepareAsync(ctx, CancellationToken.None);
 
-        result.ActionProperties["OpenClaw.ActionKind"].ShouldBe("FetchResult");
-        result.ActionProperties["OpenClaw.FieldMappings"].ShouldBe(mappings);
-        result.ActionProperties["OpenClaw.SourceVariable"].ShouldBe(SpecialVariables.OpenClaw.ResultJson);
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
     }
 
     [Fact]
