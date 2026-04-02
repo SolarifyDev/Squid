@@ -63,3 +63,9 @@ public class GcpCredentialsSummary
 {
     public bool JsonKeyHasValue { get; set; }
 }
+
+public class OpenClawGatewayCredentialsSummary
+{
+    public bool GatewayTokenHasValue { get; set; }
+    public bool HooksTokenHasValue { get; set; }
+}

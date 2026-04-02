@@ -51,6 +51,7 @@ public static class DeploymentAccountCredentialsConverter
             AccountType.AzureOidc => typeof(AzureOidcCredentials),
             AccountType.GoogleCloudAccount => typeof(GcpCredentials),
             AccountType.AmazonWebServicesOidcAccount => typeof(AwsOidcCredentials),
+            AccountType.OpenClawGateway => typeof(OpenClawGatewayCredentials),
             _ => null
         };
     }

@@ -13,6 +13,8 @@ public interface IMachineRegistrationService : IScopedDependency
     Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default);
 
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
+
+    Task<RegisterMachineResponseData> RegisterOpenClawAsync(RegisterOpenClawCommand command, CancellationToken cancellationToken = default);
 }
 
 public partial class MachineRegistrationService : IMachineRegistrationService

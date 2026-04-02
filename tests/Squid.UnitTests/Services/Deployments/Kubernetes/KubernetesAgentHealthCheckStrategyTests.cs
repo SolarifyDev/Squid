@@ -20,18 +20,6 @@ public class KubernetesAgentHealthCheckStrategyTests
     }
 
     // ========================================================================
-    // DefaultHealthCheckScript
-    // ========================================================================
-
-    [Fact]
-    public void DefaultHealthCheckScript_ContainsKubectlGetPods()
-    {
-        _strategy.DefaultHealthCheckScript.ShouldContain("kubectl get pods");
-        _strategy.DefaultHealthCheckScript.ShouldContain("set -e");
-        _strategy.DefaultHealthCheckScript.ShouldNotContain("exit 0");
-    }
-
-    // ========================================================================
     // ParseAgentEndpoint — pure static logic
     // ========================================================================
 
@@ -71,22 +59,22 @@ public class KubernetesAgentHealthCheckStrategyTests
     }
 
     // ========================================================================
-    // CheckConnectivityAsync
+    // CheckHealthAsync
     // ========================================================================
 
     [Fact]
-    public async Task CheckConnectivity_MissingSubscriptionAndThumbprint_ReturnsUnhealthy()
+    public async Task CheckHealth_MissingSubscriptionAndThumbprint_ReturnsUnhealthy()
     {
         var machine = new Machine { Id = 1, Name = "agent", Endpoint = """{"CommunicationStyle":"KubernetesAgent"}""" };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("missing SubscriptionId or Thumbprint");
     }
 
     [Fact]
-    public async Task CheckConnectivity_Success_RecordsHealthy()
+    public async Task CheckHealth_Success_RecordsHealthy()
     {
         var capsClient = new Mock<IAsyncCapabilitiesService>();
         capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
@@ -105,7 +93,7 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeTrue();
         result.Detail.ShouldContain("Agent connected");
@@ -113,7 +101,7 @@ public class KubernetesAgentHealthCheckStrategyTests
     }
 
     [Fact]
-    public async Task CheckConnectivity_NullCapabilities_RecordsUnavailable()
+    public async Task CheckHealth_NullCapabilities_RecordsUnavailable()
     {
         var capsClient = new Mock<IAsyncCapabilitiesService>();
         capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
@@ -128,14 +116,14 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("null capabilities");
     }
 
     [Fact]
-    public async Task CheckConnectivity_HalibutException_RecordsUnavailable()
+    public async Task CheckHealth_HalibutException_RecordsUnavailable()
     {
         var capsClient = new Mock<IAsyncCapabilitiesService>();
         capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
@@ -150,7 +138,7 @@ public class KubernetesAgentHealthCheckStrategyTests
             Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("Connection refused");

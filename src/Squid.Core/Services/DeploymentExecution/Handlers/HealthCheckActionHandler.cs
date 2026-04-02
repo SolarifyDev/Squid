@@ -88,14 +88,6 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
     private static async Task<HealthCheckResult> CheckTargetAsync(DeploymentTargetContext tc, HealthCheckSettings settings, CancellationToken ct)
     {
-        if (settings.CheckType == HealthCheckType.FullHealthCheck)
-            return await RunFullHealthCheckAsync(tc, ct).ConfigureAwait(false);
-
-        return await RunConnectivityCheckAsync(tc, ct).ConfigureAwait(false);
-    }
-
-    private static async Task<HealthCheckResult> RunConnectivityCheckAsync(DeploymentTargetContext tc, CancellationToken ct)
-    {
         var healthChecker = tc.Transport?.HealthChecker;
 
         if (healthChecker == null)
@@ -103,68 +95,13 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
         try
         {
-            return await healthChecker.CheckConnectivityAsync(tc.Machine, null, ct).ConfigureAwait(false);
+            return await healthChecker.CheckHealthAsync(tc.Machine, null, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "[Deploy] Health check threw for {MachineName}", tc.Machine.Name);
             return new HealthCheckResult(false, $"Health check exception: {ex.Message}");
         }
-    }
-
-    private static async Task<HealthCheckResult> RunFullHealthCheckAsync(DeploymentTargetContext tc, CancellationToken ct)
-    {
-        var healthChecker = tc.Transport?.HealthChecker;
-        var strategy = tc.Transport?.Strategy;
-
-        if (healthChecker == null || strategy == null)
-            return await RunConnectivityCheckAsync(tc, ct).ConfigureAwait(false);
-
-        try
-        {
-            var script = healthChecker.DefaultHealthCheckScript;
-
-            if (string.IsNullOrEmpty(script))
-                return await healthChecker.CheckConnectivityAsync(tc.Machine, null, ct).ConfigureAwait(false);
-
-            script = WrapWithContextIfApplicable(script, tc);
-
-            var request = new ScriptExecutionRequest
-            {
-                ScriptBody = script,
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                Machine = tc.Machine,
-                Files = new Dictionary<string, byte[]>(),
-                Variables = new List<VariableDto>()
-            };
-
-            var result = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
-
-            return result.Success
-                ? new HealthCheckResult(true, $"Full health check passed (exit code {result.ExitCode})")
-                : new HealthCheckResult(false, $"Full health check failed (exit code {result.ExitCode}): {result.BuildErrorSummary()}");
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[Deploy] Full health check threw for {MachineName}", tc.Machine.Name);
-            return new HealthCheckResult(false, $"Full health check exception: {ex.Message}");
-        }
-    }
-
-    private static string WrapWithContextIfApplicable(string script, DeploymentTargetContext tc)
-    {
-        var wrapper = tc.Transport?.ScriptWrapper;
-
-        if (wrapper == null) return script;
-
-        var scriptContext = new ScriptContext
-        {
-            Endpoint = tc.EndpointContext,
-            Syntax = ScriptSyntax.Bash
-        };
-
-        return wrapper.WrapScript(script, scriptContext);
     }
 
     private async Task IncludeNewTargetsAsync(DeploymentTaskContext deployCtx, DeploymentStepDto step, CancellationToken ct)

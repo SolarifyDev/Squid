@@ -65,3 +65,9 @@ public class AwsRoleCredentials
     public string SessionDuration { get; set; }
     public string ExternalId { get; set; }
 }
+
+public class OpenClawGatewayCredentials
+{
+    public string GatewayToken { get; set; }
+    public string HooksToken { get; set; }
+}

@@ -19,6 +19,12 @@ public static class SpecialVariables
         public const string DeployRelease = "Squid.DeployRelease";
         public const string DeployIngress = "Squid.DeployIngress";
         public const string KubernetesKustomize = "Squid.KubernetesKustomize";
+        public const string OpenClawInvokeTool = "Squid.OpenClaw.InvokeTool";
+        public const string OpenClawRunAgent = "Squid.OpenClaw.RunAgent";
+        public const string OpenClawWake = "Squid.OpenClaw.Wake";
+        public const string OpenClawWaitSession = "Squid.OpenClaw.WaitSession";
+        public const string OpenClawAssert = "Squid.OpenClaw.Assert";
+        public const string OpenClawFetchResult = "Squid.OpenClaw.FetchResult";
     }
 
     public static class StepTypes
@@ -175,6 +181,18 @@ public static class SpecialVariables
         public const string PfxSuffix = ".Pfx";
         public const string NotAfterSuffix = ".NotAfter";
         public const string HasPrivateKeySuffix = ".HasPrivateKey";
+    }
+
+    public static class OpenClaw
+    {
+        public const string BaseUrl = "Squid.Action.OpenClaw.BaseUrl";
+        public const string GatewayToken = "Squid.Action.OpenClaw.GatewayToken";
+        public const string HooksToken = "Squid.Action.OpenClaw.HooksToken";
+        public const string ResultJson = "OpenClaw.ResultJson";
+        public const string Ok = "OpenClaw.Ok";
+        public const string Accepted = "OpenClaw.Accepted";
+        public const string Status = "OpenClaw.Status";
+        public const string Summary = "OpenClaw.Summary";
     }
 
     public static class Output
