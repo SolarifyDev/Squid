@@ -1,30 +1,17 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Serilog;
 using Squid.Core.Services.Http;
 
 namespace Squid.Core.Services.DeploymentExecution.OpenClaw;
 
-internal class OpenClawApiClient : IAsyncDisposable
+internal class OpenClawApiClient
 {
     private readonly ISquidHttpClientFactory _httpClientFactory;
-    private OpenClawWsChannel _wsChannel;
 
     internal OpenClawApiClient(ISquidHttpClientFactory httpClientFactory)
     {
         _httpClientFactory = httpClientFactory;
     }
-
-    internal bool IsWsAvailable => _wsChannel != null;
-
-    internal void InitializeWs(string wsUrl, string gatewayToken)
-    {
-        if (string.IsNullOrEmpty(wsUrl) || string.IsNullOrEmpty(gatewayToken)) return;
-
-        _wsChannel ??= new OpenClawWsChannel(wsUrl, gatewayToken);
-    }
-
-    // --- HTTP methods (unchanged) ---
 
     internal async Task<OpenClawToolResponse> InvokeToolAsync(string baseUrl, string gatewayToken, string tool, string action, string argsJson, string sessionKey, TimeSpan timeout, CancellationToken ct)
     {
@@ -80,57 +67,6 @@ internal class OpenClawApiClient : IAsyncDisposable
             return false;
         }
     }
-
-    // --- WebSocket methods ---
-
-    internal async Task<OpenClawToolResponse> InvokeToolViaWsAsync(string tool, string action, string argsJson, string sessionKey, TimeSpan timeout, CancellationToken ct)
-    {
-        if (_wsChannel == null)
-            return new OpenClawToolResponse(false, null, "WebSocket channel not initialized");
-
-        try
-        {
-            var args = ParseArgsJson(argsJson);
-            var parameters = new { tool, action = action ?? "json", args, sessionKey };
-            var response = await _wsChannel.SendRequestRawAsync("tools.invoke", parameters, timeout, ct).ConfigureAwait(false);
-
-            var resultJson = response.Payload?.GetRawText();
-
-            return new OpenClawToolResponse(response.Ok, resultJson, response.Ok ? null : response.ErrorMessage);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log.Warning(ex, "[OpenClaw] WS InvokeTool failed for {Tool}", tool);
-            return new OpenClawToolResponse(false, null, $"WS error: {ex.Message}");
-        }
-    }
-
-    internal async IAsyncEnumerable<WsEvent> SubscribeSessionEventsAsync([EnumeratorCancellation] CancellationToken ct)
-    {
-        if (_wsChannel == null) yield break;
-
-        await foreach (var evt in _wsChannel.SubscribeEventsAsync("session:", ct).ConfigureAwait(false))
-        {
-            yield return evt;
-        }
-    }
-
-    internal async Task<JsonElement?> HealthSnapshotAsync(TimeSpan timeout, CancellationToken ct)
-    {
-        if (_wsChannel == null) return null;
-
-        return await _wsChannel.SendRequestAsync<JsonElement>("health", new { }, timeout, ct).ConfigureAwait(false);
-    }
-
-    // --- Disposal ---
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_wsChannel != null)
-            await _wsChannel.DisposeAsync().ConfigureAwait(false);
-    }
-
-    // --- Helpers ---
 
     private static Dictionary<string, string> BuildBearerHeaders(string token) => new()
     {
