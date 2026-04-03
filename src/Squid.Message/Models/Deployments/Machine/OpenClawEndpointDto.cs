@@ -6,5 +6,6 @@ public class OpenClawEndpointDto
     public string BaseUrl { get; set; }
     public string InlineGatewayToken { get; set; }
     public string InlineHooksToken { get; set; }
+    public string WebSocketUrl { get; set; }
     public List<EndpointResourceReference> ResourceReferences { get; set; }
 }

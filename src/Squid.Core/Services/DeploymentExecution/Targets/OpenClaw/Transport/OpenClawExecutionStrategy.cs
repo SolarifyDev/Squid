@@ -9,13 +9,18 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.OpenClaw;
 
-public class OpenClawHttpExecutionStrategy : IExecutionStrategy
+public class OpenClawExecutionStrategy : IExecutionStrategy, IAsyncDisposable
 {
     private readonly OpenClawApiClient _client;
 
-    public OpenClawHttpExecutionStrategy(ISquidHttpClientFactory httpClientFactory)
+    public OpenClawExecutionStrategy(ISquidHttpClientFactory httpClientFactory)
     {
         _client = new OpenClawApiClient(httpClientFactory);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _client.DisposeAsync().ConfigureAwait(false);
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -127,6 +132,92 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
 
     private async Task<ScriptExecutionResult> ExecuteWaitSessionAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
     {
+        var wsUrl = ResolveVariable(request, SpecialVariables.OpenClaw.WebSocketUrl);
+        var token = ResolveVariable(request, SpecialVariables.OpenClaw.GatewayToken);
+
+        if (!string.IsNullOrEmpty(wsUrl) && !string.IsNullOrEmpty(token))
+        {
+            try
+            {
+                _client.InitializeWs(wsUrl, token);
+
+                return await ExecuteWaitSessionViaWsAsync(request, props, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Warning(ex, "[OpenClaw] WS WaitSession failed, falling back to HTTP polling");
+            }
+        }
+
+        return await ExecuteWaitSessionViaPollingAsync(request, props, ct).ConfigureAwait(false);
+    }
+
+    private async Task<ScriptExecutionResult> ExecuteWaitSessionViaWsAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
+    {
+        var sessionKey = GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey);
+        var successPattern = GetProp(props, SpecialVariables.OpenClaw.PropSuccessPattern);
+        var failPattern = GetProp(props, SpecialVariables.OpenClaw.PropFailPattern);
+        var maxWaitSeconds = int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropMaxWaitSeconds), out var mw) ? mw : 120;
+
+        Log.Information("[OpenClaw] WaitSession via WS: sessionKey={SessionKey} maxWait={MaxWait}s", sessionKey, maxWaitSeconds);
+
+        var lines = new List<string> { $"Subscribing to session events for '{sessionKey}' (max {maxWaitSeconds}s)" };
+        var lastStatus = "Pending";
+        string lastSummary = null;
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(maxWaitSeconds));
+
+        try
+        {
+            await foreach (var evt in _client.SubscribeSessionEventsAsync(timeoutCts.Token).ConfigureAwait(false))
+            {
+                var payloadJson = evt.Payload.GetRawText();
+                lastSummary = payloadJson;
+
+                lines.Add($"WS event: {evt.Event} at {DateTimeOffset.UtcNow:HH:mm:ss}");
+
+                if (!string.IsNullOrEmpty(successPattern) && Regex.IsMatch(payloadJson, successPattern, RegexOptions.IgnoreCase))
+                {
+                    lastStatus = "Success";
+                    lines.Add($"Session matched success pattern: {successPattern}");
+                    break;
+                }
+
+                if (!string.IsNullOrEmpty(failPattern) && Regex.IsMatch(payloadJson, failPattern, RegexOptions.IgnoreCase))
+                {
+                    lastStatus = "Failed";
+                    lines.Add($"Session matched failure pattern: {failPattern}");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout — not caller cancellation
+        }
+
+        if (lastStatus == "Pending")
+        {
+            lastStatus = "Timeout";
+            lines.Add($"Session wait timed out after {maxWaitSeconds}s");
+        }
+
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.Status, lastStatus);
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.Summary, lastSummary ?? string.Empty);
+
+        var success = lastStatus == "Success";
+
+        return new ScriptExecutionResult
+        {
+            Success = success,
+            ExitCode = success ? 0 : 1,
+            LogLines = lines
+        };
+    }
+
+    private async Task<ScriptExecutionResult> ExecuteWaitSessionViaPollingAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
+    {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
         var token = ResolveVariable(request, SpecialVariables.OpenClaw.GatewayToken);
         var sessionKey = GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey);
@@ -135,7 +226,7 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
         var maxWaitSeconds = int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropMaxWaitSeconds), out var mw) ? mw : 120;
         var pollSeconds = int.TryParse(GetProp(props, SpecialVariables.OpenClaw.PropPollSeconds), out var ps) ? ps : 5;
 
-        Log.Information("[OpenClaw] WaitSession: sessionKey={SessionKey} maxWait={MaxWait}s poll={Poll}s", sessionKey, maxWaitSeconds, pollSeconds);
+        Log.Information("[OpenClaw] WaitSession via HTTP polling: sessionKey={SessionKey} maxWait={MaxWait}s poll={Poll}s", sessionKey, maxWaitSeconds, pollSeconds);
 
         var deadline = DateTimeOffset.UtcNow.AddSeconds(maxWaitSeconds);
         var lines = new List<string> { $"Polling session '{sessionKey}' every {pollSeconds}s (max {maxWaitSeconds}s)" };

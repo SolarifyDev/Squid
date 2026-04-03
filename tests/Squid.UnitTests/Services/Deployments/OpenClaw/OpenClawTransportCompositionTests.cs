@@ -13,7 +13,7 @@ public class OpenClawTransportCompositionTests
     {
         var variables = new OpenClawEndpointVariableContributor();
         var wrapper = new OpenClawScriptContextWrapper();
-        var strategy = new OpenClawHttpExecutionStrategy(Mock.Of<ISquidHttpClientFactory>());
+        var strategy = new OpenClawExecutionStrategy(Mock.Of<ISquidHttpClientFactory>());
         var healthChecker = new OpenClawHealthCheckStrategy(Mock.Of<IDeploymentAccountDataProvider>(), Mock.Of<ISquidHttpClientFactory>());
 
         var transport = new OpenClawTransport(variables, wrapper, strategy, healthChecker);

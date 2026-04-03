@@ -30,6 +30,7 @@ public partial class MachineRegistrationService
             BaseUrl = command.BaseUrl,
             InlineGatewayToken = command.InlineGatewayToken,
             InlineHooksToken = command.InlineHooksToken,
+            WebSocketUrl = command.WebSocketUrl,
             ResourceReferences = command.ResourceReferences
         });
     }

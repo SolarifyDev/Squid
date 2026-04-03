@@ -7,7 +7,7 @@ namespace Squid.Core.Services.DeploymentExecution.OpenClaw;
 public sealed class OpenClawTransport(
     OpenClawEndpointVariableContributor variables,
     OpenClawScriptContextWrapper scriptWrapper,
-    OpenClawHttpExecutionStrategy strategy,
+    OpenClawExecutionStrategy strategy,
     OpenClawHealthCheckStrategy healthChecker)
     : DeploymentTransport(
         CommunicationStyle.OpenClaw, variables, scriptWrapper, strategy, healthChecker,

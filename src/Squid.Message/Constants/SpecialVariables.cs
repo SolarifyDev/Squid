@@ -190,6 +190,7 @@ public static class SpecialVariables
         public const string GatewayToken = "Squid.Action.OpenClaw.GatewayToken";
         public const string HooksToken = "Squid.Action.OpenClaw.HooksToken";
         public const string SessionKey = "Squid.Action.OpenClaw.SessionKey";
+        public const string WebSocketUrl = "Squid.Action.OpenClaw.WebSocketUrl";
 
         // Output variables (emitted by execution strategy)
         public const string ResultJson = "OpenClaw.ResultJson";

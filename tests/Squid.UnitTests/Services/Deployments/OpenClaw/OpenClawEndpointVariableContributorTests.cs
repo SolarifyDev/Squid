@@ -154,4 +154,55 @@ public class OpenClawEndpointVariableContributorTests
 
         _contributor.ContributeVariables(ctx).ShouldBeEmpty();
     }
+
+    // ========================================================================
+    // ContributeVariables — WebSocketUrl
+    // ========================================================================
+
+    [Fact]
+    public void ContributeVariables_WithExplicitWebSocketUrl_ContributesExplicitValue()
+    {
+        var json = JsonSerializer.Serialize(new OpenClawEndpointDto
+        {
+            CommunicationStyle = "OpenClaw",
+            BaseUrl = "https://claw.example.com:18789",
+            WebSocketUrl = "wss://claw.example.com:18789/openclaw",
+            ResourceReferences = new()
+        });
+        var ctx = new EndpointContext { EndpointJson = json };
+
+        var vars = _contributor.ContributeVariables(ctx);
+
+        vars.First(v => v.Name == SpecialVariables.OpenClaw.WebSocketUrl).Value.ShouldBe("wss://claw.example.com:18789/openclaw");
+    }
+
+    [Fact]
+    public void ContributeVariables_WithoutWebSocketUrl_DerivesFromBaseUrl()
+    {
+        var vars = _contributor.ContributeVariables(InlineContext());
+
+        vars.First(v => v.Name == SpecialVariables.OpenClaw.WebSocketUrl).Value.ShouldBe("wss://claw.example.com:18789");
+    }
+
+    // ========================================================================
+    // DeriveWsUrl
+    // ========================================================================
+
+    [Theory]
+    [InlineData("https://host:18789", "wss://host:18789")]
+    [InlineData("http://host:18789", "ws://host:18789")]
+    [InlineData("https://host:18789/", "wss://host:18789")]
+    [InlineData("HTTPS://HOST:18789", "wss://HOST:18789")]
+    public void DeriveWsUrl_ConvertsSchemeCorrectly(string httpUrl, string expectedWsUrl)
+    {
+        OpenClawEndpointVariableContributor.DeriveWsUrl(httpUrl).ShouldBe(expectedWsUrl);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("ftp://host")]
+    public void DeriveWsUrl_UnsupportedScheme_ReturnsEmpty(string httpUrl)
+    {
+        OpenClawEndpointVariableContributor.DeriveWsUrl(httpUrl).ShouldBe(string.Empty);
+    }
 }

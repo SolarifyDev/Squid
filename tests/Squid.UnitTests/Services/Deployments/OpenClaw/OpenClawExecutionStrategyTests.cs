@@ -2,7 +2,7 @@ using Squid.Core.Services.DeploymentExecution.OpenClaw;
 
 namespace Squid.UnitTests.Services.Deployments.OpenClaw;
 
-public class OpenClawHttpExecutionStrategyTests
+public class OpenClawExecutionStrategyTests
 {
     // ========================================================================
     // ExtractJsonPath
@@ -13,7 +13,7 @@ public class OpenClawHttpExecutionStrategyTests
     {
         var json = """{"ok":true,"result":{"summary":"done"}}""";
 
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(json, "$.result.summary").ShouldBe("done");
+        OpenClawExecutionStrategy.ExtractJsonPath(json, "$.result.summary").ShouldBe("done");
     }
 
     [Fact]
@@ -21,7 +21,7 @@ public class OpenClawHttpExecutionStrategyTests
     {
         var json = """{"ok":true}""";
 
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(json, "$.ok").ShouldBe("true");
+        OpenClawExecutionStrategy.ExtractJsonPath(json, "$.ok").ShouldBe("true");
     }
 
     [Fact]
@@ -29,13 +29,13 @@ public class OpenClawHttpExecutionStrategyTests
     {
         var json = """{"ok":true}""";
 
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(json, "$.missing").ShouldBeNull();
+        OpenClawExecutionStrategy.ExtractJsonPath(json, "$.missing").ShouldBeNull();
     }
 
     [Fact]
     public void ExtractJsonPath_NullJson_ReturnsNull()
     {
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(null, "$.ok").ShouldBeNull();
+        OpenClawExecutionStrategy.ExtractJsonPath(null, "$.ok").ShouldBeNull();
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class OpenClawHttpExecutionStrategyTests
     {
         var json = """{"ok":true}""";
 
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(json, null).ShouldBe(json);
+        OpenClawExecutionStrategy.ExtractJsonPath(json, null).ShouldBe(json);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public class OpenClawHttpExecutionStrategyTests
     {
         var json = """{"result":{"count":42}}""";
 
-        OpenClawHttpExecutionStrategy.ExtractJsonPath(json, "$.result.count").ShouldBe("42");
+        OpenClawExecutionStrategy.ExtractJsonPath(json, "$.result.count").ShouldBe("42");
     }
 
     // ========================================================================
@@ -74,19 +74,19 @@ public class OpenClawHttpExecutionStrategyTests
     [InlineData("20", "lessthan", "10", false)]
     public void EvaluateAssertion_VariousOperators(string actual, string op, string expected, bool shouldPass)
     {
-        OpenClawHttpExecutionStrategy.EvaluateAssertion(actual, op, expected).ShouldBe(shouldPass);
+        OpenClawExecutionStrategy.EvaluateAssertion(actual, op, expected).ShouldBe(shouldPass);
     }
 
     [Fact]
     public void EvaluateAssertion_NullActual_ReturnsFalse()
     {
-        OpenClawHttpExecutionStrategy.EvaluateAssertion(null, "equals", "anything").ShouldBeFalse();
+        OpenClawExecutionStrategy.EvaluateAssertion(null, "equals", "anything").ShouldBeFalse();
     }
 
     [Fact]
     public void EvaluateAssertion_UnknownOperator_DefaultsToEquals()
     {
-        OpenClawHttpExecutionStrategy.EvaluateAssertion("a", "unknown_op", "a").ShouldBeTrue();
-        OpenClawHttpExecutionStrategy.EvaluateAssertion("a", "unknown_op", "b").ShouldBeFalse();
+        OpenClawExecutionStrategy.EvaluateAssertion("a", "unknown_op", "a").ShouldBeTrue();
+        OpenClawExecutionStrategy.EvaluateAssertion("a", "unknown_op", "b").ShouldBeFalse();
     }
 }

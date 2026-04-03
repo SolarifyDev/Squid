@@ -21,6 +21,9 @@ public class RegisterOpenClawCommand : ICommand, ISpaceScoped
     public string InlineGatewayToken { get; set; }
     public string InlineHooksToken { get; set; }
 
+    // WebSocket URL (optional — if not set, derived from BaseUrl)
+    public string WebSocketUrl { get; set; }
+
     // Resources — optional (AuthenticationAccount for OpenClawGateway)
     public List<EndpointResourceReference> ResourceReferences { get; set; }
 }

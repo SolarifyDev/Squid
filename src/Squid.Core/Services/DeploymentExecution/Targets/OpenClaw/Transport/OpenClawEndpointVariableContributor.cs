@@ -33,11 +33,14 @@ public class OpenClawEndpointVariableContributor : IEndpointVariableContributor
         var accountData = context.GetAccountData();
         var (gatewayToken, hooksToken) = ResolveTokens(endpoint, accountData);
 
+        var wsUrl = ResolveWebSocketUrl(endpoint);
+
         var vars = new List<VariableDto>
         {
             EndpointVariableFactory.Make(SpecialVariables.OpenClaw.BaseUrl, endpoint.BaseUrl ?? string.Empty),
             EndpointVariableFactory.Make(SpecialVariables.OpenClaw.GatewayToken, gatewayToken, isSensitive: true),
-            EndpointVariableFactory.Make(SpecialVariables.OpenClaw.HooksToken, hooksToken, isSensitive: true)
+            EndpointVariableFactory.Make(SpecialVariables.OpenClaw.HooksToken, hooksToken, isSensitive: true),
+            EndpointVariableFactory.Make(SpecialVariables.OpenClaw.WebSocketUrl, wsUrl)
         };
 
         if (accountData != null)
@@ -48,6 +51,28 @@ public class OpenClawEndpointVariableContributor : IEndpointVariableContributor
         }
 
         return vars;
+    }
+
+    private static string ResolveWebSocketUrl(OpenClawEndpointDto endpoint)
+    {
+        if (!string.IsNullOrEmpty(endpoint.WebSocketUrl))
+            return endpoint.WebSocketUrl;
+
+        if (string.IsNullOrEmpty(endpoint.BaseUrl))
+            return string.Empty;
+
+        return DeriveWsUrl(endpoint.BaseUrl);
+    }
+
+    internal static string DeriveWsUrl(string httpUrl)
+    {
+        if (httpUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return "wss://" + httpUrl[8..].TrimEnd('/');
+
+        if (httpUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            return "ws://" + httpUrl[7..].TrimEnd('/');
+
+        return string.Empty;
     }
 
     private static (string GatewayToken, string HooksToken) ResolveTokens(OpenClawEndpointDto endpoint, ResolvedAuthenticationAccountData accountData)

@@ -129,7 +129,8 @@ public class MachineService : IMachineService
     private static void ApplyOpenClawEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
     {
         if (command.BaseUrl == null && command.InlineGatewayToken == null
-            && command.InlineHooksToken == null && command.ResourceReferences == null)
+            && command.InlineHooksToken == null && command.WebSocketUrl == null
+            && command.ResourceReferences == null)
             return;
 
         var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
@@ -144,6 +145,9 @@ public class MachineService : IMachineService
 
         if (command.InlineHooksToken != null)
             endpoint.InlineHooksToken = command.InlineHooksToken;
+
+        if (command.WebSocketUrl != null)
+            endpoint.WebSocketUrl = command.WebSocketUrl;
 
         if (command.ResourceReferences != null)
             endpoint.ResourceReferences = command.ResourceReferences;

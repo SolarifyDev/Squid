@@ -34,6 +34,7 @@ public class UpdateMachineCommand : ICommand, ISpaceScoped
     public string BaseUrl { get; set; }
     public string InlineGatewayToken { get; set; }
     public string InlineHooksToken { get; set; }
+    public string WebSocketUrl { get; set; }
 }
 
 public class UpdateMachineResponse : SquidResponse<MachineDto>
