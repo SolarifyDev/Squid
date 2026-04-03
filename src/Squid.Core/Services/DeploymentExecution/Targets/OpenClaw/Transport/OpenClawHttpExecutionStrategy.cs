@@ -82,8 +82,12 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
         AddBoolIfPresent(body, "deliver", GetProp(props, SpecialVariables.OpenClaw.PropDeliver));
         AddIfPresent(body, "channel", GetProp(props, SpecialVariables.OpenClaw.PropChannel));
         AddIfPresent(body, "to", GetProp(props, SpecialVariables.OpenClaw.PropTo));
+        AddIfPresent(body, "name", GetProp(props, SpecialVariables.OpenClaw.PropAgentName));
+        AddIfPresent(body, "model", GetProp(props, SpecialVariables.OpenClaw.PropModel));
+        AddIfPresent(body, "thinking", GetProp(props, SpecialVariables.OpenClaw.PropThinking));
+        AddIntIfPresent(body, "timeoutSeconds", GetProp(props, SpecialVariables.OpenClaw.PropAgentTimeoutSeconds));
 
-        Log.Information("[OpenClaw] RunAgent: message={Message} agentId={AgentId}", GetProp(props, SpecialVariables.OpenClaw.PropMessage), GetProp(props, SpecialVariables.OpenClaw.PropAgentId));
+        Log.Information("[OpenClaw] RunAgent: message={Message} agentId={AgentId} name={Name}", GetProp(props, SpecialVariables.OpenClaw.PropMessage), GetProp(props, SpecialVariables.OpenClaw.PropAgentId), GetProp(props, SpecialVariables.OpenClaw.PropAgentName));
 
         var accepted = await _client.RunAgentAsync(baseUrl, token, body, timeout, ct).ConfigureAwait(false);
 
@@ -338,6 +342,11 @@ public class OpenClawHttpExecutionStrategy : IExecutionStrategy
     private static void AddBoolIfPresent(Dictionary<string, object> body, string key, string value)
     {
         if (bool.TryParse(value, out var b)) body[key] = b;
+    }
+
+    private static void AddIntIfPresent(Dictionary<string, object> body, string key, string value)
+    {
+        if (int.TryParse(value, out var n)) body[key] = n;
     }
 }
 

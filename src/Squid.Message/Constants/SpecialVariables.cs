@@ -210,6 +210,10 @@ public static class SpecialVariables
         public const string PropDeliver = "Squid.Action.OpenClaw.Deliver";
         public const string PropChannel = "Squid.Action.OpenClaw.Channel";
         public const string PropTo = "Squid.Action.OpenClaw.To";
+        public const string PropAgentName = "Squid.Action.OpenClaw.AgentName";
+        public const string PropModel = "Squid.Action.OpenClaw.Model";
+        public const string PropThinking = "Squid.Action.OpenClaw.Thinking";
+        public const string PropAgentTimeoutSeconds = "Squid.Action.OpenClaw.AgentTimeoutSeconds";
         public const string PropWakeText = "Squid.Action.OpenClaw.WakeText";
         public const string PropSuccessPattern = "Squid.Action.OpenClaw.SuccessPattern";
         public const string PropFailPattern = "Squid.Action.OpenClaw.FailPattern";
