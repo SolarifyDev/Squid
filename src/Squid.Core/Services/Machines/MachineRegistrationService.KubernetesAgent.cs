@@ -36,6 +36,7 @@ public partial class MachineRegistrationService
         {
             machine = BuildKubernetesAgentMachine(command, resolvedEnvironmentIds);
 
+            await EnsureUniqueNameAsync(machine.Name, machine.SpaceId, cancellationToken).ConfigureAwait(false);
             await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
             await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 

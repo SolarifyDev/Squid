@@ -13,6 +13,7 @@ public partial class MachineRegistrationService
         var endpointJson = BuildOpenClawEndpointJson(command);
         var machine = BuildOpenClawMachine(command, endpointJson);
 
+        await EnsureUniqueNameAsync(machine.Name, command.SpaceId, cancellationToken).ConfigureAwait(false);
         await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
         await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 

@@ -238,5 +238,8 @@ public static class SpecialVariables
     {
         public static string Variable(string stepName, string variableName)
             => $"Squid.Action[{stepName}].Output.{variableName}";
+
+        public static string MachineVariable(string stepName, string machineName, string variableName)
+            => $"Squid.Action[{stepName}].Output[{machineName}].{variableName}";
     }
 }

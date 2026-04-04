@@ -39,6 +39,14 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         _selfCertSetting = selfCertSetting;
     }
 
+    private async Task EnsureUniqueNameAsync(string name, int spaceId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+
+        if (await _dataProvider.ExistsByNameAsync(name, spaceId, ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"A machine named \"{name}\" already exists in this space");
+    }
+
     private static Machine BuildMachineDefaults(string name, string roles, string environmentIds, int spaceId, string endpointJson)
     {
         return new Machine

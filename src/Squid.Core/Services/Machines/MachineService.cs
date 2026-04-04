@@ -54,6 +54,14 @@ public class MachineService : IMachineService
         if (machine == null)
             throw new InvalidOperationException($"Machine {command.MachineId} not found");
 
+        if (command.Name != null && !string.Equals(command.Name, machine.Name, StringComparison.Ordinal))
+        {
+            var spaceId = command.SpaceId ?? machine.SpaceId;
+
+            if (await _machineDataProvider.ExistsByNameAsync(command.Name, spaceId, cancellationToken).ConfigureAwait(false))
+                throw new InvalidOperationException($"A machine named \"{command.Name}\" already exists in this space");
+        }
+
         ApplyUpdate(machine, command);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);

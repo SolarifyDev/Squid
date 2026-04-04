@@ -95,6 +95,9 @@ public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandl
             {
                 _ctx.Variables.AddRange(result.OutputVariables);
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
+
+                foreach (var v in result.OutputVariables)
+                    Log.Debug("[Deploy]   {Name} = {Value}", v.Name, v.IsSensitive ? "***" : v.Value?[..Math.Min(v.Value.Length, 100)]);
             }
 
             _ctx.FailureEncountered |= result.Failed;

@@ -245,7 +245,10 @@ public sealed partial class ExecuteStepsPhase
 
             await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
 
-            CollectOutputVariables(result, step.Name, actionResult);
+            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, actionResult);
+
+            if (collectedNames.Count > 0)
+                await lifecycle.EmitAsync(new OutputVariablesCapturedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine?.Name, ActionSortOrder = actionSortOrder, OutputVariableNames = collectedNames }), ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -319,18 +322,30 @@ public sealed partial class ExecuteStepsPhase
         return ReservedPrefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static void CollectOutputVariables(StepExecutionResult result, string stepName, ActionExecutionResult actionResult)
+    private static List<string> CollectOutputVariables(StepExecutionResult result, string stepName, string machineName, ActionExecutionResult actionResult)
     {
+        var collectedNames = new List<string>();
+
         foreach (var kv in actionResult.OutputVariables)
         {
             var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
             var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
+            collectedNames.Add(qualifiedName);
+
+            if (!string.IsNullOrEmpty(machineName))
+            {
+                var machineQualifiedName = SpecialVariables.Output.MachineVariable(stepName, machineName, kv.Key);
+                result.OutputVariables.Add(new VariableDto { Name = machineQualifiedName, Value = kv.Value, IsSensitive = isSensitive });
+                collectedNames.Add(machineQualifiedName);
+            }
 
             if (!IsReservedName(kv.Key))
                 result.OutputVariables.Add(new VariableDto { Name = kv.Key, Value = kv.Value, IsSensitive = isSensitive });
         }
+
+        return collectedNames;
     }
 
     private async Task<StepExecutionResult> ExecuteSyntheticStepAsync(DeploymentStepDto step, int stepSortOrder, CancellationToken ct)

@@ -21,7 +21,6 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
     {
         var props = request.ActionProperties ?? new Dictionary<string, string>();
-
         return request.ActionType switch
         {
             SpecialVariables.ActionTypes.OpenClawInvokeTool => await ExecuteInvokeToolAsync(request, props, ct).ConfigureAwait(false),
