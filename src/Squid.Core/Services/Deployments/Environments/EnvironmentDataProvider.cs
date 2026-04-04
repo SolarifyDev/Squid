@@ -11,7 +11,7 @@ public interface IEnvironmentDataProvider : IScopedDependency
 
     Task DeleteEnvironmentsAsync(List<DeploymentEnvironment> environments, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int Count, List<DeploymentEnvironment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int Count, List<DeploymentEnvironment>)> GetEnvironmentPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<DeploymentEnvironment>> GetEnvironmentsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
@@ -43,9 +43,12 @@ public class EnvironmentDataProvider(IUnitOfWork unitOfWork, IRepository reposit
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int Count, List<DeploymentEnvironment>)> GetEnvironmentPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int Count, List<DeploymentEnvironment>)> GetEnvironmentPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = repository.Query<DeploymentEnvironment>();
+
+        if (spaceId.HasValue)
+            query = query.Where(e => e.SpaceId == spaceId.Value);
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 

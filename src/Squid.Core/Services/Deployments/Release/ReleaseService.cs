@@ -168,18 +168,44 @@ public partial class ReleaseService : IReleaseService
     {
         var (count, releases) = await _releaseDataProvider.GetReleasesAsync(request.PageIndex, request.PageSize, request.ProjectId, request.ChannelId, cancellationToken).ConfigureAwait(false);
 
-        // 获取当前已部署的Release版本
         var currentDeployedReleaseIds = await GetCurrentDeployedReleaseIdsAsync(request.ProjectId, cancellationToken).ConfigureAwait(false);
+
+        var releaseDtos = _mapper.Map<List<ReleaseDto>>(releases);
+
+        await EnrichSelectedPackagesAsync(releaseDtos, releases, cancellationToken).ConfigureAwait(false);
 
         return new GetReleasesResponse
         {
             Data = new GetReleasesResponseData
             {
                 Count = count,
-                Releases = _mapper.Map<List<ReleaseDto>>(releases),
+                Releases = releaseDtos,
                 CurrentDeployedReleaseIds = currentDeployedReleaseIds
             }
         };
+    }
+
+    private async Task EnrichSelectedPackagesAsync(List<ReleaseDto> dtos, List<Persistence.Entities.Deployments.Release> releases, CancellationToken ct)
+    {
+        var releaseIds = releases.Select(r => r.Id).ToList();
+
+        if (releaseIds.Count == 0) return;
+
+        var allPackages = await _releaseSelectedPackageDataProvider.GetByReleaseIdsAsync(releaseIds, ct).ConfigureAwait(false);
+
+        var packagesByRelease = allPackages.GroupBy(p => p.ReleaseId).ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var dto in dtos)
+        {
+            if (!packagesByRelease.TryGetValue(dto.Id, out var packages)) continue;
+
+            dto.SelectedPackages = packages.Select(p => new SelectedPackageDto
+            {
+                ActionName = p.ActionName,
+                PackageReferenceName = p.PackageReferenceName,
+                Version = p.Version
+            }).ToList();
+        }
     }
 
     public async Task UpdateReleaseVariableAsync(UpdateReleaseVariableCommand command, CancellationToken cancellationToken = default)

@@ -14,7 +14,7 @@ public partial class ProjectService
     {
         var groups = await LoadProjectGroupsAsync(request, cancellationToken).ConfigureAwait(false);
         var projects = await LoadProjectsAsync(request, groups, cancellationToken).ConfigureAwait(false);
-        var lifecycleEnvMap = await ResolveLifecycleEnvironmentIdsAsync(projects, cancellationToken).ConfigureAwait(false);
+        var lifecycleEnvMap = await ResolveLifecycleEnvironmentIdsAsync(request.SpaceId, projects, cancellationToken).ConfigureAwait(false);
         var environments = await LoadEnvironmentsAsync(request, lifecycleEnvMap, cancellationToken).ConfigureAwait(false);
         var items = await LoadDashboardItemsAsync(projects, cancellationToken).ConfigureAwait(false);
         var summaries = BuildGroupSummaries(groups, projects, lifecycleEnvMap);
@@ -35,7 +35,7 @@ public partial class ProjectService
         if (request.ProjectGroupIds is { Count: > 0 })
             return await _projectGroupDataProvider.GetProjectGroupsAsync(request.ProjectGroupIds, ct).ConfigureAwait(false);
 
-        var (_, groups) = await _projectGroupDataProvider.GetProjectGroupPagingAsync(ct: ct).ConfigureAwait(false);
+        var (_, groups) = await _projectGroupDataProvider.GetProjectGroupPagingAsync(spaceId: request.SpaceId, ct: ct).ConfigureAwait(false);
 
         return groups;
     }
@@ -45,14 +45,14 @@ public partial class ProjectService
         if (request.ProjectIds is { Count: > 0 })
             return await _projectDataProvider.GetProjectsAsync(request.ProjectIds, ct).ConfigureAwait(false);
 
-        var allProjects = await _projectDataProvider.GetAllProjectsAsync(ct).ConfigureAwait(false);
+        var allProjects = await _projectDataProvider.GetAllProjectsAsync(request.SpaceId, ct).ConfigureAwait(false);
 
         var groupIds = groups.Select(g => g.Id).ToHashSet();
 
         return allProjects.Where(p => groupIds.Contains(p.ProjectGroupId)).ToList();
     }
 
-    private async Task<Dictionary<int, HashSet<int>>> ResolveLifecycleEnvironmentIdsAsync(List<Persistence.Entities.Deployments.Project> projects, CancellationToken ct)
+    private async Task<Dictionary<int, HashSet<int>>> ResolveLifecycleEnvironmentIdsAsync(int? spaceId, List<Persistence.Entities.Deployments.Project> projects, CancellationToken ct)
     {
         var lifecycleIds = projects.Select(p => p.LifecycleId).Distinct().ToList();
 
@@ -82,7 +82,7 @@ public partial class ProjectService
         {
             if (!phasesByLifecycle.TryGetValue(lifecycleId, out var lifecyclePhases) || lifecyclePhases.Count == 0)
             {
-                allEnvironmentIds ??= await LoadAllEnvironmentIdsAsync(ct).ConfigureAwait(false);
+                allEnvironmentIds ??= await LoadAllEnvironmentIdsAsync(spaceId, ct).ConfigureAwait(false);
                 result[lifecycleId] = allEnvironmentIds;
                 continue;
             }
@@ -104,7 +104,7 @@ public partial class ProjectService
 
             if (hasEmptyPhase)
             {
-                allEnvironmentIds ??= await LoadAllEnvironmentIdsAsync(ct).ConfigureAwait(false);
+                allEnvironmentIds ??= await LoadAllEnvironmentIdsAsync(spaceId, ct).ConfigureAwait(false);
 
                 foreach (var envId in allEnvironmentIds)
                 {
@@ -119,9 +119,9 @@ public partial class ProjectService
         return result;
     }
 
-    private async Task<HashSet<int>> LoadAllEnvironmentIdsAsync(CancellationToken ct)
+    private async Task<HashSet<int>> LoadAllEnvironmentIdsAsync(int? spaceId, CancellationToken ct)
     {
-        var (_, environments) = await _environmentDataProvider.GetEnvironmentPagingAsync(cancellationToken: ct).ConfigureAwait(false);
+        var (_, environments) = await _environmentDataProvider.GetEnvironmentPagingAsync(spaceId: spaceId, cancellationToken: ct).ConfigureAwait(false);
 
         return environments.Select(e => e.Id).ToHashSet();
     }

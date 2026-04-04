@@ -73,7 +73,7 @@ public class EnvironmentService(IMapper mapper, IEnvironmentDataProvider environ
 
     public async Task<GetEnvironmentsResponse> GetEnvironmentsAsync(GetEnvironmentsRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await environmentDataProvider.GetEnvironmentPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, data) = await environmentDataProvider.GetEnvironmentPagingAsync(request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetEnvironmentsResponse
         {

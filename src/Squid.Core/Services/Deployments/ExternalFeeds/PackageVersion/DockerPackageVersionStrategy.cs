@@ -9,7 +9,7 @@ namespace Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 public class DockerPackageVersionStrategy(ISquidHttpClientFactory httpClientFactory) : IPackageVersionStrategy
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
-    private static readonly Uri DockerHubRegistryBaseUri = new("https://registry-1.docker.io/v2/");
+    internal static readonly Uri DockerHubRegistryBaseUri = new("https://registry-1.docker.io/v2/");
 
     public bool CanHandle(string feedType) => DockerRegistryAuthHelper.IsContainerRegistryFeed(new ExternalFeed { FeedType = feedType });
 
@@ -102,7 +102,7 @@ public class DockerPackageVersionStrategy(ISquidHttpClientFactory httpClientFact
         return new Dictionary<string, string> { ["Authorization"] = $"Basic {encoded}" };
     }
 
-    private static Uri ResolveRegistryV2Base(Uri baseUri)
+    internal static Uri ResolveRegistryV2Base(Uri baseUri)
     {
         if (IsDockerHub(baseUri)) return DockerHubRegistryBaseUri;
 

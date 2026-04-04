@@ -12,11 +12,11 @@ public interface IProjectDataProvider : IScopedDependency
 
     Task DeleteProjectsAsync(List<Persistence.Entities.Deployments.Project> projects, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int Count, List<Persistence.Entities.Deployments.Project> Projects)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default);
+    Task<(int Count, List<Persistence.Entities.Deployments.Project> Projects)> GetProjectPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.Project>> GetProjectsAsync(List<int> ids, CancellationToken cancellationToken = default);
 
-    Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(CancellationToken cancellationToken = default);
+    Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(int? spaceId = null, CancellationToken cancellationToken = default);
 }
 
 public class ProjectDataProvider : IProjectDataProvider
@@ -56,9 +56,12 @@ public class ProjectDataProvider : IProjectDataProvider
         if (forceSave) await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int Count, List<Persistence.Entities.Deployments.Project> Projects)> GetProjectPagingAsync(int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default)
+    public async Task<(int Count, List<Persistence.Entities.Deployments.Project> Projects)> GetProjectPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, string keyword = null, CancellationToken cancellationToken = default)
     {
         var query = _repository.Query<Persistence.Entities.Deployments.Project>();
+
+        if (spaceId.HasValue)
+            query = query.Where(p => p.SpaceId == spaceId.Value);
 
         if (!string.IsNullOrWhiteSpace(keyword))
             query = query.Where(p => p.Name.Contains(keyword) || p.Slug.Contains(keyword));
@@ -79,10 +82,13 @@ public class ProjectDataProvider : IProjectDataProvider
             .ConfigureAwait(false);
     }
 
-    public async Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(CancellationToken cancellationToken = default)
+    public async Task<List<Persistence.Entities.Deployments.Project>> GetAllProjectsAsync(int? spaceId = null, CancellationToken cancellationToken = default)
     {
-        return await _repository.Query<Persistence.Entities.Deployments.Project>()
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        var query = _repository.Query<Persistence.Entities.Deployments.Project>();
+
+        if (spaceId.HasValue)
+            query = query.Where(p => p.SpaceId == spaceId.Value);
+
+        return await query.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 }

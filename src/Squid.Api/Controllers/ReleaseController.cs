@@ -59,6 +59,16 @@ public class ReleaseController : ControllerBase
         return Ok(response);
     }
 
+    [HttpGet("{releaseId:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleaseDetailResponse))]
+    public async Task<IActionResult> GetReleaseDetailAsync(int releaseId)
+    {
+        var request = new GetReleaseDetailRequest { ReleaseId = releaseId };
+        var response = await _mediator.RequestAsync<GetReleaseDetailRequest, GetReleaseDetailResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("{releaseId:int}/variable-snapshot")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetReleaseVariableSnapshotResponse))]
     public async Task<IActionResult> GetReleaseVariableSnapshotAsync(int releaseId)

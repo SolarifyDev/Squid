@@ -76,4 +76,13 @@ public class ExternalFeedController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("package-notes")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetPackageNotesResponse))]
+    public async Task<IActionResult> GetPackageNotesAsync([FromBody] GetPackageNotesRequest request)
+    {
+        var response = await _mediator.RequestAsync<GetPackageNotesRequest, GetPackageNotesResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

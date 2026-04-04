@@ -12,9 +12,9 @@ public interface ILifeCycleDataProvider : IScopedDependency
 
     Task DeleteLifecyclesAsync(List<Lifecycle> lifeCycles, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task GetLifecyclePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task GetLifecyclePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
-    Task<(int Count, List<LifecycleDetailDto> LifecycleDetails)> GetLifecyclePhasePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int Count, List<LifecycleDetailDto> LifecycleDetails)> GetLifecyclePhasePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<Lifecycle> GetLifecycleByIdAsync(int id, CancellationToken cancellationToken);
 
@@ -67,13 +67,18 @@ public class LifeCycleDataProvider(IUnitOfWork unitOfWork, IRepository repositor
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task GetLifecyclePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task GetLifecyclePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
     }
 
-    public async Task<(int Count, List<LifecycleDetailDto> LifecycleDetails)> GetLifecyclePhasePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int Count, List<LifecycleDetailDto> LifecycleDetails)> GetLifecyclePhasePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        var query = from lifecycle in repository.Query<Lifecycle>()
+        var lifecycleQuery = repository.Query<Lifecycle>();
+
+        if (spaceId.HasValue)
+            lifecycleQuery = lifecycleQuery.Where(l => l.SpaceId == spaceId.Value);
+
+        var query = from lifecycle in lifecycleQuery
             join phase in repository.Query<LifecyclePhase>() on lifecycle.Id equals phase.LifecycleId
             group new { phase, lifecycle } by lifecycle into grouped
             select new { Lifecycle = grouped.Key, Phases = grouped.Select(x => x.phase) };

@@ -94,7 +94,7 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
 
     public async Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken)
     {
-        var (count, lifecyclePhases) = await lifeCycleDataProvider.GetLifecyclePhasePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, lifecyclePhases) = await lifeCycleDataProvider.GetLifecyclePhasePagingAsync(request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         await PopulateLifecyclePhaseEnvironmentTargetIdsAsync(lifecyclePhases, cancellationToken).ConfigureAwait(false);
 

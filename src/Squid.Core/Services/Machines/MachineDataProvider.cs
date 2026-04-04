@@ -13,7 +13,7 @@ public interface IMachineDataProvider : IScopedDependency
 
     Task DeleteMachinesAsync(List<Machine> machines, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Machine>)> GetMachinePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<Machine> GetMachinesByIdAsync(int id, CancellationToken cancellationToken);
 
@@ -55,9 +55,12 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Machine>)> GetMachinePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Machine>)> GetMachinePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = repository.Query<Machine>();
+
+        if (spaceId.HasValue)
+            query = query.Where(m => m.SpaceId == spaceId.Value);
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 

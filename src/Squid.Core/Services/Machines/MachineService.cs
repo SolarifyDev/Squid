@@ -35,7 +35,7 @@ public class MachineService : IMachineService
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
     {
         var (count, data) = await _machineDataProvider.GetMachinePagingAsync(
-            request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+            request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetMachinesResponse
         {
