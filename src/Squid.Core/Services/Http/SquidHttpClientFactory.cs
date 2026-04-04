@@ -232,6 +232,15 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
 
             return await func().ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            Log.Warning(ex, "Request timed out for {RequestUrl}", requestUrl);
+            return default;
+        }
         catch (Exception ex)
         {
             if (shouldLogError)

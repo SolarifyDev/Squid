@@ -126,9 +126,7 @@ internal class OpenClawClient
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-
-            yield return new OpenClawChatStreamChunk(null, null, null) { };
-            yield break;
+            throw new HttpRequestException($"HTTP {(int)httpResponse.StatusCode}: {errorBody}");
         }
 
         using var stream = await httpResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Squid.Message.Attributes;
 using Squid.Message.Enums;
 using Squid.Message.Response;
@@ -40,6 +41,7 @@ public class SendOpenClawChatResponse : SquidResponse<SendOpenClawChatResponseDa
 public class SendOpenClawChatResponseData
 {
     public List<OpenClawChatResultItem> Results { get; set; } = new();
+    [JsonIgnore]
     public IAsyncEnumerable<OpenClawChatStreamEvent> StreamEvents { get; set; }
 }
 

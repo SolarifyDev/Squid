@@ -26,12 +26,19 @@ public class ChatController : ControllerBase
     [HttpPost("openclaw")]
     public async Task OpenClawChatAsync([FromBody] SendOpenClawChatCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<SendOpenClawChatCommand, SendOpenClawChatResponse>(command, ct).ConfigureAwait(false);
+        try
+        {
+            var response = await _mediator.SendAsync<SendOpenClawChatCommand, SendOpenClawChatResponse>(command, ct).ConfigureAwait(false);
 
-        if (response.Data?.StreamEvents != null)
-            await WriteStreamResponseAsync(response.Data.StreamEvents, ct).ConfigureAwait(false);
-        else
-            await Response.WriteAsJsonAsync(response, ct).ConfigureAwait(false);
+            if (response.Data?.StreamEvents != null)
+                await WriteStreamResponseAsync(response.Data.StreamEvents, ct).ConfigureAwait(false);
+            else
+                await Response.WriteAsJsonAsync(response, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client disconnected — nothing to write
+        }
     }
 
     private async Task WriteStreamResponseAsync(IAsyncEnumerable<OpenClawChatStreamEvent> streamEvents, CancellationToken ct)
@@ -40,14 +47,21 @@ public class ChatController : ControllerBase
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
-        await foreach (var evt in streamEvents.WithCancellation(ct).ConfigureAwait(false))
+        try
         {
-            var json = JsonSerializer.Serialize(evt, StreamJsonOptions);
-            await Response.WriteAsync($"data: {json}\n\n", ct).ConfigureAwait(false);
+            await foreach (var evt in streamEvents.WithCancellation(ct).ConfigureAwait(false))
+            {
+                var json = JsonSerializer.Serialize(evt, StreamJsonOptions);
+                await Response.WriteAsync($"data: {json}\n\n", ct).ConfigureAwait(false);
+                await Response.Body.FlushAsync(ct).ConfigureAwait(false);
+            }
+
+            await Response.WriteAsync("data: [DONE]\n\n", ct).ConfigureAwait(false);
             await Response.Body.FlushAsync(ct).ConfigureAwait(false);
         }
-
-        await Response.WriteAsync("data: [DONE]\n\n", ct).ConfigureAwait(false);
-        await Response.Body.FlushAsync(ct).ConfigureAwait(false);
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client disconnected — nothing to write
+        }
     }
 }
