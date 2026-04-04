@@ -181,6 +181,32 @@ public class OpenClawActionHandlerTests
     }
 
     // ========================================================================
+    // ChatCompletion
+    // ========================================================================
+
+    [Fact]
+    public async Task ChatCompletion_SetsExecutionSemantics()
+    {
+        var handler = new OpenClawChatCompletionActionHandler();
+        var ctx = MakeContext(new()
+        {
+            [SpecialVariables.OpenClaw.PropPrompt] = "Summarize the release"
+        });
+
+        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+
+        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
+        result.ScriptBody.ShouldContain("Summarize the release");
+    }
+
+    [Fact]
+    public void ChatCompletion_ActionType_MatchesConstant()
+    {
+        new OpenClawChatCompletionActionHandler().ActionType.ShouldBe(SpecialVariables.ActionTypes.OpenClawChatCompletion);
+    }
+
+    // ========================================================================
     // All handlers — shared assertions
     // ========================================================================
 
@@ -191,6 +217,7 @@ public class OpenClawActionHandlerTests
     [InlineData(typeof(OpenClawWaitSessionActionHandler))]
     [InlineData(typeof(OpenClawAssertActionHandler))]
     [InlineData(typeof(OpenClawFetchResultActionHandler))]
+    [InlineData(typeof(OpenClawChatCompletionActionHandler))]
     public async Task AllHandlers_ReturnDirectScriptWithSkipContext(Type handlerType)
     {
         var handler = (IActionHandler)Activator.CreateInstance(handlerType);

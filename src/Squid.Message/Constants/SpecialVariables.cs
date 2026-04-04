@@ -25,6 +25,7 @@ public static class SpecialVariables
         public const string OpenClawWaitSession = "Squid.OpenClaw.WaitSession";
         public const string OpenClawAssert = "Squid.OpenClaw.Assert";
         public const string OpenClawFetchResult = "Squid.OpenClaw.FetchResult";
+        public const string OpenClawChatCompletion = "Squid.OpenClaw.ChatCompletion";
     }
 
     public static class StepTypes
@@ -197,6 +198,9 @@ public static class SpecialVariables
         public const string Accepted = "OpenClaw.Accepted";
         public const string Status = "OpenClaw.Status";
         public const string Summary = "OpenClaw.Summary";
+        public const string ChatResponse = "OpenClaw.ChatResponse";
+        public const string ChatModel = "OpenClaw.ChatModel";
+        public const string ChatFinishReason = "OpenClaw.ChatFinishReason";
 
         // Action properties (DB keys — read from ActionProperties dictionary)
         public const string PropTool = "Squid.Action.OpenClaw.Tool";
@@ -224,6 +228,10 @@ public static class SpecialVariables
         public const string PropExpected = "Squid.Action.OpenClaw.Expected";
         public const string PropSourceVariable = "Squid.Action.OpenClaw.SourceVariable";
         public const string PropFieldMappings = "Squid.Action.OpenClaw.FieldMappings";
+        public const string PropPrompt = "Squid.Action.OpenClaw.Prompt";
+        public const string PropSystemPrompt = "Squid.Action.OpenClaw.SystemPrompt";
+        public const string PropMessagesJson = "Squid.Action.OpenClaw.MessagesJson";
+        public const string PropUser = "Squid.Action.OpenClaw.User";
     }
 
     public static class Output

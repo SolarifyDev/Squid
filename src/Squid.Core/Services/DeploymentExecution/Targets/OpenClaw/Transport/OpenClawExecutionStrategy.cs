@@ -30,6 +30,7 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
             SpecialVariables.ActionTypes.OpenClawWaitSession => await ExecuteWaitSessionAsync(request, props, ct).ConfigureAwait(false),
             SpecialVariables.ActionTypes.OpenClawAssert => ExecuteAssert(request, props),
             SpecialVariables.ActionTypes.OpenClawFetchResult => ExecuteFetchResult(request, props),
+            SpecialVariables.ActionTypes.OpenClawChatCompletion => await ExecuteChatCompletionAsync(request, props, ct).ConfigureAwait(false),
             _ => Fail($"Unknown OpenClaw action type: {request.ActionType}")
         };
     }
@@ -71,7 +72,7 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteRunAgentAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
     {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
-        var token = ResolveVariable(request, SpecialVariables.OpenClaw.HooksToken);
+        var token = ResolveHooksToken(request);
         var timeout = ResolveTimeout(props, request);
 
         var body = new Dictionary<string, object>();
@@ -87,17 +88,20 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
         AddIfPresent(body, "thinking", GetProp(props, SpecialVariables.OpenClaw.PropThinking));
         AddIntIfPresent(body, "timeoutSeconds", GetProp(props, SpecialVariables.OpenClaw.PropAgentTimeoutSeconds));
 
-        Log.Information("[OpenClaw] RunAgent: message={Message} agentId={AgentId} name={Name}", GetProp(props, SpecialVariables.OpenClaw.PropMessage), GetProp(props, SpecialVariables.OpenClaw.PropAgentId), GetProp(props, SpecialVariables.OpenClaw.PropAgentName));
+        Log.Information("[OpenClaw] RunAgent: body={@Body}", body);
 
-        var accepted = await _client.RunAgentAsync(baseUrl, token, body, timeout, ct).ConfigureAwait(false);
+        var response = await _client.RunAgentAsync(baseUrl, token, body, timeout, ct).ConfigureAwait(false);
 
-        var lines = new List<string> { $"OpenClaw RunAgent: accepted={accepted}" };
-        EmitSetVariable(lines, SpecialVariables.OpenClaw.Accepted, accepted.ToString());
+        var lines = new List<string> { $"OpenClaw RunAgent: accepted={response.Ok}" };
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.Accepted, response.Ok.ToString());
+
+        if (!response.Ok)
+            lines.Add($"Error: {response.Error}");
 
         return new ScriptExecutionResult
         {
-            Success = accepted,
-            ExitCode = accepted ? 0 : 1,
+            Success = response.Ok,
+            ExitCode = response.Ok ? 0 : 1,
             LogLines = lines
         };
     }
@@ -105,22 +109,25 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteWakeAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
     {
         var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
-        var token = ResolveVariable(request, SpecialVariables.OpenClaw.HooksToken);
+        var token = ResolveHooksToken(request);
         var text = GetProp(props, SpecialVariables.OpenClaw.PropWakeText) ?? string.Empty;
         var mode = GetProp(props, SpecialVariables.OpenClaw.PropWakeMode);
         var timeout = ResolveTimeout(props, request);
 
         Log.Information("[OpenClaw] Wake: text={Text} mode={Mode}", text, mode);
 
-        var accepted = await _client.WakeAsync(baseUrl, token, text, mode, timeout, ct).ConfigureAwait(false);
+        var response = await _client.WakeAsync(baseUrl, token, text, mode, timeout, ct).ConfigureAwait(false);
 
-        var lines = new List<string> { $"OpenClaw Wake: accepted={accepted}" };
-        EmitSetVariable(lines, SpecialVariables.OpenClaw.Accepted, accepted.ToString());
+        var lines = new List<string> { $"OpenClaw Wake: accepted={response.Ok}" };
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.Accepted, response.Ok.ToString());
+
+        if (!response.Ok)
+            lines.Add($"Error: {response.Error}");
 
         return new ScriptExecutionResult
         {
-            Success = accepted,
-            ExitCode = accepted ? 0 : 1,
+            Success = response.Ok,
+            ExitCode = response.Ok ? 0 : 1,
             LogLines = lines
         };
     }
@@ -249,6 +256,100 @@ public class OpenClawExecutionStrategy : IExecutionStrategy
         }
 
         return new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = lines };
+    }
+
+    private async Task<ScriptExecutionResult> ExecuteChatCompletionAsync(ScriptExecutionRequest request, Dictionary<string, string> props, CancellationToken ct)
+    {
+        var baseUrl = ResolveVariable(request, SpecialVariables.OpenClaw.BaseUrl);
+        var token = ResolveVariable(request, SpecialVariables.OpenClaw.GatewayToken);
+        var prompt = GetProp(props, SpecialVariables.OpenClaw.PropPrompt);
+        var systemPrompt = GetProp(props, SpecialVariables.OpenClaw.PropSystemPrompt);
+        var messagesJson = GetProp(props, SpecialVariables.OpenClaw.PropMessagesJson);
+        var agentId = GetProp(props, SpecialVariables.OpenClaw.PropAgentId);
+        var modelOverride = GetProp(props, SpecialVariables.OpenClaw.PropModel);
+        var sessionKey = GetProp(props, SpecialVariables.OpenClaw.PropSessionKey) ?? ResolveVariable(request, SpecialVariables.OpenClaw.SessionKey);
+        var channel = GetProp(props, SpecialVariables.OpenClaw.PropChannel);
+        var user = GetProp(props, SpecialVariables.OpenClaw.PropUser);
+        var timeout = ResolveTimeout(props, request);
+
+        var messages = BuildMessages(prompt, systemPrompt, messagesJson);
+        var model = !string.IsNullOrEmpty(agentId) ? $"openclaw/{agentId}" : "openclaw";
+
+        Log.Information("[OpenClaw] ChatCompletion: model={Model} messages={Count} sessionKey={SessionKey}", model, messages.Count, sessionKey);
+
+        var chatRequest = new OpenClawChatRequest(baseUrl, token, messages, model, modelOverride, sessionKey, agentId, channel, user, timeout);
+        var response = await _client.ChatCompletionAsync(chatRequest, ct).ConfigureAwait(false);
+
+        var lines = new List<string>
+        {
+            $"OpenClaw ChatCompletion: model={model}",
+            $"Result ok: {response.Ok}"
+        };
+
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.Ok, response.Ok.ToString());
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.ChatResponse, response.Content ?? string.Empty);
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.ChatModel, response.Model ?? string.Empty);
+        EmitSetVariable(lines, SpecialVariables.OpenClaw.ChatFinishReason, response.FinishReason ?? string.Empty);
+
+        if (!response.Ok)
+            lines.Add($"Error: {response.Error}");
+        else
+            lines.Add($"Response: {Truncate(response.Content, 200)}");
+
+        return new ScriptExecutionResult
+        {
+            Success = response.Ok,
+            ExitCode = response.Ok ? 0 : 1,
+            LogLines = lines
+        };
+    }
+
+    internal static List<OpenClawChatMessage> BuildMessages(string prompt, string systemPrompt, string messagesJson)
+    {
+        if (!string.IsNullOrEmpty(messagesJson))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<List<OpenClawChatMessage>>(messagesJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (parsed != null && parsed.Count > 0)
+                    return parsed;
+            }
+            catch (JsonException)
+            {
+                // Fall through to prompt-based construction
+            }
+        }
+
+        var messages = new List<OpenClawChatMessage>();
+
+        if (!string.IsNullOrEmpty(systemPrompt))
+            messages.Add(new OpenClawChatMessage("system", systemPrompt));
+
+        if (!string.IsNullOrEmpty(prompt))
+            messages.Add(new OpenClawChatMessage("user", prompt));
+
+        return messages;
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength) return value;
+
+        return value[..maxLength] + "...";
+    }
+
+    private static string ResolveHooksToken(ScriptExecutionRequest request)
+    {
+        var hooksToken = ResolveVariable(request, SpecialVariables.OpenClaw.HooksToken);
+
+        if (string.IsNullOrEmpty(hooksToken))
+            throw new InvalidOperationException(
+                "HooksToken is not configured. OpenClaw requires a separate hooks.token for /hooks/* endpoints. " +
+                "Treat hooks.token holders as full-trust callers for the hook ingress surface. " +
+                "Set it via: openclaw config set hooks.token <value>, then configure HooksToken on the deployment target.");
+
+        return hooksToken;
     }
 
     private static string ResolveVariable(ScriptExecutionRequest request, string name)

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution.OpenClaw;
 
 namespace Squid.UnitTests.Services.Deployments.OpenClaw;
@@ -88,5 +89,116 @@ public class OpenClawExecutionStrategyTests
     {
         OpenClawExecutionStrategy.EvaluateAssertion("a", "unknown_op", "a").ShouldBeTrue();
         OpenClawExecutionStrategy.EvaluateAssertion("a", "unknown_op", "b").ShouldBeFalse();
+    }
+
+    // ========================================================================
+    // RepairJsonStrings / ParseArgsJson
+    // ========================================================================
+
+    [Fact]
+    public void ParseArgsJson_ValidJson_ParsesNormally()
+    {
+        var result = OpenClawApiClient.ParseArgsJson("""{"message":"hello","count":1}""");
+
+        result.ShouldBeOfType<JsonElement>();
+    }
+
+    [Fact]
+    public void ParseArgsJson_BrokenByQuotesInValue_RepairsAndParses()
+    {
+        // Simulates: {"message":"#{Var}"} where Var = Hello "world" today
+        var broken = """{"message":"Hello "world" today"}""";
+        var result = OpenClawApiClient.ParseArgsJson(broken);
+
+        var elem = result.ShouldBeOfType<JsonElement>();
+        elem.GetProperty("message").GetString().ShouldBe("""Hello "world" today""");
+    }
+
+    [Fact]
+    public void ParseArgsJson_BrokenByNewlinesInValue_RepairsAndParses()
+    {
+        var broken = "{\"message\":\"Line1\nLine2\"}";
+        var result = OpenClawApiClient.ParseArgsJson(broken);
+
+        var elem = result.ShouldBeOfType<JsonElement>();
+        elem.GetProperty("message").GetString().ShouldBe("Line1\nLine2");
+    }
+
+    [Fact]
+    public void ParseArgsJson_MultipleFieldsWithBrokenValue_RepairsCorrectly()
+    {
+        var broken = """{"action":"send","channel":"wecom","message":"Hello "world" 🦞","dryRun":false}""";
+        var result = OpenClawApiClient.ParseArgsJson(broken);
+
+        var elem = result.ShouldBeOfType<JsonElement>();
+        elem.GetProperty("action").GetString().ShouldBe("send");
+        elem.GetProperty("channel").GetString().ShouldBe("wecom");
+        elem.GetProperty("message").GetString().ShouldContain("Hello");
+        elem.GetProperty("dryRun").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ParseArgsJson_EmptyString_ReturnsEmptyObject()
+    {
+        OpenClawApiClient.ParseArgsJson("").ShouldNotBeNull();
+        OpenClawApiClient.ParseArgsJson(null).ShouldNotBeNull();
+    }
+
+    // ========================================================================
+    // BuildMessages
+    // ========================================================================
+
+    [Fact]
+    public void BuildMessages_WithPromptOnly_ReturnsUserMessage()
+    {
+        var messages = OpenClawExecutionStrategy.BuildMessages("hello", null, null);
+
+        messages.Count.ShouldBe(1);
+        messages[0].Role.ShouldBe("user");
+        messages[0].Content.ShouldBe("hello");
+    }
+
+    [Fact]
+    public void BuildMessages_WithSystemAndPrompt_ReturnsSystemThenUser()
+    {
+        var messages = OpenClawExecutionStrategy.BuildMessages("hello", "You are helpful", null);
+
+        messages.Count.ShouldBe(2);
+        messages[0].Role.ShouldBe("system");
+        messages[0].Content.ShouldBe("You are helpful");
+        messages[1].Role.ShouldBe("user");
+        messages[1].Content.ShouldBe("hello");
+    }
+
+    [Fact]
+    public void BuildMessages_WithMessagesJson_ParsesAndReturnsDirectly()
+    {
+        var json = """[{"role":"user","content":"from json"},{"role":"assistant","content":"reply"}]""";
+
+        var messages = OpenClawExecutionStrategy.BuildMessages("ignored", "ignored", json);
+
+        messages.Count.ShouldBe(2);
+        messages[0].Role.ShouldBe("user");
+        messages[0].Content.ShouldBe("from json");
+        messages[1].Role.ShouldBe("assistant");
+        messages[1].Content.ShouldBe("reply");
+    }
+
+    [Fact]
+    public void BuildMessages_WithInvalidMessagesJson_FallsBackToPrompt()
+    {
+        var messages = OpenClawExecutionStrategy.BuildMessages("fallback", null, "{bad-json}");
+
+        messages.Count.ShouldBe(1);
+        messages[0].Role.ShouldBe("user");
+        messages[0].Content.ShouldBe("fallback");
+    }
+
+    [Fact]
+    public void BuildMessages_WithEmptyPromptAndNoJson_ReturnsEmptyList()
+    {
+        var messages = OpenClawExecutionStrategy.BuildMessages(null, null, null);
+
+        messages.ShouldBeEmpty();
     }
 }
