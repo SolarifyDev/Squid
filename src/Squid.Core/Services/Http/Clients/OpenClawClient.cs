@@ -3,13 +3,13 @@ using System.Text.Json;
 using Serilog;
 using Squid.Core.Services.Http;
 
-namespace Squid.Core.Services.DeploymentExecution.OpenClaw;
+namespace Squid.Core.Services.Http.Clients;
 
-internal class OpenClawApiClient
+internal class OpenClawClient
 {
     private readonly ISquidHttpClientFactory _httpClientFactory;
 
-    internal OpenClawApiClient(ISquidHttpClientFactory httpClientFactory)
+    internal OpenClawClient(ISquidHttpClientFactory httpClientFactory)
     {
         _httpClientFactory = httpClientFactory;
     }
@@ -109,6 +109,77 @@ internal class OpenClawApiClient
         }
     }
 
+    internal async IAsyncEnumerable<OpenClawChatStreamChunk> ChatCompletionStreamAsync(OpenClawChatRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var url = $"{request.BaseUrl.TrimEnd('/')}/v1/chat/completions";
+        var headers = BuildChatHeaders(request);
+        var body = BuildChatBody(request, stream: true);
+        var chatTimeout = request.Timeout < TimeSpan.FromSeconds(60) ? TimeSpan.FromSeconds(120) : request.Timeout;
+
+        var client = _httpClientFactory.CreateClient(timeout: chatTimeout, headers: headers);
+        var jsonBody = JsonSerializer.Serialize(body, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+        var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+        using var httpResponse = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await httpResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new HttpRequestException($"HTTP {(int)httpResponse.StatusCode}: {errorBody}");
+        }
+
+        using var stream = await httpResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var reader = new System.IO.StreamReader(stream);
+
+        while (!reader.EndOfStream && !ct.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(line)) continue;
+            if (!line.StartsWith("data: ")) continue;
+
+            var data = line[6..];
+
+            if (data == "[DONE]") yield break;
+
+            OpenClawChatStreamChunk chunk;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(data);
+                var root = doc.RootElement;
+
+                string delta = null;
+                string model = null;
+                string finishReason = null;
+
+                if (root.TryGetProperty("model", out var modelProp))
+                    model = modelProp.GetString();
+
+                if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+                {
+                    var choice = choices[0];
+
+                    if (choice.TryGetProperty("delta", out var deltaProp) && deltaProp.TryGetProperty("content", out var contentProp))
+                        delta = contentProp.GetString();
+
+                    if (choice.TryGetProperty("finish_reason", out var frProp) && frProp.ValueKind == JsonValueKind.String)
+                        finishReason = frProp.GetString();
+                }
+
+                chunk = new OpenClawChatStreamChunk(delta, model, finishReason);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (chunk.Delta != null || chunk.FinishReason != null)
+                yield return chunk;
+        }
+    }
+
     internal static Dictionary<string, string> BuildChatHeaders(OpenClawChatRequest request)
     {
         var headers = new Dictionary<string, string>
@@ -131,17 +202,26 @@ internal class OpenClawApiClient
         return headers;
     }
 
-    internal static object BuildChatBody(OpenClawChatRequest request)
+    internal static object BuildChatBody(OpenClawChatRequest request, bool stream = false)
     {
         var body = new Dictionary<string, object>
         {
             ["model"] = request.Model ?? "openclaw",
             ["messages"] = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToArray(),
-            ["stream"] = false
+            ["stream"] = stream
         };
 
         if (!string.IsNullOrEmpty(request.User))
             body["user"] = request.User;
+
+        if (request.Temperature.HasValue)
+            body["temperature"] = request.Temperature.Value;
+
+        if (request.MaxTokens.HasValue)
+            body["max_tokens"] = request.MaxTokens.Value;
+
+        if (!string.IsNullOrEmpty(request.ResponseFormat))
+            body["response_format"] = new { type = request.ResponseFormat };
 
         return body;
     }
@@ -303,10 +383,12 @@ internal class OpenClawApiClient
 
 internal record OpenClawToolResponse(bool Ok, string ResultJson, string Error);
 
-internal record OpenClawChatRequest(string BaseUrl, string GatewayToken, List<OpenClawChatMessage> Messages, string Model, string ModelOverride, string SessionKey, string AgentId, string Channel, string User, TimeSpan Timeout);
+internal record OpenClawChatRequest(string BaseUrl, string GatewayToken, List<OpenClawChatMessage> Messages, string Model, string ModelOverride, string SessionKey, string AgentId, string Channel, string User, TimeSpan Timeout, double? Temperature = null, int? MaxTokens = null, string ResponseFormat = null);
 
 internal record OpenClawChatMessage(string Role, string Content);
 
 internal record OpenClawChatResponse(bool Ok, string Content, string Model, string FinishReason, string Error);
+
+internal record OpenClawChatStreamChunk(string Delta, string Model, string FinishReason);
 
 internal record OpenClawHookResponse(bool Ok, string Error);

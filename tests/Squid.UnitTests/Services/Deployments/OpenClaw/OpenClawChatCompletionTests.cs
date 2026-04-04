@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Text.Json;
-using Squid.Core.Services.DeploymentExecution.OpenClaw;
+using Squid.Core.Services.Http.Clients;
 using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.OpenClaw;
@@ -16,7 +16,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest();
 
-        var headers = OpenClawApiClient.BuildChatHeaders(request);
+        var headers = OpenClawClient.BuildChatHeaders(request);
 
         headers.ShouldContainKeyAndValue("Authorization", "Bearer test-token");
         headers.Count.ShouldBe(1);
@@ -27,7 +27,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest(modelOverride: "anthropic/claude-sonnet-4-20250514");
 
-        var headers = OpenClawApiClient.BuildChatHeaders(request);
+        var headers = OpenClawClient.BuildChatHeaders(request);
 
         headers.ShouldContainKeyAndValue("x-openclaw-model", "anthropic/claude-sonnet-4-20250514");
     }
@@ -37,7 +37,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest(modelOverride: "openai/gpt-5", sessionKey: "sess-1", agentId: "research", channel: "slack");
 
-        var headers = OpenClawApiClient.BuildChatHeaders(request);
+        var headers = OpenClawClient.BuildChatHeaders(request);
 
         headers.ShouldContainKeyAndValue("x-openclaw-model", "openai/gpt-5");
         headers.ShouldContainKeyAndValue("x-openclaw-agent-id", "research");
@@ -55,7 +55,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest(model: "openclaw/research");
 
-        var body = OpenClawApiClient.BuildChatBody(request);
+        var body = OpenClawClient.BuildChatBody(request);
         var json = JsonSerializer.Serialize(body);
 
         using var doc = JsonDocument.Parse(json);
@@ -74,7 +74,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest(user: "deploy-session-42");
 
-        var body = OpenClawApiClient.BuildChatBody(request);
+        var body = OpenClawClient.BuildChatBody(request);
         var json = JsonSerializer.Serialize(body);
 
         using var doc = JsonDocument.Parse(json);
@@ -87,7 +87,7 @@ public class OpenClawChatCompletionTests
     {
         var request = MakeChatRequest(model: null);
 
-        var body = OpenClawApiClient.BuildChatBody(request);
+        var body = OpenClawClient.BuildChatBody(request);
         var json = JsonSerializer.Serialize(body);
 
         using var doc = JsonDocument.Parse(json);
@@ -116,7 +116,7 @@ public class OpenClawChatCompletionTests
         }
         """;
 
-        var response = OpenClawApiClient.ParseChatResponse(ParseJson(json));
+        var response = OpenClawClient.ParseChatResponse(ParseJson(json));
 
         response.Ok.ShouldBeTrue();
         response.Content.ShouldBe("Release notes for v2.1...");
@@ -130,7 +130,7 @@ public class OpenClawChatCompletionTests
     {
         var json = """{"error":{"type":"invalid_request_error","message":"model not found"}}""";
 
-        var response = OpenClawApiClient.ParseChatResponse(ParseJson(json));
+        var response = OpenClawClient.ParseChatResponse(ParseJson(json));
 
         response.Ok.ShouldBeFalse();
         response.Content.ShouldBeNull();
@@ -142,7 +142,7 @@ public class OpenClawChatCompletionTests
     {
         var json = """{"model":"openclaw","choices":[]}""";
 
-        var response = OpenClawApiClient.ParseChatResponse(ParseJson(json));
+        var response = OpenClawClient.ParseChatResponse(ParseJson(json));
 
         response.Ok.ShouldBeFalse();
         response.Content.ShouldBeNull();
@@ -151,7 +151,7 @@ public class OpenClawChatCompletionTests
     [Fact]
     public void ParseChatResponse_UndefinedElement_ReturnsEmptyResponseError()
     {
-        var response = OpenClawApiClient.ParseChatResponse(default);
+        var response = OpenClawClient.ParseChatResponse(default);
 
         response.Ok.ShouldBeFalse();
         response.Error.ShouldContain("Empty response");
@@ -162,7 +162,7 @@ public class OpenClawChatCompletionTests
     {
         var json = """{"model":"openclaw","choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"stop"}]}""";
 
-        var response = OpenClawApiClient.ParseChatResponse(ParseJson(json));
+        var response = OpenClawClient.ParseChatResponse(ParseJson(json));
 
         response.Ok.ShouldBeFalse();
     }
