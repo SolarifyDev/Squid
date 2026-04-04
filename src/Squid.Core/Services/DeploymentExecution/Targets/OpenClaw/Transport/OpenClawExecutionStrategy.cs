@@ -4,6 +4,7 @@ using Serilog;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Http;
+using Squid.Core.Services.Http.Clients;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -11,11 +12,11 @@ namespace Squid.Core.Services.DeploymentExecution.OpenClaw;
 
 public class OpenClawExecutionStrategy : IExecutionStrategy
 {
-    private readonly OpenClawApiClient _client;
+    private readonly OpenClawClient _client;
 
     public OpenClawExecutionStrategy(ISquidHttpClientFactory httpClientFactory)
     {
-        _client = new OpenClawApiClient(httpClientFactory);
+        _client = new OpenClawClient(httpClientFactory);
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)

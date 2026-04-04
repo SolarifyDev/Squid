@@ -64,7 +64,7 @@ public class ReleaseDataProvider : IReleaseDataProvider
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 
-        query = query.Skip((pageIndex - 1) * pageSize).Take(pageSize);
+        query = query.OrderByDescending(x => x.CreatedDate).Skip((pageIndex - 1) * pageSize).Take(pageSize);
 
         return (count, await query.ToListAsync(cancellationToken).ConfigureAwait(false));
     }

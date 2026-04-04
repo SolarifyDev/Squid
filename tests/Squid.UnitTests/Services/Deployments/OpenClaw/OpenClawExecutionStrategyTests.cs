@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Services.DeploymentExecution.OpenClaw;
+using Squid.Core.Services.Http.Clients;
 
 namespace Squid.UnitTests.Services.Deployments.OpenClaw;
 
@@ -98,7 +99,7 @@ public class OpenClawExecutionStrategyTests
     [Fact]
     public void ParseArgsJson_ValidJson_ParsesNormally()
     {
-        var result = OpenClawApiClient.ParseArgsJson("""{"message":"hello","count":1}""");
+        var result = OpenClawClient.ParseArgsJson("""{"message":"hello","count":1}""");
 
         result.ShouldBeOfType<JsonElement>();
     }
@@ -108,7 +109,7 @@ public class OpenClawExecutionStrategyTests
     {
         // Simulates: {"message":"#{Var}"} where Var = Hello "world" today
         var broken = """{"message":"Hello "world" today"}""";
-        var result = OpenClawApiClient.ParseArgsJson(broken);
+        var result = OpenClawClient.ParseArgsJson(broken);
 
         var elem = result.ShouldBeOfType<JsonElement>();
         elem.GetProperty("message").GetString().ShouldBe("""Hello "world" today""");
@@ -118,7 +119,7 @@ public class OpenClawExecutionStrategyTests
     public void ParseArgsJson_BrokenByNewlinesInValue_RepairsAndParses()
     {
         var broken = "{\"message\":\"Line1\nLine2\"}";
-        var result = OpenClawApiClient.ParseArgsJson(broken);
+        var result = OpenClawClient.ParseArgsJson(broken);
 
         var elem = result.ShouldBeOfType<JsonElement>();
         elem.GetProperty("message").GetString().ShouldBe("Line1\nLine2");
@@ -128,7 +129,7 @@ public class OpenClawExecutionStrategyTests
     public void ParseArgsJson_MultipleFieldsWithBrokenValue_RepairsCorrectly()
     {
         var broken = """{"action":"send","channel":"wecom","message":"Hello "world" 🦞","dryRun":false}""";
-        var result = OpenClawApiClient.ParseArgsJson(broken);
+        var result = OpenClawClient.ParseArgsJson(broken);
 
         var elem = result.ShouldBeOfType<JsonElement>();
         elem.GetProperty("action").GetString().ShouldBe("send");
@@ -140,8 +141,8 @@ public class OpenClawExecutionStrategyTests
     [Fact]
     public void ParseArgsJson_EmptyString_ReturnsEmptyObject()
     {
-        OpenClawApiClient.ParseArgsJson("").ShouldNotBeNull();
-        OpenClawApiClient.ParseArgsJson(null).ShouldNotBeNull();
+        OpenClawClient.ParseArgsJson("").ShouldNotBeNull();
+        OpenClawClient.ParseArgsJson(null).ShouldNotBeNull();
     }
 
     // ========================================================================
