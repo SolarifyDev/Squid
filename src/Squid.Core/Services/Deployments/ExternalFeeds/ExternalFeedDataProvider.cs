@@ -10,7 +10,7 @@ public interface IExternalFeedDataProvider : IScopedDependency
 
     Task DeleteExternalFeedsAsync(List<Persistence.Entities.Deployments.ExternalFeed> externalFeeds, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Persistence.Entities.Deployments.ExternalFeed>)> GetExternalFeedPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Persistence.Entities.Deployments.ExternalFeed>)> GetExternalFeedPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.ExternalFeed>> GetExternalFeedsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
@@ -40,9 +40,12 @@ public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository reposi
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Persistence.Entities.Deployments.ExternalFeed>)> GetExternalFeedPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Persistence.Entities.Deployments.ExternalFeed>)> GetExternalFeedPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = repository.Query<Persistence.Entities.Deployments.ExternalFeed>();
+
+        if (spaceId.HasValue)
+            query = query.Where(f => f.SpaceId == spaceId.Value);
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 

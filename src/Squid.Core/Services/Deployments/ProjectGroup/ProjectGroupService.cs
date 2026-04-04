@@ -77,7 +77,7 @@ public class ProjectGroupService : IProjectGroupService
         GetProjectGroupsRequest request, CancellationToken cancellationToken)
     {
         var (count, data) = await _projectGroupDataProvider.GetProjectGroupPagingAsync(
-            request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+            request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetProjectGroupsResponse
         {

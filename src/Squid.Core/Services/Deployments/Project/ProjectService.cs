@@ -143,7 +143,7 @@ public partial class ProjectService : IProjectService
     public async Task<GetProjectsResponse> GetProjectsAsync(GetProjectsRequest request, CancellationToken cancellationToken)
     {
         var (count, data) = await _projectDataProvider.GetProjectPagingAsync(
-            request.PageIndex, request.PageSize, request.Keyword, cancellationToken).ConfigureAwait(false);
+            request.SpaceId, request.PageIndex, request.PageSize, request.Keyword, cancellationToken).ConfigureAwait(false);
 
         return new GetProjectsResponse
         {

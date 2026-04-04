@@ -745,7 +745,7 @@ public class CertificateServiceTests
             CreateExistingCertificateEntity(id: 2, name: "Cert B")
         };
 
-        _dataProvider.Setup(p => p.GetCertificatePagingAsync(1, 20, It.IsAny<CancellationToken>()))
+        _dataProvider.Setup(p => p.GetCertificatePagingAsync(null, 1, 20, It.IsAny<CancellationToken>()))
             .ReturnsAsync((2, entities));
 
         var request = new GetCertificatesRequest { PageIndex = 1, PageSize = 20 };

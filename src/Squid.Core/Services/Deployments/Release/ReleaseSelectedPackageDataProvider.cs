@@ -7,6 +7,7 @@ public interface IReleaseSelectedPackageDataProvider : IScopedDependency
 {
     Task InsertAllAsync(IEnumerable<ReleaseSelectedPackage> packages, CancellationToken ct = default);
     Task<List<ReleaseSelectedPackage>> GetByReleaseIdAsync(int releaseId, CancellationToken ct = default);
+    Task<List<ReleaseSelectedPackage>> GetByReleaseIdsAsync(List<int> releaseIds, CancellationToken ct = default);
 }
 
 public class ReleaseSelectedPackageDataProvider : IReleaseSelectedPackageDataProvider
@@ -29,5 +30,10 @@ public class ReleaseSelectedPackageDataProvider : IReleaseSelectedPackageDataPro
     public async Task<List<ReleaseSelectedPackage>> GetByReleaseIdAsync(int releaseId, CancellationToken ct = default)
     {
         return await _repository.ToListAsync<ReleaseSelectedPackage>(p => p.ReleaseId == releaseId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<List<ReleaseSelectedPackage>> GetByReleaseIdsAsync(List<int> releaseIds, CancellationToken ct = default)
+    {
+        return await _repository.Query<ReleaseSelectedPackage>(p => releaseIds.Contains(p.ReleaseId)).ToListAsync(ct).ConfigureAwait(false);
     }
 }

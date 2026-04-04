@@ -165,7 +165,7 @@ public class CertificateService(IMapper mapper, ICertificateDataProvider certifi
 
     public async Task<GetCertificatesResponse> GetCertificatesAsync(GetCertificatesRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await certificateDataProvider.GetCertificatePagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, data) = await certificateDataProvider.GetCertificatePagingAsync(request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetCertificatesResponse
         {

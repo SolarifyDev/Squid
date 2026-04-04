@@ -73,7 +73,7 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
 
     public async Task<GetExternalFeedsResponse> GetExternalFeedsAsync(GetExternalFeedsRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await externalFeedDataProvider.GetExternalFeedPagingAsync(request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        var (count, data) = await externalFeedDataProvider.GetExternalFeedPagingAsync(request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         return new GetExternalFeedsResponse
         {

@@ -468,7 +468,7 @@ public class MachineHealthCheckServiceTests
 
     private void SetupMachineList(params Machine[] machines)
     {
-        _machineDataProvider.Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+        _machineDataProvider.Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((machines.Length, machines.ToList()));
     }
 

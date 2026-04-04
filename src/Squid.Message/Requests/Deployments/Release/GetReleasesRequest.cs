@@ -13,7 +13,7 @@ public class GetReleasesRequest : IPaginatedRequest, ISpaceScoped
 
     public int PageSize { get; set; } = 20;
     
-    public int ChannelId { get; set; }
+    public int? ChannelId { get; set; }
     
     public int ProjectId { get; set; }
 }

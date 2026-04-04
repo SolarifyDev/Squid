@@ -10,7 +10,7 @@ public interface ICertificateDataProvider : IScopedDependency
 
     Task DeleteCertificatesAsync(List<Persistence.Entities.Deployments.Certificate> certificates, bool forceSave = true, CancellationToken cancellationToken = default);
 
-    Task<(int count, List<Persistence.Entities.Deployments.Certificate>)> GetCertificatePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
+    Task<(int count, List<Persistence.Entities.Deployments.Certificate>)> GetCertificatePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.Certificate>> GetCertificatesByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
@@ -40,9 +40,12 @@ public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository reposit
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Persistence.Entities.Deployments.Certificate>)> GetCertificatePagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
+    public async Task<(int count, List<Persistence.Entities.Deployments.Certificate>)> GetCertificatePagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
         var query = repository.Query<Persistence.Entities.Deployments.Certificate>();
+
+        if (spaceId.HasValue)
+            query = query.Where(c => c.SpaceId == spaceId.Value);
 
         var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
 

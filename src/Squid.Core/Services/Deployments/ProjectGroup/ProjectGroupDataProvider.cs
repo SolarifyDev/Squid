@@ -16,7 +16,7 @@ public interface IProjectGroupDataProvider : IScopedDependency
 
     Task<List<Persistence.Entities.Deployments.ProjectGroup>> GetProjectGroupsAsync(List<int> ids, CancellationToken ct = default);
 
-    Task<(int count, List<Persistence.Entities.Deployments.ProjectGroup>)> GetProjectGroupPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken ct = default);
+    Task<(int count, List<Persistence.Entities.Deployments.ProjectGroup>)> GetProjectGroupPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken ct = default);
 }
 
 public class ProjectGroupDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IProjectGroupDataProvider
@@ -60,9 +60,12 @@ public class ProjectGroupDataProvider(IUnitOfWork unitOfWork, IRepository reposi
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<(int count, List<Persistence.Entities.Deployments.ProjectGroup>)> GetProjectGroupPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken ct = default)
+    public async Task<(int count, List<Persistence.Entities.Deployments.ProjectGroup>)> GetProjectGroupPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken ct = default)
     {
         var query = repository.Query<Persistence.Entities.Deployments.ProjectGroup>();
+
+        if (spaceId.HasValue)
+            query = query.Where(pg => pg.SpaceId == spaceId.Value);
 
         var count = await query.CountAsync(ct).ConfigureAwait(false);
 

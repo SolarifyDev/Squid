@@ -19,4 +19,6 @@ public class ReleaseDto
     public int SpaceId { get; set; }
     
     public DateTimeOffset LastModifiedDate { get; set; }
+
+    public List<SelectedPackageDto> SelectedPackages { get; set; }
 }

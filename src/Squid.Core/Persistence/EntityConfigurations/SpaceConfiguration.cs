@@ -10,5 +10,6 @@ public class SpaceConfiguration: IEntityTypeConfiguration<Space>
 
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id).ValueGeneratedOnAdd();
+        builder.Property(p => p.Description).HasDefaultValue(string.Empty);
     }
 }
