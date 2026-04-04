@@ -90,6 +90,7 @@ public sealed partial class ExecuteStepsPhase
             if (prepared != null)
             {
                 prepared.ActionName = action.Name;
+                prepared.ActionType = action.ActionType;
                 prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
 
                 var executionMode = prepared.ResolveExecutionMode();
@@ -149,6 +150,7 @@ public sealed partial class ExecuteStepsPhase
             PayloadKind = actionResult.PayloadKind,
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
+            ActionType = actionResult.ActionType,
             ActionProperties = actionResult.ActionProperties,
             EndpointContext = tc.EndpointContext,
             Variables = effectiveVariables,

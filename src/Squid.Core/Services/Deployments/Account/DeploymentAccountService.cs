@@ -159,6 +159,11 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             {
                 JsonKeyHasValue = creds is GcpCredentials gcp && !string.IsNullOrEmpty(gcp.JsonKey)
             },
+            AccountType.OpenClawGateway => new OpenClawGatewayCredentialsSummary
+            {
+                GatewayTokenHasValue = creds is OpenClawGatewayCredentials oc && !string.IsNullOrEmpty(oc.GatewayToken),
+                HooksTokenHasValue = creds is OpenClawGatewayCredentials ocH && !string.IsNullOrEmpty(ocH.HooksToken)
+            },
             _ => null
         };
     }

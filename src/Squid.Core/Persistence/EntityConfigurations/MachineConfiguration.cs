@@ -10,6 +10,7 @@ public class MachineConfiguration: IEntityTypeConfiguration<Machine>
 
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id).ValueGeneratedOnAdd();
+        builder.HasIndex(p => new { p.Name, p.SpaceId }).IsUnique();
         builder.Property(p => p.HealthStatus)
             .HasConversion<string>()
             .HasMaxLength(50)

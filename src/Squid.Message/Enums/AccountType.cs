@@ -13,5 +13,6 @@ public enum AccountType
     ClientCertificate = 8,
     AzureOidc = 9,
     GoogleCloudAccount = 10,
-    AmazonWebServicesOidcAccount = 11
+    AmazonWebServicesOidcAccount = 11,
+    OpenClawGateway = 12
 }

@@ -353,6 +353,16 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         await UpdateActivityNodeStatusAsync(actionNodeId, DeploymentActivityLogNodeStatus.Success, ct).ConfigureAwait(false);
     }
 
+    protected override async Task OnOutputVariablesCapturedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        if (ctx.OutputVariableNames == null || ctx.OutputVariableNames.Count == 0) return;
+
+        var actionNodeId = LookupActionNode(ctx.StepDisplayOrder, ctx.MachineName, ctx.ActionSortOrder);
+
+        foreach (var name in ctx.OutputVariableNames)
+            await LogInfoAsync($"Output variable: #{{{name}}}", ctx.MachineName, ct, actionNodeId).ConfigureAwait(false);
+    }
+
     protected override async Task OnActionFailedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var actionNodeId = LookupActionNode(ctx.StepDisplayOrder, ctx.MachineName, ctx.ActionSortOrder);

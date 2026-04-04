@@ -15,20 +15,7 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
         _halibutClientFactory = halibutClientFactory;
     }
 
-    public ScriptSyntax ScriptSyntax => ScriptSyntax.Bash;
-
-    public string DefaultHealthCheckScript => """
-                                              #!/bin/bash
-                                              set -e
-                                              echo "Health check started (KubernetesAgent)"
-                                              echo "Hostname: $(hostname)"
-                                              echo "Date: $(date -u)"
-                                              kubectl version 2>&1
-                                              kubectl get pods --namespace=${NAMESPACE:-default} -o name 2>&1 | head -5
-                                              echo "Health check completed"
-                                              """;
-
-    public async Task<HealthCheckResult> CheckConnectivityAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
     {
         var endpoint = ParseAgentEndpoint(machine);
 

@@ -42,6 +42,9 @@ public class DeploymentEventContext
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
 
+    // Output variables
+    public List<string> OutputVariableNames { get; init; }
+
     // Guided failure / Manual intervention
     public string GuidedFailureResolution { get; init; }
     public InterruptionType? InterruptionType { get; init; }
@@ -99,6 +102,7 @@ public sealed record ActionFailedEvent(DeploymentEventContext Context) : Deploym
 
 // === Script Output ===
 public sealed record ScriptOutputReceivedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record OutputVariablesCapturedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Guided Failure ===
 public sealed record GuidedFailurePromptEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

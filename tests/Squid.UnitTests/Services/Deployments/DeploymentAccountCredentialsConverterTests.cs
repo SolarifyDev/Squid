@@ -278,4 +278,25 @@ public class DeploymentAccountCredentialsConverterTests
         creds.PrivateKeyFile.ShouldBe("key-data");
         creds.PrivateKeyPassphrase.ShouldBe("pass");
     }
+
+    [Fact]
+    public void RoundTrip_OpenClawGateway_PreservesBothTokens()
+    {
+        var original = new OpenClawGatewayCredentials { GatewayToken = "gw-token", HooksToken = "hooks-token" };
+
+        var json = DeploymentAccountCredentialsConverter.Serialize(original);
+        var restored = DeploymentAccountCredentialsConverter.Deserialize(AccountType.OpenClawGateway, json);
+
+        var creds = restored.ShouldBeOfType<OpenClawGatewayCredentials>();
+        creds.GatewayToken.ShouldBe("gw-token");
+        creds.HooksToken.ShouldBe("hooks-token");
+    }
+
+    [Fact]
+    public void Serialize_OpenClawGateway_OutputsCamelCase()
+    {
+        var json = DeploymentAccountCredentialsConverter.Serialize(new OpenClawGatewayCredentials { GatewayToken = "gw", HooksToken = "hk" });
+
+        json.ShouldBe("""{"gatewayToken":"gw","hooksToken":"hk"}""");
+    }
 }

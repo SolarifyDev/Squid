@@ -1,56 +1,32 @@
-using System;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.Http;
-using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Account;
+using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 public class KubernetesApiHealthCheckStrategyTests
 {
-    private readonly Mock<IDeploymentAccountDataProvider> _accountDataProvider = new();
-    private readonly Mock<ISquidHttpClientFactory> _httpClientFactory = new();
+    private readonly Mock<ITargetScriptRunner> _scriptRunner = new();
     private readonly KubernetesApiHealthCheckStrategy _strategy;
 
     public KubernetesApiHealthCheckStrategyTests()
     {
-        _strategy = new KubernetesApiHealthCheckStrategy(_accountDataProvider.Object, _httpClientFactory.Object);
+        _scriptRunner.Setup(r => r.RunAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<ScriptSyntax>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new() { "kubectl version ok" } });
+
+        _strategy = new KubernetesApiHealthCheckStrategy(_scriptRunner.Object);
     }
 
     // ========================================================================
-    // DefaultHealthCheckScript
+    // CheckHealthAsync — endpoint parsing
     // ========================================================================
 
     [Fact]
-    public void DefaultHealthCheckScript_ContainsKubectlVersion()
-    {
-        _strategy.DefaultHealthCheckScript.ShouldContain("kubectl version");
-        _strategy.DefaultHealthCheckScript.ShouldContain("set -e");
-        _strategy.DefaultHealthCheckScript.ShouldNotContain("exit 0");
-    }
-
-    // ========================================================================
-    // ConnectivityTimeout
-    // ========================================================================
-
-    [Fact]
-    public void DefaultConnectTimeoutSeconds_Is15()
-    {
-        KubernetesApiHealthCheckStrategy.DefaultConnectTimeoutSeconds.ShouldBe(15);
-    }
-
-    // ========================================================================
-    // CheckConnectivityAsync — endpoint parsing
-    // ========================================================================
-
-    [Fact]
-    public async Task CheckConnectivity_EmptyClusterUrl_ReturnsUnhealthy()
+    public async Task CheckHealth_EmptyClusterUrl_ReturnsUnhealthy()
     {
         var machine = new Machine
         {
@@ -58,91 +34,75 @@ public class KubernetesApiHealthCheckStrategyTests
             Endpoint = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesApi" })
         };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("ClusterUrl is empty");
+        _scriptRunner.Verify(r => r.RunAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<ScriptSyntax>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task CheckConnectivity_InvalidEndpointJson_ReturnsUnhealthy()
+    public async Task CheckHealth_InvalidEndpointJson_ReturnsUnhealthy()
     {
         var machine = new Machine { Id = 1, Name = "bad-json", Endpoint = "not-json" };
 
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("Failed to parse endpoint JSON");
     }
 
-    [Fact]
-    public async Task CheckConnectivity_WithTokenAuth_LoadsAccount()
-    {
-        var account = new DeploymentAccount
-        {
-            Id = 10, AccountType = AccountType.Token,
-            Credentials = JsonSerializer.Serialize(new TokenCredentials { Token = "test-token-123" })
-        };
-
-        _accountDataProvider.Setup(a => a.GetAccountByIdAsync(10, It.IsAny<CancellationToken>())).ReturnsAsync(account);
-
-        var endpointJson = JsonSerializer.Serialize(new
-        {
-            CommunicationStyle = "KubernetesApi",
-            ClusterUrl = "https://unreachable-cluster.local:6443",
-            SkipTlsVerification = "True",
-            ResourceReferences = new[] { new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 10 } }
-        });
-
-        var machine = new Machine { Id = 1, Name = "api-with-token", Endpoint = endpointJson };
-
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
-
-        result.Healthy.ShouldBeFalse();
-        _accountDataProvider.Verify(a => a.GetAccountByIdAsync(10, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task CheckConnectivity_NoAccount_StillAttempts()
-    {
-        var endpointJson = JsonSerializer.Serialize(new
-        {
-            CommunicationStyle = "KubernetesApi",
-            ClusterUrl = "https://unreachable-cluster.local:6443",
-            SkipTlsVerification = "True"
-        });
-
-        var machine = new Machine { Id = 1, Name = "api-no-account", Endpoint = endpointJson };
-
-        var result = await _strategy.CheckConnectivityAsync(machine, null, CancellationToken.None);
-
-        result.Healthy.ShouldBeFalse();
-        result.Detail.ShouldNotBeNullOrWhiteSpace();
-    }
-
     // ========================================================================
-    // ProbeClusterHealthAsync — HTTP behavior
+    // CheckHealthAsync — delegates to ITargetScriptRunner
     // ========================================================================
 
     [Fact]
-    public async Task ProbeClusterHealth_InvalidUrl_ReturnsUnhealthy()
+    public async Task CheckHealth_ValidEndpoint_DelegatesToScriptRunner()
     {
-        var result = await _strategy.ProbeClusterHealthAsync(
-            "http://invalid-host-that-does-not-exist.local:9999", null, true, TimeSpan.FromSeconds(5), CancellationToken.None);
+        var machine = MakeValidMachine();
 
-        result.Healthy.ShouldBeFalse();
-        result.Detail.ShouldNotBeNullOrWhiteSpace();
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeTrue();
+        _scriptRunner.Verify(r => r.RunAsync(machine, It.Is<string>(s => s.Contains("kubectl version")), ScriptSyntax.Bash, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ProbeClusterHealth_Cancelled_ReturnsFalse()
+    public async Task CheckHealth_ScriptFails_ReturnsUnhealthy()
     {
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
+        _scriptRunner.Setup(r => r.RunAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<ScriptSyntax>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new() { "connection refused" } });
 
-        var result = await _strategy.ProbeClusterHealthAsync(
-            "https://localhost:6443", null, true, TimeSpan.FromSeconds(5), cts.Token);
+        var machine = MakeValidMachine();
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeFalse();
+        result.Detail.ShouldContain("Health check failed");
     }
+
+    [Fact]
+    public async Task CheckHealth_ScriptThrows_ReturnsError()
+    {
+        _scriptRunner.Setup(r => r.RunAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<ScriptSyntax>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("transport not found"));
+
+        var machine = MakeValidMachine();
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeFalse();
+        result.Detail.ShouldContain("transport not found");
+    }
+
+    private static Machine MakeValidMachine() => new()
+    {
+        Id = 1,
+        Name = "k8s-api-test",
+        Endpoint = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+        {
+            CommunicationStyle = "KubernetesApi",
+            ClusterUrl = "https://k8s.example.com:6443"
+        })
+    };
 }

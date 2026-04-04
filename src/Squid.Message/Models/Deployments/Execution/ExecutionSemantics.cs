@@ -26,7 +26,8 @@ public enum ExecutionBackend
 {
     Unspecified = 0,
     LocalProcess = 1,
-    HalibutScriptService = 2
+    HalibutScriptService = 2,
+    HttpApi = 3
 }
 
 public enum PayloadKind

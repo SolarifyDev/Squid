@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Halibut;
+using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Enums;
 using Squid.Message.Events.Machine;
 using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Machine;
@@ -52,6 +54,14 @@ public class MachineService : IMachineService
         if (machine == null)
             throw new InvalidOperationException($"Machine {command.MachineId} not found");
 
+        if (command.Name != null && !string.Equals(command.Name, machine.Name, StringComparison.Ordinal))
+        {
+            var spaceId = command.SpaceId ?? machine.SpaceId;
+
+            if (await _machineDataProvider.ExistsByNameAsync(command.Name, spaceId, cancellationToken).ConfigureAwait(false))
+                throw new InvalidOperationException($"A machine named \"{command.Name}\" already exists in this space");
+        }
+
         ApplyUpdate(machine, command);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -85,6 +95,16 @@ public class MachineService : IMachineService
 
     private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
     {
+        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+
+        if (style == CommunicationStyle.OpenClaw)
+            ApplyOpenClawEndpointUpdate(machine, command);
+        else
+            ApplyKubernetesEndpointUpdate(machine, command);
+    }
+
+    private static void ApplyKubernetesEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    {
         if (command.ClusterUrl == null && command.Namespace == null && !command.SkipTlsVerification.HasValue
             && !command.ProviderType.HasValue && command.ProviderConfig == null && command.ResourceReferences == null)
             return;
@@ -107,6 +127,31 @@ public class MachineService : IMachineService
 
         if (command.ProviderConfig != null)
             endpoint.ProviderConfig = command.ProviderConfig;
+
+        if (command.ResourceReferences != null)
+            endpoint.ResourceReferences = command.ResourceReferences;
+
+        machine.Endpoint = JsonSerializer.Serialize(endpoint);
+    }
+
+    private static void ApplyOpenClawEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    {
+        if (command.BaseUrl == null && command.InlineGatewayToken == null
+            && command.InlineHooksToken == null && command.ResourceReferences == null)
+            return;
+
+        var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
+            ? JsonSerializer.Deserialize<OpenClawEndpointDto>(machine.Endpoint, SquidJsonDefaults.CaseInsensitive)
+            : new OpenClawEndpointDto();
+
+        if (command.BaseUrl != null)
+            endpoint.BaseUrl = command.BaseUrl;
+
+        if (command.InlineGatewayToken != null)
+            endpoint.InlineGatewayToken = command.InlineGatewayToken;
+
+        if (command.InlineHooksToken != null)
+            endpoint.InlineHooksToken = command.InlineHooksToken;
 
         if (command.ResourceReferences != null)
             endpoint.ResourceReferences = command.ResourceReferences;

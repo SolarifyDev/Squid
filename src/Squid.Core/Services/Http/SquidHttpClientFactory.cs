@@ -184,44 +184,44 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
         }, cancellationToken, shouldLogError).ConfigureAwait(false);
     }
     
-    private static async Task<T> ReadAndLogResponseAsync<T>(string requestUrl, HttpMethod httpMethod, 
+    private static async Task<T> ReadAndLogResponseAsync<T>(string requestUrl, HttpMethod httpMethod,
         HttpResponseMessage response, CancellationToken cancellationToken, bool isNeedToReadErrorContent = false)
     {
-        if (response.IsSuccessStatusCode || isNeedToReadErrorContent)
+        // Read body as string once — stream can only be consumed once
+        var bodyString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode && !isNeedToReadErrorContent)
         {
-            try
-            {
-                return await ReadResponseContentAs<T>(response, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                await LogHttpErrorAsync(requestUrl, httpMethod, response, cancellationToken).ConfigureAwait(false);
-            }
+            LogHttpError(requestUrl, httpMethod, response, bodyString);
+            return default;
         }
 
-        await LogHttpErrorAsync(requestUrl, httpMethod, response, cancellationToken).ConfigureAwait(false);
-
-        return default;
+        try
+        {
+            return DeserializeBody<T>(bodyString);
+        }
+        catch
+        {
+            LogHttpError(requestUrl, httpMethod, response, bodyString);
+            return default;
+        }
     }
 
-    private static async Task<T> ReadResponseContentAs<T>(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static T DeserializeBody<T>(string bodyString)
     {
         if (typeof(T) == typeof(string))
-            return (T)(object) await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return (T)(object)bodyString;
+
         if (typeof(T) == typeof(byte[]))
-            return (T)(object) await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-        if (typeof(T) == typeof(Stream))
-            return (T)(object) await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        
-        return await response.Content.ReadFromJsonAsync<T>(cancellationToken).ConfigureAwait(false);
+            return (T)(object)Encoding.UTF8.GetBytes(bodyString);
+
+        return JsonSerializer.Deserialize<T>(bodyString);
     }
-    
-    private static async Task LogHttpErrorAsync(string requestUrl, HttpMethod httpMethod, HttpResponseMessage response, CancellationToken cancellationToken)
+
+    private static void LogHttpError(string requestUrl, HttpMethod httpMethod, HttpResponseMessage response, string bodyString)
     {
-        var responseAsString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        
         Log.Error("Squid http {Method} {Url} error, Status: {StatusCode}, As string: {ResponseAsString}",
-            httpMethod.ToString(), requestUrl, (int)response.StatusCode, responseAsString);
+            httpMethod.ToString(), requestUrl, (int)response.StatusCode, bodyString);
     }
     
     private static async Task<T> SafelyProcessRequestAsync<T>(string requestUrl, Func<Task<T>> func, CancellationToken cancellationToken, bool shouldLogError = true)
@@ -229,7 +229,7 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            
+
             return await func().ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -238,6 +238,7 @@ public class SquidHttpClientFactory : ISquidHttpClientFactory
                 Log.Error(ex, "Error on requesting {RequestUrl}", requestUrl);
             else
                 Log.Warning(ex, "Error on requesting {RequestUrl}", requestUrl);
+
             return default;
         }
     }

@@ -13,6 +13,8 @@ public interface IMachineRegistrationService : IScopedDependency
     Task<RegisterMachineResponseData> RegisterKubernetesAgentAsync(RegisterKubernetesAgentCommand command, CancellationToken cancellationToken = default);
 
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
+
+    Task<RegisterMachineResponseData> RegisterOpenClawAsync(RegisterOpenClawCommand command, CancellationToken cancellationToken = default);
 }
 
 public partial class MachineRegistrationService : IMachineRegistrationService
@@ -35,6 +37,14 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         _environmentDataProvider = environmentDataProvider;
         _trustDistributor = trustDistributor;
         _selfCertSetting = selfCertSetting;
+    }
+
+    private async Task EnsureUniqueNameAsync(string name, int spaceId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+
+        if (await _dataProvider.ExistsByNameAsync(name, spaceId, ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"A machine named \"{name}\" already exists in this space");
     }
 
     private static Machine BuildMachineDefaults(string name, string roles, string environmentIds, int spaceId, string endpointJson)

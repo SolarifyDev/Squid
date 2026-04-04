@@ -112,7 +112,7 @@ public class HealthCheckActionHandlerTests
     {
         var handler = CreateHandler(out _);
         var throwingChecker = new Mock<IHealthCheckStrategy>();
-        throwingChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        throwingChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("network error"));
 
         var ctx = CreateContextWithChecker("node-1", throwingChecker.Object);
@@ -223,24 +223,16 @@ public class HealthCheckActionHandlerTests
     // === FullHealthCheck ===
 
     [Fact]
-    public async Task ExecuteStepLevelAsync_FullHealthCheck_SetsExecutionModeOnRequest()
+    public async Task ExecuteStepLevelAsync_FullHealthCheck_DelegatesToHealthChecker()
     {
         var handler = CreateHandler(out _);
-        ScriptExecutionRequest capturedRequest = null;
-
-        var strategy = new Mock<IExecutionStrategy>();
-        strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((req, _) => capturedRequest = req)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var checker = new Mock<IHealthCheckStrategy>();
-        checker.Setup(h => h.DefaultHealthCheckScript).Returns("echo health");
-        checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HealthCheckResult(true, "ok"));
 
         var transport = new Mock<IDeploymentTransport>();
         transport.Setup(t => t.HealthChecker).Returns(checker.Object);
-        transport.Setup(t => t.Strategy).Returns(strategy.Object);
 
         var ctx = new StepActionContext
         {
@@ -262,8 +254,8 @@ public class HealthCheckActionHandlerTests
 
         await handler.ExecuteStepLevelAsync(ctx, CancellationToken.None);
 
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        checker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        ctx.DeploymentContext.AllTargetsContext.Single().IsExcluded.ShouldBeFalse();
     }
 
     // === Helpers ===
@@ -306,7 +298,7 @@ public class HealthCheckActionHandlerTests
         foreach (var (name, result) in targets)
         {
             var checker = new Mock<IHealthCheckStrategy>();
-            checker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+            checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(result);
 
             var transport = new Mock<IDeploymentTransport>();

@@ -28,6 +28,8 @@ public interface IMachineDataProvider : IScopedDependency
     Task<IReadOnlyList<string>> GetPollingThumbprintsAsync(CancellationToken cancellationToken = default);
 
     Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default);
+
+    Task<bool> ExistsByNameAsync(string name, int spaceId, CancellationToken cancellationToken = default);
 }
 
 public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository) : IMachineDataProvider
@@ -104,6 +106,13 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
             .FromSqlRaw<Machine>(
                 "SELECT * FROM machine WHERE endpoint::jsonb ->> 'SubscriptionId' = {0}",
                 subscriptionId)
+            .AnyAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<bool> ExistsByNameAsync(string name, int spaceId, CancellationToken cancellationToken = default)
+    {
+        return await repository.Query<Machine>(m => m.Name == name && m.SpaceId == spaceId)
             .AnyAsync(cancellationToken)
             .ConfigureAwait(false);
     }

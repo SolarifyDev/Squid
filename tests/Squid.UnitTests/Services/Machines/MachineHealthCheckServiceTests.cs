@@ -7,11 +7,8 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Core.Services.DeploymentExecution.Transport;
-using Squid.Core.Services.DeploymentExecution.Script;
-using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Machines;
 
@@ -26,27 +23,18 @@ public class MachineHealthCheckServiceTests
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IMachinePolicyDataProvider> _policyDataProvider = new();
     private readonly Mock<ITransportRegistry> _transportRegistry = new();
-    private readonly Mock<IExecutionStrategy> _strategy = new();
     private readonly Mock<IDeploymentTransport> _transport = new();
     private readonly Mock<IHealthCheckStrategy> _healthChecker = new();
-    private readonly Mock<IEndpointVariableContributor> _variableContributor = new();
-    private readonly Mock<IEndpointContextBuilder> _endpointContextBuilder = new();
     private readonly MachineHealthCheckService _service;
 
     public MachineHealthCheckServiceTests()
     {
-        _transport.Setup(t => t.Strategy).Returns(_strategy.Object);
         _transport.Setup(t => t.HealthChecker).Returns(_healthChecker.Object);
         _transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
-        _transport.Setup(t => t.Variables).Returns(_variableContributor.Object);
-        _healthChecker.Setup(h => h.DefaultHealthCheckScript).Returns("#!/bin/bash\nkubectl cluster-info 2>&1");
-        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.Bash);
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "ok" } });
-        _endpointContextBuilder.Setup(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string endpoint, IEndpointVariableContributor _, CancellationToken _) => new EndpointContext { EndpointJson = endpoint });
-        _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object, _endpointContextBuilder.Object);
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(true, "ok"));
+        _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object);
     }
 
     // ========================================================================
@@ -54,53 +42,40 @@ public class MachineHealthCheckServiceTests
     // ========================================================================
 
     [Fact]
-    public async Task RunHealthCheck_UsesTransportDefaultScript()
+    public async Task RunHealthCheck_DelegatesToHealthChecker()
     {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         SetupMachineById(machine);
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task RunHealthCheck_NullHealthChecker_UsesFallbackScript()
+    public async Task RunHealthCheck_NullHealthChecker_RecordsUnavailable()
     {
         _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         SetupMachineById(machine);
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("Uptime");
-        capturedRequest.ScriptBody.ShouldNotContain("kubectl");
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+        machine.HealthDetail.ShouldContain("No health checker");
     }
 
     [Fact]
     public async Task RunHealthCheck_IgnoresPolicy_AlwaysExecutes()
     {
-        // Machine has policy, but manual trigger should not load it
+        // Machine has policy, but manual trigger should not load health check schedule policy
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
         SetupMachineById(machine);
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        _policyDataProvider.Verify(p => p.GetByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -116,17 +91,17 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
-    public async Task RunHealthCheck_ScriptFails_RecordsUnhealthy()
+    public async Task RunHealthCheck_UnhealthyResult_RecordsUnavailable()
     {
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "error" } });
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HealthCheckResult(false, "connection refused"));
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         SetupMachineById(machine);
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unhealthy);
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
     }
 
     [Fact]
@@ -137,7 +112,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.ManualHealthCheckAsync(1);
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -173,7 +148,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -184,7 +159,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -195,7 +170,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
@@ -212,7 +187,7 @@ public class MachineHealthCheckServiceTests
         await _service.AutoHealthCheckForAllAsync();
 
         var expected = shouldExecute ? Times.Once() : Times.Never();
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), expected);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), expected);
     }
 
     [Fact]
@@ -363,35 +338,31 @@ public class MachineHealthCheckServiceTests
     }
 
     // ========================================================================
-    // Recurring job — OnlyConnectivity mode (policy-driven, top-level enum)
+    // Recurring job — delegates to health checker (all types)
     // ========================================================================
 
     [Fact]
-    public async Task RunHealthCheckForAll_OnlyConnectivity_DelegatesToHealthChecker()
+    public async Task RunHealthCheckForAll_DelegatesToHealthChecker_RecordsHealthy()
     {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HealthCheckResult(true, "Connected"));
-
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
+        SetupPolicy(1, 0);
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        _healthChecker.Verify(h => h.CheckConnectivityAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
     }
 
     [Fact]
-    public async Task RunHealthCheckForAll_OnlyConnectivity_Unhealthy_RecordsUnavailable()
+    public async Task RunHealthCheckForAll_UnhealthyResult_RecordsUnavailable()
     {
-        _healthChecker.Setup(h => h.CheckConnectivityAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
+        SetupPolicy(1, 0);
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -400,228 +371,17 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
-    public async Task RunHealthCheckForAll_OnlyConnectivity_NullHealthChecker_RecordsUnavailable()
+    public async Task RunHealthCheckForAll_NullHealthChecker_RecordsUnavailable()
     {
         _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
         SetupMachineList(machine);
-        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.OnlyConnectivity);
+        SetupPolicy(1, 0);
 
         await _service.AutoHealthCheckForAllAsync();
 
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
-    }
-
-    [Fact]
-    public async Task RunHealthCheckForAll_HealthCheckTypeRunScript_ExecutesScript()
-    {
-        var machine = CreateActiveMachine(machinePolicyId: 1);
-        SetupMachineList(machine);
-        SetupPolicyWithHealthCheckType(1, PolicyHealthCheckType.RunScript);
-
-        await _service.AutoHealthCheckForAllAsync();
-
-        _strategy.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ========================================================================
-    // Recurring job — Script resolution (policy-driven)
-    // ========================================================================
-
-    [Fact]
-    public async Task RunHealthCheckForAll_InheritFromDefault_UsesTransportDefaultScript()
-    {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachine(machinePolicyId: 1);
-        SetupMachineList(machine);
-        SetupPolicyWithRunType(1, ScriptSyntax.Bash.ToString(), ScriptPolicyRunType.InheritFromDefault);
-
-        await _service.AutoHealthCheckForAllAsync();
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
-    }
-
-    [Fact]
-    public async Task RunHealthCheckForAll_CustomInlineScript_UsesCustomScript()
-    {
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachine(machinePolicyId: 1);
-        SetupMachineList(machine);
-        SetupPolicyWithCustomScript(1, ScriptSyntax.Bash.ToString(), ScriptPolicyRunType.CustomScript, "echo custom-check");
-
-        await _service.AutoHealthCheckForAllAsync();
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldBe("echo custom-check");
-    }
-
-    // ========================================================================
-    // ResolveScriptPolicy — pure static logic (keyed by ScriptSyntax)
-    // ========================================================================
-
-    [Fact]
-    public void ResolveScriptPolicy_NullPolicy_ReturnsNull()
-    {
-        MachineHealthCheckService.ResolveScriptPolicy(null, ScriptSyntax.Bash).ShouldBeNull();
-    }
-
-    [Fact]
-    public void ResolveScriptPolicy_NoMatchingSyntax_ReturnsNull()
-    {
-        var policy = new MachineHealthCheckPolicyDto
-        {
-            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
-            {
-                ["PowerShell"] = new() { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo test" }
-            }
-        };
-
-        MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.Bash).ShouldBeNull();
-    }
-
-    [Fact]
-    public void ResolveScriptPolicy_ByScriptSyntax_Bash()
-    {
-        var expected = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo test" };
-        var policy = new MachineHealthCheckPolicyDto
-        {
-            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
-            {
-                ["Bash"] = expected
-            }
-        };
-
-        var result = MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.Bash);
-
-        result.ShouldBe(expected);
-    }
-
-    [Fact]
-    public void ResolveScriptPolicy_ByScriptSyntax_PowerShell()
-    {
-        var expected = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "Write-Host test" };
-        var policy = new MachineHealthCheckPolicyDto
-        {
-            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
-            {
-                ["PowerShell"] = expected
-            }
-        };
-
-        var result = MachineHealthCheckService.ResolveScriptPolicy(policy, ScriptSyntax.PowerShell);
-
-        result.ShouldBe(expected);
-    }
-
-    // ========================================================================
-    // ResolveScriptBody — enum-based
-    // ========================================================================
-
-    [Fact]
-    public void ResolveScriptBody_CustomScript_ReturnsCustomBody()
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo custom" };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
-
-        result.ShouldBe("echo custom");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_InheritFromDefault_ReturnsTransportDefault()
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
-
-        result.ShouldContain("kubectl cluster-info");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_NullScriptPolicy_ReturnsTransportDefault()
-    {
-        var result = MachineHealthCheckService.ResolveScriptBody(null, null, _transport.Object);
-
-        result.ShouldContain("kubectl cluster-info");
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    public void ResolveScriptBody_CustomScriptButEmptyBody_FallsBackToDefault(string emptyBody)
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = emptyBody };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, null, _transport.Object);
-
-        result.ShouldContain("kubectl cluster-info");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_NullScriptPolicy_NullHealthChecker_ReturnsFallback()
-    {
-        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
-
-        var result = MachineHealthCheckService.ResolveScriptBody(null, null, _transport.Object);
-
-        result.ShouldContain("Uptime");
-    }
-
-    // ========================================================================
-    // ResolveScriptBody — InheritFromDefault cross-policy inheritance
-    // ========================================================================
-
-    [Fact]
-    public void ResolveScriptBody_InheritFromDefault_DefaultPolicyHasCustomScript_UsesDefaultPolicyScript()
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
-        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
-
-        result.ShouldBe("echo default-policy-custom");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_NullScriptPolicy_DefaultPolicyHasCustomScript_UsesDefaultPolicyScript()
-    {
-        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(null, defaultScript, _transport.Object);
-
-        result.ShouldBe("echo default-policy-custom");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_InheritFromDefault_DefaultPolicyAlsoInherits_FallsToTransportDefault()
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
-        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.InheritFromDefault };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
-
-        result.ShouldContain("kubectl cluster-info");
-    }
-
-    [Fact]
-    public void ResolveScriptBody_CustomScript_IgnoresDefaultPolicy()
-    {
-        var scriptPolicy = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo machine-custom" };
-        var defaultScript = new MachineScriptPolicyDto { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo default-policy-custom" };
-
-        var result = MachineHealthCheckService.ResolveScriptBody(scriptPolicy, defaultScript, _transport.Object);
-
-        result.ShouldBe("echo machine-custom");
     }
 
     // ========================================================================
@@ -641,12 +401,12 @@ public class MachineHealthCheckServiceTests
         SetupMachineList(machine1, machine2);
 
         var callCount = 0;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
                 if (callCount == 1) throw new TimeoutException("connection timeout");
-                return new ScriptExecutionResult { Success = true, ExitCode = 0 };
+                return new HealthCheckResult(true, "ok");
             });
 
         await _service.AutoHealthCheckForAllAsync();
@@ -655,162 +415,8 @@ public class MachineHealthCheckServiceTests
         machine2.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
     }
 
-    // ========================================================================
-    // Credential loading + script wrapping
-    // ========================================================================
-
     [Fact]
-    public async Task ManualHealthCheck_CallsEndpointContextBuilder()
-    {
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        _endpointContextBuilder.Verify(b => b.BuildAsync(machine.Endpoint, It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ManualHealthCheck_WrapsScriptViaTransportWrapper()
-    {
-        var scriptWrapper = new Mock<IScriptContextWrapper>();
-        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
-            .Returns((string s, ScriptContext _) => $"# context setup\n{s}");
-        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldStartWith("# context setup");
-        capturedRequest.EndpointContext.ShouldNotBeNull();
-        scriptWrapper.Verify(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ManualHealthCheck_NullWrapper_ScriptUnchanged()
-    {
-        _transport.Setup(t => t.ScriptWrapper).Returns((IScriptContextWrapper)null);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldContain("kubectl cluster-info");
-        capturedRequest.EndpointContext.ShouldNotBeNull();
-    }
-
-    [Fact]
-    public async Task AutoHealthCheck_WrapsScript()
-    {
-        var scriptWrapper = new Mock<IScriptContextWrapper>();
-        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
-            .Returns((string s, ScriptContext _) => $"# wrapped\n{s}");
-        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachine(healthLastChecked: null);
-        SetupMachineList(machine);
-
-        await _service.AutoHealthCheckForAllAsync();
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.ScriptBody.ShouldStartWith("# wrapped");
-        scriptWrapper.Verify(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()), Times.Once);
-    }
-
-    // ========================================================================
-    // EndpointContext content & syntax verification
-    // ========================================================================
-
-    [Fact]
-    public async Task ManualHealthCheck_PassesEndpointContextToExecutionRequest()
-    {
-        var expectedContext = new EndpointContext { EndpointJson = """{"communicationStyle":"KubernetesApi"}""" };
-        expectedContext.SetAccountData(AccountType.Token, """{"token":"test-token"}""");
-
-        _endpointContextBuilder.Setup(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedContext);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.EndpointContext.ShouldBe(expectedContext);
-        capturedRequest.EndpointContext.GetAccountData().ShouldNotBeNull();
-        capturedRequest.EndpointContext.GetAccountData().AuthenticationAccountType.ShouldBe(AccountType.Token);
-    }
-
-    [Fact]
-    public async Task ManualHealthCheck_PassesSyntaxFromHealthChecker()
-    {
-        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.PowerShell);
-
-        ScriptExecutionRequest capturedRequest = null;
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ScriptExecutionRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        capturedRequest.ShouldNotBeNull();
-        capturedRequest.Syntax.ShouldBe(ScriptSyntax.PowerShell);
-    }
-
-    [Fact]
-    public async Task ManualHealthCheck_ScriptWrapperReceivesCorrectSyntax()
-    {
-        _healthChecker.Setup(h => h.ScriptSyntax).Returns(ScriptSyntax.PowerShell);
-
-        ScriptContext capturedScriptContext = null;
-        var scriptWrapper = new Mock<IScriptContextWrapper>();
-        scriptWrapper.Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
-            .Callback<string, ScriptContext>((_, ctx) => capturedScriptContext = ctx)
-            .Returns((string s, ScriptContext _) => s);
-        _transport.Setup(t => t.ScriptWrapper).Returns(scriptWrapper.Object);
-
-        _strategy.Setup(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0 });
-
-        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
-        SetupMachineById(machine);
-
-        await _service.ManualHealthCheckAsync(machine.Id);
-
-        capturedScriptContext.ShouldNotBeNull();
-        capturedScriptContext.Syntax.ShouldBe(ScriptSyntax.PowerShell);
-    }
-
-    [Fact]
-    public async Task AutoHealthCheck_BuilderCalledPerMachine()
+    public async Task AutoHealthCheck_CheckHealthCalledPerMachine()
     {
         var machine1 = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
         var machine2 = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
@@ -823,7 +429,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _endpointContextBuilder.Verify(b => b.BuildAsync(It.IsAny<string>(), It.IsAny<IEndpointVariableContributor>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     // ========================================================================
@@ -869,45 +475,6 @@ public class MachineHealthCheckServiceTests
     private void SetupPolicy(int policyId, int intervalSeconds)
     {
         var healthPolicy = new MachineHealthCheckPolicyDto { HealthCheckIntervalSeconds = intervalSeconds };
-        var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
-
-        _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
-    }
-
-    private void SetupPolicyWithHealthCheckType(int policyId, PolicyHealthCheckType healthCheckType)
-    {
-        var healthPolicy = new MachineHealthCheckPolicyDto { HealthCheckType = healthCheckType };
-        var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
-
-        _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
-    }
-
-    private void SetupPolicyWithRunType(int policyId, string syntaxKey, ScriptPolicyRunType runType)
-    {
-        var healthPolicy = new MachineHealthCheckPolicyDto
-        {
-            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
-            {
-                [syntaxKey] = new() { RunType = runType }
-            }
-        };
-        var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
-
-        _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
-    }
-
-    private void SetupPolicyWithCustomScript(int policyId, string syntaxKey, ScriptPolicyRunType runType, string scriptBody)
-    {
-        var healthPolicy = new MachineHealthCheckPolicyDto
-        {
-            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
-            {
-                [syntaxKey] = new() { RunType = runType, ScriptBody = scriptBody }
-            }
-        };
         var policyJson = JsonSerializer.Serialize(healthPolicy, JsonOptions);
 
         _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))

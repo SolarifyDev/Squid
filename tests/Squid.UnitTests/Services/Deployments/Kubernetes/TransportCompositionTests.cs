@@ -24,7 +24,7 @@ public class TransportCompositionTests
         var variables = new KubernetesApiEndpointVariableContributor(Mock.Of<IExternalFeedDataProvider>());
         var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
         var strategy = new LocalProcessExecutionStrategy(payloadBuilder.Object, processRunner.Object);
-        var healthChecker = new KubernetesApiHealthCheckStrategy(Mock.Of<IDeploymentAccountDataProvider>(), Mock.Of<ISquidHttpClientFactory>());
+        var healthChecker = new KubernetesApiHealthCheckStrategy(Mock.Of<ITargetScriptRunner>());
 
         var transport = new KubernetesApiTransport(variables, wrapper, strategy, healthChecker);
 

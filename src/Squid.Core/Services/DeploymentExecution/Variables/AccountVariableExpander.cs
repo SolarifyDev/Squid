@@ -29,6 +29,7 @@ public static class AccountVariableExpander
             AzureOidcCredentials azOidc => ExpandAzureOidc(azOidc),
             GcpCredentials gcp => ExpandGcp(gcp),
             SshKeyPairCredentials ssh => ExpandSsh(ssh),
+            OpenClawGatewayCredentials oc => ExpandOpenClawGateway(oc),
             _ => new()
         };
     }
@@ -97,5 +98,11 @@ public static class AccountVariableExpander
         EndpointVariableFactory.Make(SpecialVariables.Account.Username, ssh.Username ?? string.Empty),
         EndpointVariableFactory.Make(SpecialVariables.Account.SshPrivateKeyFile, ssh.PrivateKeyFile ?? string.Empty, isSensitive: true),
         EndpointVariableFactory.Make(SpecialVariables.Account.SshPassphrase, ssh.PrivateKeyPassphrase ?? string.Empty, isSensitive: true)
+    };
+
+    private static List<VariableDto> ExpandOpenClawGateway(OpenClawGatewayCredentials oc) => new()
+    {
+        EndpointVariableFactory.Make(SpecialVariables.OpenClaw.GatewayToken, oc.GatewayToken ?? string.Empty, isSensitive: true),
+        EndpointVariableFactory.Make(SpecialVariables.OpenClaw.HooksToken, oc.HooksToken ?? string.Empty, isSensitive: true)
     };
 }
