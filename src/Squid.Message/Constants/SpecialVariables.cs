@@ -184,6 +184,14 @@ public static class SpecialVariables
         public const string HasPrivateKeySuffix = ".HasPrivateKey";
     }
 
+    public static class Ssh
+    {
+        public const string Host = "Squid.Action.Ssh.Host";
+        public const string Port = "Squid.Action.Ssh.Port";
+        public const string Fingerprint = "Squid.Action.Ssh.Fingerprint";
+        public const string RemoteWorkingDirectory = "Squid.Action.Ssh.RemoteWorkingDirectory";
+    }
+
     public static class OpenClaw
     {
         // Endpoint variables (contributed by OpenClawEndpointVariableContributor)

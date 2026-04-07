@@ -23,6 +23,8 @@ public class TransportRegistryTests
     [InlineData("KUBERNETESAPI", CommunicationStyle.KubernetesApi)]
     [InlineData("KubernetesAgent", CommunicationStyle.KubernetesAgent)]
     [InlineData("kubernetesagent", CommunicationStyle.KubernetesAgent)]
+    [InlineData("Ssh", CommunicationStyle.Ssh)]
+    [InlineData("ssh", CommunicationStyle.Ssh)]
     public void Parse_KnownStyle_ReturnsMappedEnum(string styleValue, CommunicationStyle expected)
     {
         var json = MakeEndpointJson(styleValue);
@@ -31,7 +33,6 @@ public class TransportRegistryTests
     }
 
     [Theory]
-    [InlineData("Ssh")]
     [InlineData("Docker")]
     [InlineData("")]
     public void Parse_UnknownStyle_ReturnsUnknown(string styleValue)

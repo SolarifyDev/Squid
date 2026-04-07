@@ -38,6 +38,7 @@
     <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
     <PackageReference Include="AutoMapper.Contrib.Autofac.DependencyInjection" Version="8.1.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
+    <PackageReference Include="SSH.NET" Version="2025.1.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.6.122" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
