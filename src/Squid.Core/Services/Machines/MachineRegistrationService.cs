@@ -15,6 +15,8 @@ public interface IMachineRegistrationService : IScopedDependency
     Task<RegisterMachineResponseData> RegisterKubernetesApiAsync(RegisterKubernetesApiCommand command, CancellationToken cancellationToken = default);
 
     Task<RegisterMachineResponseData> RegisterOpenClawAsync(RegisterOpenClawCommand command, CancellationToken cancellationToken = default);
+
+    Task<RegisterMachineResponseData> RegisterSshAsync(RegisterSshCommand command, CancellationToken cancellationToken = default);
 }
 
 public partial class MachineRegistrationService : IMachineRegistrationService

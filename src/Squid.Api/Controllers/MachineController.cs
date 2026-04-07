@@ -43,6 +43,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("register/ssh")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterSshAsync([FromBody] RegisterSshCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<RegisterSshCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("generate-kubernetes-agent-install-script")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
     public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)

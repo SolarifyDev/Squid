@@ -497,6 +497,157 @@ public class MachineRegistrationServiceTests
         callOrder.ShouldBe(new[] { "persist", "reconfigure" });
     }
 
+    // ========================================================================
+    // Ssh Registration
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterSsh_PersistsMachineWithSshEndpointJson()
+    {
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        var result = await _service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = "prod-ssh-01",
+            SpaceId = 1,
+            Host = "prod.example.com",
+            Port = 2222,
+            Fingerprint = "SHA256:abc123",
+            RemoteWorkingDirectory = "/opt/deploy",
+            Roles = new List<string> { "web", "api" },
+            EnvironmentIds = new List<int> { 1, 2 },
+            ResourceReferences = new List<Squid.Message.Models.Deployments.Machine.EndpointResourceReference>
+            {
+                new() { Type = Squid.Message.Enums.EndpointResourceType.AuthenticationAccount, ResourceId = 42 }
+            }
+        }, CancellationToken.None);
+
+        result.MachineId.ShouldBe(captured.Id);
+        captured.ShouldNotBeNull();
+        captured.Name.ShouldBe("prod-ssh-01");
+        captured.SpaceId.ShouldBe(1);
+        captured.Roles.ShouldBe("[\"web\",\"api\"]");
+        captured.EnvironmentIds.ShouldBe("[1,2]");
+
+        var endpoint = JsonSerializer.Deserialize<SshEndpointDto>(captured.Endpoint);
+        endpoint.CommunicationStyle.ShouldBe("Ssh");
+        endpoint.Host.ShouldBe("prod.example.com");
+        endpoint.Port.ShouldBe(2222);
+        endpoint.Fingerprint.ShouldBe("SHA256:abc123");
+        endpoint.RemoteWorkingDirectory.ShouldBe("/opt/deploy");
+        endpoint.ResourceReferences.ShouldHaveSingleItem();
+        endpoint.ResourceReferences[0].ResourceId.ShouldBe(42);
+        endpoint.ResourceReferences[0].Type.ShouldBe(Squid.Message.Enums.EndpointResourceType.AuthenticationAccount);
+    }
+
+    [Fact]
+    public async Task RegisterSsh_DefaultsPortTo22WhenZero()
+    {
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = "ssh-default-port",
+            SpaceId = 1,
+            Host = "example.com",
+            Port = 0
+        }, CancellationToken.None);
+
+        var endpoint = JsonSerializer.Deserialize<SshEndpointDto>(captured.Endpoint);
+        endpoint.Port.ShouldBe(22);
+    }
+
+    [Fact]
+    public async Task RegisterSsh_NullRolesAndEnvironments_StoresEmptyJsonArrays()
+    {
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = "ssh-minimal",
+            SpaceId = 1,
+            Host = "host.example.com"
+        }, CancellationToken.None);
+
+        captured.Roles.ShouldBe("[]");
+        captured.EnvironmentIds.ShouldBe("[]");
+    }
+
+    [Fact]
+    public async Task RegisterSsh_NullMachineName_GeneratesSshPrefixedName()
+    {
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = null,
+            SpaceId = 1,
+            Host = "host.example.com"
+        }, CancellationToken.None);
+
+        captured.Name.ShouldStartWith("ssh-");
+        captured.Name.Length.ShouldBe(20);
+    }
+
+    [Fact]
+    public async Task RegisterSsh_AssignsDefaultPolicy()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 77, IsDefault = true, Name = "Default" });
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = "ssh-policy-test",
+            SpaceId = 1,
+            Host = "host.example.com"
+        }, CancellationToken.None);
+
+        captured.MachinePolicyId.ShouldBe(77);
+    }
+
+    [Fact]
+    public async Task RegisterSsh_DuplicateNameInSpace_ThrowsInvalidOperation()
+    {
+        _machineDataProvider
+            .Setup(x => x.ExistsByNameAsync("duplicate-ssh", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            _service.RegisterSshAsync(new RegisterSshCommand
+            {
+                MachineName = "duplicate-ssh",
+                SpaceId = 1,
+                Host = "host.example.com"
+            }, CancellationToken.None));
+
+        ex.Message.ShouldContain("duplicate-ssh");
+        _machineDataProvider.Verify(
+            x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static RegisterKubernetesAgentCommand CreateCommand(
         string machineName = "test-agent",
         string thumbprint = "AABBCCDD",

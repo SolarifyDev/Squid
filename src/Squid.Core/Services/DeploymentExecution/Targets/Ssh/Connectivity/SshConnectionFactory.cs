@@ -40,7 +40,8 @@ public class SshConnectionFactory : ISshConnectionFactory
 
         if (!string.IsNullOrEmpty(info.PrivateKey))
         {
-            using var keyStream = new MemoryStream(Encoding.UTF8.GetBytes(info.PrivateKey));
+            var normalizedKey = NormalizePem(info.PrivateKey);
+            using var keyStream = new MemoryStream(Encoding.UTF8.GetBytes(normalizedKey));
             var keyFile = string.IsNullOrEmpty(info.Passphrase) ? new PrivateKeyFile(keyStream) : new PrivateKeyFile(keyStream, info.Passphrase);
             methods.Add(new PrivateKeyAuthenticationMethod(info.Username, keyFile));
         }
@@ -63,5 +64,33 @@ public class SshConnectionFactory : ISshConnectionFactory
         }
 
         return methods;
+    }
+
+    internal static string NormalizePem(string pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem) || !pem.Contains("-----BEGIN")) return pem;
+
+        var firstDash = pem.IndexOf("-----", StringComparison.Ordinal);
+        var headerEnd = pem.IndexOf("-----", firstDash + 5, StringComparison.Ordinal) + 5;
+        var footerStart = pem.IndexOf("-----END", headerEnd, StringComparison.Ordinal);
+
+        if (headerEnd <= 5 || footerStart < 0) return pem;
+
+        var header = pem[..headerEnd].Trim();
+        var footer = pem[footerStart..].Trim();
+        var body = pem[headerEnd..footerStart].Replace(" ", "").Replace("\n", "").Replace("\r", "").Replace("\t", "");
+
+        var sb = new StringBuilder();
+        sb.Append(header).Append('\n');
+
+        for (var i = 0; i < body.Length; i += 70)
+        {
+            var len = Math.Min(70, body.Length - i);
+            sb.Append(body, i, len).Append('\n');
+        }
+
+        sb.Append(footer).Append('\n');
+
+        return sb.ToString();
     }
 }

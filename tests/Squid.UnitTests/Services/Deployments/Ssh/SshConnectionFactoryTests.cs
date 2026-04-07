@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 
 namespace Squid.UnitTests.Services.Deployments.Ssh;
@@ -112,6 +113,86 @@ public class SshConnectionFactoryTests
 
         scope.ShouldNotBeNull();
         scope.Dispose();
+    }
+
+    // ========================================================================
+    // NormalizePem
+    // ========================================================================
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void NormalizePem_NullOrWhitespace_ReturnsAsIs(string input)
+    {
+        SshConnectionFactory.NormalizePem(input).ShouldBe(input);
+    }
+
+    [Fact]
+    public void NormalizePem_NoPemMarkers_ReturnsAsIs()
+    {
+        var input = "not a pem key at all";
+
+        SshConnectionFactory.NormalizePem(input).ShouldBe(input);
+    }
+
+    [Fact]
+    public void NormalizePem_AlreadyFormatted_PreservesBase64()
+    {
+        var key = GenerateTestRsaPrivateKey();
+
+        var normalized = SshConnectionFactory.NormalizePem(key);
+
+        ExtractBase64Body(normalized).ShouldBe(ExtractBase64Body(key));
+    }
+
+    [Fact]
+    public void NormalizePem_SpacesInsteadOfNewlines_RestoresValidPem()
+    {
+        var key = GenerateTestRsaPrivateKey();
+        var mangled = key.Replace("\n", "   ");
+
+        var normalized = SshConnectionFactory.NormalizePem(mangled);
+
+        normalized.ShouldStartWith("-----BEGIN");
+        normalized.ShouldContain("\n");
+        ExtractBase64Body(normalized).ShouldBe(ExtractBase64Body(key));
+    }
+
+    [Fact]
+    public void NormalizePem_SpacesInsteadOfNewlines_ProducesValidPrivateKey()
+    {
+        var key = GenerateTestRsaPrivateKey();
+        var mangled = key.Replace("\n", "   ");
+
+        var normalized = SshConnectionFactory.NormalizePem(mangled);
+        var info = new SshConnectionInfo("host", 22, "user", normalized, null, null, null, TimeSpan.FromSeconds(10));
+
+        var scope = _factory.CreateScope(info);
+
+        scope.ShouldNotBeNull();
+        scope.Dispose();
+    }
+
+    [Fact]
+    public void NormalizePem_MixedWhitespace_RestoresValidPem()
+    {
+        var key = GenerateTestRsaPrivateKey();
+        var mangled = key.Replace("\n", " \t ");
+
+        var normalized = SshConnectionFactory.NormalizePem(mangled);
+
+        ExtractBase64Body(normalized).ShouldBe(ExtractBase64Body(key));
+    }
+
+    // ========================================================================
+    // Helpers
+    // ========================================================================
+
+    private static string ExtractBase64Body(string pem)
+    {
+        var lines = pem.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return string.Concat(lines.Where(l => !l.StartsWith("-----")).Select(l => l.Trim()));
     }
 
     private static string GenerateTestRsaPrivateKey()
