@@ -9,6 +9,8 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
 public class SshExecutionStrategy : IExecutionStrategy
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(10);
+
     private readonly ISshConnectionFactory _connectionFactory;
 
     public SshExecutionStrategy(ISshConnectionFactory connectionFactory)
@@ -29,13 +31,29 @@ public class SshExecutionStrategy : IExecutionStrategy
             var remoteWorkDir = ResolveVariable(request.Variables, SpecialVariables.Ssh.RemoteWorkingDirectory);
             var workDir = SshPaths.WorkDirectory(request.ServerTaskId, remoteWorkDir);
 
-            await Task.Run(() => PrepareRemoteWorkDirectory(scope, workDir, request), ct).ConfigureAwait(false);
+            PrepareRemoteWorkDirectory(scope, workDir, request);
 
-            var result = await Task.Run(() => ExecuteScript(scope, workDir, request), ct).ConfigureAwait(false);
+            var result = await ExecuteScriptAsync(scope, workDir, request, ct).ConfigureAwait(false);
 
-            await Task.Run(() => CleanupRemoteWorkDirectory(scope, workDir), ct).ConfigureAwait(false);
+            CleanupRemoteWorkDirectory(scope, workDir);
 
             return result;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warning("[SSH] Execution timed out on {Host}", connectionInfo?.Host ?? "unknown");
+
+            return new ScriptExecutionResult
+            {
+                Success = false,
+                ExitCode = ScriptExitCodes.Timeout,
+                LogLines = new List<string> { $"SSH script execution timed out" },
+                StderrLines = new List<string> { "Timeout" }
+            };
         }
         catch (Exception ex)
         {
@@ -77,7 +95,7 @@ public class SshExecutionStrategy : IExecutionStrategy
             throw new ArgumentException($"File name contains invalid path characters: {fileName}");
     }
 
-    private ScriptExecutionResult ExecuteScript(ISshConnectionScope scope, string workDir, ScriptExecutionRequest request)
+    private async Task<ScriptExecutionResult> ExecuteScriptAsync(ISshConnectionScope scope, string workDir, ScriptExecutionRequest request, CancellationToken ct)
     {
         var sftp = scope.GetSftpClient();
         var ssh = scope.GetSshClient();
@@ -86,7 +104,7 @@ public class SshExecutionStrategy : IExecutionStrategy
         var scriptPath = SshPaths.ScriptPath(workDir, scriptName);
         var scriptBytes = Encoding.UTF8.GetBytes(request.ScriptBody ?? string.Empty);
 
-        SshFileTransfer.UploadBytes(sftp, scriptBytes, scriptPath);
+        SshFileTransfer.UploadBytesVerified(sftp, ssh, scriptBytes, scriptPath);
 
         var chmodResult = SshRemoteShellExecutor.Execute(ssh, $"chmod +x \"{scriptPath}\"", TimeSpan.FromSeconds(10));
 
@@ -94,8 +112,12 @@ public class SshExecutionStrategy : IExecutionStrategy
             Log.Warning("[SSH] chmod +x failed for {Path}: {Error}", scriptPath, chmodResult.Error);
 
         var command = BuildExecutionCommand(scriptPath, workDir, request);
-        var timeout = request.Timeout ?? TimeSpan.FromMinutes(10);
-        var result = SshRemoteShellExecutor.Execute(ssh, command, timeout);
+        var scriptTimeout = request.Timeout ?? DefaultTimeout;
+
+        using var timeoutCts = new CancellationTokenSource(scriptTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+        var result = await SshRemoteShellExecutor.ExecuteAsync(ssh, command, scriptTimeout, linkedCts.Token).ConfigureAwait(false);
 
         return new ScriptExecutionResult
         {

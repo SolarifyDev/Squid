@@ -1,4 +1,5 @@
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Serilog;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
@@ -30,6 +31,7 @@ public class SshConnectionScope : ISshConnectionScope
 
             var client = new SshClient(_connectionInfo);
             client.KeepAliveInterval = KeepAliveInterval;
+            client.ErrorOccurred += OnClientError;
             AttachFingerprintValidation(client);
             client.Connect();
 
@@ -50,6 +52,7 @@ public class SshConnectionScope : ISshConnectionScope
 
             var client = new SftpClient(_connectionInfo);
             client.KeepAliveInterval = KeepAliveInterval;
+            client.ErrorOccurred += OnClientError;
             AttachFingerprintValidation(client);
             client.Connect();
 
@@ -94,6 +97,11 @@ public class SshConnectionScope : ISshConnectionScope
             normalized = normalized.Substring(4);
 
         return normalized.Replace(":", string.Empty).Replace("-", string.Empty);
+    }
+
+    private void OnClientError(object sender, ExceptionEventArgs e)
+    {
+        Log.Error(e.Exception, "[SSH] Client error on {Host}:{Port}", _connectionInfo.Host, _connectionInfo.Port);
     }
 
     public void Dispose()

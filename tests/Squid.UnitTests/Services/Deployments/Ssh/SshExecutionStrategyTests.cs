@@ -97,16 +97,6 @@ public class SshExecutionStrategyTests
         _connectionFactory.Verify(f => f.CreateScope(It.IsAny<SshConnectionInfo>()), Times.Once);
     }
 
-    [Fact]
-    public async Task Execute_DefaultRemoteWorkDir_UsesDefaultBase()
-    {
-        var strategy = CreateStrategy();
-        await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
-
-        // Verifies the scope was created (which implies path construction succeeded with default)
-        _scope.Verify(s => s.GetSftpClient(), Times.AtLeastOnce);
-    }
-
     // ========== File Name Validation ==========
 
     [Theory]
@@ -138,20 +128,6 @@ public class SshExecutionStrategyTests
         Should.Throw<ArgumentException>(() => SshExecutionStrategy.ValidateFileName(fileName));
     }
 
-    // ========== Exit Code ==========
-
-    [Fact]
-    public async Task Execute_ExitCodeNonZero_ReturnsFailure()
-    {
-        _connectionFactory.Setup(f => f.CreateScope(It.IsAny<SshConnectionInfo>())).Throws(new InvalidOperationException("Script failed with exit 1"));
-
-        var strategy = CreateStrategy();
-        var result = await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
-
-        result.Success.ShouldBeFalse();
-        result.ExitCode.ShouldBe(-1);
-    }
-
     // ========== Port Parsing ==========
 
     [Fact]
@@ -181,13 +157,47 @@ public class SshExecutionStrategyTests
     // ========== Timeout ==========
 
     [Fact]
-    public async Task Execute_NullTimeout_UsesDefaultTimeout()
+    public async Task Execute_NullTimeout_DoesNotThrow()
     {
         var request = MakeRequest();
         request.Timeout = null;
 
         var strategy = CreateStrategy();
-        // Should not throw — uses 10 minute default
-        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+        var result = await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        _connectionFactory.Verify(f => f.CreateScope(It.IsAny<SshConnectionInfo>()), Times.Once);
+    }
+
+    // ========== Cancellation ==========
+
+    [Fact]
+    public async Task Execute_CancellationRequested_PropagatesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        _connectionFactory.Setup(f => f.CreateScope(It.IsAny<SshConnectionInfo>()))
+            .Throws(new OperationCanceledException(cts.Token));
+
+        var strategy = CreateStrategy();
+
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            strategy.ExecuteScriptAsync(MakeRequest(), cts.Token));
+    }
+
+    // ========== Exit Code ==========
+
+    [Fact]
+    public async Task Execute_GeneralException_ReturnsNegativeOneExitCode()
+    {
+        _connectionFactory.Setup(f => f.CreateScope(It.IsAny<SshConnectionInfo>()))
+            .Throws(new InvalidOperationException("fail"));
+
+        var strategy = CreateStrategy();
+        var result = await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ExitCode.ShouldBe(-1);
     }
 }

@@ -40,7 +40,7 @@ public class SshConnectionFactory : ISshConnectionFactory
 
         if (!string.IsNullOrEmpty(info.PrivateKey))
         {
-            var keyStream = new MemoryStream(Encoding.UTF8.GetBytes(info.PrivateKey));
+            using var keyStream = new MemoryStream(Encoding.UTF8.GetBytes(info.PrivateKey));
             var keyFile = string.IsNullOrEmpty(info.Passphrase) ? new PrivateKeyFile(keyStream) : new PrivateKeyFile(keyStream, info.Passphrase);
             methods.Add(new PrivateKeyAuthenticationMethod(info.Username, keyFile));
         }
@@ -54,7 +54,10 @@ public class SshConnectionFactory : ISshConnectionFactory
             kbInteractive.AuthenticationPrompt += (_, e) =>
             {
                 foreach (var prompt in e.Prompts)
-                    prompt.Response = password;
+                {
+                    if (prompt.Request.TrimEnd().EndsWith(":", StringComparison.OrdinalIgnoreCase))
+                        prompt.Response = password;
+                }
             };
             methods.Add(kbInteractive);
         }

@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Serilog;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
@@ -7,21 +9,38 @@ public static class SshFileTransfer
 {
     public static void UploadBytes(SftpClient client, byte[] data, string remotePath)
     {
-        EnsureParentDirectoryExists(client, remotePath);
+        SshRetryHelper.ExecuteWithRetry(() =>
+        {
+            EnsureParentDirectoryExists(client, remotePath);
 
-        using var stream = new MemoryStream(data);
-        client.UploadFile(stream, remotePath, canOverride: true);
+            using var stream = new MemoryStream(data);
+            client.UploadFile(stream, remotePath, canOverride: true);
 
-        Log.Debug("[SSH] Uploaded {Bytes} bytes to {RemotePath}", data.Length, remotePath);
+            Log.Debug("[SSH] Uploaded {Bytes} bytes to {RemotePath}", data.Length, remotePath);
+        }, SshTransientErrorDetector.IsTransient);
     }
 
     public static void UploadFile(SftpClient client, Stream source, string remotePath)
     {
-        EnsureParentDirectoryExists(client, remotePath);
+        SshRetryHelper.ExecuteWithRetry(() =>
+        {
+            EnsureParentDirectoryExists(client, remotePath);
 
-        client.UploadFile(source, remotePath, canOverride: true);
+            client.UploadFile(source, remotePath, canOverride: true);
 
-        Log.Debug("[SSH] Uploaded file to {RemotePath}", remotePath);
+            Log.Debug("[SSH] Uploaded file to {RemotePath}", remotePath);
+        }, SshTransientErrorDetector.IsTransient);
+    }
+
+    public static void UploadBytesVerified(SftpClient sftp, SshClient ssh, byte[] data, string remotePath)
+    {
+        UploadBytes(sftp, data, remotePath);
+
+        var localHash = ComputeLocalMd5(data);
+        var remoteHash = CalculateRemoteMd5(ssh, remotePath);
+
+        if (!string.IsNullOrEmpty(remoteHash) && !string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"MD5 checksum mismatch for {remotePath}: local={localHash}, remote={remoteHash}");
     }
 
     public static byte[] DownloadFile(SftpClient client, string remotePath)
@@ -30,6 +49,30 @@ public static class SshFileTransfer
         client.DownloadFile(remotePath, stream);
 
         return stream.ToArray();
+    }
+
+    public static string CalculateRemoteMd5(SshClient ssh, string remotePath)
+    {
+        try
+        {
+            var result = SshRemoteShellExecutor.Execute(ssh, $"md5sum \"{remotePath}\" | awk '{{ print $1 }}'", TimeSpan.FromSeconds(10));
+
+            if (result.ExitCode != 0) return string.Empty;
+
+            return result.Output.Trim();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[SSH] Failed to calculate remote MD5 for {RemotePath}", remotePath);
+            return string.Empty;
+        }
+    }
+
+    internal static string ComputeLocalMd5(byte[] data)
+    {
+        var hashBytes = MD5.HashData(data);
+
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 
     public static void EnsureDirectoryExists(SftpClient client, string remotePath)
@@ -69,7 +112,7 @@ public static class SshFileTransfer
             var attrs = client.GetAttributes(path);
             return attrs.IsDirectory;
         }
-        catch
+        catch (SftpPathNotFoundException)
         {
             return false;
         }
