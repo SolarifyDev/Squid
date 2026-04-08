@@ -11,6 +11,7 @@ namespace Squid.UnitTests.Services.Deployments.Ssh;
 public class SshExecutionStrategyTests
 {
     private readonly Mock<ISshConnectionFactory> _connectionFactory = new();
+    private readonly Mock<ISshExecutionMutex> _executionMutex = new();
     private readonly Mock<ISshConnectionScope> _scope = new();
     private readonly Mock<SshClient> _sshClient;
     private readonly Mock<SftpClient> _sftpClient;
@@ -23,9 +24,11 @@ public class SshExecutionStrategyTests
         _scope.Setup(s => s.GetSshClient()).Returns(_sshClient.Object);
         _scope.Setup(s => s.GetSftpClient()).Returns(_sftpClient.Object);
         _connectionFactory.Setup(f => f.CreateScope(It.IsAny<SshConnectionInfo>())).Returns(_scope.Object);
+        _executionMutex.Setup(m => m.AcquireAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IDisposable>());
     }
 
-    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object);
+    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object);
 
     private static ScriptExecutionRequest MakeRequest(string scriptBody = "echo hello", int serverTaskId = 42, ScriptSyntax syntax = ScriptSyntax.Bash)
     {
@@ -199,5 +202,60 @@ public class SshExecutionStrategyTests
 
         result.Success.ShouldBeFalse();
         result.ExitCode.ShouldBe(-1);
+    }
+
+    // ========== BootstrapIfBash ==========
+
+    [Fact]
+    public void BootstrapIfBash_BashSyntax_WrapsWithBootstrap()
+    {
+        var request = MakeRequest(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
+
+        var result = SshExecutionStrategy.BootstrapIfBash(request, "/home/user/.squid/Work/42", "/home/user/.squid");
+
+        result.ShouldStartWith("#!/bin/bash\n");
+        result.ShouldContain("export SquidHome=");
+        result.ShouldContain("echo hello");
+    }
+
+    [Fact]
+    public void BootstrapIfBash_PowerShellSyntax_ReturnsOriginalBody()
+    {
+        var request = MakeRequest(scriptBody: "Get-Process", syntax: ScriptSyntax.PowerShell);
+
+        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+
+        result.ShouldBe("Get-Process");
+        result.ShouldNotContain("#!/bin/bash");
+    }
+
+    [Fact]
+    public void BootstrapIfBash_PythonSyntax_ReturnsOriginalBody()
+    {
+        var request = MakeRequest(scriptBody: "print('hello')", syntax: ScriptSyntax.Python);
+
+        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+
+        result.ShouldBe("print('hello')");
+        result.ShouldNotContain("#!/bin/bash");
+    }
+
+    [Fact]
+    public void BootstrapIfBash_NullScriptBody_ReturnsEmpty()
+    {
+        var request = MakeRequest(syntax: ScriptSyntax.PowerShell);
+        request.ScriptBody = null;
+
+        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+
+        result.ShouldBe(string.Empty);
+    }
+
+    // ========== RetentionKeepCount ==========
+
+    [Fact]
+    public void RetentionKeepCount_IsReasonable()
+    {
+        SshExecutionStrategy.RetentionKeepCount.ShouldBe(10);
     }
 }

@@ -20,6 +20,13 @@ public class RegisterSshCommand : ICommand, ISpaceScoped
     public string Fingerprint { get; set; }
     public string RemoteWorkingDirectory { get; set; }
 
+    // Proxy
+    public SshProxyType ProxyType { get; set; }
+    public string ProxyHost { get; set; }
+    public int ProxyPort { get; set; }
+    public string ProxyUsername { get; set; }
+    public string ProxyPassword { get; set; }
+
     // Resources — must contain one AuthenticationAccount reference (SshKeyPair or UsernamePassword)
     public List<EndpointResourceReference> ResourceReferences { get; set; }
 }

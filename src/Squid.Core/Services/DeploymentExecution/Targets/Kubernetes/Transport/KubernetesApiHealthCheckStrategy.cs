@@ -24,7 +24,7 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
         _scriptRunner = scriptRunner;
     }
 
-    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct, MachineHealthCheckPolicyDto healthCheckPolicy = null)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<KubernetesApiEndpointDto>(machine.Endpoint);
 

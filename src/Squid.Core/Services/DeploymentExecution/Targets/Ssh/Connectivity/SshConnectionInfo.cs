@@ -1,3 +1,5 @@
+using Squid.Message.Enums;
+
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
 public record SshConnectionInfo(
@@ -8,4 +10,9 @@ public record SshConnectionInfo(
     string Passphrase,
     string Password,
     string ExpectedFingerprint,
-    TimeSpan ConnectTimeout);
+    TimeSpan ConnectTimeout,
+    SshProxyType ProxyType = SshProxyType.None,
+    string ProxyHost = null,
+    int ProxyPort = 0,
+    string ProxyUsername = null,
+    string ProxyPassword = null);

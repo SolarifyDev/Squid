@@ -1,6 +1,7 @@
 using System.Text;
 using Renci.SshNet;
 using Serilog;
+using Squid.Message.Enums;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
@@ -26,12 +27,33 @@ public class SshConnectionFactory : ISshConnectionFactory
         if (authMethods.Count == 0)
             throw new InvalidOperationException("No SSH authentication method available — provide either a private key or a password");
 
-        var connectionInfo = new ConnectionInfo(info.Host, info.Port, info.Username, authMethods.ToArray())
-        {
-            Timeout = info.ConnectTimeout > TimeSpan.Zero ? info.ConnectTimeout : TimeSpan.FromSeconds(30)
-        };
+        var timeout = info.ConnectTimeout > TimeSpan.Zero ? info.ConnectTimeout : TimeSpan.FromSeconds(30);
 
-        return connectionInfo;
+        var proxyType = MapProxyType(info.ProxyType);
+
+        if (proxyType != ProxyTypes.None && !string.IsNullOrEmpty(info.ProxyHost))
+        {
+            return new ConnectionInfo(info.Host, info.Port, info.Username, proxyType, info.ProxyHost, info.ProxyPort, info.ProxyUsername, info.ProxyPassword, authMethods.ToArray())
+            {
+                Timeout = timeout
+            };
+        }
+
+        return new ConnectionInfo(info.Host, info.Port, info.Username, authMethods.ToArray())
+        {
+            Timeout = timeout
+        };
+    }
+
+    internal static ProxyTypes MapProxyType(SshProxyType proxyType)
+    {
+        return proxyType switch
+        {
+            SshProxyType.Http => ProxyTypes.Http,
+            SshProxyType.Socks4 => ProxyTypes.Socks4,
+            SshProxyType.Socks5 => ProxyTypes.Socks5,
+            _ => ProxyTypes.None
+        };
     }
 
     private static List<AuthenticationMethod> BuildAuthMethods(SshConnectionInfo info)

@@ -9,7 +9,7 @@ public class SshConnectionScope : ISshConnectionScope
     private readonly Renci.SshNet.ConnectionInfo _connectionInfo;
     private readonly string _expectedFingerprint;
 
-    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(30);
 
     private SshClient _sshClient;
     private SftpClient _sftpClient;

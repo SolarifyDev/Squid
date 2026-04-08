@@ -32,6 +32,11 @@ public partial class MachineRegistrationService
             Port = command.Port > 0 ? command.Port : 22,
             Fingerprint = command.Fingerprint,
             RemoteWorkingDirectory = command.RemoteWorkingDirectory,
+            ProxyType = command.ProxyType,
+            ProxyHost = command.ProxyHost,
+            ProxyPort = command.ProxyPort,
+            ProxyUsername = command.ProxyUsername,
+            ProxyPassword = command.ProxyPassword,
             ResourceReferences = command.ResourceReferences
         });
     }

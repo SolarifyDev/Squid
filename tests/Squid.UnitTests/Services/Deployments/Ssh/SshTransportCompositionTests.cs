@@ -12,7 +12,7 @@ public class SshTransportCompositionTests
     {
         var variables = new SshEndpointVariableContributor();
         var wrapper = new SshScriptContextWrapper();
-        var strategy = new SshExecutionStrategy(Mock.Of<ISshConnectionFactory>());
+        var strategy = new SshExecutionStrategy(Mock.Of<ISshConnectionFactory>(), Mock.Of<ISshExecutionMutex>());
         var healthChecker = new SshHealthCheckStrategy(Mock.Of<IEndpointContextBuilder>(), Mock.Of<ISshConnectionFactory>());
 
         var transport = new SshTransport(variables, wrapper, strategy, healthChecker);

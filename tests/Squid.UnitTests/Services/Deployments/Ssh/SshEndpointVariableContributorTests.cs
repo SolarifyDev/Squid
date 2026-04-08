@@ -220,28 +220,28 @@ public class SshEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_SshKeyPair_TotalCount()
     {
-        // 4 endpoint (Host, Port, Fingerprint, RemoteWorkingDirectory) + 2 account meta (AccountType, CredentialsJson) + 3 SSH creds (Username, PrivateKey, Passphrase) = 9
+        // 10 endpoint (Machine.Hostname, Host, Port, Fingerprint, RemoteWorkingDirectory, ProxyType, ProxyHost, ProxyPort, ProxyUsername, ProxyPassword) + 2 account meta (AccountType, CredentialsJson) + 3 SSH creds (Username, PrivateKey, Passphrase) = 15
         var vars = _contributor.ContributeVariables(SshKeyPairContext());
 
-        vars.Count.ShouldBe(9);
+        vars.Count.ShouldBe(15);
     }
 
     [Fact]
     public void ContributeVariables_UsernamePassword_TotalCount()
     {
-        // 4 endpoint + 2 account meta + 2 creds (Username, Password) = 8
+        // 10 endpoint + 2 account meta + 2 creds (Username, Password) = 14
         var vars = _contributor.ContributeVariables(UsernamePasswordContext());
 
-        vars.Count.ShouldBe(8);
+        vars.Count.ShouldBe(14);
     }
 
     [Fact]
     public void ContributeVariables_NoAccount_TotalCount()
     {
-        // 4 endpoint only
+        // 10 endpoint only
         var vars = _contributor.ContributeVariables(NoAccountContext());
 
-        vars.Count.ShouldBe(4);
+        vars.Count.ShouldBe(10);
     }
 
     // ========================================================================

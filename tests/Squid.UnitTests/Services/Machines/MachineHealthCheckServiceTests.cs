@@ -32,7 +32,7 @@ public class MachineHealthCheckServiceTests
         _transport.Setup(t => t.HealthChecker).Returns(_healthChecker.Object);
         _transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
-        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(new HealthCheckResult(true, "ok"));
         _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object);
     }
@@ -49,7 +49,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.ManualHealthCheckAsync(machine.Id);
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class MachineHealthCheckServiceTests
     [Fact]
     public async Task RunHealthCheck_UnhealthyResult_RecordsUnavailable()
     {
-        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(new HealthCheckResult(false, "connection refused"));
 
         var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
@@ -112,7 +112,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.ManualHealthCheckAsync(1);
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Never);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Never);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Never);
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
     }
 
     [Theory]
@@ -187,7 +187,7 @@ public class MachineHealthCheckServiceTests
         await _service.AutoHealthCheckForAllAsync();
 
         var expected = shouldExecute ? Times.Once() : Times.Never();
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), expected);
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), expected);
     }
 
     [Fact]
@@ -350,14 +350,14 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        _healthChecker.Verify(h => h.CheckHealthAsync(machine, It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
     }
 
     [Fact]
     public async Task RunHealthCheckForAll_UnhealthyResult_RecordsUnavailable()
     {
-        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(new HealthCheckResult(false, "ClusterUrl is empty"));
 
         var machine = CreateActiveMachine(machinePolicyId: 1);
@@ -401,7 +401,7 @@ public class MachineHealthCheckServiceTests
         SetupMachineList(machine1, machine2);
 
         var callCount = 0;
-        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
@@ -429,7 +429,7 @@ public class MachineHealthCheckServiceTests
 
         await _service.AutoHealthCheckForAllAsync();
 
-        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _healthChecker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Exactly(2));
     }
 
     // ========================================================================

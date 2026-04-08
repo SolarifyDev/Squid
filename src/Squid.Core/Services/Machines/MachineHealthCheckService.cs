@@ -55,8 +55,9 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         }
 
         var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+        var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
 
-        await RunAndRecordAsync(machine, transport, connectivityPolicy, cancellationToken).ConfigureAwait(false);
+        await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
@@ -89,7 +90,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
                 var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
 
-                await RunAndRecordAsync(machine, transport, connectivityPolicy, cancellationToken).ConfigureAwait(false);
+                await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
                 checkedCount++;
             }
             catch (Exception ex)
@@ -107,11 +108,11 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     // Core — single entry point, strategy decides how
     // ========================================================================
 
-    private async Task RunAndRecordAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken cancellationToken)
+    private async Task RunAndRecordAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken cancellationToken)
     {
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
-        var result = await transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, cancellationToken).ConfigureAwait(false);
+        var result = await transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, cancellationToken, healthCheckPolicy).ConfigureAwait(false);
         var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);

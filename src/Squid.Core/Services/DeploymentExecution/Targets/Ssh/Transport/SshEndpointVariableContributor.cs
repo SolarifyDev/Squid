@@ -31,10 +31,16 @@ public class SshEndpointVariableContributor : IEndpointVariableContributor
 
         var vars = new List<VariableDto>
         {
+            EndpointVariableFactory.Make(SpecialVariables.Machine.Hostname, endpoint.Host ?? string.Empty),
             EndpointVariableFactory.Make(SpecialVariables.Ssh.Host, endpoint.Host ?? string.Empty),
             EndpointVariableFactory.Make(SpecialVariables.Ssh.Port, endpoint.Port.ToString()),
             EndpointVariableFactory.Make(SpecialVariables.Ssh.Fingerprint, endpoint.Fingerprint ?? string.Empty),
-            EndpointVariableFactory.Make(SpecialVariables.Ssh.RemoteWorkingDirectory, endpoint.RemoteWorkingDirectory ?? string.Empty)
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.RemoteWorkingDirectory, endpoint.RemoteWorkingDirectory ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyType, endpoint.ProxyType.ToString()),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyHost, endpoint.ProxyHost ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyPort, endpoint.ProxyPort.ToString()),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyUsername, endpoint.ProxyUsername ?? string.Empty),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyPassword, endpoint.ProxyPassword ?? string.Empty, isSensitive: true)
         };
 
         if (accountData != null)

@@ -135,6 +135,7 @@ public static class SpecialVariables
         public const string Id = "Squid.Machine.Id";
         public const string Name = "Squid.Machine.Name";
         public const string Roles = "Squid.Machine.Roles";
+        public const string Hostname = "Squid.Machine.Hostname";
     }
 
     public static class Account
@@ -190,6 +191,11 @@ public static class SpecialVariables
         public const string Port = "Squid.Action.Ssh.Port";
         public const string Fingerprint = "Squid.Action.Ssh.Fingerprint";
         public const string RemoteWorkingDirectory = "Squid.Action.Ssh.RemoteWorkingDirectory";
+        public const string ProxyType = "Squid.Action.Ssh.ProxyType";
+        public const string ProxyHost = "Squid.Action.Ssh.ProxyHost";
+        public const string ProxyPort = "Squid.Action.Ssh.ProxyPort";
+        public const string ProxyUsername = "Squid.Action.Ssh.ProxyUsername";
+        public const string ProxyPassword = "Squid.Action.Ssh.ProxyPassword";
     }
 
     public static class OpenClaw

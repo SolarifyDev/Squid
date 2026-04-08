@@ -1,5 +1,7 @@
 using System.Linq;
+using Renci.SshNet;
 using Squid.Core.Services.DeploymentExecution.Ssh;
+using Squid.Message.Enums;
 
 namespace Squid.UnitTests.Services.Deployments.Ssh;
 
@@ -183,6 +185,43 @@ public class SshConnectionFactoryTests
         var normalized = SshConnectionFactory.NormalizePem(mangled);
 
         ExtractBase64Body(normalized).ShouldBe(ExtractBase64Body(key));
+    }
+
+    // ========================================================================
+    // MapProxyType
+    // ========================================================================
+
+    [Theory]
+    [InlineData(SshProxyType.None, ProxyTypes.None)]
+    [InlineData(SshProxyType.Http, ProxyTypes.Http)]
+    [InlineData(SshProxyType.Socks4, ProxyTypes.Socks4)]
+    [InlineData(SshProxyType.Socks5, ProxyTypes.Socks5)]
+    public void MapProxyType_MapsCorrectly(SshProxyType input, ProxyTypes expected)
+    {
+        SshConnectionFactory.MapProxyType(input).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void CreateScope_WithProxy_ReturnsScope()
+    {
+        var info = new SshConnectionInfo("host", 22, "user", null, null, "pass", null, TimeSpan.FromSeconds(10), SshProxyType.Http, "proxy.example.com", 8080, "proxyuser", "proxypass");
+
+        var scope = _factory.CreateScope(info);
+
+        scope.ShouldNotBeNull();
+        scope.Dispose();
+    }
+
+    [Fact]
+    public void CreateScope_WithProxyNoHost_NoProxy()
+    {
+        // ProxyType set but no ProxyHost — should not use proxy (fallback to direct)
+        var info = new SshConnectionInfo("host", 22, "user", null, null, "pass", null, TimeSpan.FromSeconds(10), SshProxyType.Http, null, 8080);
+
+        var scope = _factory.CreateScope(info);
+
+        scope.ShouldNotBeNull();
+        scope.Dispose();
     }
 
     // ========================================================================

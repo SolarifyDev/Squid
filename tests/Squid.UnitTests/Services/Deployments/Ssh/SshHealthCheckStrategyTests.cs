@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Deployments.Ssh;
@@ -142,5 +143,95 @@ public class SshHealthCheckStrategyTests
 
         capturedInfo.ShouldNotBeNull();
         capturedInfo.ConnectTimeout.ShouldBe(TimeSpan.FromSeconds(SshHealthCheckStrategy.DefaultConnectTimeoutSeconds));
+    }
+
+    // ========================================================================
+    // ResolveCustomScript
+    // ========================================================================
+
+    [Fact]
+    public void ResolveCustomScript_NullPolicy_ReturnsNull()
+    {
+        SshHealthCheckStrategy.ResolveCustomScript(null).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveCustomScript_OnlyConnectivity_ReturnsNull()
+    {
+        var policy = new MachineHealthCheckPolicyDto { HealthCheckType = PolicyHealthCheckType.OnlyConnectivity };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveCustomScript_RunScript_NullScriptPolicies_ReturnsNull()
+    {
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckType = PolicyHealthCheckType.RunScript,
+            ScriptPolicies = null
+        };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveCustomScript_RunScript_NoBashKey_ReturnsNull()
+    {
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckType = PolicyHealthCheckType.RunScript,
+            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
+            {
+                ["PowerShell"] = new() { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "Get-Process" }
+            }
+        };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveCustomScript_RunScript_BashCustomScript_ReturnsBody()
+    {
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckType = PolicyHealthCheckType.RunScript,
+            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
+            {
+                ["Bash"] = new() { RunType = ScriptPolicyRunType.CustomScript, ScriptBody = "echo healthy" }
+            }
+        };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBe("echo healthy");
+    }
+
+    [Fact]
+    public void ResolveCustomScript_RunScript_BashInheritFromDefault_ReturnsNull()
+    {
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckType = PolicyHealthCheckType.RunScript,
+            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
+            {
+                ["Bash"] = new() { RunType = ScriptPolicyRunType.InheritFromDefault, ScriptBody = "echo test" }
+            }
+        };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ResolveCustomScript_RunScript_NullBashPolicy_ReturnsNull()
+    {
+        var policy = new MachineHealthCheckPolicyDto
+        {
+            HealthCheckType = PolicyHealthCheckType.RunScript,
+            ScriptPolicies = new Dictionary<string, MachineScriptPolicyDto>
+            {
+                ["Bash"] = null
+            }
+        };
+
+        SshHealthCheckStrategy.ResolveCustomScript(policy).ShouldBeNull();
     }
 }

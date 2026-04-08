@@ -1,4 +1,5 @@
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Serilog;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
@@ -35,6 +36,10 @@ public static class SshRemoteShellExecutor
         while (!asyncResult.IsCompleted)
         {
             ct.ThrowIfCancellationRequested();
+
+            if (!client.IsConnected)
+                throw new SshConnectionException("Connection to the target has been lost while executing command");
+
             await Task.Delay(PollInterval, ct).ConfigureAwait(false);
         }
 
