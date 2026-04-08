@@ -85,7 +85,7 @@ public class KubernetesDeployYamlActionHandlerTests
 
         var fetcherMock = new Mock<IPackageContentFetcher>();
         fetcherMock.Setup(f => f.FetchAsync(It.IsAny<ExternalFeed>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PackageFetchResult(fetchedFiles ?? new Dictionary<string, byte[]>(), fetcherWarnings ?? new List<string>()));
+            .ReturnsAsync(new PackageFetchResult(fetchedFiles ?? new Dictionary<string, byte[]>(), fetcherWarnings ?? new List<string>(), Array.Empty<byte>()));
 
         return new KubernetesDeployYamlActionHandler(feedMock.Object, fetcherMock.Object);
     }
@@ -464,7 +464,7 @@ public class KubernetesDeployYamlActionHandlerTests
         feedMock.Setup(f => f.GetFeedByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(feed);
         var files = new Dictionary<string, byte[]> { ["deploy.yaml"] = Encoding.UTF8.GetBytes("v1") };
         fetcherMock.Setup(f => f.FetchAsync(feed, "my-pkg", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PackageFetchResult(files, new List<string>()));
+            .ReturnsAsync(new PackageFetchResult(files, new List<string>(), Array.Empty<byte>()));
 
         var action = CreateAction(syntax: "Bash", feedId: "5", packageId: "my-pkg");
         var ctx = CreateContext(action);
@@ -504,7 +504,7 @@ public class KubernetesDeployYamlActionHandlerTests
         feedMock.Setup(f => f.GetFeedByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(feed);
         var files = new Dictionary<string, byte[]> { ["deploy.yaml"] = Encoding.UTF8.GetBytes("v1") };
         fetcherMock.Setup(f => f.FetchAsync(feed, "my-pkg", "3.2.1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PackageFetchResult(files, new List<string>()));
+            .ReturnsAsync(new PackageFetchResult(files, new List<string>(), Array.Empty<byte>()));
 
         var action = CreateAction(syntax: "Bash", feedId: "1", packageId: "my-pkg");
         var selectedPackages = new List<SelectedPackageDto>
@@ -526,7 +526,7 @@ public class KubernetesDeployYamlActionHandlerTests
         feedMock.Setup(f => f.GetFeedByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(feed);
         var files = new Dictionary<string, byte[]> { ["deploy.yaml"] = Encoding.UTF8.GetBytes("v1") };
         fetcherMock.Setup(f => f.FetchAsync(feed, "my-pkg", "2.0.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PackageFetchResult(files, new List<string>()));
+            .ReturnsAsync(new PackageFetchResult(files, new List<string>(), Encoding.UTF8.GetBytes("v1")));
 
         var action = CreateAction(syntax: "Bash", feedId: "1", packageId: "my-pkg");
         var variables = new List<VariableDto>
@@ -548,7 +548,7 @@ public class KubernetesDeployYamlActionHandlerTests
         feedMock.Setup(f => f.GetFeedByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(feed);
         var files = new Dictionary<string, byte[]> { ["deploy.yaml"] = Encoding.UTF8.GetBytes("v1") };
         fetcherMock.Setup(f => f.FetchAsync(feed, "my-pkg", string.Empty, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PackageFetchResult(files, new List<string>()));
+            .ReturnsAsync(new PackageFetchResult(files, new List<string>(), Encoding.UTF8.GetBytes("v1")));
 
         var action = CreateAction(syntax: "Bash", feedId: "1", packageId: "my-pkg");
         var ctx = CreateContext(action);

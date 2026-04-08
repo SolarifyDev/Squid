@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -7,11 +8,20 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
-public sealed partial class ExecuteStepsPhase(IActionHandlerRegistry actionHandlerRegistry, IDeploymentLifecycle lifecycle, IDeploymentInterruptionService interruptionService, IDeploymentCheckpointService checkpointService, IServerTaskService serverTaskService, ITransportRegistry transportRegistry) : IDeploymentPipelinePhase
+public sealed partial class ExecuteStepsPhase(
+    IActionHandlerRegistry actionHandlerRegistry,
+    IDeploymentLifecycle lifecycle,
+    IDeploymentInterruptionService interruptionService,
+    IDeploymentCheckpointService checkpointService,
+    IServerTaskService serverTaskService,
+    ITransportRegistry transportRegistry,
+    IExternalFeedDataProvider externalFeedDataProvider,
+    IPackageAcquisitionService packageAcquisitionService) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 

@@ -36,20 +36,20 @@ public class HttpPackageContentFetcher : IPackageContentFetcher
             if (!response.IsSuccessStatusCode)
             {
                 warnings.Add($"Package download failed: HTTP {(int)response.StatusCode} from {url}");
-                return new PackageFetchResult(new Dictionary<string, byte[]>(), warnings);
+                return new PackageFetchResult(new Dictionary<string, byte[]>(), warnings, Array.Empty<byte>());
             }
 
             var archiveBytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             var files = ExtractArchive(archiveBytes);
 
             Log.Information("[Deploy] Extracted {FileCount} files from package", files.Count);
-            return new PackageFetchResult(files, warnings);
+            return new PackageFetchResult(files, warnings, archiveBytes);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "[Deploy] Failed to fetch package {PackageId} v{Version} from feed {FeedId}", packageId, version, feed.Id);
             warnings.Add($"Package fetch failed: {ex.Message}");
-            return new PackageFetchResult(new Dictionary<string, byte[]>(), warnings);
+            return new PackageFetchResult(new Dictionary<string, byte[]>(), warnings, Array.Empty<byte>());
         }
     }
 

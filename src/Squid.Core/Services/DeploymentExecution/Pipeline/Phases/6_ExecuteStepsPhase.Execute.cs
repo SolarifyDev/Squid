@@ -366,7 +366,56 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task AcquirePackagesAsync(int stepSortOrder, CancellationToken ct)
     {
-        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, SelectedPackages = _ctx.SelectedPackages }), ct).ConfigureAwait(false);
+        var packages = _ctx.SelectedPackages ?? [];
+        if (packages.Count == 0)
+        {
+            Log.Information("[Deploy] No packages selected for acquisition");
+            return;
+        }
+
+        var feedIds = packages.Select(p => p.FeedId).Distinct().ToList();
+        var feeds = await externalFeedDataProvider.GetExternalFeedsByIdsAsync(feedIds, ct).ConfigureAwait(false);
+        var feedById = feeds.ToDictionary(f => f.Id);
+
+        var totalSize = 0L;
+        var packageCount = packages.Count;
+
+        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, SelectedPackages = packages, PackageCount = packageCount, PackageTotalSizeBytes = 0 }), ct).ConfigureAwait(false);
+
+        for (var i = 0; i < packages.Count; i++)
+        {
+            var pkg = packages[i];
+
+            if (!feedById.TryGetValue(pkg.FeedId, out var feed))
+            {
+                Log.Error("[Deploy] Feed {FeedId} not found for package {PackageId} v{Version}", pkg.FeedId, pkg.PackageReferenceName, pkg.Version);
+                await lifecycle.EmitAsync(new PackageDownloadFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, PackageIndex = i, PackageCount = packageCount, PackageId = pkg.PackageReferenceName, PackageVersion = pkg.Version, PackageFeedId = pkg.FeedId, PackageError = $"Feed {pkg.FeedId} not found" }), ct).ConfigureAwait(false);
+                continue;
+            }
+
+            var fetchCtx = new DeploymentEventContext { StepDisplayOrder = stepSortOrder, PackageIndex = i, PackageCount = packageCount, PackageId = pkg.PackageReferenceName, PackageVersion = pkg.Version, PackageFeedId = pkg.FeedId };
+
+            await lifecycle.EmitAsync(new PackageDownloadingEvent(fetchCtx), ct).ConfigureAwait(false);
+
+            try
+            {
+                var result = await packageAcquisitionService.AcquireAsync(feed, pkg.PackageReferenceName, pkg.Version, _ctx.Deployment.Id, ct).ConfigureAwait(false);
+
+                _ctx.AcquiredPackages[pkg.PackageReferenceName] = result;
+                totalSize += result.SizeBytes;
+
+                var downloadedCtx = new DeploymentEventContext { StepDisplayOrder = fetchCtx.StepDisplayOrder, PackageIndex = fetchCtx.PackageIndex, PackageCount = fetchCtx.PackageCount, PackageId = fetchCtx.PackageId, PackageVersion = fetchCtx.PackageVersion, PackageFeedId = fetchCtx.PackageFeedId, PackageSizeBytes = result.SizeBytes, PackageHash = result.Hash, PackageLocalPath = result.LocalPath };
+                await lifecycle.EmitAsync(new PackageDownloadedEvent(downloadedCtx), ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[Deploy] Failed to acquire package {PackageId} v{Version}", pkg.PackageReferenceName, pkg.Version);
+                var failedCtx = new DeploymentEventContext { StepDisplayOrder = fetchCtx.StepDisplayOrder, PackageIndex = fetchCtx.PackageIndex, PackageCount = fetchCtx.PackageCount, PackageId = fetchCtx.PackageId, PackageVersion = fetchCtx.PackageVersion, PackageFeedId = fetchCtx.PackageFeedId, PackageError = ex.Message };
+                await lifecycle.EmitAsync(new PackageDownloadFailedEvent(failedCtx), ct).ConfigureAwait(false);
+            }
+        }
+
+        await lifecycle.EmitAsync(new PackagesAcquiredEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, SelectedPackages = packages, PackageCount = packageCount, PackageTotalSizeBytes = totalSize }), ct).ConfigureAwait(false);
     }
 
     private static bool IsSyntheticStep(DeploymentStepDto step)

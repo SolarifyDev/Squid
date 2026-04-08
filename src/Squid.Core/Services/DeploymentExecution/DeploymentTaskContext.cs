@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -32,6 +33,7 @@ public class DeploymentTaskContext
     // Execution
     public List<DeploymentStepDto> Steps { get; set; }
     public List<ReleaseSelectedPackage> SelectedPackages { get; set; } = new();
+    public Dictionary<string, PackageAcquisitionResult> AcquiredPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
     public bool UseGuidedFailure { get; set; }
 
