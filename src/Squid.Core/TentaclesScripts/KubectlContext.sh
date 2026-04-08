@@ -173,10 +173,15 @@ case "$ACCOUNT_TYPE" in
             || { echo "ERROR: az login failed" >&2; exit 1; }
         az account set --subscription "$(b64d '{{AzureSubscriptionId}}')" \
             || { echo "ERROR: az account set failed" >&2; exit 1; }
+        AKS_ADMIN_FLAG=""
+        if [ "$(b64d '{{AksUseAdminCredentials}}')" = "True" ]; then
+            AKS_ADMIN_FLAG="--admin"
+        fi
         az aks get-credentials \
             --resource-group "$(b64d '{{AksClusterResourceGroup}}')" \
             --name "$(b64d '{{AksClusterName}}')" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
+            $AKS_ADMIN_FLAG \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
         if command -v kubelogin &>/dev/null; then
             kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG_PATH" \
@@ -192,10 +197,15 @@ case "$ACCOUNT_TYPE" in
             || { echo "ERROR: az login (OIDC) failed" >&2; exit 1; }
         az account set --subscription "$(b64d '{{AzureSubscriptionId}}')" \
             || { echo "ERROR: az account set failed" >&2; exit 1; }
+        AKS_ADMIN_FLAG=""
+        if [ "$(b64d '{{AksUseAdminCredentials}}')" = "True" ]; then
+            AKS_ADMIN_FLAG="--admin"
+        fi
         az aks get-credentials \
             --resource-group "$(b64d '{{AksClusterResourceGroup}}')" \
             --name "$(b64d '{{AksClusterName}}')" \
             --file "$KUBECONFIG_PATH" --overwrite-existing \
+            $AKS_ADMIN_FLAG \
             || { echo "ERROR: az aks get-credentials failed" >&2; exit 1; }
         if command -v kubelogin &>/dev/null; then
             kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG_PATH" \

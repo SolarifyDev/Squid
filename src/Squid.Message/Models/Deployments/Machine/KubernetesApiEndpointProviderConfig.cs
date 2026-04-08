@@ -14,6 +14,7 @@ public class KubernetesApiAzureAksConfig
 {
     public string ClusterName { get; set; }
     public string ResourceGroup { get; set; }
+    public bool UseAdminCredentials { get; set; }
 }
 
 public class KubernetesApiGcpGkeConfig

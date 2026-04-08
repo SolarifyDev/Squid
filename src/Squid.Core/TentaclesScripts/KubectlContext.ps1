@@ -157,7 +157,12 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "az login failed" }
             & az account set --subscription (B64D "{{AzureSubscriptionId}}")
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
-            & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
+            $aksAdminFlag = if ((B64D "{{AksUseAdminCredentials}}") -eq "True") { "--admin" } else { "" }
+            if ($aksAdminFlag) {
+                & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing $aksAdminFlag
+            } else {
+                & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
+            }
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
             $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
             if ($kubeloginPath) {
@@ -176,7 +181,12 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "az login (OIDC) failed" }
             & az account set --subscription (B64D "{{AzureSubscriptionId}}")
             if ($LASTEXITCODE -ne 0) { throw "az account set failed" }
-            & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
+            $aksAdminFlag = if ((B64D "{{AksUseAdminCredentials}}") -eq "True") { "--admin" } else { "" }
+            if ($aksAdminFlag) {
+                & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing $aksAdminFlag
+            } else {
+                & az aks get-credentials --resource-group (B64D "{{AksClusterResourceGroup}}") --name (B64D "{{AksClusterName}}") --file $kubeconfigPath --overwrite-existing
+            }
             if ($LASTEXITCODE -ne 0) { throw "az aks get-credentials failed" }
             $kubeloginPath = Get-Command kubelogin -ErrorAction SilentlyContinue
             if ($kubeloginPath) {
