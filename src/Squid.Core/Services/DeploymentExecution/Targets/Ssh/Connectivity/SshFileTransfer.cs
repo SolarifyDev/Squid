@@ -79,21 +79,44 @@ public static class SshFileTransfer
     {
         if (string.IsNullOrEmpty(remotePath)) return;
 
-        var parts = remotePath.Split('/');
-        var current = string.Empty;
+        foreach (var path in GetDirectoryCreationPaths(remotePath))
+        {
+            if (!DirectoryExists(client, path))
+            {
+                client.CreateDirectory(path);
+                Log.Debug("[SSH] Created remote directory: {Path}", path);
+            }
+        }
+    }
+
+    internal static IReadOnlyList<string> GetDirectoryCreationPaths(string remotePath)
+    {
+        if (string.IsNullOrWhiteSpace(remotePath))
+            return Array.Empty<string>();
+
+        var normalizedPath = remotePath.Replace('\\', '/');
+        var isAbsolute = normalizedPath.StartsWith("/", StringComparison.Ordinal);
+        var parts = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+            return Array.Empty<string>();
+
+        var paths = new List<string>(parts.Length);
+        var current = isAbsolute ? "/" : string.Empty;
 
         foreach (var part in parts)
         {
-            if (string.IsNullOrEmpty(part)) continue;
-
-            current = string.IsNullOrEmpty(current) ? part : $"{current}/{part}";
-
-            if (!DirectoryExists(client, current))
+            current = current switch
             {
-                client.CreateDirectory(current);
-                Log.Debug("[SSH] Created remote directory: {Path}", current);
-            }
+                "/" => $"/{part}",
+                "" => part,
+                _ => $"{current}/{part}"
+            };
+
+            paths.Add(current);
         }
+
+        return paths;
     }
 
     private static void EnsureParentDirectoryExists(SftpClient client, string remotePath)

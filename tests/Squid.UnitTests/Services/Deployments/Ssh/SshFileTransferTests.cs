@@ -40,4 +40,38 @@ public class SshFileTransferTests
         hash.ShouldBe(hash.ToLowerInvariant());
         hash.Length.ShouldBe(32);
     }
+
+    [Fact]
+    public void GetDirectoryCreationPaths_AbsoluteUnixPath_PreservesLeadingSlash()
+    {
+        var result = SshFileTransfer.GetDirectoryCreationPaths("/Users/mars/.squid/Work/274");
+
+        result.ShouldBe(new[]
+        {
+            "/Users",
+            "/Users/mars",
+            "/Users/mars/.squid",
+            "/Users/mars/.squid/Work",
+            "/Users/mars/.squid/Work/274"
+        });
+    }
+
+    [Fact]
+    public void GetDirectoryCreationPaths_RelativePath_RemainsRelative()
+    {
+        var result = SshFileTransfer.GetDirectoryCreationPaths(".squid/Work/274");
+
+        result.ShouldBe(new[]
+        {
+            ".squid",
+            ".squid/Work",
+            ".squid/Work/274"
+        });
+    }
+
+    [Fact]
+    public void GetDirectoryCreationPaths_EmptyPath_ReturnsEmpty()
+    {
+        SshFileTransfer.GetDirectoryCreationPaths(string.Empty).ShouldBeEmpty();
+    }
 }

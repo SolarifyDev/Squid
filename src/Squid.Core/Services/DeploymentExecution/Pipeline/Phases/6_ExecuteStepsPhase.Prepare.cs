@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Execution;
@@ -138,6 +139,8 @@ public sealed partial class ExecuteStepsPhase
         var resolvedContextPreparationPolicy = ResolveContextPreparationPolicy(actionResult, tc);
         var masker = BuildSensitiveMasker(effectiveVariables);
 
+        var packageReferences = BuildPackageReferences(actionResult.ActionName);
+
         return new ScriptExecutionRequest
         {
             ScriptBody = actionResult.ScriptBody,
@@ -162,8 +165,25 @@ public sealed partial class ExecuteStepsPhase
             TargetNamespace = ResolveTargetNamespace(effectiveVariables),
             ServerTaskId = _ctx.ServerTaskId,
             StepName = step.Name,
-            ActionName = actionResult.ActionName
+            ActionName = actionResult.ActionName,
+            PackageReferences = packageReferences
         };
+    }
+
+    private List<PackageAcquisitionResult> BuildPackageReferences(string? actionName)
+    {
+        if (string.IsNullOrEmpty(actionName) || _ctx.SelectedPackages.Count == 0)
+            return new List<PackageAcquisitionResult>();
+
+        var names = _ctx.SelectedPackages
+            .Where(p => string.Equals(p.ActionName, actionName, StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.PackageReferenceName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return _ctx.AcquiredPackages
+            .Where(kv => names.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .ToList();
     }
 
     private static string? ResolveTargetNamespace(List<VariableDto> variables)
