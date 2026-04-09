@@ -196,6 +196,7 @@ public static class SpecialVariables
         public const string ProxyPort = "Squid.Action.Ssh.ProxyPort";
         public const string ProxyUsername = "Squid.Action.Ssh.ProxyUsername";
         public const string ProxyPassword = "Squid.Action.Ssh.ProxyPassword";
+        public const string PackageBaseDirectory = "Squid.Action.Ssh.PackageBaseDirectory";
     }
 
     public static class OpenClaw

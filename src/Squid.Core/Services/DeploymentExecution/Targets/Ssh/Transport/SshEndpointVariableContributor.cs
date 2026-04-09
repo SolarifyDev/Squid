@@ -40,7 +40,8 @@ public class SshEndpointVariableContributor : IEndpointVariableContributor
             EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyHost, endpoint.ProxyHost ?? string.Empty),
             EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyPort, endpoint.ProxyPort.ToString()),
             EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyUsername, endpoint.ProxyUsername ?? string.Empty),
-            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyPassword, endpoint.ProxyPassword ?? string.Empty, isSensitive: true)
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.ProxyPassword, endpoint.ProxyPassword ?? string.Empty, isSensitive: true),
+            EndpointVariableFactory.Make(SpecialVariables.Ssh.PackageBaseDirectory, PackageBaseDirectory(endpoint.RemoteWorkingDirectory))
         };
 
         if (accountData != null)
@@ -51,5 +52,13 @@ public class SshEndpointVariableContributor : IEndpointVariableContributor
         }
 
         return vars;
+    }
+
+    private static string PackageBaseDirectory(string remoteWorkingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(remoteWorkingDirectory))
+            return "~/.squid/Packages";
+
+        return $"{remoteWorkingDirectory.TrimEnd('/')}/Packages";
     }
 }

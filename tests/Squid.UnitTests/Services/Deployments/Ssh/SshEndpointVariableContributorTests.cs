@@ -220,28 +220,28 @@ public class SshEndpointVariableContributorTests
     [Fact]
     public void ContributeVariables_SshKeyPair_TotalCount()
     {
-        // 10 endpoint (Machine.Hostname, Host, Port, Fingerprint, RemoteWorkingDirectory, ProxyType, ProxyHost, ProxyPort, ProxyUsername, ProxyPassword) + 2 account meta (AccountType, CredentialsJson) + 3 SSH creds (Username, PrivateKey, Passphrase) = 15
+        // 11 endpoint (Machine.Hostname, Host, Port, Fingerprint, RemoteWorkingDirectory, PackageBaseDirectory, ProxyType, ProxyHost, ProxyPort, ProxyUsername, ProxyPassword) + 2 account meta (AccountType, CredentialsJson) + 3 SSH creds (Username, PrivateKey, Passphrase) = 16
         var vars = _contributor.ContributeVariables(SshKeyPairContext());
 
-        vars.Count.ShouldBe(15);
+        vars.Count.ShouldBe(16);
     }
 
     [Fact]
     public void ContributeVariables_UsernamePassword_TotalCount()
     {
-        // 10 endpoint + 2 account meta + 2 creds (Username, Password) = 14
+        // 11 endpoint + 2 account meta + 2 creds (Username, Password) = 15
         var vars = _contributor.ContributeVariables(UsernamePasswordContext());
 
-        vars.Count.ShouldBe(14);
+        vars.Count.ShouldBe(15);
     }
 
     [Fact]
     public void ContributeVariables_NoAccount_TotalCount()
     {
-        // 10 endpoint only
+        // 11 endpoint only
         var vars = _contributor.ContributeVariables(NoAccountContext());
 
-        vars.Count.ShouldBe(10);
+        vars.Count.ShouldBe(11);
     }
 
     // ========================================================================
@@ -257,7 +257,42 @@ public class SshEndpointVariableContributorTests
         vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.Port);
         vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.Fingerprint);
         vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.RemoteWorkingDirectory);
+        vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.PackageBaseDirectory);
         vars.ShouldNotContain(v => v.Name == SpecialVariables.Account.AccountType);
+    }
+
+    // ========================================================================
+    // ContributeVariables — PackageBaseDirectory
+    // ========================================================================
+
+    [Fact]
+    public void ContributeVariables_DefaultRemoteWorkDir_ContributesDefaultPackageBase()
+    {
+        var vars = _contributor.ContributeVariables(NoAccountContext());
+
+        vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.PackageBaseDirectory && v.Value == "~/.squid/Packages");
+    }
+
+    [Fact]
+    public void ContributeVariables_CustomRemoteWorkDir_ContributesCustomPackageBase()
+    {
+        var json = MakeEndpointJson(remoteWorkDir: "/opt/deploy");
+        var ctx = new EndpointContext { EndpointJson = json };
+
+        var vars = _contributor.ContributeVariables(ctx);
+
+        vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.PackageBaseDirectory && v.Value == "/opt/deploy/Packages");
+    }
+
+    [Fact]
+    public void ContributeVariables_RemoteWorkDirWithTrailingSlash_TrimsSlash()
+    {
+        var json = MakeEndpointJson(remoteWorkDir: "/opt/deploy/");
+        var ctx = new EndpointContext { EndpointJson = json };
+
+        var vars = _contributor.ContributeVariables(ctx);
+
+        vars.ShouldContain(v => v.Name == SpecialVariables.Ssh.PackageBaseDirectory && v.Value == "/opt/deploy/Packages");
     }
 
     // ========================================================================

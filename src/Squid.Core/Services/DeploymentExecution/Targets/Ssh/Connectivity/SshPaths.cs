@@ -49,4 +49,16 @@ public static class SshPaths
 
         return string.Empty;
     }
+
+    // ========== Package Paths ==========
+
+    private const string PackagesDirectoryName = "Packages";
+
+    public static string PackageCacheDirectory(string baseDir) => $"{baseDir}/{PackagesDirectoryName}";
+
+    public static string PackageNupkgPath(string baseDir, string packageId, string version)
+        => $"{PackageCacheDirectory(baseDir)}/{packageId}.{version}.nupkg";
+
+    public static string PackageExtractDir(string baseDir, string packageId, string version)
+        => $"{PackageCacheDirectory(baseDir)}/{packageId}.{version}";
 }

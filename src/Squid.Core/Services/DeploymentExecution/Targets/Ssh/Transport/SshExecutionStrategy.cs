@@ -1,5 +1,7 @@
 using System.Text;
+using Renci.SshNet;
 using Serilog;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
@@ -35,7 +37,7 @@ public class SshExecutionStrategy : IExecutionStrategy
             var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
             var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
 
-            PrepareRemoteWorkDirectory(scope, workDir, request);
+            PrepareRemoteWorkDirectory(scope, workDir, resolvedBase, request);
 
             var result = await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
 
@@ -73,20 +75,38 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
     }
 
-    private void PrepareRemoteWorkDirectory(ISshConnectionScope scope, string workDir, ScriptExecutionRequest request)
+    private void PrepareRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir, ScriptExecutionRequest request)
     {
         var sftp = scope.GetSftpClient();
+        var ssh = scope.GetSshClient();
 
         SshFileTransfer.EnsureDirectoryExists(sftp, workDir);
 
-        if (request.Files == null) return;
+        UploadScriptFiles(sftp, workDir, request.Files);
+        UploadAndExtractPackages(sftp, ssh, baseDir, request.PackageReferences);
+    }
 
-        foreach (var file in request.Files)
+    private static void UploadScriptFiles(SftpClient sftp, string workDir, Dictionary<string, byte[]> files)
+    {
+        if (files == null) return;
+
+        foreach (var file in files)
         {
             ValidateFileName(file.Key);
-
             var remotePath = SshPaths.ScriptPath(workDir, file.Key);
             SshFileTransfer.UploadBytes(sftp, file.Value, remotePath);
+        }
+    }
+
+    private static void UploadAndExtractPackages(SftpClient sftp, SshClient ssh, string baseDir, List<PackageAcquisitionResult> packages)
+    {
+        if (packages == null || packages.Count == 0) return;
+
+        foreach (var pkg in packages)
+        {
+            SshPackageTransfer.UploadPackageWithCache(sftp, ssh, pkg.LocalPath, pkg.PackageId, pkg.Version, baseDir);
+            var extractDir = SshPaths.PackageExtractDir(baseDir, pkg.PackageId, pkg.Version);
+            SshPackageTransfer.ExtractPackage(sftp, ssh, SshPaths.PackageNupkgPath(baseDir, pkg.PackageId, pkg.Version), extractDir);
         }
     }
 

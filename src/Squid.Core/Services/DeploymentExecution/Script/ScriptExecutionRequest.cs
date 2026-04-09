@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -28,6 +29,7 @@ public class ScriptExecutionRequest
     public SensitiveValueMasker Masker { get; set; }
     public string? TargetNamespace { get; set; }
     public int ServerTaskId { get; set; }
+    public List<PackageAcquisitionResult> PackageReferences { get; set; } = new();
     public string StepName { get; set; }
     public string ActionName { get; set; }
 
