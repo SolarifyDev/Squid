@@ -36,7 +36,7 @@ public class DeploymentEventContext
     public StepEligibilityResult? StepEligibility { get; init; }
     public ActionEligibilityResult? ActionEligibility { get; init; }
 
-    // Packages
+    // Packages — flat fields (backward-compatible; prefer Packages property)
     public List<ReleaseSelectedPackage> SelectedPackages { get; init; }
     public string PackageId { get; init; }
     public string PackageVersion { get; init; }
@@ -48,6 +48,9 @@ public class DeploymentEventContext
     public int PackageCount { get; init; }
     public long PackageTotalSizeBytes { get; init; }
     public string PackageError { get; init; }
+
+    // Packages — nested context (primary accessor; populated alongside flat fields)
+    public DeploymentPackageContext Packages { get; init; }
 
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
