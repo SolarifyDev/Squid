@@ -28,6 +28,22 @@ public sealed class DeploymentFileCollection : IReadOnlyList<DeploymentFile>
         _files = materialized;
     }
 
+    /// <summary>
+    /// Converts a legacy <see cref="Dictionary{TKey, TValue}"/>-shaped file map to a typed
+    /// <see cref="DeploymentFileCollection"/>. Every entry is classified as
+    /// <see cref="DeploymentFileKind.Asset"/>. Used as a bridge while the handler layer
+    /// still emits raw dictionaries (Phase 1 of the execution-layer refactor).
+    /// </summary>
+    public static DeploymentFileCollection FromLegacyFiles(IReadOnlyDictionary<string, byte[]>? files)
+    {
+        if (files is null || files.Count == 0)
+            return Empty;
+
+        var entries = files.Select(kvp => DeploymentFile.Asset(kvp.Key, kvp.Value));
+
+        return new DeploymentFileCollection(entries);
+    }
+
     public int Count => _files.Count;
     public DeploymentFile this[int index] => _files[index];
 

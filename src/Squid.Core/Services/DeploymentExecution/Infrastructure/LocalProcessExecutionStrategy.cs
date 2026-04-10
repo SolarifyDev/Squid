@@ -1,6 +1,7 @@
 using System.Text;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
@@ -51,7 +52,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteCalamariLocallyAsync(
         PackagedPayloadExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(plan.Files, workDir);
+        WriteFilesToDirectory(plan.DeploymentFiles, workDir);
 
         var request = plan.Request;
         var syntax = request.Syntax;
@@ -81,7 +82,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
         DirectScriptExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(plan.Files, workDir);
+        WriteFilesToDirectory(plan.DeploymentFiles, workDir);
 
         var scriptBody = plan.ScriptBody;
         Dictionary<string, string> envVars = null;
@@ -148,25 +149,25 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         return _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
-    private static void WriteFilesToDirectory(Dictionary<string, byte[]> files, string workDir)
+    private static void WriteFilesToDirectory(DeploymentFileCollection files, string workDir)
     {
-        if (files == null) return;
+        if (files == null || files.Count == 0) return;
 
         var normalizedWorkDir = Path.GetFullPath(workDir);
 
         foreach (var file in files)
         {
-            var filePath = Path.GetFullPath(Path.Combine(workDir, file.Key));
+            var filePath = Path.GetFullPath(Path.Combine(workDir, file.RelativePath));
 
             if (!filePath.StartsWith(normalizedWorkDir, StringComparison.Ordinal))
-                throw new InvalidOperationException($"Path traversal detected: file key '{file.Key}' resolves outside work directory.");
+                throw new InvalidOperationException($"Path traversal detected: file '{file.RelativePath}' resolves outside work directory.");
 
             var dir = Path.GetDirectoryName(filePath);
 
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
-            File.WriteAllBytes(filePath, file.Value);
+            File.WriteAllBytes(filePath, file.Content);
         }
     }
 

@@ -333,7 +333,9 @@ public class KubernetesApiExecutionStrategyTests
             ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
         });
 
-        await Should.ThrowAsync<InvalidOperationException>(() =>
+        // DeploymentFileCollection.EnsureValid rejects '..' segments up-front, so the
+        // pipeline fails with ArgumentException before the filesystem guard is reached.
+        await Should.ThrowAsync<ArgumentException>(() =>
             _strategy.ExecuteScriptAsync(request, CancellationToken.None));
     }
 

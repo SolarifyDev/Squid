@@ -3,6 +3,7 @@ using Renci.SshNet;
 using Serilog;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Variable;
@@ -82,19 +83,19 @@ public class SshExecutionStrategy : IExecutionStrategy
 
         SshFileTransfer.EnsureDirectoryExists(sftp, workDir);
 
-        UploadScriptFiles(sftp, workDir, request.Files);
+        UploadScriptFiles(sftp, workDir, request.DeploymentFiles);
         UploadAndExtractPackages(sftp, ssh, baseDir, request.PackageReferences);
     }
 
-    private static void UploadScriptFiles(SftpClient sftp, string workDir, Dictionary<string, byte[]> files)
+    private static void UploadScriptFiles(SftpClient sftp, string workDir, DeploymentFileCollection files)
     {
-        if (files == null) return;
+        if (files == null || files.Count == 0) return;
 
         foreach (var file in files)
         {
-            ValidateFileName(file.Key);
-            var remotePath = SshPaths.ScriptPath(workDir, file.Key);
-            SshFileTransfer.UploadBytes(sftp, file.Value, remotePath);
+            ValidateRelativePath(file.RelativePath);
+            var remotePath = SshPaths.ScriptPath(workDir, file.RelativePath);
+            SshFileTransfer.UploadBytes(sftp, file.Content, remotePath);
         }
     }
 
@@ -110,13 +111,32 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
     }
 
-    internal static void ValidateFileName(string fileName)
+    /// <summary>
+    /// Validates a relative upload path. Forward-slash nesting (e.g. <c>content/values.yaml</c>)
+    /// is accepted; rooted paths, backslashes, and <c>..</c> traversal segments are rejected.
+    /// Mirrors <see cref="DeploymentFile.EnsureValid"/> but is retained here as a defensive
+    /// check at the transport seam until handlers emit typed <see cref="DeploymentFile"/>
+    /// entries end-to-end.
+    /// </summary>
+    internal static void ValidateRelativePath(string relativePath)
     {
-        if (string.IsNullOrEmpty(fileName))
-            throw new ArgumentException("File name cannot be empty");
+        if (string.IsNullOrWhiteSpace(relativePath))
+            throw new ArgumentException("Relative path cannot be empty");
 
-        if (fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
-            throw new ArgumentException($"File name contains invalid path characters: {fileName}");
+        if (relativePath.StartsWith('/') || relativePath.StartsWith('\\'))
+            throw new ArgumentException($"Relative path must not be rooted: {relativePath}");
+
+        if (relativePath.Length >= 2 && relativePath[1] == ':')
+            throw new ArgumentException($"Relative path must not contain a drive letter: {relativePath}");
+
+        if (relativePath.Contains('\\'))
+            throw new ArgumentException($"Relative path must use forward slashes: {relativePath}");
+
+        foreach (var segment in relativePath.Split('/'))
+        {
+            if (segment == "..")
+                throw new ArgumentException($"Relative path must not contain '..' segments: {relativePath}");
+        }
     }
 
     private async Task<ScriptExecutionResult> ExecuteScriptAsync(ISshConnectionScope scope, string workDir, string baseDir, ScriptExecutionRequest request, CancellationToken ct)

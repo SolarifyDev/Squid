@@ -115,4 +115,51 @@ public class DeploymentFileCollectionTests
 
         paths.ShouldBe(new[] { "a.yaml", "b.yaml", "c.yaml" });
     }
+
+    // ========== FromLegacyFiles ==========
+
+    [Fact]
+    public void FromLegacyFiles_Null_ReturnsEmpty()
+    {
+        var collection = DeploymentFileCollection.FromLegacyFiles(null);
+
+        collection.ShouldBeSameAs(DeploymentFileCollection.Empty);
+    }
+
+    [Fact]
+    public void FromLegacyFiles_Empty_ReturnsEmpty()
+    {
+        var collection = DeploymentFileCollection.FromLegacyFiles(new Dictionary<string, byte[]>());
+
+        collection.ShouldBeSameAs(DeploymentFileCollection.Empty);
+    }
+
+    [Fact]
+    public void FromLegacyFiles_PopulatedDictionary_ConvertsEntriesToAssetFiles()
+    {
+        var legacy = new Dictionary<string, byte[]>
+        {
+            ["deploy.yaml"] = SampleContent,
+            ["content/values.yaml"] = SampleContent
+        };
+
+        var collection = DeploymentFileCollection.FromLegacyFiles(legacy);
+
+        collection.Count.ShouldBe(2);
+        collection.All(f => f.Kind == DeploymentFileKind.Asset).ShouldBeTrue();
+        collection.Select(f => f.RelativePath).ShouldBe(new[] { "deploy.yaml", "content/values.yaml" }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public void FromLegacyFiles_NestedPaths_HasNestedPathsTrue()
+    {
+        var legacy = new Dictionary<string, byte[]>
+        {
+            ["content/values.yaml"] = SampleContent
+        };
+
+        var collection = DeploymentFileCollection.FromLegacyFiles(legacy);
+
+        collection.HasNestedPaths().ShouldBeTrue();
+    }
 }

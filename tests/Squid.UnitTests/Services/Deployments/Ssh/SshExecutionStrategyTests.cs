@@ -100,35 +100,42 @@ public class SshExecutionStrategyTests
         _connectionFactory.Verify(f => f.CreateScope(It.IsAny<SshConnectionInfo>()), Times.Once);
     }
 
-    // ========== File Name Validation ==========
+    // ========== Relative Path Validation ==========
 
     [Theory]
     [InlineData("script.sh")]
     [InlineData("deploy.yaml")]
     [InlineData("values-prod.yaml")]
     [InlineData("config.json")]
-    public void ValidateFileName_ValidNames_NoException(string fileName)
+    [InlineData("content/values.yaml")]
+    [InlineData("bin/helpers/set_var.sh")]
+    [InlineData("a/b/c/d/e/file.txt")]
+    public void ValidateRelativePath_ValidPaths_NoException(string relativePath)
     {
-        Should.NotThrow(() => SshExecutionStrategy.ValidateFileName(fileName));
+        Should.NotThrow(() => SshExecutionStrategy.ValidateRelativePath(relativePath));
     }
 
     [Theory]
     [InlineData("")]
     [InlineData(null)]
-    public void ValidateFileName_Empty_ThrowsArgumentException(string fileName)
+    [InlineData(" ")]
+    public void ValidateRelativePath_EmptyOrWhitespace_ThrowsArgumentException(string relativePath)
     {
-        Should.Throw<ArgumentException>(() => SshExecutionStrategy.ValidateFileName(fileName));
+        Should.Throw<ArgumentException>(() => SshExecutionStrategy.ValidateRelativePath(relativePath));
     }
 
     [Theory]
     [InlineData("../etc/passwd")]
     [InlineData("..\\windows\\system32")]
-    [InlineData("foo/bar")]
     [InlineData("foo\\bar")]
     [InlineData("..")]
-    public void ValidateFileName_PathTraversal_ThrowsArgumentException(string fileName)
+    [InlineData("/etc/passwd")]
+    [InlineData("\\windows\\system32")]
+    [InlineData("C:/Users/foo")]
+    [InlineData("content/../secrets")]
+    public void ValidateRelativePath_InvalidPaths_ThrowsArgumentException(string relativePath)
     {
-        Should.Throw<ArgumentException>(() => SshExecutionStrategy.ValidateFileName(fileName));
+        Should.Throw<ArgumentException>(() => SshExecutionStrategy.ValidateRelativePath(relativePath));
     }
 
     // ========== Port Parsing ==========
