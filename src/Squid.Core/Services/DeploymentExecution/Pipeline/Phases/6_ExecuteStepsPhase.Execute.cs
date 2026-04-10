@@ -1,6 +1,8 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Rendering;
+using Squid.Core.Services.DeploymentExecution.Rendering.Adapters;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -234,6 +236,9 @@ public sealed partial class ExecuteStepsPhase
                 throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
 
             var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, step, stepTimeout);
+
+            request = await RenderIntentAsync(actionResult, request, tc, step, effectiveVariables, stepTimeout, ct).ConfigureAwait(false);
+
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
             CaptureOutputVariables(actionResult, execResult.LogLines);
@@ -271,6 +276,33 @@ public sealed partial class ExecuteStepsPhase
             if (step.IsRequired)
                 throw;
         }
+    }
+
+    private async Task<Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest> RenderIntentAsync(
+        ActionExecutionResult actionResult,
+        Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest request,
+        DeploymentTargetContext tc,
+        DeploymentStepDto step,
+        List<VariableDto> effectiveVariables,
+        TimeSpan? stepTimeout,
+        CancellationToken ct)
+    {
+        var intent = LegacyIntentAdapter.FromLegacyResult(actionResult, step.Name ?? string.Empty);
+
+        var renderContext = new IntentRenderContext
+        {
+            Target = tc,
+            Step = step,
+            EffectiveVariables = effectiveVariables,
+            ServerTaskId = _ctx.ServerTaskId,
+            ReleaseVersion = _ctx.Release?.Version,
+            StepTimeout = stepTimeout,
+            LegacyRequest = request
+        };
+
+        var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, intent);
+
+        return await renderer.RenderAsync(intent, renderContext, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)

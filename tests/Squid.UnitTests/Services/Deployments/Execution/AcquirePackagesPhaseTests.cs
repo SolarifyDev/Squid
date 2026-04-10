@@ -59,7 +59,7 @@ public class AcquirePackagesPhaseTests : IDisposable
             _transportRegistryMock.Object,
             _feedProviderMock.Object,
             _acquisitionMock.Object,
-            new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser());
+            new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         _ctx = new DeploymentTaskContext
         {

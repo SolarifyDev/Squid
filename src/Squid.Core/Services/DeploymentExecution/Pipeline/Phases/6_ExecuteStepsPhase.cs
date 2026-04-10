@@ -9,6 +9,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -23,7 +24,8 @@ public sealed partial class ExecuteStepsPhase(
     ITransportRegistry transportRegistry,
     IExternalFeedDataProvider externalFeedDataProvider,
     IPackageAcquisitionService packageAcquisitionService,
-    IServiceMessageParser serviceMessageParser) : IDeploymentPipelinePhase
+    IServiceMessageParser serviceMessageParser,
+    IIntentRendererRegistry intentRendererRegistry) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 
