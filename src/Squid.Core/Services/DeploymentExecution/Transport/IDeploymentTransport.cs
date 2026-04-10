@@ -10,7 +10,17 @@ public interface IDeploymentTransport : IScopedDependency
     IScriptContextWrapper ScriptWrapper { get; }
     IExecutionStrategy Strategy { get; }
     IHealthCheckStrategy HealthChecker { get; }
+
+    ITransportCapabilities Capabilities => new TransportCapabilities
+    {
+        ExecutionLocation = ExecutionLocation,
+        ExecutionBackend = ExecutionBackend,
+        RequiresContextPreparationForPackagedPayload = RequiresContextPreparationForPackagedPayload
+    };
+
     ExecutionLocation ExecutionLocation { get; }
+
     ExecutionBackend ExecutionBackend { get; }
+
     bool RequiresContextPreparationForPackagedPayload { get; }
 }
