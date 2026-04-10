@@ -1,4 +1,5 @@
 using System.Text;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
@@ -6,7 +7,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesIngressActionYamlGenerator : IActionYamlGenerator
 {
-    private const string IngressActionType = "Squid.KubernetesDeployIngress";
+    private static readonly string IngressActionType = SpecialVariables.ActionTypes.KubernetesDeployIngress;
 
     private readonly IngressResourceGenerator _generator = new();
 

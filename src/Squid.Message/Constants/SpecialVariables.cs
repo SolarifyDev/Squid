@@ -26,6 +26,32 @@ public static class SpecialVariables
         public const string OpenClawAssert = "Squid.OpenClaw.Assert";
         public const string OpenClawFetchResult = "Squid.OpenClaw.FetchResult";
         public const string OpenClawChatCompletion = "Squid.OpenClaw.ChatCompletion";
+
+        public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Script,
+            KubernetesDeployRawYaml,
+            KubernetesDeployContainers,
+            HelmChartUpgrade,
+            KubernetesDeployIngress,
+            KubernetesDeployService,
+            KubernetesDeployConfigMap,
+            KubernetesDeploySecret,
+            TentaclePackage,
+            HttpRequest,
+            Manual,
+            HealthCheck,
+            DeployRelease,
+            DeployIngress,
+            KubernetesKustomize,
+            OpenClawInvokeTool,
+            OpenClawRunAgent,
+            OpenClawWake,
+            OpenClawWaitSession,
+            OpenClawAssert,
+            OpenClawFetchResult,
+            OpenClawChatCompletion
+        };
     }
 
     public static class StepTypes

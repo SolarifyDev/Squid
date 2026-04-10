@@ -10,7 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
-using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -302,9 +302,9 @@ public sealed partial class ExecuteStepsPhase
         return executed;
     }
 
-    private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
+    private void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
     {
-        var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
+        var outputVars = serviceMessageParser.ParseOutputVariables(logLines);
 
         foreach (var kv in outputVars)
         {

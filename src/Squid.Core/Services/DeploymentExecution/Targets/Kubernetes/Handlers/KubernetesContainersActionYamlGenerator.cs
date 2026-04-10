@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
@@ -8,7 +9,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes;
 
 public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 {
-    private const string ContainersActionType = "Squid.KubernetesDeployContainers";
+    private static readonly string ContainersActionType = SpecialVariables.ActionTypes.KubernetesDeployContainers;
 
     private readonly DeploymentResourceGenerator _deployment = new();
     private readonly StatefulSetResourceGenerator _statefulSet = new();

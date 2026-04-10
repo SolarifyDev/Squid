@@ -66,7 +66,8 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
             _taskServiceMock.Object,
             _transportRegistryMock.Object,
             _feedProviderMock.Object,
-            _acquisitionMock.Object);
+            _acquisitionMock.Object,
+            new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser());
 
         _ctx = new DeploymentTaskContext
         {

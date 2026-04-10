@@ -4,13 +4,15 @@ using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Variables;
-using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
 public class SensitiveOutputVariableTests
 {
+    private static readonly ServiceMessageParser Parser = new();
+
     // ========== ServiceMessageParser ==========
 
     [Fact]
@@ -21,7 +23,7 @@ public class SensitiveOutputVariableTests
             "##squid[setVariable name='Token' value='secret123' sensitive='True']"
         };
 
-        var result = ServiceMessageParser.ParseOutputVariables(lines);
+        var result = Parser.ParseOutputVariables(lines);
 
         result.ShouldContainKey("Token");
         result["Token"].Value.ShouldBe("secret123");
@@ -36,7 +38,7 @@ public class SensitiveOutputVariableTests
             "##squid[setVariable name='Output' value='hello' sensitive='False']"
         };
 
-        var result = ServiceMessageParser.ParseOutputVariables(lines);
+        var result = Parser.ParseOutputVariables(lines);
 
         result["Output"].IsSensitive.ShouldBeFalse();
     }
@@ -49,7 +51,7 @@ public class SensitiveOutputVariableTests
             "##squid[setVariable name='Output' value='hello']"
         };
 
-        var result = ServiceMessageParser.ParseOutputVariables(lines);
+        var result = Parser.ParseOutputVariables(lines);
 
         result["Output"].IsSensitive.ShouldBeFalse();
     }
@@ -62,7 +64,7 @@ public class SensitiveOutputVariableTests
             "##squid[setVariable name='Token' value='abc' sensitive='true']"
         };
 
-        var result = ServiceMessageParser.ParseOutputVariables(lines);
+        var result = Parser.ParseOutputVariables(lines);
 
         result["Token"].IsSensitive.ShouldBeTrue();
     }
@@ -260,7 +262,7 @@ public class SensitiveOutputVariableTests
 
     private static void SimulateCaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
     {
-        var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
+        var outputVars = Parser.ParseOutputVariables(logLines);
 
         foreach (var kv in outputVars)
         {
