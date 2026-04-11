@@ -207,6 +207,29 @@ public class ExecutionIntentTests
     }
 
     [Fact]
+    public void ManualInterventionIntent_DefaultsInstructionsToEmpty_AndResponsibleTeamIdsToNull()
+    {
+        var intent = new ManualInterventionIntent { Name = "manual-intervention" };
+
+        intent.Instructions.ShouldBe(string.Empty);
+        intent.ResponsibleTeamIds.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ManualInterventionIntent_PreservesInstructionsAndTeamIds()
+    {
+        var intent = new ManualInterventionIntent
+        {
+            Name = "manual-intervention",
+            Instructions = "Approve the release before continuing.",
+            ResponsibleTeamIds = "team-releases,team-sre"
+        };
+
+        intent.Instructions.ShouldBe("Approve the release before continuing.");
+        intent.ResponsibleTeamIds.ShouldBe("team-releases,team-sre");
+    }
+
+    [Fact]
     public void OpenClawInvokeIntent_DefaultsParametersToEmptyDictionary()
     {
         var intent = new OpenClawInvokeIntent

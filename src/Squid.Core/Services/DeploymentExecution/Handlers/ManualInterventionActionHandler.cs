@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -20,7 +21,7 @@ public sealed class ManualInterventionActionHandler(
 
     public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var instructions = ctx.Action.Properties?.FirstOrDefault(p => p.PropertyName == "Squid.Action.Manual.Instructions")?.PropertyValue ?? "";
+        var instructions = ReadInstructions(ctx.Action);
 
         return Task.FromResult(new ActionExecutionResult
         {
@@ -30,6 +31,28 @@ public sealed class ManualInterventionActionHandler(
             ManualInterventionInstructions = instructions
         });
     }
+
+    Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var intent = new ManualInterventionIntent
+        {
+            Name = "manual-intervention",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            Instructions = ReadInstructions(ctx.Action),
+            ResponsibleTeamIds = ReadResponsibleTeamIds(ctx.Action)
+        };
+
+        return Task.FromResult<ExecutionIntent>(intent);
+    }
+
+    private static string ReadInstructions(DeploymentActionDto action)
+        => action?.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Action.ManualInstructions)?.PropertyValue ?? string.Empty;
+
+    private static string ReadResponsibleTeamIds(DeploymentActionDto action)
+        => action?.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Action.ManualResponsibleTeamIds)?.PropertyValue;
 
     public async Task ExecuteStepLevelAsync(StepActionContext ctx, CancellationToken ct)
     {
@@ -65,8 +88,8 @@ public sealed class ManualInterventionActionHandler(
 
     private async Task SuspendForInterruptionAsync(StepActionContext ctx, CancellationToken ct)
     {
-        var instructions = ctx.Action.Properties?.FirstOrDefault(p => p.PropertyName == "Squid.Action.Manual.Instructions")?.PropertyValue ?? "";
-        var responsibleTeamIds = ctx.Action.Properties?.FirstOrDefault(p => p.PropertyName == SpecialVariables.Action.ManualResponsibleTeamIds)?.PropertyValue;
+        var instructions = ReadInstructions(ctx.Action);
+        var responsibleTeamIds = ReadResponsibleTeamIds(ctx.Action);
         var form = InterruptionFormBuilder.BuildManualInterventionForm(instructions);
 
         await lifecycle.EmitAsync(new ManualInterventionPromptEvent(new DeploymentEventContext
