@@ -127,8 +127,8 @@ public sealed partial class ExecuteStepsPhase
             CalamariCommand = actionResult.CalamariCommand,
             ExecutionMode = resolvedMode,
             ContextPreparationPolicy = resolvedContextPreparationPolicy,
-            ExecutionLocation = tc.Transport?.ExecutionLocation ?? ExecutionLocation.Unspecified,
-            ExecutionBackend = tc.Transport?.ExecutionBackend ?? ExecutionBackend.Unspecified,
+            ExecutionLocation = tc.Transport?.Capabilities?.ExecutionLocation ?? ExecutionLocation.Unspecified,
+            ExecutionBackend = tc.Transport?.Capabilities?.ExecutionBackend ?? ExecutionBackend.Unspecified,
             PayloadKind = actionResult.PayloadKind,
             RunnerKind = actionResult.RunnerKind,
             Syntax = actionResult.Syntax,
@@ -225,7 +225,7 @@ public sealed partial class ExecuteStepsPhase
 
         var mode = actionResult.ResolveExecutionMode();
 
-        if (mode == ExecutionMode.PackagedPayload && (tc.Transport?.RequiresContextPreparationForPackagedPayload ?? false))
+        if (mode == ExecutionMode.PackagedPayload && (tc.Transport?.Capabilities?.RequiresContextPreparationForPackagedPayload ?? false))
             return ContextPreparationPolicy.Apply;
 
         return actionResult.ResolveContextPreparationPolicy();

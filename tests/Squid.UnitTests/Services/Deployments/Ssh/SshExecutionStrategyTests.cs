@@ -1,6 +1,8 @@
 using System.Linq;
 using Renci.SshNet;
 using Squid.Core.Services.DeploymentExecution.Packages.Staging;
+using Squid.Core.Services.DeploymentExecution.Runtime;
+using Squid.Core.Services.DeploymentExecution.Runtime.Bundles;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 using Squid.Message.Constants;
@@ -14,6 +16,7 @@ public class SshExecutionStrategyTests
     private readonly Mock<ISshConnectionFactory> _connectionFactory = new();
     private readonly Mock<ISshExecutionMutex> _executionMutex = new();
     private readonly Mock<IPackageStagingPlanner> _stagingPlanner = new();
+    private readonly IRuntimeBundleProvider _runtimeBundleProvider = new RuntimeBundleProvider(new IRuntimeBundle[] { new BashRuntimeBundle() });
     private readonly Mock<ISshConnectionScope> _scope = new();
     private readonly Mock<SshClient> _sshClient;
     private readonly Mock<SftpClient> _sftpClient;
@@ -30,7 +33,7 @@ public class SshExecutionStrategyTests
             .ReturnsAsync(Mock.Of<IDisposable>());
     }
 
-    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object);
+    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
 
     private static ScriptExecutionRequest MakeRequest(string scriptBody = "echo hello", int serverTaskId = 42, ScriptSyntax syntax = ScriptSyntax.Bash)
     {
@@ -216,23 +219,42 @@ public class SshExecutionStrategyTests
     // ========== BootstrapIfBash ==========
 
     [Fact]
-    public void BootstrapIfBash_BashSyntax_WrapsWithBootstrap()
+    public void BootstrapIfBash_BashSyntax_WrapsViaRuntimeBundle()
     {
         var request = MakeRequest(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
+        var strategy = CreateStrategy();
 
-        var result = SshExecutionStrategy.BootstrapIfBash(request, "/home/user/.squid/Work/42", "/home/user/.squid");
+        var result = strategy.BootstrapIfBash(request, "/home/user/.squid/Work/42", "/home/user/.squid");
 
         result.ShouldStartWith("#!/bin/bash\n");
-        result.ShouldContain("export SquidHome=");
+        result.ShouldContain("export SquidHome=\"/home/user/.squid\"");
+        result.ShouldContain("export SquidWorkDirectory=\"/home/user/.squid/Work/42\"");
+        result.ShouldContain("set_squidvariable()");
         result.ShouldContain("echo hello");
+    }
+
+    [Fact]
+    public void BootstrapIfBash_BashSyntax_ExportsNonSensitiveVariables()
+    {
+        var request = MakeRequest(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
+        request.Variables.Add(new VariableDto { Name = "AppEnv", Value = "production", IsSensitive = false });
+        request.Variables.Add(new VariableDto { Name = "DbPassword", Value = "secret", IsSensitive = true });
+        var strategy = CreateStrategy();
+
+        var result = strategy.BootstrapIfBash(request, "/work/1", "/base");
+
+        result.ShouldContain("export AppEnv=\"production\"");
+        result.ShouldNotContain("DbPassword");
+        result.ShouldNotContain("secret");
     }
 
     [Fact]
     public void BootstrapIfBash_PowerShellSyntax_ReturnsOriginalBody()
     {
         var request = MakeRequest(scriptBody: "Get-Process", syntax: ScriptSyntax.PowerShell);
+        var strategy = CreateStrategy();
 
-        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+        var result = strategy.BootstrapIfBash(request, "/work/1", "/base");
 
         result.ShouldBe("Get-Process");
         result.ShouldNotContain("#!/bin/bash");
@@ -242,20 +264,22 @@ public class SshExecutionStrategyTests
     public void BootstrapIfBash_PythonSyntax_ReturnsOriginalBody()
     {
         var request = MakeRequest(scriptBody: "print('hello')", syntax: ScriptSyntax.Python);
+        var strategy = CreateStrategy();
 
-        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+        var result = strategy.BootstrapIfBash(request, "/work/1", "/base");
 
         result.ShouldBe("print('hello')");
         result.ShouldNotContain("#!/bin/bash");
     }
 
     [Fact]
-    public void BootstrapIfBash_NullScriptBody_ReturnsEmpty()
+    public void BootstrapIfBash_NullScriptBody_NonBash_ReturnsEmpty()
     {
         var request = MakeRequest(syntax: ScriptSyntax.PowerShell);
         request.ScriptBody = null;
+        var strategy = CreateStrategy();
 
-        var result = SshExecutionStrategy.BootstrapIfBash(request, "/work/1", "/base");
+        var result = strategy.BootstrapIfBash(request, "/work/1", "/base");
 
         result.ShouldBe(string.Empty);
     }

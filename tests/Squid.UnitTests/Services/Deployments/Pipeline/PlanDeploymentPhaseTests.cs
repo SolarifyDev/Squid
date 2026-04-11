@@ -226,8 +226,6 @@ public class PlanDeploymentPhaseTests
         public IEndpointVariableContributor Variables => null;
         public IExecutionStrategy Strategy => null;
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
     }
 }

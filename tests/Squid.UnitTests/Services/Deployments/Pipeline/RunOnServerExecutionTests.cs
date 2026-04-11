@@ -457,9 +457,11 @@ public class RunOnServerExecutionTests
         public IEndpointVariableContributor Variables => null;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.ApiWorkerLocal;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.LocalProcess;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities
+        {
+            ExecutionLocation = ExecutionLocation.ApiWorkerLocal,
+            ExecutionBackend = ExecutionBackend.LocalProcess
+        };
     }
 
     private sealed class SuccessStrategy : IExecutionStrategy

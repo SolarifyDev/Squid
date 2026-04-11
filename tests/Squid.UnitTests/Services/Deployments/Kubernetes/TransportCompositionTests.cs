@@ -30,9 +30,9 @@ public class TransportCompositionTests
         transport.Variables.ShouldBeSameAs(variables);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
+        transport.Capabilities.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]
@@ -56,9 +56,9 @@ public class TransportCompositionTests
         transport.Variables.ShouldBeSameAs(variables);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
+        transport.Capabilities.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]

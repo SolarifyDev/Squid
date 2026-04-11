@@ -51,9 +51,7 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
         public IEndpointVariableContributor Variables => _inner.Variables;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => _inner.HealthChecker;
-        public ExecutionLocation ExecutionLocation => _inner.ExecutionLocation;
-        public ExecutionBackend ExecutionBackend => _inner.ExecutionBackend;
-        public bool RequiresContextPreparationForPackagedPayload => _inner.RequiresContextPreparationForPackagedPayload;
+        public ITransportCapabilities Capabilities => _inner.Capabilities;
 
         public StrategyCapturingTransport(IDeploymentTransport inner, IExecutionStrategy strategy)
         {

@@ -1,5 +1,4 @@
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -10,10 +9,6 @@ public abstract class DeploymentTransport : IDeploymentTransport
     public IExecutionStrategy Strategy { get; }
     public IHealthCheckStrategy HealthChecker { get; }
     public ITransportCapabilities Capabilities { get; }
-
-    public ExecutionLocation ExecutionLocation => Capabilities.ExecutionLocation;
-    public ExecutionBackend ExecutionBackend => Capabilities.ExecutionBackend;
-    public bool RequiresContextPreparationForPackagedPayload => Capabilities.RequiresContextPreparationForPackagedPayload;
 
     protected DeploymentTransport(
         CommunicationStyle communicationStyle,

@@ -104,30 +104,13 @@ public class TransportCapabilitiesTests
     }
 
     [Fact]
-    public void DeploymentTransport_LegacyPropertiesForwardToCapabilities()
-    {
-        var expected = new TransportCapabilities
-        {
-            ExecutionLocation = ExecutionLocation.RemoteTentacle,
-            ExecutionBackend = ExecutionBackend.HalibutScriptService,
-            RequiresContextPreparationForPackagedPayload = true
-        };
-
-        var transport = new TestTransport(expected);
-
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
-    }
-
-    [Fact]
     public void DeploymentTransport_NullCapabilities_FallsBackToDefault()
     {
         var transport = new TestTransport(capabilities: null);
 
         transport.Capabilities.ShouldNotBeNull();
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.Unspecified);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.Unspecified);
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.Unspecified);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.Unspecified);
     }
 
     [Fact]

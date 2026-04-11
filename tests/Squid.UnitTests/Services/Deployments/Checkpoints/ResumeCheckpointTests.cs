@@ -299,9 +299,7 @@ public class ResumeCheckpointTests
         public IEndpointVariableContributor Variables => null;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
     }
 
     private sealed class RecordingStrategy : IExecutionStrategy

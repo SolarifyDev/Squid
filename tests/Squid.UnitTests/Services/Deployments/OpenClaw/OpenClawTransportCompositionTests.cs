@@ -21,8 +21,8 @@ public class OpenClawTransportCompositionTests
         transport.Variables.ShouldBeSameAs(variables);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.HttpApi);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeFalse();
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.HttpApi);
+        transport.Capabilities.RequiresContextPreparationForPackagedPayload.ShouldBeFalse();
     }
 }

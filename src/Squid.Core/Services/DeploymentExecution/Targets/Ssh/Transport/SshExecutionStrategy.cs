@@ -3,6 +3,7 @@ using Renci.SshNet;
 using Serilog;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Packages.Staging;
+using Squid.Core.Services.DeploymentExecution.Runtime;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Ssh.Packages;
@@ -19,12 +20,14 @@ public class SshExecutionStrategy : IExecutionStrategy
     private readonly ISshConnectionFactory _connectionFactory;
     private readonly ISshExecutionMutex _executionMutex;
     private readonly IPackageStagingPlanner _stagingPlanner;
+    private readonly IRuntimeBundleProvider _runtimeBundleProvider;
 
-    public SshExecutionStrategy(ISshConnectionFactory connectionFactory, ISshExecutionMutex executionMutex, IPackageStagingPlanner stagingPlanner)
+    public SshExecutionStrategy(ISshConnectionFactory connectionFactory, ISshExecutionMutex executionMutex, IPackageStagingPlanner stagingPlanner, IRuntimeBundleProvider runtimeBundleProvider)
     {
         _connectionFactory = connectionFactory;
         _executionMutex = executionMutex;
         _stagingPlanner = stagingPlanner;
+        _runtimeBundleProvider = runtimeBundleProvider;
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -247,15 +250,21 @@ public class SshExecutionStrategy : IExecutionStrategy
             ?.Value ?? string.Empty;
     }
 
-    internal static string BootstrapIfBash(ScriptExecutionRequest request, string workDir, string baseDir)
+    internal string BootstrapIfBash(ScriptExecutionRequest request, string workDir, string baseDir)
     {
         if (request.Syntax is Message.Models.Deployments.Execution.ScriptSyntax.PowerShell or Message.Models.Deployments.Execution.ScriptSyntax.Python)
             return request.ScriptBody ?? string.Empty;
 
-        // Phase 9 will replace this with SshIntentRenderer + IRuntimeBundleProvider.
-#pragma warning disable CS0618 // Legacy bootstrapper retained until Phase 9 migration.
-        return SshBootstrapper.WrapBashScript(request.ScriptBody, workDir, request.ServerTaskId, baseDir);
-#pragma warning restore CS0618
+        var bundle = _runtimeBundleProvider.GetBundle(RuntimeBundleKind.Bash);
+
+        return bundle.Wrap(new RuntimeBundleWrapContext
+        {
+            UserScriptBody = request.ScriptBody,
+            WorkDirectory = workDir,
+            BaseDirectory = baseDir,
+            ServerTaskId = request.ServerTaskId,
+            Variables = request.Variables ?? (IReadOnlyList<VariableDto>)Array.Empty<VariableDto>()
+        });
     }
 
     private static string ResolveScriptFileName(ScriptExecutionRequest request)
