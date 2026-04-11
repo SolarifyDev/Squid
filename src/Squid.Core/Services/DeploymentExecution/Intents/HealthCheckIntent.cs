@@ -15,4 +15,46 @@ public sealed record HealthCheckIntent : ExecutionIntent
 
     /// <summary>Syntax of <see cref="CustomScript"/>. Ignored when <see cref="CustomScript"/> is null.</summary>
     public ScriptSyntax Syntax { get; init; } = ScriptSyntax.Bash;
+
+    /// <summary>
+    /// Depth of the health check. <see cref="HealthCheckType.FullHealthCheck"/> runs the
+    /// machine-policy probe (typically a scripted check); <see cref="HealthCheckType.ConnectionTest"/>
+    /// only verifies the transport is reachable.
+    /// </summary>
+    public HealthCheckType CheckType { get; init; } = HealthCheckType.FullHealthCheck;
+
+    /// <summary>
+    /// How the pipeline should react to failed probes.
+    /// <see cref="HealthCheckErrorHandling.FailDeployment"/> aborts the deployment;
+    /// <see cref="HealthCheckErrorHandling.SkipUnavailable"/> logs a warning and excludes
+    /// the unhealthy targets from subsequent steps.
+    /// </summary>
+    public HealthCheckErrorHandling ErrorHandling { get; init; } = HealthCheckErrorHandling.FailDeployment;
+
+    /// <summary>
+    /// When true, the pipeline re-queries the deployment target finder after the probe and
+    /// adds any newly-discovered targets to the run. Maps to the legacy
+    /// <c>"IncludeCheckedMachines"</c> property value.
+    /// </summary>
+    public bool IncludeNewTargets { get; init; }
+}
+
+/// <summary>Depth of a <see cref="HealthCheckIntent"/> probe.</summary>
+public enum HealthCheckType
+{
+    /// <summary>Full health check — runs the machine-policy probe (typically a scripted check).</summary>
+    FullHealthCheck,
+
+    /// <summary>Connection test only — verifies the transport is reachable.</summary>
+    ConnectionTest
+}
+
+/// <summary>Failure policy for a <see cref="HealthCheckIntent"/> probe.</summary>
+public enum HealthCheckErrorHandling
+{
+    /// <summary>Abort the deployment when any target is unhealthy.</summary>
+    FailDeployment,
+
+    /// <summary>Log a warning and exclude unhealthy targets from subsequent steps.</summary>
+    SkipUnavailable
 }

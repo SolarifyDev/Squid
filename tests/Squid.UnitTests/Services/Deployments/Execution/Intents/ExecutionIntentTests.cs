@@ -189,9 +189,21 @@ public class ExecutionIntentTests
         var defaultIntent = new HealthCheckIntent { Name = "health-check" };
         defaultIntent.CustomScript.ShouldBeNull();
         defaultIntent.Syntax.ShouldBe(ScriptSyntax.Bash);
+        defaultIntent.CheckType.ShouldBe(HealthCheckType.FullHealthCheck);
+        defaultIntent.ErrorHandling.ShouldBe(HealthCheckErrorHandling.FailDeployment);
+        defaultIntent.IncludeNewTargets.ShouldBeFalse();
 
-        var customIntent = defaultIntent with { CustomScript = "exit 0" };
+        var customIntent = defaultIntent with
+        {
+            CustomScript = "exit 0",
+            CheckType = HealthCheckType.ConnectionTest,
+            ErrorHandling = HealthCheckErrorHandling.SkipUnavailable,
+            IncludeNewTargets = true
+        };
         customIntent.CustomScript.ShouldBe("exit 0");
+        customIntent.CheckType.ShouldBe(HealthCheckType.ConnectionTest);
+        customIntent.ErrorHandling.ShouldBe(HealthCheckErrorHandling.SkipUnavailable);
+        customIntent.IncludeNewTargets.ShouldBeTrue();
     }
 
     // ------------------------------------------------------------------
