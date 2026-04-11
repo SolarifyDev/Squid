@@ -171,8 +171,16 @@ public class ExecutionIntentTests
 
         intent.InlineValues.ShouldNotBeNull();
         intent.InlineValues.Count.ShouldBe(0);
-        intent.ValuesFile.ShouldBeNull();
+        intent.ValuesFiles.ShouldBeEmpty();
         intent.Namespace.ShouldBe(string.Empty);
+        intent.ChartVersion.ShouldBe(string.Empty);
+        intent.CustomHelmExecutable.ShouldBe(string.Empty);
+        intent.ResetValues.ShouldBeTrue();
+        intent.Wait.ShouldBeFalse();
+        intent.WaitForJobs.ShouldBeFalse();
+        intent.Timeout.ShouldBe(string.Empty);
+        intent.AdditionalArgs.ShouldBe(string.Empty);
+        intent.Repository.ShouldBeNull();
     }
 
     [Fact]
