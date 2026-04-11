@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 using Squid.Core.Services.DeploymentExecution.OpenClaw.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering;
@@ -22,7 +23,7 @@ public static class TestIntentRendererRegistry
         var renderers = new IIntentRenderer[]
         {
             new SshIntentRenderer(),
-            new KubernetesApiIntentRenderer(),
+            new KubernetesApiIntentRenderer(new KubernetesApiContextScriptBuilder()),
             new KubernetesAgentIntentRenderer(),
             new OpenClawIntentRenderer(),
             new ServerIntentRenderer()

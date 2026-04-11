@@ -15,22 +15,27 @@ namespace Squid.UnitTests.Services.Deployments.Execution.Rendering;
 
 /// <summary>
 /// Phase 5 — unit tests for the pass-through renderer base and the concrete subclasses that
-/// still behave as pure pass-through (KubernetesApi, KubernetesAgent, OpenClaw) plus the
-/// server variant. Every listed renderer must return
-/// <see cref="IntentRenderContext.LegacyRequest"/> unchanged.
+/// still behave as pure pass-through (KubernetesAgent, OpenClaw) plus the server variant.
+/// Every listed renderer must return <see cref="IntentRenderContext.LegacyRequest"/>
+/// unchanged.
 ///
 /// <para>
 /// Phase 9i — SSH has been removed from this matrix because
 /// <see cref="Squid.Core.Services.DeploymentExecution.Ssh.Rendering.SshIntentRenderer"/>
-/// now natively renders <see cref="RunScriptIntent"/> from intent + context instead of
-/// forwarding the legacy request. Phase 9j will retire the remaining entries here.
+/// now natively renders <see cref="RunScriptIntent"/> from intent + context.
+/// </para>
+///
+/// <para>
+/// Phase 9j.1 — KubernetesApi has been removed from this matrix because
+/// <see cref="KubernetesApiIntentRenderer"/> now natively renders
+/// <see cref="RunScriptIntent"/> (wrapping the script body with kubectl context) instead of
+/// forwarding the legacy request. Later Phase 9j sub-steps will retire the remaining entries.
 /// </para>
 /// </summary>
 public class PassThroughIntentRendererTests
 {
     public static IEnumerable<object[]> AllRenderers => new object[][]
     {
-        new object[] { new KubernetesApiIntentRenderer(), CommunicationStyle.KubernetesApi },
         new object[] { new KubernetesAgentIntentRenderer(), CommunicationStyle.KubernetesAgent },
         new object[] { new OpenClawIntentRenderer(), CommunicationStyle.OpenClaw },
         new object[] { new ServerIntentRenderer(), CommunicationStyle.None },
