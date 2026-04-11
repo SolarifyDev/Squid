@@ -206,6 +206,39 @@ public class ExecutionIntentTests
         customIntent.IncludeNewTargets.ShouldBeTrue();
     }
 
+    [Fact]
+    public void OpenClawInvokeIntent_DefaultsParametersToEmptyDictionary()
+    {
+        var intent = new OpenClawInvokeIntent
+        {
+            Name = "openclaw-wake",
+            Kind = OpenClawInvocationKind.Wake
+        };
+
+        intent.Kind.ShouldBe(OpenClawInvocationKind.Wake);
+        intent.Parameters.ShouldNotBeNull();
+        intent.Parameters.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void OpenClawInvokeIntent_PreservesParameters()
+    {
+        var intent = new OpenClawInvokeIntent
+        {
+            Name = "openclaw-invoke-tool",
+            Kind = OpenClawInvocationKind.InvokeTool,
+            Parameters = new Dictionary<string, string>
+            {
+                ["Squid.Action.OpenClaw.Tool"] = "sessions_list",
+                ["Squid.Action.OpenClaw.ToolAction"] = "json"
+            }
+        };
+
+        intent.Parameters.Count.ShouldBe(2);
+        intent.Parameters["Squid.Action.OpenClaw.Tool"].ShouldBe("sessions_list");
+        intent.Parameters["Squid.Action.OpenClaw.ToolAction"].ShouldBe("json");
+    }
+
     // ------------------------------------------------------------------
     // IntentCapabilityKeys drift / self-consistency
     // ------------------------------------------------------------------
