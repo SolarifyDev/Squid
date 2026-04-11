@@ -3,12 +3,19 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
+/// <summary>
+/// Legacy bash/PowerShell wrapping helpers. Superseded by
+/// <see cref="Runtime.IRuntimeBundleProvider"/> + concrete <see cref="Runtime.IRuntimeBundle"/>
+/// implementations in Phase 8. Retained only so <c>SshExecutionStrategy</c> keeps compiling
+/// until the Phase 9 handler migration flips SSH to <c>SshIntentRenderer</c>. Removed in Phase 10.
+/// </summary>
 public static class SshBootstrapper
 {
     internal const string EnvSquidHome = "SquidHome";
     internal const string EnvSquidWorkDir = "SquidWorkDirectory";
     internal const string EnvSquidTaskId = "SquidServerTaskId";
 
+    [Obsolete("Use IRuntimeBundleProvider.GetBundle(RuntimeBundleKind.Bash).Wrap(ctx) instead. Removed in Phase 10.")]
     public static string WrapBashScript(string scriptBody, string workDir, int serverTaskId, string baseDir)
     {
         var sb = new StringBuilder();
@@ -23,6 +30,7 @@ public static class SshBootstrapper
         return sb.ToString();
     }
 
+    [Obsolete("Use IRuntimeBundleProvider.GetBundle(RuntimeBundleKind.Bash).Wrap(ctx) instead. Removed in Phase 10.")]
     public static string WrapWithVariableExports(string scriptBody, List<VariableDto> variables, string workDir, int serverTaskId, string baseDir)
     {
         var sb = new StringBuilder();

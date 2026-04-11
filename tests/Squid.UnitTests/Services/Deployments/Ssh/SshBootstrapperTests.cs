@@ -3,6 +3,9 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.UnitTests.Services.Deployments.Ssh;
 
+// Legacy coverage retained until Phase 9 flips SSH to the runtime bundle provider.
+// BashRuntimeBundle is the replacement and is exercised by BashRuntimeBundleTests.
+#pragma warning disable CS0618
 public class SshBootstrapperTests
 {
     // ========================================================================
@@ -183,3 +186,4 @@ public class SshBootstrapperTests
         result.ShouldNotContain("export =\"value\"");
     }
 }
+#pragma warning restore CS0618

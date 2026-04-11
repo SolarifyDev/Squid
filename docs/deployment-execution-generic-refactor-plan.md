@@ -352,27 +352,36 @@ Total estimated new tests: **~140**.
 
 ---
 
-### Phase 8 — `IRuntimeBundleProvider` + bash/pwsh helpers
+### Phase 8 — `IRuntimeBundleProvider` + bash/pwsh helpers ✅
 
 **Goal**: Embed a helper script that gives user scripts `set_squidvariable`, `get_squidvariable`, `new_squidartifact`. Close the loop with the existing `ServiceMessageParser`.
 
 **New files** (under `Runtime/`):
-- `IRuntimeBundleProvider.cs`
-- `RuntimeBundleKind.cs` — enum: Bash, PowerShell, Python
-- `Bundles/BashRuntimeBundle.cs`
-- `Bundles/PowerShellRuntimeBundle.cs`
-- `Bundles/Resources/squid-runtime.sh` (embedded)
-- `Bundles/Resources/squid-runtime.ps1` (embedded)
+- ✅ `IRuntimeBundleProvider.cs`
+- ✅ `RuntimeBundleProvider.cs` — default dispatcher keyed by `RuntimeBundleKind`
+- ✅ `IRuntimeBundle.cs` — per-language bundle contract
+- ✅ `RuntimeBundleKind.cs` — enum: Bash, PowerShell, Python
+- ✅ `RuntimeBundleWrapContext.cs` — input record (script body, work dir, base dir, task id, variables)
+- ✅ `Exceptions/RuntimeBundleNotFoundException.cs`
+- ✅ `Bundles/BashRuntimeBundle.cs`
+- ✅ `Bundles/PowerShellRuntimeBundle.cs`
+- ✅ `Bundles/Resources/squid-runtime.sh` (embedded)
+- ✅ `Bundles/Resources/squid-runtime.ps1` (embedded)
 
 **Changed files**:
-- `SshIntentRenderer.cs` — uses `IRuntimeBundleProvider.GetAsync(Bash, ctx, ct)` when `RunScriptIntent.InjectRuntimeBundle = true`
-- `SshBootstrapper.cs` — mark `WrapBashScript`, `WrapWithVariableExports` `[Obsolete]` forwarding to the bundle provider
-- `Script/ServiceMessages/ServiceMessageParser.cs` — add `createArtifact` + `stepFailed` kind support (if not done in Phase 3)
+- ✅ `Squid.Core.csproj` — include `Services\DeploymentExecution\Runtime\Bundles\Resources\*` as `EmbeddedResource`
+- ✅ `SshBootstrapper.cs` — `WrapBashScript`, `WrapWithVariableExports` marked `[Obsolete]`, retained as Phase-9 migration seam
+- ✅ `SshExecutionStrategy.cs` — callsite pragma-suppressed until Phase 9 flips to `SshIntentRenderer`
+- ✅ `Script/ServiceMessages/ServiceMessageParser.cs` — `createArtifact` + `stepFailed` already supported (Phase 3)
+- ✅ `SshBootstrapperTests.cs` — suppressed `CS0618` to preserve legacy coverage until Phase 9
+- Deferred to Phase 9: wiring `SshIntentRenderer` to call `IRuntimeBundleProvider.GetBundle(Bash).Wrap(ctx)` when `RunScriptIntent.InjectRuntimeBundle = true`
 
 **Tests**:
-- Unit: `BashRuntimeBundleTests` — placeholder replacement, sensitive var skip, sanitization, quote escaping (5)
-- Integration (real bash): `BashBundleShellIntegrationTests` — `set_squidvariable` round-trip, `new_squidartifact`, `fail_step` exit code (4)
-- E2E: `SshRuntimeBundleE2ETests` — `set_squidvariable` captured in output variables, `new_squidartifact` registered, sensitive not in exports (3)
+- ✅ Unit: `BashRuntimeBundleTests` — 29 facts covering shebang, scope exports, variable exports (sensitive skip, empty name skip, digit-leading sanitization, quote/dollar/backtick escaping), helper injection, user-script ordering, null-body, null-context guard, theory-based sanitization and escaping rules
+- ✅ Unit: `PowerShellRuntimeBundleTests` — 10 facts covering `$env:` exports, sensitive skip, single-quote doubling, helper function presence, user-script ordering, null-context guard
+- ✅ Unit: `RuntimeBundleProviderTests` — 7 facts covering ctor null guard, per-kind dispatch, unknown-kind exception, duplicate-kind last-wins, empty registration, functional wiring
+- ✅ Integration (real bash): `BashBundleShellIntegrationTests` — 7 tests running the wrapped script through `/bin/bash` and parsing output with `ServiceMessageParser`: `set_squidvariable` round-trip (plain + sensitive flag), `new_squidartifact` service message, `fail_step` exit 1 and stop-execution contract, non-sensitive env var readable inside user script, sensitive var absent from `env`, quoted/dollar values round-trip unchanged
+- E2E: `SshRuntimeBundleE2ETests` — deferred until Phase 9 wires the renderer
 
 ---
 

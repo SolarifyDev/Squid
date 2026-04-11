@@ -252,7 +252,10 @@ public class SshExecutionStrategy : IExecutionStrategy
         if (request.Syntax is Message.Models.Deployments.Execution.ScriptSyntax.PowerShell or Message.Models.Deployments.Execution.ScriptSyntax.Python)
             return request.ScriptBody ?? string.Empty;
 
+        // Phase 9 will replace this with SshIntentRenderer + IRuntimeBundleProvider.
+#pragma warning disable CS0618 // Legacy bootstrapper retained until Phase 9 migration.
         return SshBootstrapper.WrapBashScript(request.ScriptBody, workDir, request.ServerTaskId, baseDir);
+#pragma warning restore CS0618
     }
 
     private static string ResolveScriptFileName(ScriptExecutionRequest request)

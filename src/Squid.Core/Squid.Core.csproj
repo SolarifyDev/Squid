@@ -53,6 +53,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="TentaclesScripts\*" />
+    <EmbeddedResource Include="Services\DeploymentExecution\Runtime\Bundles\Resources\*" />
   </ItemGroup>
 
   <ItemGroup Label="DbUp">
