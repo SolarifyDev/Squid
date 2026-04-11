@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -33,11 +34,7 @@ public class CredentialTypePipelineAcceptanceTests
         var handler = new SimpleRunScriptHandler();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
-        var wrapperA = new CredentialCapturingWrapper("target-a");
-        var wrapperB = new CredentialCapturingWrapper("target-b");
-
-        var transportA = new TestTransport(strategy, wrapperA, CommunicationStyle.KubernetesApi);
-        var transportB = new TestTransport(strategy, wrapperB, CommunicationStyle.KubernetesApi);
+        var transport = new TestTransport(strategy, CommunicationStyle.KubernetesApi);
 
         var (lifecycle, _) = CreateLifecycle();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
@@ -54,8 +51,8 @@ public class CredentialTypePipelineAcceptanceTests
 
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
         {
-            MakeTarget("target-a", "web", transportA, endpointContextA),
-            MakeTarget("target-b", "web", transportB, endpointContextB)
+            MakeTarget("target-a", "web", transport, endpointContextA),
+            MakeTarget("target-b", "web", transport, endpointContextB)
         };
 
         ctx.Steps = new List<DeploymentStepDto>
@@ -67,26 +64,20 @@ public class CredentialTypePipelineAcceptanceTests
 
         strategy.Requests.Count.ShouldBe(2);
 
-        // Verify credential isolation — each target wrapper received its own endpoint context
-        wrapperA.CapturedEndpointJson.ShouldNotBeNull();
-        wrapperB.CapturedEndpointJson.ShouldNotBeNull();
+        var requestsByMachine = strategy.Requests.ToDictionary(r => r.Machine.Name, r => r);
 
-        var accountA = wrapperA.CapturedAccountType;
-        var accountB = wrapperB.CapturedAccountType;
-
-        accountA.ShouldBe(AccountType.Token);
-        accountB.ShouldBe(AccountType.UsernamePassword);
+        requestsByMachine["target-a"].EndpointContext.GetAccountData().AuthenticationAccountType.ShouldBe(AccountType.Token);
+        requestsByMachine["target-b"].EndpointContext.GetAccountData().AuthenticationAccountType.ShouldBe(AccountType.UsernamePassword);
     }
 
     [Fact]
-    public async Task Execute_ApiTarget_WrapsWithEndpointContext()
+    public async Task Execute_ApiTarget_PropagatesEndpointContext()
     {
         var strategy = new RecordingStrategy();
-        var wrapper = new CredentialCapturingWrapper("api-target");
         var handler = new SimpleRunScriptHandler();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
-        var transport = new TestTransport(strategy, wrapper, CommunicationStyle.KubernetesApi);
+        var transport = new TestTransport(strategy, CommunicationStyle.KubernetesApi);
         var (lifecycle, _) = CreateLifecycle();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext();
@@ -104,18 +95,20 @@ public class CredentialTypePipelineAcceptanceTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        wrapper.CapturedEndpointJson.ShouldContain("my-cluster");
+        strategy.Requests.Count.ShouldBe(1);
+        var request = strategy.Requests.Single();
+        request.EndpointContext.EndpointJson.ShouldContain("my-cluster");
+        request.EndpointContext.GetAccountData().AuthenticationAccountType.ShouldBe(AccountType.Token);
     }
 
     [Fact]
-    public async Task Execute_AgentTarget_WrapsWithNamespaceOnly()
+    public async Task Execute_AgentTarget_PropagatesEndpointContext()
     {
         var strategy = new RecordingStrategy();
-        var wrapper = new CredentialCapturingWrapper("agent-target");
         var handler = new SimpleRunScriptHandler();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
-        var transport = new TestTransport(strategy, wrapper, CommunicationStyle.KubernetesAgent);
+        var transport = new TestTransport(strategy, CommunicationStyle.KubernetesAgent);
         var (lifecycle, _) = CreateLifecycle();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext();
@@ -132,42 +125,24 @@ public class CredentialTypePipelineAcceptanceTests
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
 
-        wrapper.CapturedEndpointJson.ShouldContain("KubernetesAgent");
+        strategy.Requests.Count.ShouldBe(1);
+        strategy.Requests.Single().EndpointContext.EndpointJson.ShouldContain("KubernetesAgent");
     }
 
     // ========================================================================
     // Test Doubles
     // ========================================================================
 
-    private sealed class CredentialCapturingWrapper : IScriptContextWrapper
-    {
-        private readonly string _expectedMachine;
-
-        public string CapturedEndpointJson { get; private set; }
-        public AccountType? CapturedAccountType { get; private set; }
-
-        public CredentialCapturingWrapper(string expectedMachine) => _expectedMachine = expectedMachine;
-
-        public string WrapScript(string script, ScriptContext context)
-        {
-            CapturedEndpointJson = context?.Endpoint?.EndpointJson;
-            CapturedAccountType = context?.Endpoint?.GetAccountData()?.AuthenticationAccountType;
-            return $"WRAPPED_{_expectedMachine};{script}";
-        }
-    }
-
     private sealed class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper, CommunicationStyle style)
+        public TestTransport(IExecutionStrategy strategy, CommunicationStyle style)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
             CommunicationStyle = style;
         }
 
         public CommunicationStyle CommunicationStyle { get; }
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

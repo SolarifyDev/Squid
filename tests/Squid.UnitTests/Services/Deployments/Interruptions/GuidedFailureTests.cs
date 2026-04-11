@@ -276,7 +276,7 @@ public class GuidedFailureTests
     {
         var effectiveStrategy = strategy ?? new TestExecutionStrategy(_ =>
             new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "script failed" } });
-        var transport = new TestTransport(effectiveStrategy, scriptWrapper: null);
+        var transport = new TestTransport(effectiveStrategy);
 
         return new DeploymentTaskContext
         {
@@ -335,15 +335,13 @@ public class GuidedFailureTests
 
     private class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesApi;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

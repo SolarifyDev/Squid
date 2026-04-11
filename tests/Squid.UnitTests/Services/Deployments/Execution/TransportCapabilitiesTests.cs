@@ -14,7 +14,7 @@ public class TransportCapabilitiesTests
     private sealed class TestTransport : DeploymentTransport
     {
         public TestTransport(ITransportCapabilities capabilities)
-            : base(CommunicationStyle.None, variables: null, scriptWrapper: null, strategy: null, capabilities, healthChecker: null)
+            : base(CommunicationStyle.None, variables: null, strategy: null, capabilities, healthChecker: null)
         {
         }
     }

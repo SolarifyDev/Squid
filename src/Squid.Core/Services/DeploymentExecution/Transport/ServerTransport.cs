@@ -32,7 +32,6 @@ public sealed class ServerTransport : DeploymentTransport
         : base(
             CommunicationStyle.None,
             variables: null,
-            scriptWrapper: null,
             new LocalProcessExecutionStrategy(payloadBuilder, processRunner),
             Capability,
             healthChecker: null)

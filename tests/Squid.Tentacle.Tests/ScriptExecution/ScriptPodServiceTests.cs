@@ -961,7 +961,7 @@ public class ScriptPodServiceTests : IDisposable
     // ========== Helpers ==========
 
     // === Namespace — pod always created in agent namespace ===
-    // TargetNamespace is for kubectl context wrapping (IScriptContextWrapper),
+    // TargetNamespace is for kubectl context wrapping (handled by the intent renderer),
     // not for pod placement. PVC, ServiceAccount, ImagePullSecrets are namespace-scoped
     // and only exist in the agent namespace.
 

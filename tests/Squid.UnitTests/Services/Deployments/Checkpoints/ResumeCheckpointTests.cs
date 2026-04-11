@@ -106,7 +106,7 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
@@ -133,7 +133,7 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
@@ -159,7 +159,7 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var savedCheckpoints = new List<DeploymentExecutionCheckpoint>();
         var checkpointService = new Mock<IDeploymentCheckpointService>();
         checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
@@ -290,15 +290,13 @@ public class ResumeCheckpointTests
 
     private sealed class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

@@ -177,7 +177,6 @@ public class TransportRegistryTests
     {
         public CommunicationStyle CommunicationStyle { get; }
         public IEndpointVariableContributor Variables { get; }
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy => null;
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

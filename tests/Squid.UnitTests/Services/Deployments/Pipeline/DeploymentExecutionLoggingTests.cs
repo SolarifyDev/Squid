@@ -521,7 +521,7 @@ public class DeploymentExecutionLoggingTests
         var (phase, ctx, logs, nodes) = CreateTestHarness();
 
         var strategy = new ScriptOutputStrategy(new List<string> { "hello", "world", "done" });
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
         {
             MakeTarget("target-1", "web", transport)
@@ -549,7 +549,7 @@ public class DeploymentExecutionLoggingTests
         var strategy = new SuccessStrategy();
         var handler = new SimpleRunScriptHandler();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
 
         var lifecycle = CreateLifecycle(logs, nodes);
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
@@ -572,7 +572,7 @@ public class DeploymentExecutionLoggingTests
         var strategy = new FailingStrategy();
         var handler = new SimpleRunScriptHandler();
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
 
         var lifecycle = CreateLifecycle(logs, nodes);
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
@@ -754,15 +754,13 @@ public class DeploymentExecutionLoggingTests
 
     private sealed class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

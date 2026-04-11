@@ -40,7 +40,6 @@ public class ScriptExecutionRequest
     public List<VariableDto> Variables { get; set; }
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public string ReleaseVersion { get; set; }
-    public IScriptContextWrapper ContextWrapper { get; set; }
     public TimeSpan? Timeout { get; set; }
     public SensitiveValueMasker Masker { get; set; }
     public string? TargetNamespace { get; set; }

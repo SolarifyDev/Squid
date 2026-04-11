@@ -12,18 +12,15 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly ILocalProcessRunner _processRunner;
-    private readonly IScriptContextWrapper? _scriptContextWrapper;
     private readonly IScriptContextPreparer? _contextPreparer;
 
     public LocalProcessExecutionStrategy(
         ICalamariPayloadBuilder payloadBuilder,
         ILocalProcessRunner processRunner,
-        IScriptContextWrapper? scriptContextWrapper = null,
         IScriptContextPreparer? contextPreparer = null)
     {
         _payloadBuilder = payloadBuilder;
         _processRunner = processRunner;
-        _scriptContextWrapper = scriptContextWrapper;
         _contextPreparer = contextPreparer;
     }
 
@@ -68,7 +65,6 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         await File.WriteAllBytesAsync(sensitivePath, payload.SensitiveBytes, ct).ConfigureAwait(false);
 
         var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
-        scriptBody = ApplyContextWrappingIfRequired(request, scriptBody);
 
         var (executable, args, scriptFileName) = BuildCalamariInvocation(syntax);
         var scriptPath = Path.Combine(workDir, scriptFileName);
@@ -105,7 +101,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
     private bool ShouldPrepareContext(ScriptExecutionRequest request)
     {
-        if (_contextPreparer == null && _scriptContextWrapper == null) return false;
+        if (_contextPreparer == null) return false;
 
         return request.ResolveContextPreparationPolicy() == ContextPreparationPolicy.Apply;
     }
@@ -114,16 +110,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     {
         var scriptContext = BuildScriptContext(request);
 
-        if (_contextPreparer != null)
-            return await _contextPreparer.PrepareAsync(scriptBody, scriptContext, workDir, ct).ConfigureAwait(false);
-
-        if (_scriptContextWrapper != null)
-        {
-            var wrapped = _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
-            return new ScriptContextResult { Script = wrapped };
-        }
-
-        return new ScriptContextResult { Script = scriptBody };
+        return await _contextPreparer.PrepareAsync(scriptBody, scriptContext, workDir, ct).ConfigureAwait(false);
     }
 
     private static ScriptContext BuildScriptContext(ScriptExecutionRequest request)
@@ -135,18 +122,6 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
             Variables = request.Variables,
             ActionProperties = request.ActionProperties
         };
-    }
-
-    private string ApplyContextWrappingIfRequired(ScriptExecutionRequest request, string scriptBody)
-    {
-        if (_scriptContextWrapper == null) return scriptBody;
-
-        if (request.ResolveContextPreparationPolicy() != ContextPreparationPolicy.Apply)
-            return scriptBody;
-
-        var scriptContext = BuildScriptContext(request);
-
-        return _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
     private static void WriteFilesToDirectory(DeploymentFileCollection files, string workDir)

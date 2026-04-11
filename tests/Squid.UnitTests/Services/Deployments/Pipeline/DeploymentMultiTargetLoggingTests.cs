@@ -411,7 +411,7 @@ public class DeploymentMultiTargetLoggingTests
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
-        ctx.AllTargetsContext = targets.Select(t => MakeTarget(t.Name, "web", new TestTransport(t.Strategy, scriptWrapper: null))).ToList();
+        ctx.AllTargetsContext = targets.Select(t => MakeTarget(t.Name, "web", new TestTransport(t.Strategy))).ToList();
         lifecycle.Initialize(ctx);
 
         return (phase, ctx, logs, nodes);
@@ -431,8 +431,8 @@ public class DeploymentMultiTargetLoggingTests
         var strategy = new SuccessStrategy();
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
         {
-            MakeTarget(targetA, "web", new TestTransport(strategy, scriptWrapper: null)),
-            MakeTarget(targetB, "web", new TestTransport(strategy, scriptWrapper: null))
+            MakeTarget(targetA, "web", new TestTransport(strategy)),
+            MakeTarget(targetB, "web", new TestTransport(strategy))
         };
         lifecycle.Initialize(ctx);
 
@@ -600,15 +600,13 @@ public class DeploymentMultiTargetLoggingTests
 
     private sealed class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

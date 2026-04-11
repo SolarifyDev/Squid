@@ -455,7 +455,6 @@ public class RunOnServerExecutionTests
 
         public CommunicationStyle CommunicationStyle { get; }
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.ApiWorkerLocal;

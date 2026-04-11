@@ -23,7 +23,7 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
     }
 
     // Wraps the real registry so each resolved transport uses the capturing strategy
-    // while retaining real variable contribution and script wrapping.
+    // while retaining real variable contribution and health checking.
     private sealed class CapturingTransportRegistry : ITransportRegistry
     {
         private readonly Dictionary<CommunicationStyle, IDeploymentTransport> _transports;
@@ -49,7 +49,6 @@ public class DeploymentPipelineFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         public CommunicationStyle CommunicationStyle => _inner.CommunicationStyle;
         public IEndpointVariableContributor Variables => _inner.Variables;
-        public IScriptContextWrapper ScriptWrapper => _inner.ScriptWrapper;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => _inner.HealthChecker;
         public ExecutionLocation ExecutionLocation => _inner.ExecutionLocation;

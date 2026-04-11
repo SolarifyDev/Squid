@@ -7,7 +7,6 @@ public interface IDeploymentTransport : IScopedDependency
 {
     CommunicationStyle CommunicationStyle { get; }
     IEndpointVariableContributor Variables { get; }
-    IScriptContextWrapper ScriptWrapper { get; }
     IExecutionStrategy Strategy { get; }
     IHealthCheckStrategy HealthChecker { get; }
 

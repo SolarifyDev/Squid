@@ -224,7 +224,6 @@ public class PlanDeploymentPhaseTests
     {
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesApi;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy => null;
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

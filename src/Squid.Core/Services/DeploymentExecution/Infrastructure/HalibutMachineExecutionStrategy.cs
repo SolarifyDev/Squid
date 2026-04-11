@@ -1,6 +1,5 @@
 using Halibut;
 using Halibut.Diagnostics;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -49,8 +48,6 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             $"./{payload.PackageFileName}",
             "./variables.json",
             "./sensitiveVariables.json");
-
-        scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
 
         var scriptFiles = new[]
         {
@@ -129,22 +126,6 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             files.Add(new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(sensitiveBytes), password));
 
         return files.ToArray();
-    }
-
-    private static string ApplyContextPreparationIfRequired(ScriptExecutionRequest request, string scriptBody)
-    {
-        if (request.ContextWrapper == null)
-            return scriptBody;
-
-        var scriptContext = new ScriptContext
-        {
-            Endpoint = request.EndpointContext,
-            Syntax = request.Syntax,
-            Variables = request.Variables,
-            ActionProperties = request.ActionProperties
-        };
-
-        return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)

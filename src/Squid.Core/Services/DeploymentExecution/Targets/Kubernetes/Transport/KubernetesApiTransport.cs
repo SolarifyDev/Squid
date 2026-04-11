@@ -37,10 +37,9 @@ public sealed class KubernetesApiTransport : DeploymentTransport
 
     public KubernetesApiTransport(
         KubernetesApiEndpointVariableContributor variables,
-        KubernetesApiScriptContextWrapper scriptWrapper,
         LocalProcessExecutionStrategy strategy,
         KubernetesApiHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.KubernetesApi, variables, scriptWrapper, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.KubernetesApi, variables, strategy, Capability, healthChecker)
     {
     }
 }

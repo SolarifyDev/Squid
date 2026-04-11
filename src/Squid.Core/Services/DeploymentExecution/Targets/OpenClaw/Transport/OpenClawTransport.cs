@@ -33,10 +33,9 @@ public sealed class OpenClawTransport : DeploymentTransport
 
     public OpenClawTransport(
         OpenClawEndpointVariableContributor variables,
-        OpenClawScriptContextWrapper scriptWrapper,
         OpenClawExecutionStrategy strategy,
         OpenClawHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.OpenClaw, variables, scriptWrapper, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.OpenClaw, variables, strategy, Capability, healthChecker)
     {
     }
 }

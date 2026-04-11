@@ -155,24 +155,9 @@ public class KubernetesApiExecutionStrategyTests
     }
 
     [Fact]
-    public async Task ExecuteScriptAsync_PackagedPayload_WithContextPreparationApply_WrapsPayloadScript()
+    public async Task ExecuteScriptAsync_PackagedPayload_PowerShell_RunsPwsh()
     {
         string capturedArguments = null;
-
-        var contextBuilder = new Mock<IKubernetesApiContextScriptBuilder>();
-        contextBuilder
-            .Setup(b => b.WrapWithContext(
-                It.IsAny<string>(),
-                It.IsAny<ScriptContext>(),
-                It.IsAny<string>()))
-            .Returns((string userScript,
-                ScriptContext _,
-                string __) => $"WRAPPED::{userScript}");
-
-        var strategy = new LocalProcessExecutionStrategy(
-            _payloadBuilder.Object,
-            _processRunner.Object,
-            new KubernetesApiScriptContextWrapper(contextBuilder.Object));
 
         _processRunner
             .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<Dictionary<string, string>>()))
@@ -191,11 +176,10 @@ public class KubernetesApiExecutionStrategyTests
             new TokenCredentials { Token = "secret" }));
         request.EndpointContext = endpointCtx;
 
-        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
 
         capturedArguments.ShouldContain("-File");
         capturedArguments.ShouldContain("calamari-deploy.ps1");
-        contextBuilder.VerifyAll();
     }
 
     // === Work Directory Lifecycle ===

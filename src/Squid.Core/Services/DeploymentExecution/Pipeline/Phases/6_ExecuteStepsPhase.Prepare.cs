@@ -98,18 +98,10 @@ public sealed partial class ExecuteStepsPhase
                 prepared.ActionType = action.ActionType;
                 prepared.ActionProperties = BuildActionPropertyDictionary(expandedAction);
 
-                var executionMode = prepared.ResolveExecutionMode();
-                var contextPreparationPolicy = ResolveContextPreparationPolicy(prepared, tc);
-
                 if (prepared.ScriptBody != null)
                     prepared.ScriptBody = VariableExpander.ExpandString(prepared.ScriptBody, variableDictionary);
 
                 StructuredConfigurationVariableReplacer.ReplaceIfEnabled(prepared, variableDictionary);
-
-                // Direct script can be wrapped here. Packaged payloads are wrapped later after payload template paths are resolved.
-                if (executionMode == ExecutionMode.DirectScript
-                    && contextPreparationPolicy == ContextPreparationPolicy.Apply)
-                    WrapScriptIfApplicable(prepared, tc, actionEffective);
 
                 await EmitPreparationWarningsAsync(prepared.Warnings, stepDisplayOrder, action.Name, tc.Machine.Name, ct).ConfigureAwait(false);
 
@@ -118,23 +110,6 @@ public sealed partial class ExecuteStepsPhase
         }
 
         return stepResults;
-    }
-
-    private static void WrapScriptIfApplicable(ActionExecutionResult prepared, DeploymentTargetContext tc, List<VariableDto> effectiveVariables)
-    {
-        var wrapper = tc.Transport?.ScriptWrapper;
-
-        if (wrapper == null) return;
-
-        var scriptContext = new ScriptContext
-        {
-            Endpoint = tc.EndpointContext,
-            Syntax = prepared.Syntax,
-            Variables = effectiveVariables,
-            ActionProperties = prepared.ActionProperties
-        };
-
-        prepared.ScriptBody = wrapper.WrapScript(prepared.ScriptBody, scriptContext);
     }
 
     private ScriptExecutionRequest BuildScriptExecutionRequest(ActionExecutionResult actionResult, DeploymentTargetContext tc, List<VariableDto> effectiveVariables, DeploymentStepDto step, TimeSpan? stepTimeout = null)
@@ -163,7 +138,6 @@ public sealed partial class ExecuteStepsPhase
             Variables = effectiveVariables,
             Machine = tc.Machine,
             ReleaseVersion = _ctx.Release?.Version,
-            ContextWrapper = resolvedContextPreparationPolicy == ContextPreparationPolicy.Apply ? tc.Transport?.ScriptWrapper : null,
             Timeout = stepTimeout,
             Masker = masker,
             TargetNamespace = ResolveTargetNamespace(effectiveVariables),

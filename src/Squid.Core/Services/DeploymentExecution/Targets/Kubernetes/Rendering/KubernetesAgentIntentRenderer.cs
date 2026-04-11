@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -50,6 +51,8 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 /// </summary>
 public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
 {
+    private static readonly Regex ValidKubernetesNameRegex = new("^[a-z0-9][-a-z0-9]*$", RegexOptions.Compiled);
+
     public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
 
     public bool CanRender(ExecutionIntent intent) => intent is not null;
@@ -179,11 +182,19 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         if (!ScriptSyntaxHelper.IsShellSyntax(syntax))
             return scriptBody;
 
-        KubernetesAgentScriptContextWrapper.ValidateKubernetesName(namespace_);
+        ValidateKubernetesName(namespace_);
 
         return syntax == ScriptSyntax.Bash
             ? WrapBash(scriptBody, namespace_)
             : WrapPowerShell(scriptBody, namespace_);
+    }
+
+    private static void ValidateKubernetesName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        if (!ValidKubernetesNameRegex.IsMatch(name))
+            throw new ArgumentException($"Invalid Kubernetes namespace name: '{name}'. Must match [a-z0-9][-a-z0-9]*.");
     }
 
     private static string WrapBash(string script, string ns)

@@ -7,7 +7,6 @@ public abstract class DeploymentTransport : IDeploymentTransport
 {
     public CommunicationStyle CommunicationStyle { get; }
     public IEndpointVariableContributor Variables { get; }
-    public IScriptContextWrapper ScriptWrapper { get; }
     public IExecutionStrategy Strategy { get; }
     public IHealthCheckStrategy HealthChecker { get; }
     public ITransportCapabilities Capabilities { get; }
@@ -19,14 +18,12 @@ public abstract class DeploymentTransport : IDeploymentTransport
     protected DeploymentTransport(
         CommunicationStyle communicationStyle,
         IEndpointVariableContributor variables,
-        IScriptContextWrapper scriptWrapper,
         IExecutionStrategy strategy,
         ITransportCapabilities capabilities,
         IHealthCheckStrategy healthChecker = null)
     {
         CommunicationStyle = communicationStyle;
         Variables = variables;
-        ScriptWrapper = scriptWrapper;
         Strategy = strategy;
         HealthChecker = healthChecker;
         Capabilities = capabilities ?? new TransportCapabilities();

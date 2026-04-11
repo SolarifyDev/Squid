@@ -28,10 +28,9 @@ public sealed class SshTransport : DeploymentTransport
 
     public SshTransport(
         SshEndpointVariableContributor variables,
-        SshScriptContextWrapper scriptWrapper,
         SshExecutionStrategy strategy,
         SshHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.Ssh, variables, scriptWrapper, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.Ssh, variables, strategy, Capability, healthChecker)
     {
     }
 }

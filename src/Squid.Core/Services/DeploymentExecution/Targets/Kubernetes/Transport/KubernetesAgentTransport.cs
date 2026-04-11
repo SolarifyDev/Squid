@@ -37,10 +37,9 @@ public sealed class KubernetesAgentTransport : DeploymentTransport
 
     public KubernetesAgentTransport(
         KubernetesAgentEndpointVariableContributor variables,
-        KubernetesAgentScriptContextWrapper scriptWrapper,
         HalibutMachineExecutionStrategy strategy,
         KubernetesAgentHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.KubernetesAgent, variables, scriptWrapper, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.KubernetesAgent, variables, strategy, Capability, healthChecker)
     {
     }
 }

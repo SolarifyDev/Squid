@@ -12,15 +12,13 @@ public class SshTransportCompositionTests
     public void SshTransport_ComposesExpectedDependencies()
     {
         var variables = new SshEndpointVariableContributor();
-        var wrapper = new SshScriptContextWrapper();
         var strategy = new SshExecutionStrategy(Mock.Of<ISshConnectionFactory>(), Mock.Of<ISshExecutionMutex>(), Mock.Of<IPackageStagingPlanner>());
         var healthChecker = new SshHealthCheckStrategy(Mock.Of<IEndpointContextBuilder>(), Mock.Of<ISshConnectionFactory>());
 
-        var transport = new SshTransport(variables, wrapper, strategy, healthChecker);
+        var transport = new SshTransport(variables, strategy, healthChecker);
 
         transport.CommunicationStyle.ShouldBe(CommunicationStyle.Ssh);
         transport.Variables.ShouldBeSameAs(variables);
-        transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
         transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteSsh);

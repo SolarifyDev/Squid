@@ -382,7 +382,6 @@ public class AnnounceSetupPhaseTests
     {
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy => null;
         public IHealthCheckStrategy HealthChecker => null;
         public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;

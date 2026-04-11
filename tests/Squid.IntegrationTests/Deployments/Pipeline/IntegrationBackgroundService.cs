@@ -46,12 +46,10 @@ public class IntegrationDeploymentTaskBackgroundService : DeploymentFixtureBase
         builder.Register(ctx =>
         {
             var contributor = ctx.Resolve<KubernetesApiEndpointVariableContributor>();
-            var wrapper = ctx.Resolve<KubernetesApiScriptContextWrapper>();
 
             var transport = new Mock<IDeploymentTransport>();
             transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
             transport.Setup(t => t.Variables).Returns(contributor);
-            transport.Setup(t => t.ScriptWrapper).Returns(wrapper);
             transport.Setup(t => t.Strategy).Returns(executionStrategyMock.Object);
 
             var registry = new Mock<ITransportRegistry>();
