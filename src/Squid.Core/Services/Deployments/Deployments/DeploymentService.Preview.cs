@@ -1,9 +1,11 @@
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.Deployments.Validation;
-using Squid.Message.Constants;
-using Squid.Message.Models.Deployments.Deployment;
-using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Deployments.Validation;
+using Squid.Message.Models.Deployments.Deployment;
+using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments.Deployments;
 
@@ -51,34 +53,153 @@ public partial class DeploymentService
 
         blockingReasons.AddRange(ruleReport.Issues.Where(issue => issue.IsBlocking).Select(issue => issue.Message));
 
-        try
-        {
-            result.Steps = await BuildStepPreviewAsync(release, context, selectedMachines, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to build step preview for release {ReleaseId}", release.Id);
-            blockingReasons.Add($"Deployment process preview failed: {ex.Message}");
-        }
-
-        result.CandidateTargets = FilterCandidatesByStepRoles(result.Steps, selectedMachines);
-        result.AvailableMachineCount = result.CandidateTargets.Count;
-
-        if (HasTargetLevelSteps(result.Steps) && selectedMachines.Count == 0)
-        {
-            var message = context.SpecificMachineIds.Count > 0 || context.ExcludedMachineIds.Count > 0
-                ? $"No available machines found after applying machine selection constraints in environment {context.EnvironmentId}."
-                : $"No available machines found in environment {context.EnvironmentId}.";
-            blockingReasons.Add(message);
-        }
-
-        if (HasNoMatchingTargetsForApplicableSteps(result.Steps))
-        {
-            blockingReasons.Add("No target machines match the required roles for any runnable step.");
-        }
+        await PopulateStepsAndBlockersFromPlanAsync(result, release, context, selectedMachines, blockingReasons, cancellationToken).ConfigureAwait(false);
 
         return FinalizePreview(result, blockingReasons);
     }
+
+    // ---------- planner adapter ------------------------------------------
+
+    private async Task PopulateStepsAndBlockersFromPlanAsync(
+        DeploymentPreviewResult result,
+        Persistence.Entities.Deployments.Release release,
+        DeploymentValidationContext context,
+        List<Persistence.Entities.Deployments.Machine> selectedMachines,
+        List<string> blockingReasons,
+        CancellationToken cancellationToken)
+    {
+        DeploymentPlan plan;
+
+        try
+        {
+            plan = await BuildPlanAsync(release, context, selectedMachines, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to build deployment plan for release {ReleaseId}", release.Id);
+            blockingReasons.Add($"Deployment process preview failed: {ex.Message}");
+            return;
+        }
+
+        result.Steps = plan.Steps.Select(MapPlannedStep).ToList();
+        result.CandidateTargets = plan.CandidateTargets.Select(MapPlannedTarget).ToList();
+        result.AvailableMachineCount = result.CandidateTargets.Count;
+
+        blockingReasons.AddRange(plan.BlockingReasons.Select(reason => reason.Message));
+    }
+
+    private async Task<DeploymentPlan> BuildPlanAsync(
+        Persistence.Entities.Deployments.Release release,
+        DeploymentValidationContext context,
+        List<Persistence.Entities.Deployments.Machine> selectedMachines,
+        CancellationToken cancellationToken)
+    {
+        if (release.ProjectDeploymentProcessSnapshotId <= 0)
+            throw new InvalidOperationException($"Release {release.Id} has no deployment process snapshot.");
+
+        var processSnapshot = await _deploymentSnapshotService
+            .LoadProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, cancellationToken).ConfigureAwait(false);
+
+        var steps = ProcessSnapshotStepConverter.Convert(processSnapshot);
+        var targetContexts = BuildPreviewTargetContexts(selectedMachines);
+
+        var request = new DeploymentPlanRequest
+        {
+            Mode = PlanMode.Preview,
+            ReleaseId = release.Id,
+            EnvironmentId = context.EnvironmentId,
+            ChannelId = release.ChannelId,
+            DeploymentProcessSnapshotId = processSnapshot.Id,
+            Steps = steps,
+            Variables = Array.Empty<VariableDto>(),
+            TargetContexts = targetContexts,
+            SkipActionIds = context.SkipActionIds
+        };
+
+        return await _deploymentPlanner.PlanAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private List<DeploymentTargetContext> BuildPreviewTargetContexts(List<Persistence.Entities.Deployments.Machine> machines)
+    {
+        return machines.Select(BuildPreviewTargetContext).ToList();
+    }
+
+    private DeploymentTargetContext BuildPreviewTargetContext(Persistence.Entities.Deployments.Machine machine)
+    {
+        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+
+        return new DeploymentTargetContext
+        {
+            Machine = machine,
+            CommunicationStyle = style,
+            Transport = _transportRegistry.Resolve(style),
+            EndpointContext = new EndpointContext { EndpointJson = machine.Endpoint ?? string.Empty }
+        };
+    }
+
+    // ---------- plan -> preview mapping ----------------------------------
+
+    internal static DeploymentPreviewStepResult MapPlannedStep(PlannedStep step)
+    {
+        var result = new DeploymentPreviewStepResult
+        {
+            StepId = step.StepId,
+            StepOrder = step.StepOrder,
+            StepName = step.StepName,
+            IsDisabled = step.Status == PlannedStepStatus.Disabled,
+            RequiredRoles = step.RequiredRoles.ToList(),
+            RunnableActionIds = step.Actions.Select(a => a.ActionId).ToList()
+        };
+
+        ApplyStatusToPreviewStep(step, result);
+
+        return result;
+    }
+
+    private static void ApplyStatusToPreviewStep(PlannedStep step, DeploymentPreviewStepResult result)
+    {
+        switch (step.Status)
+        {
+            case PlannedStepStatus.Applicable:
+                result.IsApplicable = true;
+                result.MatchedTargets = step.MatchedTargets.Select(MapPlannedTarget).ToList();
+                return;
+
+            case PlannedStepStatus.StepLevelOnly:
+                result.IsApplicable = true;
+                result.IsStepLevelOnly = true;
+                return;
+
+            case PlannedStepStatus.RunOnServer:
+                result.IsApplicable = true;
+                result.IsRunOnServer = true;
+                return;
+
+            case PlannedStepStatus.NoMatchingTargets:
+                result.IsApplicable = true;
+                result.Reason = step.StatusMessage;
+                return;
+
+            case PlannedStepStatus.Disabled:
+                result.Reason = step.StatusMessage;
+                return;
+
+            case PlannedStepStatus.NoRunnableActions:
+            case PlannedStepStatus.ConditionNotMet:
+            default:
+                result.Reason = step.StatusMessage;
+                return;
+        }
+    }
+
+    private static DeploymentPreviewTargetResult MapPlannedTarget(PlannedTarget target) => new()
+    {
+        MachineId = target.MachineId,
+        MachineName = target.MachineName,
+        Roles = target.Roles.ToList()
+    };
+
+    // ---------- finalize / lifecycle / selection -------------------------
 
     private static DeploymentPreviewResult FinalizePreview(DeploymentPreviewResult result, List<string> blockingReasons)
     {
@@ -117,149 +238,6 @@ public partial class DeploymentService
             Log.Warning(ex, "Lifecycle validation failed for release {ReleaseId} and environment {EnvironmentId}", context.ReleaseId, context.EnvironmentId);
             blockingReasons.Add($"Lifecycle validation failed: {ex.Message}");
         }
-    }
-
-    private async Task<List<DeploymentPreviewStepResult>> BuildStepPreviewAsync(Persistence.Entities.Deployments.Release release, DeploymentValidationContext context, List<Persistence.Entities.Deployments.Machine> selectedMachines, CancellationToken cancellationToken)
-    {
-        if (release.ProjectDeploymentProcessSnapshotId <= 0)
-            throw new InvalidOperationException($"Release {release.Id} has no deployment process snapshot.");
-
-        var processSnapshot = await _deploymentSnapshotService
-            .LoadProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, cancellationToken).ConfigureAwait(false);
-
-        var steps = ProcessSnapshotStepConverter.Convert(processSnapshot).OrderBy(step => step.StepOrder).ToList();
-
-        return steps.Select(step => BuildStepPreview(step, step.StepOrder, release.ChannelId, context, selectedMachines)).ToList();
-    }
-
-    internal DeploymentPreviewStepResult BuildStepPreview(Squid.Message.Models.Deployments.Process.DeploymentStepDto step, int displayOrder, int releaseChannelId, DeploymentValidationContext context, List<Persistence.Entities.Deployments.Machine> selectedMachines)
-    {
-        var result = new DeploymentPreviewStepResult
-        {
-            StepId = step.Id,
-            StepOrder = displayOrder,
-            StepName = step.Name,
-            IsDisabled = step.IsDisabled
-        };
-
-        if (step.IsDisabled)
-        {
-            result.Reason = "Step is disabled.";
-            return result;
-        }
-
-        var runnableActions = step.Actions
-            .Where(action => StepEligibilityEvaluator.ShouldExecuteAction(action, context.EnvironmentId, releaseChannelId))
-            .Where(action => !context.SkipActionIds.Contains(action.Id))
-            .OrderBy(action => action.ActionOrder)
-            .ToList();
-
-        result.RunnableActionIds = runnableActions.Select(action => action.Id).ToList();
-
-        if (runnableActions.Count == 0)
-        {
-            result.Reason = "No runnable actions for the selected environment/channel after skip filters.";
-            return result;
-        }
-
-        result.IsApplicable = true;
-
-        var allStepLevel = runnableActions.All(action => _actionHandlerRegistry.ResolveScope(action) == ExecutionScope.StepLevel);
-
-        if (allStepLevel)
-        {
-            result.IsStepLevelOnly = true;
-            return result;
-        }
-
-        if (RunOnServerEvaluator.IsRunOnServer(step))
-        {
-            result.IsRunOnServer = true;
-            return result;
-        }
-
-        result.RequiredRoles = ExtractRequiredRoles(step);
-
-        var matchedMachines = result.RequiredRoles.Count == 0
-            ? selectedMachines
-            : DeploymentTargetFinder.FilterByRoles(selectedMachines, result.RequiredRoles.ToHashSet(StringComparer.OrdinalIgnoreCase));
-
-        result.MatchedTargets = matchedMachines
-            .OrderBy(machine => machine.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(ToPreviewTarget)
-            .ToList();
-
-        if (result.MatchedTargets.Count > 0)
-            return result;
-
-        result.Reason = result.RequiredRoles.Count == 0
-            ? "No available machines remain after machine selection constraints."
-            : $"No machines match required roles: {string.Join(", ", result.RequiredRoles)}.";
-
-        return result;
-    }
-
-    private static List<string> ExtractRequiredRoles(Squid.Message.Models.Deployments.Process.DeploymentStepDto step)
-    {
-        var stepRolesProperty = step.Properties?
-            .FirstOrDefault(property => property.PropertyName == SpecialVariables.Step.TargetRoles);
-
-        if (stepRolesProperty == null || string.IsNullOrWhiteSpace(stepRolesProperty.PropertyValue))
-            return [];
-
-        return DeploymentTargetFinder.ParseCsvRoles(stepRolesProperty.PropertyValue)
-            .OrderBy(role => role, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    internal static List<DeploymentPreviewTargetResult> FilterCandidatesByStepRoles(List<DeploymentPreviewStepResult> steps, List<Persistence.Entities.Deployments.Machine> selectedMachines)
-    {
-        List<DeploymentPreviewTargetResult> AllMachines() =>
-            selectedMachines.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
-
-        if (steps == null || steps.Count == 0)
-            return AllMachines();
-
-        var targetLevelSteps = steps.Where(s => s.IsApplicable && !s.IsStepLevelOnly && !s.IsRunOnServer).ToList();
-
-        if (targetLevelSteps.Count == 0)
-            return AllMachines();
-
-        if (targetLevelSteps.Any(s => s.RequiredRoles.Count == 0))
-            return AllMachines();
-
-        var allRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var step in targetLevelSteps)
-            allRoles.UnionWith(step.RequiredRoles);
-
-        var filtered = DeploymentTargetFinder.FilterByRoles(selectedMachines, allRoles);
-
-        return filtered.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(ToPreviewTarget).ToList();
-    }
-
-    private static bool HasTargetLevelSteps(List<DeploymentPreviewStepResult> steps)
-    {
-        return steps != null && steps.Any(step => step.IsApplicable && !step.IsStepLevelOnly && !step.IsRunOnServer);
-    }
-
-    private static bool HasNoMatchingTargetsForApplicableSteps(List<DeploymentPreviewStepResult> steps)
-    {
-        var targetLevelSteps = steps
-            .Where(step => step.IsApplicable && !step.IsStepLevelOnly && !step.IsRunOnServer)
-            .ToList();
-
-        return targetLevelSteps.Count > 0 && targetLevelSteps.All(step => step.MatchedTargets.Count == 0);
-    }
-
-    private static DeploymentPreviewTargetResult ToPreviewTarget(Persistence.Entities.Deployments.Machine machine)
-    {
-        return new DeploymentPreviewTargetResult
-        {
-            MachineId = machine.Id,
-            MachineName = machine.Name,
-            Roles = DeploymentTargetFinder.ParseRoles(machine.Roles).OrderBy(role => role, StringComparer.OrdinalIgnoreCase).ToList()
-        };
     }
 
     private static DeploymentRequestPayload NormalizeRequestPayload(DeploymentRequestPayload payload)

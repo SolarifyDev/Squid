@@ -1,378 +1,185 @@
-using System.Collections.Generic;
 using System.Linq;
-using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.Deployments.Deployments;
-using Squid.Message.Constants;
-using Squid.Core.Services.Deployments.Environments;
-using Squid.Core.Services.Deployments.Project;
-using Squid.Core.Services.Deployments.LifeCycle;
-using Squid.Core.Services.Deployments.Release;
-using Squid.Core.Services.Deployments.ServerTask;
-using Squid.Core.Services.Deployments.Snapshots;
-using Squid.Core.Services.Deployments.Validation;
-using Squid.Core.Services.Identity;
-using Squid.Core.Services.Jobs;
-using Squid.Core.Services.Machines;
-using Squid.Message.Models.Deployments.Deployment;
-using Squid.Message.Models.Deployments.Process;
+using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Message.Enums;
 
 namespace Squid.UnitTests.Services.Deployments.Preview;
 
+/// <summary>
+/// Phase 6c-ii — unit tests for <see cref="DeploymentService.MapPlannedStep"/>. The preview
+/// service now delegates step/target/action resolution to <see cref="IDeploymentPlanner"/>
+/// and only owns the translation from <see cref="PlannedStep"/> to
+/// <see cref="Squid.Message.Models.Deployments.Deployment.DeploymentPreviewStepResult"/>.
+/// Structural planner coverage lives in <c>DeploymentPlannerTests</c>; these tests pin the
+/// mapping contract only.
+/// </summary>
 public class DeploymentPreviewStepTests
 {
-    private readonly Mock<IActionHandlerRegistry> _registryMock = new();
-    private readonly DeploymentService _sut;
-
-    public DeploymentPreviewStepTests()
+    [Fact]
+    public void MapPlannedStep_ApplicableStep_CopiesIdNameOrderAndMatchedTargets()
     {
-        _sut = new DeploymentService(
-            new Mock<IMapper>().Object,
-            new Mock<ICurrentUser>().Object,
-            new Mock<IDeploymentDataProvider>().Object,
-            new Mock<IReleaseDataProvider>().Object,
-            new Mock<IEnvironmentDataProvider>().Object,
-            new Mock<IMachineDataProvider>().Object,
-            new Mock<ILifecycleResolver>().Object,
-            new Mock<ILifecycleProgressionEvaluator>().Object,
-            new Mock<IDeploymentValidationOrchestrator>().Object,
-            new Mock<IDeploymentSnapshotService>().Object,
-            new Mock<IServerTaskDataProvider>().Object,
-            new Mock<IServerTaskService>().Object,
-            new Mock<IProjectDataProvider>().Object,
-            _registryMock.Object,
-            new Mock<ISquidBackgroundJobClient>().Object);
-    }
-
-    private static DeploymentValidationContext DefaultContext(int environmentId = 1, int skipActionId = 0)
-    {
-        return new DeploymentValidationContext
+        var planned = new PlannedStep
         {
-            ReleaseId = 1,
-            EnvironmentId = environmentId,
-            SkipActionIds = skipActionId > 0 ? [skipActionId] : []
-        };
-    }
-
-    private static List<Machine> CreateMachines(params (int id, string name, string roles)[] defs)
-    {
-        return defs.Select(d => new Machine { Id = d.id, Name = d.name, Roles = d.roles }).ToList();
-    }
-
-    private static DeploymentStepDto CreateStep(int id, int stepOrder, string name, bool isDisabled, string targetRoles, List<DeploymentActionDto> actions)
-    {
-        var properties = new List<DeploymentStepPropertyDto>();
-
-        if (!string.IsNullOrEmpty(targetRoles))
-        {
-            properties.Add(new DeploymentStepPropertyDto
+            StepId = 10,
+            StepName = "Deploy Web",
+            StepOrder = 1,
+            Status = PlannedStepStatus.Applicable,
+            RequiredRoles = new List<string> { "web" },
+            MatchedTargets = new List<PlannedTarget>
             {
-                StepId = id,
-                PropertyName = SpecialVariables.Step.TargetRoles,
-                PropertyValue = targetRoles
-            });
-        }
-
-        return new DeploymentStepDto
-        {
-            Id = id,
-            StepOrder = stepOrder,
-            Name = name,
-            IsDisabled = isDisabled,
-            Properties = properties,
-            Actions = actions
-        };
-    }
-
-    private static DeploymentStepDto CreateRunOnServerStep(int id, int stepOrder, string name, List<DeploymentActionDto> actions)
-    {
-        return new DeploymentStepDto
-        {
-            Id = id,
-            StepOrder = stepOrder,
-            Name = name,
-            Properties = new List<DeploymentStepPropertyDto>
-            {
-                new() { StepId = id, PropertyName = SpecialVariables.Step.RunOnServer, PropertyValue = "true" }
+                new() { MachineId = 1, MachineName = "web-1", Roles = new List<string> { "web" }, CommunicationStyle = CommunicationStyle.KubernetesApi },
+                new() { MachineId = 2, MachineName = "web-2", Roles = new List<string> { "web" }, CommunicationStyle = CommunicationStyle.KubernetesApi }
             },
-            Actions = actions
+            Actions = new List<PlannedAction>
+            {
+                new() { ActionId = 100, ActionName = "Run", ActionType = "Squid.Script", ActionOrder = 1 }
+            }
         };
-    }
 
-    private static DeploymentActionDto CreateAction(int id, string actionType, int actionOrder = 1)
-    {
-        return new DeploymentActionDto
-        {
-            Id = id,
-            ActionType = actionType,
-            ActionOrder = actionOrder,
-            Environments = [],
-            ExcludedEnvironments = [],
-            Channels = []
-        };
+        var result = DeploymentService.MapPlannedStep(planned);
+
+        result.StepId.ShouldBe(10);
+        result.StepName.ShouldBe("Deploy Web");
+        result.StepOrder.ShouldBe(1);
+        result.IsApplicable.ShouldBeTrue();
+        result.IsDisabled.ShouldBeFalse();
+        result.IsStepLevelOnly.ShouldBeFalse();
+        result.IsRunOnServer.ShouldBeFalse();
+        result.Reason.ShouldBeNull();
+        result.RequiredRoles.ShouldBe(new[] { "web" });
+        result.RunnableActionIds.ShouldBe(new[] { 100 });
+        result.MatchedTargets.Count.ShouldBe(2);
+        result.MatchedTargets.Select(t => t.MachineName).ShouldBe(new[] { "web-1", "web-2" });
     }
 
     [Fact]
-    public void ManualInterventionStep_ShouldHaveEmptyTargetsAndBeApplicable()
+    public void MapPlannedStep_StepLevelOnly_HasEmptyTargetsAndNoReason()
     {
-        var action = CreateAction(10, "Squid.Manual");
-        var step = CreateStep(1, 1, "Approve", false, null, [action]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "web-server"));
+        var planned = new PlannedStep
+        {
+            StepId = 1,
+            StepName = "Approve",
+            StepOrder = 1,
+            Status = PlannedStepStatus.StepLevelOnly,
+            StatusMessage = "Step \"Approve\" runs at step-level (no per-target dispatches).",
+            Actions = new List<PlannedAction>
+            {
+                new() { ActionId = 10, ActionName = "Gate", ActionType = "Squid.Manual", ActionOrder = 1, IsStepLevel = true }
+            }
+        };
 
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.StepLevel);
-
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
+        var result = DeploymentService.MapPlannedStep(planned);
 
         result.IsApplicable.ShouldBeTrue();
         result.IsStepLevelOnly.ShouldBeTrue();
+        result.IsRunOnServer.ShouldBeFalse();
         result.MatchedTargets.ShouldBeEmpty();
         result.Reason.ShouldBeNull();
     }
 
     [Fact]
-    public void MixedStep_ManualInterventionAndTargetLevel_ShouldMatchTargetsNormally()
+    public void MapPlannedStep_RunOnServer_HasEmptyTargetsAndNoReason()
     {
-        var manualAction = CreateAction(10, "Squid.Manual", 1);
-        var scriptAction = CreateAction(11, "Squid.Script", 2);
-        var step = CreateStep(1, 1, "Mixed Step", false, "web-server", [manualAction, scriptAction]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
+        var planned = new PlannedStep
+        {
+            StepId = 1,
+            StepName = "Server Script",
+            StepOrder = 1,
+            Status = PlannedStepStatus.RunOnServer,
+            StatusMessage = "Step \"Server Script\" is marked RunOnServer.",
+            Actions = new List<PlannedAction>
+            {
+                new() { ActionId = 10, ActionName = "Run", ActionType = "Squid.Script", ActionOrder = 1 }
+            }
+        };
 
-        _registryMock.Setup(r => r.ResolveScope(manualAction)).Returns(ExecutionScope.StepLevel);
-        _registryMock.Setup(r => r.ResolveScope(scriptAction)).Returns(ExecutionScope.TargetLevel);
-
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
+        var result = DeploymentService.MapPlannedStep(planned);
 
         result.IsApplicable.ShouldBeTrue();
+        result.IsRunOnServer.ShouldBeTrue();
         result.IsStepLevelOnly.ShouldBeFalse();
-        result.MatchedTargets.Count.ShouldBe(1);
-        result.MatchedTargets[0].MachineName.ShouldBe("k8s-node-1");
+        result.MatchedTargets.ShouldBeEmpty();
+        result.Reason.ShouldBeNull();
     }
 
     [Fact]
-    public void NormalStepWithRoles_ShouldFilterByRoles()
+    public void MapPlannedStep_Disabled_IsNotApplicableAndCarriesReason()
     {
-        var action = CreateAction(10, "Squid.Script");
-        var step = CreateStep(1, 1, "Deploy", false, "web-server", [action]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
+        var planned = new PlannedStep
+        {
+            StepId = 1,
+            StepName = "Disabled Step",
+            StepOrder = 5,
+            Status = PlannedStepStatus.Disabled,
+            StatusMessage = "Step \"Disabled Step\" is disabled."
+        };
 
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
+        var result = DeploymentService.MapPlannedStep(planned);
 
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
-
-        result.IsApplicable.ShouldBeTrue();
-        result.IsStepLevelOnly.ShouldBeFalse();
-        result.MatchedTargets.Count.ShouldBe(1);
-        result.MatchedTargets[0].MachineName.ShouldBe("k8s-node-1");
-        result.RequiredRoles.ShouldContain("web-server");
-    }
-
-    [Fact]
-    public void NormalStepWithoutRoles_ShouldMatchAllMachines()
-    {
-        var action = CreateAction(10, "Squid.Script");
-        var step = CreateStep(1, 1, "Deploy", false, null, [action]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
-
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
-
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
-
-        result.IsApplicable.ShouldBeTrue();
-        result.MatchedTargets.Count.ShouldBe(2);
-    }
-
-    [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public void StepNumbering_ShouldUseStepOrderDirectly(int stepOrder)
-    {
-        var action = CreateAction(10, "Squid.Script");
-        var step = CreateStep(1, stepOrder, "Deploy", false, null, [action]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"));
-
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
-
-        var result = _sut.BuildStepPreview(step, step.StepOrder, 0, DefaultContext(), machines);
-
-        result.StepOrder.ShouldBe(stepOrder);
-    }
-
-    [Fact]
-    public void DisabledStep_ShouldGetCorrectDisplayOrder()
-    {
-        var step = CreateStep(1, 5, "Disabled Step", true, null, []);
-
-        var result = _sut.BuildStepPreview(step, 2, 0, DefaultContext(), []);
-
-        result.StepOrder.ShouldBe(2);
         result.IsDisabled.ShouldBeTrue();
         result.IsApplicable.ShouldBeFalse();
-        result.Reason.ShouldBe("Step is disabled.");
+        result.Reason.ShouldBe("Step \"Disabled Step\" is disabled.");
+        result.StepOrder.ShouldBe(5);
     }
 
     [Fact]
-    public void NoRunnableActions_ShouldNotBeApplicable()
+    public void MapPlannedStep_NoRunnableActions_IsNotApplicableAndCarriesReason()
     {
-        var action = CreateAction(10, "Squid.Script");
-        action.IsDisabled = true;
-        var step = CreateStep(1, 1, "Deploy", false, null, [action]);
+        var planned = new PlannedStep
+        {
+            StepId = 1,
+            StepName = "Deploy",
+            StepOrder = 1,
+            Status = PlannedStepStatus.NoRunnableActions,
+            StatusMessage = "Step \"Deploy\" has no runnable actions for the selected environment/channel."
+        };
 
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), []);
+        var result = DeploymentService.MapPlannedStep(planned);
 
         result.IsApplicable.ShouldBeFalse();
-        result.Reason.ShouldContain("No runnable actions");
+        result.IsDisabled.ShouldBeFalse();
+        result.Reason.ShouldBe("Step \"Deploy\" has no runnable actions for the selected environment/channel.");
     }
 
-    // ========== FilterCandidatesByStepRoles ==========
-
     [Fact]
-    public void FilterCandidates_StepLevelOnlySteps_ReturnsAllMachines()
+    public void MapPlannedStep_NoMatchingTargets_IsApplicableButCarriesReasonAndEmptyTargets()
     {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
+        var planned = new PlannedStep
         {
-            new() { IsApplicable = true, IsStepLevelOnly = true, StepName = "Manual Intervention" }
+            StepId = 1,
+            StepName = "Deploy Web",
+            StepOrder = 1,
+            Status = PlannedStepStatus.NoMatchingTargets,
+            StatusMessage = "Step \"Deploy Web\" requires roles [web] but no candidate target has any of them.",
+            RequiredRoles = new List<string> { "web" }
         };
 
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(2);
-    }
-
-    [Fact]
-    public void FilterCandidates_TargetLevelWithRoles_FiltersCorrectly()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
-        {
-            new() { IsApplicable = true, IsStepLevelOnly = true, StepName = "Manual Intervention" },
-            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] }
-        };
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(1);
-        result[0].MachineName.ShouldBe("node-1");
-    }
-
-    [Fact]
-    public void FilterCandidates_MultipleTargetLevelSteps_UnionsRoles()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"), (3, "node-3", "[\"cache\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
-        {
-            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] },
-            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Run Migrations", RequiredRoles = ["db"] }
-        };
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(2);
-        result.Select(t => t.MachineName).ShouldBe(["node-1", "node-2"], ignoreOrder: true);
-    }
-
-    [Fact]
-    public void FilterCandidates_TargetLevelWithNoRoles_ReturnsAllMachines()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
-        {
-            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy All", RequiredRoles = [] }
-        };
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(2);
-    }
-
-    // ========== RunOnServer Steps ==========
-
-    [Fact]
-    public void RunOnServerStep_ShouldBeApplicableWithNoMatchedTargets()
-    {
-        var action = CreateAction(10, "Squid.Script");
-        var step = CreateRunOnServerStep(1, 1, "Server Script", [action]);
-        var machines = CreateMachines((1, "k8s-node-1", "web-server"), (2, "k8s-node-2", "db-server"));
-
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
-
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), machines);
+        var result = DeploymentService.MapPlannedStep(planned);
 
         result.IsApplicable.ShouldBeTrue();
-        result.IsRunOnServer.ShouldBeTrue();
-        result.IsStepLevelOnly.ShouldBeFalse();
         result.MatchedTargets.ShouldBeEmpty();
-        result.RequiredRoles.ShouldBeEmpty();
-        result.Reason.ShouldBeNull();
+        result.Reason.ShouldBe("Step \"Deploy Web\" requires roles [web] but no candidate target has any of them.");
+        result.RequiredRoles.ShouldBe(new[] { "web" });
     }
 
     [Fact]
-    public void RunOnServerStep_NoMachines_ShouldStillBeApplicable()
+    public void MapPlannedStep_CopiesRunnableActionIds()
     {
-        var action = CreateAction(10, "Squid.Script");
-        var step = CreateRunOnServerStep(1, 1, "Server Script", [action]);
-
-        _registryMock.Setup(r => r.ResolveScope(action)).Returns(ExecutionScope.TargetLevel);
-
-        var result = _sut.BuildStepPreview(step, 1, 0, DefaultContext(), []);
-
-        result.IsApplicable.ShouldBeTrue();
-        result.IsRunOnServer.ShouldBeTrue();
-        result.MatchedTargets.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void FilterCandidates_RunOnServerOnlySteps_ReturnsAllMachines()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
+        var planned = new PlannedStep
         {
-            new() { IsApplicable = true, IsRunOnServer = true, StepName = "Server Script" }
+            StepId = 1,
+            StepName = "Deploy",
+            StepOrder = 1,
+            Status = PlannedStepStatus.Applicable,
+            Actions = new List<PlannedAction>
+            {
+                new() { ActionId = 100, ActionName = "Step1", ActionType = "Squid.Script", ActionOrder = 1 },
+                new() { ActionId = 200, ActionName = "Step2", ActionType = "Squid.Script", ActionOrder = 2 }
+            }
         };
 
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
+        var result = DeploymentService.MapPlannedStep(planned);
 
-        result.Count.ShouldBe(2);
-    }
-
-    [Fact]
-    public void FilterCandidates_MixedRunOnServerAndTarget_FiltersOnlyByTargetRoles()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"), (3, "node-3", "[\"cache\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
-        {
-            new() { IsApplicable = true, IsRunOnServer = true, StepName = "Server Script" },
-            new() { IsApplicable = true, IsStepLevelOnly = false, StepName = "Deploy Web", RequiredRoles = ["web"] }
-        };
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(1);
-        result[0].MachineName.ShouldBe("node-1");
-    }
-
-    [Fact]
-    public void FilterCandidates_NullSteps_ReturnsAllMachines()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(null, machines);
-
-        result.Count.ShouldBe(2);
-    }
-
-    [Fact]
-    public void FilterCandidates_NoApplicableSteps_ReturnsAllMachines()
-    {
-        var machines = CreateMachines((1, "node-1", "[\"web\"]"), (2, "node-2", "[\"db\"]"));
-        var steps = new List<DeploymentPreviewStepResult>
-        {
-            new() { IsApplicable = false, IsDisabled = true, StepName = "Disabled Step" }
-        };
-
-        var result = DeploymentService.FilterCandidatesByStepRoles(steps, machines);
-
-        result.Count.ShouldBe(2);
+        result.RunnableActionIds.ShouldBe(new[] { 100, 200 });
     }
 }

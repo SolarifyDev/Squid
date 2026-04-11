@@ -2,6 +2,8 @@ using System.Text.Json;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Project;
@@ -34,6 +36,8 @@ public partial class DeploymentService : IDeploymentService
     private readonly IServerTaskService _serverTaskService;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
+    private readonly IDeploymentPlanner _deploymentPlanner;
+    private readonly ITransportRegistry _transportRegistry;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
     public DeploymentService(
@@ -51,6 +55,8 @@ public partial class DeploymentService : IDeploymentService
         IServerTaskService serverTaskService,
         IProjectDataProvider projectDataProvider,
         IActionHandlerRegistry actionHandlerRegistry,
+        IDeploymentPlanner deploymentPlanner,
+        ITransportRegistry transportRegistry,
         ISquidBackgroundJobClient backgroundJobClient)
     {
         _mapper = mapper;
@@ -67,6 +73,8 @@ public partial class DeploymentService : IDeploymentService
         _serverTaskService = serverTaskService;
         _projectDataProvider = projectDataProvider;
         _actionHandlerRegistry = actionHandlerRegistry;
+        _deploymentPlanner = deploymentPlanner;
+        _transportRegistry = transportRegistry;
         _backgroundJobClient = backgroundJobClient;
     }
 
