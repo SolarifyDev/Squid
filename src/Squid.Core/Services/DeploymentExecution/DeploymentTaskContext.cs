@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -36,6 +37,11 @@ public class DeploymentTaskContext
     public Dictionary<string, PackageAcquisitionResult> AcquiredPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
     public bool UseGuidedFailure { get; set; }
+
+    // Planning — deployment plan produced by IDeploymentPlanner (phase 6, order 460).
+    // Shadow-observed in 6c-i: built but not consumed. Phase 6c-iii wires ExecuteStepsPhase
+    // to consume Plan.Steps for per-target dispatches and switches the planner to Execute mode.
+    public DeploymentPlan Plan { get; set; }
 
     // Server-only execution
     public bool IsServerOnlyDeployment { get; set; }
