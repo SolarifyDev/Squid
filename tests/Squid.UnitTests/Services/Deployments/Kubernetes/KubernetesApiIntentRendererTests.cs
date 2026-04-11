@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Moq;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -10,6 +11,7 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
@@ -21,12 +23,15 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 /// <summary>
-/// Phase 9j.1 — <see cref="KubernetesApiIntentRenderer"/> is no longer a pure pass-through.
-/// When it sees a <see cref="RunScriptIntent"/>, it constructs a fresh
-/// <see cref="ScriptExecutionRequest"/> from the intent plus <see cref="IntentRenderContext"/>,
-/// applying kubectl context wrapping via <see cref="IKubernetesApiContextScriptBuilder"/> for
-/// shell syntaxes. For any other intent kind it still falls through to the pass-through path
-/// (until Phase 9j.2 lands native K8s intent rendering).
+/// Phase 9j.1 / 9j.2 — <see cref="KubernetesApiIntentRenderer"/> natively renders
+/// <see cref="RunScriptIntent"/> and <see cref="KubernetesApplyIntent"/> by constructing a
+/// fresh <see cref="ScriptExecutionRequest"/> from the intent plus the
+/// <see cref="IntentRenderContext"/>. For shell syntaxes the rendered body is wrapped with
+/// the cluster's kubectl context via <see cref="IKubernetesApiContextScriptBuilder"/>; for
+/// <see cref="KubernetesApplyIntent"/> the body is the per-file <c>kubectl apply -f</c>
+/// pipeline plus a <see cref="KubernetesResourceWaitBuilder"/> block when
+/// <see cref="KubernetesApplyIntent.ObjectStatusCheck"/> is set. Intents without a native
+/// renderer still fall through to the legacy pass-through path.
 /// </summary>
 public class KubernetesApiIntentRendererTests
 {
@@ -50,6 +55,12 @@ public class KubernetesApiIntentRendererTests
     public void CanRender_RunScriptIntent_True()
     {
         _renderer.CanRender(NewRunScriptIntent()).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CanRender_KubernetesApplyIntent_True()
+    {
+        _renderer.CanRender(NewKubernetesApplyIntent()).ShouldBeTrue();
     }
 
     [Fact]
@@ -368,27 +379,469 @@ public class KubernetesApiIntentRendererTests
         rendered.Files.ShouldBe(files);
     }
 
-    // ========== Non-RunScript intents still pass through ==========
+    // ========== KubernetesApplyIntent: basic rendering ==========
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_PassesLegacyRequestThrough()
+    public async Task RenderAsync_KubernetesApplyIntent_EmitsKubectlApplyPerFile()
     {
-        var legacy = new ScriptExecutionRequest { ScriptBody = "kubectl apply -f ." };
-        var intent = new KubernetesApplyIntent
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
         {
-            Name = "k8s-apply",
-            YamlFiles = new List<Squid.Core.Services.DeploymentExecution.Script.Files.DeploymentFile>(),
-            Namespace = "default",
-            ServerSideApply = false
-        };
+            DeploymentFile.Asset("a.yaml", new byte[] { 0x41 }),
+            DeploymentFile.Asset("b.yaml", new byte[] { 0x42 })
+        });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
 
-        rendered.ShouldBeSameAs(legacy);
+        captured.ShouldNotBeNull();
+        captured.ShouldContain("kubectl apply -f \"./a.yaml\"");
+        captured.ShouldContain("kubectl apply -f \"./b.yaml\"");
     }
 
     [Fact]
-    public async Task RenderAsync_NonRunScriptIntent_NullLegacy_ThrowsIntentRenderingException()
+    public async Task RenderAsync_KubernetesApplyIntent_FilesSortedDeterministically()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("zeta.yaml", new byte[] { 0x5A }),
+            DeploymentFile.Asset("alpha.yaml", new byte[] { 0x41 })
+        });
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var alphaIdx = captured!.IndexOf("alpha.yaml", StringComparison.Ordinal);
+        var zetaIdx = captured.IndexOf("zeta.yaml", StringComparison.Ordinal);
+        alphaIdx.ShouldBeGreaterThan(-1);
+        zetaIdx.ShouldBeGreaterThan(-1);
+        alphaIdx.ShouldBeLessThan(zetaIdx);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_EmptyYamlFiles_EmitsEmptyApplyScript()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: Array.Empty<DeploymentFile>());
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldBe(string.Empty);
+        rendered.Files.ShouldBeEmpty();
+    }
+
+    // ========== KubernetesApplyIntent: server-side-apply flag combinations ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ServerSideApplyDisabled_NoServerSideFlag()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent() with { ServerSideApply = false };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldNotContain("--server-side");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ServerSideApplyEnabled_UsesFieldManager()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent() with
+        {
+            ServerSideApply = true,
+            FieldManager = "my-manager",
+            ForceConflicts = false
+        };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldContain("--server-side");
+        captured.ShouldContain("--field-manager=\"my-manager\"");
+        captured.ShouldNotContain("--force-conflicts");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ForceConflictsEnabled_EmitsForceFlag()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent() with
+        {
+            ServerSideApply = true,
+            FieldManager = "squid-deploy",
+            ForceConflicts = true
+        };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldContain("--force-conflicts");
+    }
+
+    // ========== KubernetesApplyIntent: ObjectStatusCheck wait script ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ObjectStatusCheckDisabled_NoWaitScript()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("deployment.yaml", BytesFor("kind: Deployment\nmetadata:\n  name: api\n"))
+        }) with { ObjectStatusCheck = false };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldNotContain("kubectl rollout status");
+        captured.ShouldNotContain("Resource status check");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ObjectStatusCheckEnabled_AppendsRolloutWait()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("deployment.yaml", BytesFor("kind: Deployment\nmetadata:\n  name: api\n"))
+        }) with
+        {
+            Namespace = "prod",
+            ObjectStatusCheck = true,
+            StatusCheckTimeoutSeconds = 120
+        };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldContain("kubectl rollout status \"deployment/api\" -n \"prod\" --timeout=120s");
+    }
+
+    // ========== KubernetesApplyIntent: syntax-specific path separator ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_PowerShellSyntax_UsesBackslashInTargetPath()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
+        }) with { Syntax = ScriptSyntax.PowerShell };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldContain(".\\content\\deploy.yaml");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_BashSyntax_UsesForwardSlashInTargetPath()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
+        }) with { Syntax = ScriptSyntax.Bash };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.ShouldContain("./content/deploy.yaml");
+    }
+
+    // ========== KubernetesApplyIntent: kubectl-context wrapping ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_BashSyntax_WrapsWithKubectlContext()
+    {
+        SetupBuilder(returnValue: "wrapped-apply");
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("deploy.yaml", new byte[] { 0x41 })
+        });
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldBe("wrapped-apply");
+        _builderMock.Verify(b => b.WrapWithContext(
+            It.Is<string>(s => s.Contains("kubectl apply -f")),
+            It.IsAny<ScriptContext>(),
+            It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_PythonSyntax_DoesNotWrapWithKubectlContext()
+    {
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("deploy.yaml", new byte[] { 0x41 })
+        }) with { Syntax = ScriptSyntax.Python };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kubectl apply -f");
+        _builderMock.Verify(b => b.WrapWithContext(
+            It.IsAny<string>(),
+            It.IsAny<ScriptContext>(),
+            It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_CustomKubectlExecutableFromVariables_PassedToBuilder()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        string? capturedKubectl = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((_, _, kubectl) => capturedKubectl = kubectl)
+            .Returns("wrapped");
+
+        var vars = new List<VariableDto>
+        {
+            new() { Name = SpecialVariables.Kubernetes.CustomKubectlExecutable, Value = "/opt/bin/kubectl" }
+        };
+
+        await _renderer.RenderAsync(
+            NewKubernetesApplyIntent(),
+            NewContext(legacy: null, variables: vars),
+            CancellationToken.None);
+
+        capturedKubectl.ShouldBe("/opt/bin/kubectl");
+    }
+
+    // ========== KubernetesApplyIntent: intent-sourced + context-sourced fields ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_StepAndActionNameFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKubernetesApplyIntent() with { StepName = "Apply Step", ActionName = "Apply Action" };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.StepName.ShouldBe("Apply Step");
+        rendered.ActionName.ShouldBe("Apply Action");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_SyntaxFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKubernetesApplyIntent() with { Syntax = ScriptSyntax.PowerShell };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_VariablesFromContext()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var vars = new List<VariableDto>
+        {
+            new() { Name = "Foo", Value = "Bar" }
+        };
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+
+        rendered.Variables.ShouldNotBeNull();
+        rendered.Variables.Select(v => v.Name).ShouldContain("Foo");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_MachineAndEndpointFromContext()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var machine = new Machine { Id = 7, Name = "k8s-box" };
+        var endpoint = new EndpointContext { EndpointJson = "{}" };
+        var target = new DeploymentTargetContext
+        {
+            Machine = machine,
+            EndpointContext = endpoint,
+            CommunicationStyle = CommunicationStyle.KubernetesApi
+        };
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+
+        rendered.Machine.ShouldBeSameAs(machine);
+        rendered.EndpointContext.ShouldBeSameAs(endpoint);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ServerTaskIdAndReleaseVersionFromContext()
+    {
+        SetupBuilder(returnValue: "wrapped");
+
+        var rendered = await _renderer.RenderAsync(
+            NewKubernetesApplyIntent(),
+            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            CancellationToken.None);
+
+        rendered.ServerTaskId.ShouldBe(99);
+        rendered.ReleaseVersion.ShouldBe("2.5.0");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_TimeoutPrefersIntentOverStepTimeout()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKubernetesApplyIntent() with { Timeout = TimeSpan.FromMinutes(3) };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+
+        rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_TimeoutFallsBackToStepTimeout()
+    {
+        SetupBuilder(returnValue: "wrapped");
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+
+        rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ExecutionModeDirectScript()
+    {
+        SetupBuilder(returnValue: "wrapped");
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+        rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
+        rendered.PayloadKind.ShouldBe(PayloadKind.None);
+    }
+
+    // ========== KubernetesApplyIntent: Files derived from intent (not LegacyRequest) ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_FilesComeFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("configmap.yaml", new byte[] { 0x43, 0x4D }),
+            DeploymentFile.Asset("secret.yaml", new byte[] { 0x53, 0x45 })
+        });
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.ShouldNotBeNull();
+        rendered.Files.Count.ShouldBe(2);
+        rendered.Files["configmap.yaml"].ShouldBe(new byte[] { 0x43, 0x4D });
+        rendered.Files["secret.yaml"].ShouldBe(new byte[] { 0x53, 0x45 });
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyFiles()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var legacyFiles = new Dictionary<string, byte[]> { { "legacy.yaml", new byte[] { 0xFF } } };
+        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("intent.yaml", new byte[] { 0x01 })
+        });
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+
+        rendered.Files.ShouldContainKey("intent.yaml");
+        rendered.Files.ShouldNotContainKey("legacy.yaml");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_NullLegacy_PackageReferencesEmpty()
+    {
+        SetupBuilder(returnValue: "wrapped");
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_ForwardsLegacyPackageReferencesWhenPresent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
+        };
+        var legacy = new ScriptExecutionRequest { PackageReferences = packages };
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy), CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBe(packages);
+    }
+
+    // ========== Non-native intents still pass through ==========
+
+    [Fact]
+    public async Task RenderAsync_NonNativeIntent_NullLegacy_ThrowsIntentRenderingException()
     {
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
@@ -420,6 +873,32 @@ public class KubernetesApiIntentRendererTests
             InjectRuntimeBundle = true
         };
     }
+
+    private static KubernetesApplyIntent NewKubernetesApplyIntent(IReadOnlyList<DeploymentFile>? files = null)
+    {
+        var yamlFiles = files ?? new[]
+        {
+            DeploymentFile.Asset("deploy.yaml", new byte[] { 0x41 })
+        };
+
+        return new KubernetesApplyIntent
+        {
+            Name = "k8s-apply",
+            StepName = "step-1",
+            ActionName = "action-1",
+            YamlFiles = yamlFiles,
+            Assets = yamlFiles,
+            Namespace = "default",
+            Syntax = ScriptSyntax.Bash,
+            ServerSideApply = false,
+            FieldManager = "squid-deploy",
+            ForceConflicts = false,
+            ObjectStatusCheck = false,
+            StatusCheckTimeoutSeconds = 300
+        };
+    }
+
+    private static byte[] BytesFor(string content) => Encoding.UTF8.GetBytes(content);
 
     private static IntentRenderContext NewContext(
         ScriptExecutionRequest? legacy,

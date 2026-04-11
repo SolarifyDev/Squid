@@ -44,6 +44,9 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
         var yamlFiles = DeploymentFileCollection.FromLegacyFiles(source.Files).ToList();
         var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
 
+        var (serverSide, fieldManager, forceConflicts) = KubernetesApplyIntentFactory.ReadServerSideApply(ctx.Action);
+        var (objectStatusCheck, statusCheckTimeout) = KubernetesApplyIntentFactory.ReadObjectStatusCheck(ctx.Action);
+
         return new KubernetesApplyIntent
         {
             Name = "k8s-apply",
@@ -52,7 +55,12 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
             YamlFiles = yamlFiles,
             Assets = yamlFiles,
             Namespace = namespace_,
-            ServerSideApply = false
+            Syntax = syntax,
+            ServerSideApply = serverSide,
+            FieldManager = fieldManager,
+            ForceConflicts = forceConflicts,
+            ObjectStatusCheck = objectStatusCheck,
+            StatusCheckTimeoutSeconds = statusCheckTimeout
         };
     }
 

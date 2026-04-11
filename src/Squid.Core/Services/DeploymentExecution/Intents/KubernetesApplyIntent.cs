@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Intents;
 
@@ -20,6 +21,37 @@ public sealed record KubernetesApplyIntent : ExecutionIntent
     /// <summary>The target namespace. Empty string means "use the kubeconfig default namespace".</summary>
     public string Namespace { get; init; } = string.Empty;
 
+    /// <summary>
+    /// The script syntax the renderer should target when emitting the kubectl apply
+    /// pipeline (Bash vs PowerShell). Defaults to <see cref="ScriptSyntax.Bash"/>.
+    /// </summary>
+    public ScriptSyntax Syntax { get; init; } = ScriptSyntax.Bash;
+
     /// <summary>When true, invoke <c>kubectl apply --server-side</c> for conflict-free apply.</summary>
     public bool ServerSideApply { get; init; }
+
+    /// <summary>
+    /// Field manager name for server-side apply. Ignored when <see cref="ServerSideApply"/>
+    /// is false. Defaults to <c>"squid-deploy"</c>.
+    /// </summary>
+    public string FieldManager { get; init; } = "squid-deploy";
+
+    /// <summary>
+    /// When true, pass <c>--force-conflicts</c> alongside server-side apply. Ignored when
+    /// <see cref="ServerSideApply"/> is false.
+    /// </summary>
+    public bool ForceConflicts { get; init; }
+
+    /// <summary>
+    /// When true, the renderer appends a rollout / wait-for-condition status check
+    /// for every Deployment / StatefulSet / DaemonSet / Job found in <see cref="YamlFiles"/>
+    /// after the apply commands.
+    /// </summary>
+    public bool ObjectStatusCheck { get; init; }
+
+    /// <summary>
+    /// Timeout in seconds for each status check probe. Ignored when
+    /// <see cref="ObjectStatusCheck"/> is false. Defaults to <c>300</c>.
+    /// </summary>
+    public int StatusCheckTimeoutSeconds { get; init; } = 300;
 }

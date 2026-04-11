@@ -18,17 +18,41 @@ internal static class KubernetesResourceWaitBuilder
     private static readonly Regex KindRegex = new(@"^kind:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
     private static readonly Regex NameRegex = new(@"^\s+name:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Legacy overload — reads enabled flag and timeout from <see cref="DeploymentActionDto"/>.
+    /// Still used by the handler PrepareAsync path; delete once Phase 9k retires PrepareAsync.
+    /// </summary>
     internal static string BuildWaitScript(Dictionary<string, byte[]> files, DeploymentActionDto action, string namespace_, ScriptSyntax syntax)
     {
-        if (action.GetProperty(KubernetesProperties.ObjectStatusCheck) != KubernetesBooleanValues.True)
+        var enabled = action.GetProperty(KubernetesProperties.ObjectStatusCheck) == KubernetesBooleanValues.True;
+
+        if (!enabled)
             return string.Empty;
 
-        var timeout = action.GetProperty(KubernetesProperties.ObjectStatusCheckTimeout) ?? "300";
+        var timeoutStr = action.GetProperty(KubernetesProperties.ObjectStatusCheckTimeout) ?? "300";
+
+        if (!int.TryParse(timeoutStr, out var timeoutSeconds))
+            timeoutSeconds = 300;
+
+        return BuildWaitScript(files, enabled: true, timeoutSeconds, namespace_, syntax);
+    }
+
+    /// <summary>
+    /// Canonical overload — used by the intent renderer path. When <paramref name="enabled"/>
+    /// is false, returns an empty string. Otherwise emits <c>kubectl rollout status</c> /
+    /// <c>kubectl wait --for=condition=complete</c> per resource parsed from <paramref name="files"/>.
+    /// </summary>
+    internal static string BuildWaitScript(Dictionary<string, byte[]> files, bool enabled, int timeoutSeconds, string namespace_, ScriptSyntax syntax)
+    {
+        if (!enabled)
+            return string.Empty;
+
         var resources = ExtractResources(files);
 
         if (resources.Count == 0)
             return string.Empty;
 
+        var timeout = timeoutSeconds > 0 ? timeoutSeconds.ToString() : "300";
         var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine("# --- Resource status check ---");

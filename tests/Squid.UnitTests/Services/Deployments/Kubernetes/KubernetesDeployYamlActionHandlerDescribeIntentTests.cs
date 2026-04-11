@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Release;
@@ -150,6 +151,73 @@ public class KubernetesDeployYamlActionHandlerDescribeIntentTests
         var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         intent.ServerSideApply.ShouldBeFalse();
+    }
+
+    // ========== Phase 9j.2 — Syntax resolved from action properties ==========
+
+    [Fact]
+    public async Task DescribeIntentAsync_NoScriptSyntaxProperty_DefaultsToBash()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.Syntax.ShouldBe(ScriptSyntax.Bash);
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ScriptSyntaxPowerShell_UsedInIntent()
+    {
+        var action = CreateInlineYamlAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Script.Syntax",
+            PropertyValue = "PowerShell"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_FieldManager_DefaultsToSquidDeploy()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.FieldManager.ShouldBe("squid-deploy");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ForceConflicts_DefaultsToFalse()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ForceConflicts.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ObjectStatusCheck_DefaultsToFalse()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ObjectStatusCheck.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_StatusCheckTimeoutSeconds_DefaultsTo300()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.StatusCheckTimeoutSeconds.ShouldBe(300);
     }
 
     [Fact]

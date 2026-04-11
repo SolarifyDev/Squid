@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
@@ -182,6 +183,163 @@ public class KubernetesDeployConfigMapActionHandlerDescribeIntentTests
         var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         intent.ServerSideApply.ShouldBeFalse();
+    }
+
+    // ========== Phase 9j.2 — new fields populated by KubernetesApplyIntentFactory ==========
+
+    [Fact]
+    public async Task DescribeIntentAsync_Syntax_DefaultsToBash()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.Syntax.ShouldBe(ScriptSyntax.Bash);
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_FieldManager_DefaultsToSquidDeploy()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.FieldManager.ShouldBe("squid-deploy");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ForceConflicts_DefaultsToFalse()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ForceConflicts.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ObjectStatusCheck_DefaultsToFalse()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ObjectStatusCheck.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_StatusCheckTimeoutSeconds_DefaultsTo300()
+    {
+        var ctx = CreateContext();
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.StatusCheckTimeoutSeconds.ShouldBe(300);
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ServerSideApplyEnabledProperty_PopulatesIntent()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.Enabled",
+            PropertyValue = "True"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.ServerSideApply.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_CustomFieldManagerProperty_PopulatesIntent()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.Enabled",
+            PropertyValue = "True"
+        });
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.FieldManager",
+            PropertyValue = "custom-manager"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.FieldManager.ShouldBe("custom-manager");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ForceConflictsProperty_PopulatesIntent()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.Enabled",
+            PropertyValue = "True"
+        });
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.Kubernetes.ServerSideApply.ForceConflicts",
+            PropertyValue = "True"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.ForceConflicts.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ObjectStatusCheckProperty_PopulatesIntent()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.KubernetesContainers.ObjectStatusCheck",
+            PropertyValue = "True"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.ObjectStatusCheck.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ObjectStatusCheckTimeoutProperty_PopulatesIntent()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.KubernetesContainers.ObjectStatusCheck",
+            PropertyValue = "True"
+        });
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout",
+            PropertyValue = "120"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.StatusCheckTimeoutSeconds.ShouldBe(120);
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_InvalidStatusCheckTimeout_FallsBackTo300()
+    {
+        var action = CreateAction();
+        action.Properties.Add(new DeploymentActionPropertyDto
+        {
+            PropertyName = "Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout",
+            PropertyValue = "not-a-number"
+        });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.StatusCheckTimeoutSeconds.ShouldBe(300);
     }
 
     [Fact]
