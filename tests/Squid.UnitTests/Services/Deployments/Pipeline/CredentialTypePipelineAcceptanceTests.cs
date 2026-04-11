@@ -15,6 +15,7 @@ using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Message.Models.Deployments.Account;
@@ -199,6 +200,14 @@ public class CredentialTypePipelineAcceptanceTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
         }
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash
+            });
     }
 
     // ========================================================================

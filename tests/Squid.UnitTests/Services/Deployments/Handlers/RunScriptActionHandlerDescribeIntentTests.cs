@@ -10,10 +10,10 @@ namespace Squid.UnitTests.Services.Deployments.Handlers;
 /// <summary>
 /// Phase 9b — verifies that <see cref="RunScriptActionHandler"/> overrides
 /// <c>DescribeIntentAsync</c> and emits a <see cref="RunScriptIntent"/> DIRECTLY,
-/// without routing through the legacy <c>PrepareAsync</c> + <c>LegacyIntentAdapter</c>
-/// seam. Critically, <see cref="RunScriptIntent.InjectRuntimeBundle"/> must be <c>true</c>
-/// — the Phase 8 runtime bundle is always injected when the handler emits the intent
-/// directly, unlike the adapter which defaults to <c>false</c>.
+/// without routing through the legacy <c>PrepareAsync</c> path. Critically,
+/// <see cref="RunScriptIntent.InjectRuntimeBundle"/> must be <c>true</c> — the
+/// Phase 8 runtime bundle (<c>set_squidvariable</c>, <c>new_squidartifact</c>,
+/// <c>fail_step</c>) is always injected when the handler emits the intent directly.
 /// </summary>
 public class RunScriptActionHandlerDescribeIntentTests
 {

@@ -16,6 +16,7 @@ using Squid.Message.Models.Deployments.Variable;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -575,6 +576,21 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             };
         }
+
+        public async Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
+        {
+            if (ctx.Action.Name is "Action1" or "Action2" or "ActionA" or "ActionB")
+                await _barrier.SignalAndWaitAsync(ct).ConfigureAwait(false);
+
+            var seesX = ctx.Variables?.Any(v => v.Name == "X") == true;
+
+            return new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"ACTION={ctx.Action.Name};SEES_X={seesX}",
+                Syntax = ScriptSyntax.Bash
+            };
+        }
     }
 
     private sealed class SimpleRunScriptHandler : IActionHandler
@@ -591,6 +607,14 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
         }
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash
+            });
     }
 
     private sealed class ConcurrencyTrackingStrategy : IExecutionStrategy

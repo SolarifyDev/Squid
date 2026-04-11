@@ -28,11 +28,11 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployRawYaml;
 
     /// <summary>
-    /// Phase 9c.1 — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="KubernetesApplyIntent"/>
-    /// with a stable semantic name (<c>k8s-apply</c>) and the namespace resolved from the
-    /// action properties. The YAML source resolution (inline or external feed) is shared
-    /// with <see cref="PrepareAsync"/> via <see cref="ResolveYamlSourceAsync"/>.
+    /// Phase 9c.1 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
+    /// produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
+    /// (<c>k8s-apply</c>) and the namespace resolved from the action properties. The YAML
+    /// source resolution (inline or external feed) is shared with <see cref="PrepareAsync"/>
+    /// via <see cref="ResolveYamlSourceAsync"/>.
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

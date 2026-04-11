@@ -37,12 +37,11 @@ public class KubernetesDeploySecretActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Phase 9c.4 — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="KubernetesApplyIntent"/>
-    /// with a stable semantic name (<c>k8s-apply</c>). The generated Secret YAML is
-    /// carried as a single <c>secret.yaml</c> asset. Unconfigured or invalid actions
-    /// produce an empty <c>YamlFiles</c> collection (a semantic no-op) instead of tripping
-    /// the adapter's null-result guard.
+    /// Phase 9c.4 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
+    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
+    /// (<c>k8s-apply</c>). The generated Secret YAML is carried as a single
+    /// <c>secret.yaml</c> asset. Unconfigured or invalid actions produce an empty
+    /// <c>YamlFiles</c> collection (a semantic no-op).
     /// </summary>
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

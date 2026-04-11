@@ -20,6 +20,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -826,6 +827,14 @@ public class DeploymentExecutionLoggingTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
         }
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"echo ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash
+            });
     }
 
     private sealed class SimpleStepLevelHandler : IActionHandler
@@ -836,6 +845,9 @@ public class DeploymentExecutionLoggingTests
 
         public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
             => Task.FromResult(new ActionExecutionResult());
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new ManualInterventionIntent { Name = "manual-intervention" });
 
         public Task ExecuteStepLevelAsync(StepActionContext ctx, CancellationToken ct)
             => Task.CompletedTask;

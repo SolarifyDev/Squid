@@ -19,6 +19,7 @@ using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -330,5 +331,13 @@ public class ResumeCheckpointTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
         }
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"echo ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash
+            });
     }
 }

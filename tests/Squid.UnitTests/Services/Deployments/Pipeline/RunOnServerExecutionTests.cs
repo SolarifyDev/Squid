@@ -15,6 +15,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -518,5 +519,13 @@ public class RunOnServerExecutionTests
                 ContextPreparationPolicy = ContextPreparationPolicy.Skip
             });
         }
+
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
+            {
+                Name = "run-script",
+                ScriptBody = $"echo ACTION={ctx.Action.Name}",
+                Syntax = ScriptSyntax.Bash
+            });
     }
 }

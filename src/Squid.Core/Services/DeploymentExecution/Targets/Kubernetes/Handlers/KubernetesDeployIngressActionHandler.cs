@@ -36,12 +36,11 @@ public class KubernetesDeployIngressActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Phase 9c.4 — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="KubernetesApplyIntent"/>
-    /// with a stable semantic name (<c>k8s-apply</c>). The generated Ingress YAML is
-    /// carried as a single <c>ingress.yaml</c> asset. Unconfigured or invalid actions
-    /// produce an empty <c>YamlFiles</c> collection (a semantic no-op) instead of tripping
-    /// the adapter's null-result guard.
+    /// Phase 9c.4 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
+    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
+    /// (<c>k8s-apply</c>). The generated Ingress YAML is carried as a single
+    /// <c>ingress.yaml</c> asset. Unconfigured or invalid actions produce an empty
+    /// <c>YamlFiles</c> collection (a semantic no-op).
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

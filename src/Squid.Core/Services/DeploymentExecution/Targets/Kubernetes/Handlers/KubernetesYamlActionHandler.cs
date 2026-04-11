@@ -70,14 +70,14 @@ public class KubernetesYamlActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Phase 9c.2 — direct intent emission. Bypasses <see cref="PrepareAsync"/> and the
-    /// <c>LegacyIntentAdapter</c> seam, producing a <see cref="KubernetesApplyIntent"/>
-    /// with a stable semantic name (<c>k8s-apply</c>). YAML generation (container image
-    /// resolution, deployment id suffix injection, feed secret injection, generator
-    /// invocation) is shared with <see cref="PrepareAsync"/> via
-    /// <see cref="ResolveGeneratedYamlFilesAsync"/>; the intent's <c>YamlFiles</c> is
-    /// then filtered to valid YAML entries only — non-YAML helper scripts (e.g. <c>.sh</c>)
-    /// are a legacy kubectl-wrapping concern that do not belong in the intent model.
+    /// Phase 9c.2 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
+    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
+    /// (<c>k8s-apply</c>). YAML generation (container image resolution, deployment id
+    /// suffix injection, feed secret injection, generator invocation) is shared with
+    /// <see cref="PrepareAsync"/> via <see cref="ResolveGeneratedYamlFilesAsync"/>; the
+    /// intent's <c>YamlFiles</c> is then filtered to valid YAML entries only — non-YAML
+    /// helper scripts (e.g. <c>.sh</c>) are a legacy kubectl-wrapping concern that do not
+    /// belong in the intent model.
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

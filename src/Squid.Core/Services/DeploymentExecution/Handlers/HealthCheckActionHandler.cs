@@ -29,12 +29,11 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
     }
 
     /// <summary>
-    /// Phase 9e — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="HealthCheckIntent"/> with a
-    /// stable semantic name (<c>health-check</c>). The legacy <c>Squid.Action.HealthCheck.*</c>
-    /// properties are mapped onto semantic intent fields via the same
-    /// <see cref="ParseSettings"/> helper that powers <see cref="ExecuteStepLevelAsync"/>,
-    /// so both paths stay in lock-step until Phase 9g flips the pipeline.
+    /// Phase 9e — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
+    /// produces a <see cref="HealthCheckIntent"/> with a stable semantic name
+    /// (<c>health-check</c>). The legacy <c>Squid.Action.HealthCheck.*</c> properties are
+    /// mapped onto semantic intent fields via the same <see cref="ParseSettings"/> helper
+    /// that powers <see cref="ExecuteStepLevelAsync"/>.
     /// </summary>
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

@@ -30,10 +30,10 @@ public class RunScriptActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Phase 9b — direct intent emission. Bypasses <see cref="PrepareAsync"/> and the
-    /// <c>LegacyIntentAdapter</c>, producing a <see cref="RunScriptIntent"/> with
-    /// <c>InjectRuntimeBundle = true</c> so the Phase 8 runtime bundle (<c>set_squidvariable</c>,
-    /// <c>new_squidartifact</c>, <c>fail_step</c>) is always injected by the renderer.
+    /// Phase 9b — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
+    /// produces a <see cref="RunScriptIntent"/> with <c>InjectRuntimeBundle = true</c> so the
+    /// Phase 8 runtime bundle (<c>set_squidvariable</c>, <c>new_squidartifact</c>,
+    /// <c>fail_step</c>) is always injected by the renderer.
     /// </summary>
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

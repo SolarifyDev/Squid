@@ -16,9 +16,7 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 /// <c>DescribeIntentAsync</c> and emits a <see cref="KubernetesApplyIntent"/> directly, with
 /// a stable semantic name (<c>k8s-apply</c>) and the generated ConfigMap YAML carried as a
 /// single <c>configmap.yaml</c> asset. Invalid/unconfigured actions produce an intent with
-/// an empty <c>YamlFiles</c> collection (a semantic no-op) instead of tripping the
-/// <see cref="Squid.Core.Services.DeploymentExecution.Rendering.Adapters.LegacyIntentAdapter"/>
-/// null-result guard. The legacy <c>PrepareAsync</c> path is preserved until Phase 9g.
+/// an empty <c>YamlFiles</c> collection (a semantic no-op).
 /// </summary>
 public class KubernetesDeployConfigMapActionHandlerDescribeIntentTests
 {

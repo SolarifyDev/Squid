@@ -64,14 +64,13 @@ public class KubernetesKustomizeActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Phase 9c.3 — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="KubernetesKustomizeIntent"/>
-    /// with a stable semantic name (<c>k8s-kustomize-apply</c>). The adapter path would
-    /// have collapsed this onto a <see cref="KubernetesApplyIntent"/> with an empty
-    /// <c>YamlFiles</c> list — which is ambiguous because an empty-yaml k8s-apply is
-    /// indistinguishable from a nothing-to-apply no-op. A kustomize overlay is a distinct
-    /// semantic: the renderer runs <c>kustomize build</c> on the target filesystem and
-    /// only THEN has manifests to apply.
+    /// Phase 9c.3 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
+    /// and produces a <see cref="KubernetesKustomizeIntent"/> with a stable semantic name
+    /// (<c>k8s-kustomize-apply</c>) rather than collapsing onto a
+    /// <see cref="KubernetesApplyIntent"/> with an empty <c>YamlFiles</c> list. An empty
+    /// <c>k8s-apply</c> is ambiguous (indistinguishable from a no-op), whereas a kustomize
+    /// overlay is a distinct semantic: the renderer runs <c>kustomize build</c> on the
+    /// target filesystem and only THEN has manifests to apply.
     /// </summary>
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

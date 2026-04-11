@@ -307,15 +307,14 @@ public class HelmUpgradeActionHandler : IActionHandler
     private record IntentChartSource(string ChartReference, string ChartVersion, HelmRepository Repository);
 
     /// <summary>
-    /// Phase 9d — direct intent emission. Bypasses the default <c>PrepareAsync</c> +
-    /// <c>LegacyIntentAdapter</c> seam and produces a <see cref="HelmUpgradeIntent"/>
-    /// with a stable semantic name (<c>helm-upgrade</c>). Every legacy action property
-    /// is projected onto a semantic intent field: flags (<c>ResetValues</c>, <c>Wait</c>,
-    /// <c>WaitForJobs</c>), options (<c>Timeout</c>, <c>AdditionalArgs</c>, <c>CustomHelmExecutable</c>),
-    /// rendered values files (<see cref="HelmUpgradeIntent.ValuesFiles"/>), inline <c>--set</c>
-    /// overrides (<see cref="HelmUpgradeIntent.InlineValues"/>), and any attached feed-backed
-    /// chart repository (<see cref="HelmRepository"/>). The legacy <c>PrepareAsync</c>
-    /// path is preserved until Phase 9g flips the pipeline.
+    /// Phase 9d — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
+    /// produces a <see cref="HelmUpgradeIntent"/> with a stable semantic name
+    /// (<c>helm-upgrade</c>). Every legacy action property is projected onto a semantic
+    /// intent field: flags (<c>ResetValues</c>, <c>Wait</c>, <c>WaitForJobs</c>), options
+    /// (<c>Timeout</c>, <c>AdditionalArgs</c>, <c>CustomHelmExecutable</c>), rendered values
+    /// files (<see cref="HelmUpgradeIntent.ValuesFiles"/>), inline <c>--set</c> overrides
+    /// (<see cref="HelmUpgradeIntent.InlineValues"/>), and any attached feed-backed chart
+    /// repository (<see cref="HelmRepository"/>).
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

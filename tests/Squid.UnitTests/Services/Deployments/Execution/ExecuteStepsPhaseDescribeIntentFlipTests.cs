@@ -23,16 +23,13 @@ namespace Squid.UnitTests.Services.Deployments.Execution;
 
 /// <summary>
 /// Phase 9h — proves the pipeline renders intents produced by
-/// <see cref="IActionHandler.DescribeIntentAsync"/> directly, rather than routing
-/// through <see cref="Squid.Core.Services.DeploymentExecution.Rendering.Adapters.LegacyIntentAdapter"/>
-/// on top of <c>PrepareAsync</c> output. The test installs a handler whose explicit
+/// <see cref="IActionHandler.DescribeIntentAsync"/> directly, bypassing the legacy
+/// <c>PrepareAsync</c> path entirely. The test installs a handler whose explicit
 /// <c>DescribeIntentAsync</c> override returns a distinctive <see cref="RunScriptIntent"/>
 /// (different <c>Name</c> and <c>ScriptBody</c> than its legacy <c>PrepareAsync</c>
 /// output) and captures the intent that reaches the renderer via a probe
-/// <see cref="IIntentRenderer"/>. Before the flip, the captured intent comes from the
-/// legacy adapter and carries <c>legacy:&lt;ActionType&gt;</c> and the <c>PrepareAsync</c>
-/// script body — proving the pipeline has not yet flipped. After the flip, the captured
-/// intent is the one returned by <c>DescribeIntentAsync</c>.
+/// <see cref="IIntentRenderer"/>. The captured intent must be the one returned by
+/// <c>DescribeIntentAsync</c>, not any value derived from <c>PrepareAsync</c>.
 /// </summary>
 public class ExecuteStepsPhaseDescribeIntentFlipTests : IDisposable
 {
