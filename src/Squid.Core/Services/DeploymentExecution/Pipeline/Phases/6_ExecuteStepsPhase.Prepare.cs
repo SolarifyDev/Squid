@@ -16,7 +16,11 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
 public sealed partial class ExecuteStepsPhase
 {
-    private record PreparedAction(ActionExecutionResult Result, List<VariableDto> EffectiveVariables);
+    private record PreparedAction(
+        ActionExecutionResult Result,
+        List<VariableDto> EffectiveVariables,
+        IActionHandler Handler,
+        ActionExecutionContext Context);
 
     private async Task<List<PreparedAction>> PrepareStepActionsAsync(
         DeploymentStepDto step,
@@ -109,7 +113,7 @@ public sealed partial class ExecuteStepsPhase
 
                 await EmitPreparationWarningsAsync(prepared.Warnings, stepDisplayOrder, action.Name, tc.Machine.Name, ct).ConfigureAwait(false);
 
-                stepResults.Add(new PreparedAction(prepared, actionEffective));
+                stepResults.Add(new PreparedAction(prepared, actionEffective, handler, context));
             }
         }
 

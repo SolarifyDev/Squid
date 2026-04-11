@@ -3,7 +3,6 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Rendering;
-using Squid.Core.Services.DeploymentExecution.Rendering.Adapters;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -298,7 +297,7 @@ public sealed partial class ExecuteStepsPhase
 
             var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, step, stepTimeout);
 
-            request = await RenderIntentAsync(actionResult, request, tc, step, effectiveVariables, stepTimeout, ct).ConfigureAwait(false);
+            request = await RenderIntentAsync(prepared, request, tc, step, effectiveVariables, stepTimeout, ct).ConfigureAwait(false);
 
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
@@ -340,7 +339,7 @@ public sealed partial class ExecuteStepsPhase
     }
 
     private async Task<Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest> RenderIntentAsync(
-        ActionExecutionResult actionResult,
+        PreparedAction prepared,
         Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest request,
         DeploymentTargetContext tc,
         DeploymentStepDto step,
@@ -348,7 +347,7 @@ public sealed partial class ExecuteStepsPhase
         TimeSpan? stepTimeout,
         CancellationToken ct)
     {
-        var intent = LegacyIntentAdapter.FromLegacyResult(actionResult, step.Name ?? string.Empty);
+        var intent = await prepared.Handler.DescribeIntentAsync(prepared.Context, ct).ConfigureAwait(false);
 
         var renderContext = new IntentRenderContext
         {

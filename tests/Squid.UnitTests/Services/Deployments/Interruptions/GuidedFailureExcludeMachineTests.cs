@@ -19,6 +19,7 @@ using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Message.Models.Deployments.Interruption;
+using Squid.UnitTests.Services.Deployments.Execution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Interruptions;
 
@@ -194,6 +195,7 @@ public class GuidedFailureExcludeMachineTests
                 ExecutionMode = ExecutionMode.DirectScript,
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
+        handler.SetupDescribeIntentAsRunScript();
 
         return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);
     }

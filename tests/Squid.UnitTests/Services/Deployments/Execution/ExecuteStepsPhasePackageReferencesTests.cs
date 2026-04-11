@@ -14,6 +14,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.UnitTests.Services.Deployments.Execution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
@@ -133,6 +134,8 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
                 ExecutionMode = ExecutionMode.DirectScript,
                 Files = new Dictionary<string, byte[]>()
             });
+
+        _actionHandlerMock.SetupDescribeIntentAsRunScript(scriptBody: "echo 'test'");
     }
 
     [Fact]
@@ -333,6 +336,8 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
                 ExecutionMode = ExecutionMode.DirectScript,
                 Files = new Dictionary<string, byte[]>()
             });
+
+        _actionHandlerMock.SetupDescribeIntentAsRunScript();
 
         await _phase.ExecuteAsync(_ctx, CancellationToken.None);
 

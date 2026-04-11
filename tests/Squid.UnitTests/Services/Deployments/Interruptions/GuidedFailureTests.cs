@@ -18,6 +18,7 @@ using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.UnitTests.Services.Deployments.Execution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Interruptions;
 
@@ -266,6 +267,7 @@ public class GuidedFailureTests
                 ExecutionMode = ExecutionMode.DirectScript,
                 ContextPreparationPolicy = ContextPreparationPolicy.Apply
             });
+        handler.SetupDescribeIntentAsRunScript();
 
         return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);
     }
