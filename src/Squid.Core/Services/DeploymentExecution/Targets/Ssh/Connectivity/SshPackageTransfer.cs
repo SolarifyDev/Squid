@@ -1,53 +1,17 @@
-using System.IO;
 using Renci.SshNet;
 using Serilog;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
+/// <summary>
+/// Static helpers for post-staging package operations on SSH targets.
+/// The cache-lookup and upload responsibilities that previously lived here
+/// have been split into <see cref="ICachedPackageLookup"/> and
+/// <see cref="IFullPackageUploader"/>, which are consumed by the
+/// <c>IPackageStagingPlanner</c> handler chain.
+/// </summary>
 public static class SshPackageTransfer
 {
-    public static void UploadPackageWithCache(SftpClient sftp, SshClient ssh, string localPath, string packageId, string version, string baseDir)
-    {
-        var remoteNupkgPath = SshPaths.PackageNupkgPath(baseDir, packageId, version);
-
-        if (FindCachedPackage(ssh, remoteNupkgPath, localPath))
-        {
-            Log.Information("[SSH] Package {PackageId} v{Version} already cached at {RemotePath}, skipping upload", packageId, version, remoteNupkgPath);
-            return;
-        }
-
-        Log.Information("[SSH] Uploading package {PackageId} v{Version} to {RemotePath}", packageId, version, remoteNupkgPath);
-
-        var localBytes = File.ReadAllBytes(localPath);
-        SshFileTransfer.UploadBytesVerified(sftp, ssh, localBytes, remoteNupkgPath);
-    }
-
-    private static bool FindCachedPackage(SshClient ssh, string remoteNupkgPath, string localPath)
-    {
-        try
-        {
-            var localBytes = File.ReadAllBytes(localPath);
-            var localHash = SshFileTransfer.ComputeLocalMd5(localBytes);
-            var remoteHash = SshFileTransfer.CalculateRemoteMd5(ssh, remoteNupkgPath);
-
-            if (string.IsNullOrEmpty(remoteHash)) return false;
-
-            if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
-            {
-                Log.Warning("[SSH] Cached package hash mismatch (local={LocalHash}, remote={RemoteHash}), re-uploading", localHash, remoteHash);
-                return false;
-            }
-
-            Log.Debug("[SSH] Cached package hash verified: {Hash}", remoteHash);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "[SSH] Cache check failed, proceeding with upload: {Message}", ex.Message);
-            return false;
-        }
-    }
-
     public static void ExtractPackage(SftpClient sftp, SshClient ssh, string remoteNupkgPath, string extractDir)
     {
         SshFileTransfer.EnsureDirectoryExists(sftp, extractDir);

@@ -1,5 +1,6 @@
 using System.Linq;
 using Renci.SshNet;
+using Squid.Core.Services.DeploymentExecution.Packages.Staging;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 using Squid.Message.Constants;
@@ -12,6 +13,7 @@ public class SshExecutionStrategyTests
 {
     private readonly Mock<ISshConnectionFactory> _connectionFactory = new();
     private readonly Mock<ISshExecutionMutex> _executionMutex = new();
+    private readonly Mock<IPackageStagingPlanner> _stagingPlanner = new();
     private readonly Mock<ISshConnectionScope> _scope = new();
     private readonly Mock<SshClient> _sshClient;
     private readonly Mock<SftpClient> _sftpClient;
@@ -28,7 +30,7 @@ public class SshExecutionStrategyTests
             .ReturnsAsync(Mock.Of<IDisposable>());
     }
 
-    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object);
+    private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object);
 
     private static ScriptExecutionRequest MakeRequest(string scriptBody = "echo hello", int serverTaskId = 42, ScriptSyntax syntax = ScriptSyntax.Bash)
     {

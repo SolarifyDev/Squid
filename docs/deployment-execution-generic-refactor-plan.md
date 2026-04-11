@@ -318,30 +318,37 @@ Total estimated new tests: **~140**.
 
 ---
 
-### Phase 7 — `IPackageStagingPlanner`
+### Phase 7 — `IPackageStagingPlanner` ✅
 
 **Goal**: Extract SSH's ad-hoc MD5-cache decision into a pluggable strategy service that future transports can reuse and future staging modes (delta, remote download) can extend.
 
 **New files** (under `Packages/Staging/`):
-- `IPackageStagingPlanner.cs`
-- `PackageStagingPlanner.cs` — dispatches to first matching `IPackageStagingHandler` by priority
-- `PackageStagingPlan.cs` — record with strategy + materialised data
-- `PackageStagingStrategy.cs` — enum: FullUpload, CacheHit, RemoteDownload, Delta
-- `PackageRequirement.cs`
-- `IPackageStagingHandler.cs` — `Priority`, `CanHandle`, `TryPlanAsync`
-- `Handlers/CacheHitStagingHandler.cs`
-- `Handlers/FullUploadStagingHandler.cs`
-- `Handlers/RemoteDownloadStagingHandler.cs` (stub)
-- `Handlers/DeltaStagingHandler.cs` (stub)
+- `IPackageStagingPlanner.cs` ✓
+- `PackageStagingPlanner.cs` — dispatches to first matching `IPackageStagingHandler` by priority ✓
+- `PackageStagingPlan.cs` — record with strategy + materialised data ✓
+- `PackageStagingStrategy.cs` — enum: FullUpload, CacheHit, RemoteDownload, Delta ✓
+- `PackageRequirement.cs` ✓
+- `PackageStagingContext.cs` — abstract record; transports supply derived subtypes ✓
+- `IPackageStagingHandler.cs` — `Priority`, `CanHandle`, `TryPlanAsync` ✓
+- `Exceptions/PackageStagingFailedException.cs` ✓
+- `Handlers/CacheHitStagingHandler.cs` (Priority 100) ✓
+- `Handlers/FullUploadStagingHandler.cs` (Priority 10) ✓
+- `Handlers/RemoteDownloadStagingHandler.cs` (stub, Priority 80) ✓
+- `Handlers/DeltaStagingHandler.cs` (stub, Priority 70) ✓
 
 **Changed files**:
-- `SshIntentRenderer.cs` — for `DeployPackageIntent`, consult `IPackageStagingPlanner` first, then build the staging shell commands based on the returned plan
-- `SshPackageTransfer.cs` — split into `ICachedPackageLookup` (read) + `FullPackageUploader` (write), both used by staging handlers
+- `Targets/Ssh/Packages/SshPackageStagingContext.cs` — derived record carrying `ISshConnectionScope` ✓
+- `Targets/Ssh/Connectivity/ICachedPackageLookup.cs` + `SshCachedPackageLookup.cs` — read-side primitive ✓
+- `Targets/Ssh/Connectivity/IFullPackageUploader.cs` + `SshFullPackageUploader.cs` — write-side primitive ✓
+- `Targets/Ssh/Connectivity/SshPackageTransfer.cs` — shrunk to the post-staging `ExtractPackage` helper ✓
+- `Targets/Ssh/Transport/SshExecutionStrategy.cs` — ctor-injects `IPackageStagingPlanner`, new `StageAndExtractPackagesAsync` builds `SshPackageStagingContext` per package and lets the planner decide ✓
+
+> Note: the planner is consumed by `SshExecutionStrategy` today. When Phase 9 flips handlers to `DescribeIntentAsync`, `SshIntentRenderer` will pick up the same call for `DeployPackageIntent` without touching the planner or its handlers.
 
 **Tests**:
-- Unit: `PackageStagingPlannerTests` — priority ordering, no-match throws (4)
-- Integration: `SshCacheHitIntegrationTests` — real SSH, cache hit on second upload (2)
-- E2E: `SshPackageStagingE2ETests` — first-time full upload, second-time cache hit, hash change forces re-upload (3)
+- Unit: `PackageStagingPlannerTests` — priority ordering, fall-through on `CanHandle` false, fall-through on null plan, guard clauses, exhaustion throws, out-of-order registration (9) ✓
+- Integration: `SshCacheHitIntegrationTests` — real SSH, cache hit on second upload (2) — deferred
+- E2E: `SshPackageStagingE2ETests` — first-time full upload, second-time cache hit, hash change forces re-upload (3) — deferred
 
 ---
 

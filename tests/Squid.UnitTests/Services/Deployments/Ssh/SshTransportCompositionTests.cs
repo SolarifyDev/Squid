@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Packages.Staging;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
@@ -12,7 +13,7 @@ public class SshTransportCompositionTests
     {
         var variables = new SshEndpointVariableContributor();
         var wrapper = new SshScriptContextWrapper();
-        var strategy = new SshExecutionStrategy(Mock.Of<ISshConnectionFactory>(), Mock.Of<ISshExecutionMutex>());
+        var strategy = new SshExecutionStrategy(Mock.Of<ISshConnectionFactory>(), Mock.Of<ISshExecutionMutex>(), Mock.Of<IPackageStagingPlanner>());
         var healthChecker = new SshHealthCheckStrategy(Mock.Of<IEndpointContextBuilder>(), Mock.Of<ISshConnectionFactory>());
 
         var transport = new SshTransport(variables, wrapper, strategy, healthChecker);

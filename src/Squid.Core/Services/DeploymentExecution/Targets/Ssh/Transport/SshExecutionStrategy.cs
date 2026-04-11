@@ -2,8 +2,10 @@ using System.Text;
 using Renci.SshNet;
 using Serilog;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Packages.Staging;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Core.Services.DeploymentExecution.Ssh.Packages;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Variable;
@@ -16,11 +18,13 @@ public class SshExecutionStrategy : IExecutionStrategy
 
     private readonly ISshConnectionFactory _connectionFactory;
     private readonly ISshExecutionMutex _executionMutex;
+    private readonly IPackageStagingPlanner _stagingPlanner;
 
-    public SshExecutionStrategy(ISshConnectionFactory connectionFactory, ISshExecutionMutex executionMutex)
+    public SshExecutionStrategy(ISshConnectionFactory connectionFactory, ISshExecutionMutex executionMutex, IPackageStagingPlanner stagingPlanner)
     {
         _connectionFactory = connectionFactory;
         _executionMutex = executionMutex;
+        _stagingPlanner = stagingPlanner;
     }
 
     public async Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
@@ -38,7 +42,7 @@ public class SshExecutionStrategy : IExecutionStrategy
             var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
             var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
 
-            PrepareRemoteWorkDirectory(scope, workDir, resolvedBase, request);
+            await PrepareRemoteWorkDirectoryAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
 
             var result = await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
 
@@ -76,15 +80,15 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
     }
 
-    private void PrepareRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir, ScriptExecutionRequest request)
+    private async Task PrepareRemoteWorkDirectoryAsync(ISshConnectionScope scope, string workDir, string baseDir, ScriptExecutionRequest request, CancellationToken ct)
     {
         var sftp = scope.GetSftpClient();
-        var ssh = scope.GetSshClient();
 
         SshFileTransfer.EnsureDirectoryExists(sftp, workDir);
 
         UploadScriptFiles(sftp, workDir, request.DeploymentFiles);
-        UploadAndExtractPackages(sftp, ssh, baseDir, request.PackageReferences);
+
+        await StageAndExtractPackagesAsync(scope, baseDir, request.PackageReferences, ct).ConfigureAwait(false);
     }
 
     private static void UploadScriptFiles(SftpClient sftp, string workDir, DeploymentFileCollection files)
@@ -99,15 +103,22 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
     }
 
-    private static void UploadAndExtractPackages(SftpClient sftp, SshClient ssh, string baseDir, List<PackageAcquisitionResult> packages)
+    private async Task StageAndExtractPackagesAsync(ISshConnectionScope scope, string baseDir, List<PackageAcquisitionResult> packages, CancellationToken ct)
     {
         if (packages == null || packages.Count == 0) return;
 
+        var stagingContext = new SshPackageStagingContext(scope, baseDir);
+        var sftp = scope.GetSftpClient();
+        var ssh = scope.GetSshClient();
+
         foreach (var pkg in packages)
         {
-            SshPackageTransfer.UploadPackageWithCache(sftp, ssh, pkg.LocalPath, pkg.PackageId, pkg.Version, baseDir);
+            var requirement = new PackageRequirement(pkg.PackageId, pkg.Version, pkg.LocalPath, pkg.SizeBytes, pkg.Hash);
+
+            var plan = await _stagingPlanner.PlanAsync(requirement, stagingContext, ct).ConfigureAwait(false);
+
             var extractDir = SshPaths.PackageExtractDir(baseDir, pkg.PackageId, pkg.Version);
-            SshPackageTransfer.ExtractPackage(sftp, ssh, SshPaths.PackageNupkgPath(baseDir, pkg.PackageId, pkg.Version), extractDir);
+            SshPackageTransfer.ExtractPackage(sftp, ssh, plan.RemotePath, extractDir);
         }
     }
 
