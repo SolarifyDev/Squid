@@ -188,6 +188,30 @@ public class DeploymentPlannerTests
         blocker.StepId.ShouldBe(10);
     }
 
+    [Fact]
+    public async Task PlanAsync_NoMatchingTargets_StillCarriesRunnableActionsForStepLevelExecution()
+    {
+        // Phase 6c-iii: the executor consumes planned.Actions to decide what to run — even on
+        // NoMatchingTargets we must carry the runnable actions so step-level actions
+        // (e.g. Manual Intervention) can still fire.
+        var step = BuildStep(id: 10, order: 1, name: "Approve", roles: "payments");
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: SpecialVariables.ActionTypes.Script, name: "Run"));
+
+        var targets = new[]
+        {
+            BuildTargetContext(1, "web-1", "web", CommunicationStyle.KubernetesApi)
+        };
+
+        var plan = await BuildPlanner().PlanAsync(BuildRequest(PlanMode.Preview, [step], targets), CancellationToken.None);
+
+        var planned = plan.Steps.Single();
+        planned.Status.ShouldBe(PlannedStepStatus.NoMatchingTargets);
+        planned.Actions.Count.ShouldBe(1);
+        planned.Actions[0].ActionId.ShouldBe(100);
+        planned.Actions[0].Dispatches.ShouldBeEmpty();
+        planned.MatchedTargets.ShouldBeEmpty();
+    }
+
     // ---------- no candidate targets at all -----------------------------
 
     [Fact]

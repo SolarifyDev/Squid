@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Adapters;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -25,7 +26,14 @@ public sealed partial class ExecuteStepsPhase
         if (IsSyntheticStep(step))
             return await ExecuteSyntheticStepAsync(step, stepSortOrder, ct).ConfigureAwait(false);
 
-        var (eligibleActions, skippedActions) = FilterEligibleActions(step);
+        var planned = LookupPlannedStep(step);
+
+        if (planned != null && IsSkippedByPlanner(planned.Status))
+            return stepResult;
+
+        var (eligibleActions, skippedActions) = planned != null
+            ? SplitActionsUsingPlan(step, planned)
+            : FilterEligibleActions(step);
 
         if (eligibleActions.Count == 0 && step.Actions.Count > 0)
             return stepResult;
@@ -41,16 +49,14 @@ public sealed partial class ExecuteStepsPhase
 
         if (HasTargetLevelActions(eligibleActions))
         {
-            if (RunOnServerEvaluator.IsRunOnServer(step))
+            if (IsRunOnServer(step, planned))
             {
                 var serverResult = await ExecuteStepOnServerAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
                 stepResult.Absorb(serverResult);
             }
             else
             {
-                var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
-
-                matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
+                var matchingTargets = ResolveMatchingTargets(step, planned);
 
                 if (matchingTargets.Count == 0)
                 {
@@ -88,6 +94,61 @@ public sealed partial class ExecuteStepsPhase
         await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed, Skipped = skipped }), ct).ConfigureAwait(false);
 
         return stepResult;
+    }
+
+    private PlannedStep LookupPlannedStep(DeploymentStepDto step)
+    {
+        return _ctx.Plan?.Steps.FirstOrDefault(p => p.StepId == step.Id);
+    }
+
+    private static bool IsSkippedByPlanner(PlannedStepStatus status)
+    {
+        return status is PlannedStepStatus.Disabled or PlannedStepStatus.NoRunnableActions;
+    }
+
+    private static bool IsRunOnServer(DeploymentStepDto step, PlannedStep planned)
+    {
+        if (planned != null)
+            return planned.Status == PlannedStepStatus.RunOnServer;
+
+        return RunOnServerEvaluator.IsRunOnServer(step);
+    }
+
+    private (List<DeploymentActionDto> Eligible, List<(DeploymentActionDto Action, ActionEligibilityResult Eligibility)> Skipped) SplitActionsUsingPlan(DeploymentStepDto step, PlannedStep planned)
+    {
+        var plannedActionIds = planned.Actions.Select(a => a.ActionId).ToHashSet();
+        var evalCtx = BuildActionEvaluationContext();
+        var eligible = new List<DeploymentActionDto>();
+        var skipped = new List<(DeploymentActionDto, ActionEligibilityResult)>();
+
+        foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+        {
+            if (plannedActionIds.Contains(action.Id))
+            {
+                eligible.Add(action);
+                continue;
+            }
+
+            var eligibility = StepEligibilityEvaluator.EvaluateAction(action, evalCtx);
+            skipped.Add((action, eligibility));
+        }
+
+        return (eligible, skipped);
+    }
+
+    private List<DeploymentTargetContext> ResolveMatchingTargets(DeploymentStepDto step, PlannedStep planned)
+    {
+        if (planned == null)
+        {
+            var legacy = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
+            return legacy.Where(tc => !tc.IsExcluded).ToList();
+        }
+
+        var plannedMachineIds = planned.MatchedTargets.Select(t => t.MachineId).ToHashSet();
+
+        return _ctx.AllTargetsContext
+            .Where(tc => plannedMachineIds.Contains(tc.Machine.Id) && !tc.IsExcluded)
+            .ToList();
     }
 
     private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)

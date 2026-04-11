@@ -125,10 +125,15 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
         {
             blockers.Add(BuildNoMatchingTargetsBlocker(step, requiredRoles));
 
-            return SkippedStep(step, PlannedStepStatus.NoMatchingTargets,
-                BuildNoMatchingTargetsMessage(step, requiredRoles)) with
+            return new PlannedStep
             {
-                RequiredRoles = requiredRoles
+                StepId = step.Id,
+                StepName = step.Name,
+                StepOrder = step.StepOrder,
+                Status = PlannedStepStatus.NoMatchingTargets,
+                StatusMessage = BuildNoMatchingTargetsMessage(step, requiredRoles),
+                RequiredRoles = requiredRoles,
+                Actions = BuildTargetLevelActionsWithoutDispatches(runnableActions)
             };
         }
 
@@ -223,6 +228,21 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
     }
 
     // ---------- target-level action construction ------------------------
+
+    private List<PlannedAction> BuildTargetLevelActionsWithoutDispatches(List<DeploymentActionDto> runnableActions)
+    {
+        return runnableActions
+            .Select(a => new PlannedAction
+            {
+                ActionId = a.Id,
+                ActionName = a.Name,
+                ActionType = a.ActionType,
+                ActionOrder = a.ActionOrder,
+                IsStepLevel = _actionHandlerRegistry.ResolveScope(a) == ExecutionScope.StepLevel,
+                Dispatches = Array.Empty<PlannedTargetDispatch>()
+            })
+            .ToList();
+    }
 
     private List<PlannedAction> BuildTargetLevelActions(
         List<DeploymentActionDto> runnableActions,
