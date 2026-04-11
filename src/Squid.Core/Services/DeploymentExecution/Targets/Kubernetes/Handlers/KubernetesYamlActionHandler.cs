@@ -5,6 +5,8 @@ using Squid.Core.Extensions;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
@@ -45,16 +47,7 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         var syntax = ScriptSyntax.Bash;
 
-        await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
-        InjectDeploymentIdSuffix(ctx);
-
-        var secretYaml = await GenerateFeedSecretAsync(ctx, ct).ConfigureAwait(false);
-
-        var yamlFiles = await generator.GenerateAsync(ctx.Step, ctx.Action, ct).ConfigureAwait(false)
-            ?? new Dictionary<string, byte[]>();
-
-        if (secretYaml != null)
-            yamlFiles["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
+        var yamlFiles = await ResolveGeneratedYamlFilesAsync(ctx, generator, ct).ConfigureAwait(false);
 
         var scriptBody = BuildApplyScript(yamlFiles, ctx.Action, syntax);
         scriptBody += ExtractAndAppendShellScripts(yamlFiles);
@@ -74,6 +67,59 @@ public class KubernetesYamlActionHandler : IActionHandler
             PayloadKind = PayloadKind.None,
             Syntax = syntax
         };
+    }
+
+    /// <summary>
+    /// Phase 9c.2 — direct intent emission. Bypasses <see cref="PrepareAsync"/> and the
+    /// <c>LegacyIntentAdapter</c> seam, producing a <see cref="KubernetesApplyIntent"/>
+    /// with a stable semantic name (<c>k8s-apply</c>). YAML generation (container image
+    /// resolution, deployment id suffix injection, feed secret injection, generator
+    /// invocation) is shared with <see cref="PrepareAsync"/> via
+    /// <see cref="ResolveGeneratedYamlFilesAsync"/>; the intent's <c>YamlFiles</c> is
+    /// then filtered to valid YAML entries only — non-YAML helper scripts (e.g. <c>.sh</c>)
+    /// are a legacy kubectl-wrapping concern that do not belong in the intent model.
+    /// </summary>
+    async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var generator = _yamlGenerators.FirstOrDefault(g => g.CanHandle(ctx.Action));
+        var files = generator == null
+            ? new Dictionary<string, byte[]>()
+            : await ResolveGeneratedYamlFilesAsync(ctx, generator, ct).ConfigureAwait(false);
+
+        var yamlOnly = files.Where(kvp => IsYamlFile(kvp.Key))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        var yamlFiles = DeploymentFileCollection.FromLegacyFiles(yamlOnly).ToList();
+        var namespace_ = GetNamespaceFromAction(ctx.Action);
+
+        return new KubernetesApplyIntent
+        {
+            Name = "k8s-apply",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            YamlFiles = yamlFiles,
+            Assets = yamlFiles,
+            Namespace = namespace_,
+            ServerSideApply = false
+        };
+    }
+
+    private async Task<Dictionary<string, byte[]>> ResolveGeneratedYamlFilesAsync(
+        ActionExecutionContext ctx, IActionYamlGenerator generator, CancellationToken ct)
+    {
+        await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
+        InjectDeploymentIdSuffix(ctx);
+
+        var secretYaml = await GenerateFeedSecretAsync(ctx, ct).ConfigureAwait(false);
+
+        var files = await generator.GenerateAsync(ctx.Step, ctx.Action, ct).ConfigureAwait(false)
+            ?? new Dictionary<string, byte[]>();
+
+        if (secretYaml != null)
+            files["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
+
+        return files;
     }
 
     private static string BuildApplyScript(Dictionary<string, byte[]> yamlFiles, DeploymentActionDto action, ScriptSyntax syntax)
