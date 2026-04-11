@@ -6,7 +6,6 @@ using Squid.Core.Services.DeploymentExecution.OpenClaw.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
-using Squid.Core.Services.DeploymentExecution.Ssh.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
@@ -15,15 +14,22 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.UnitTests.Services.Deployments.Execution.Rendering;
 
 /// <summary>
-/// Phase 5 — unit tests for the pass-through renderer base and the four concrete subclasses
-/// (SSH, KubernetesApi, KubernetesAgent, OpenClaw) plus the server variant. Every renderer
-/// must return <see cref="IntentRenderContext.LegacyRequest"/> unchanged.
+/// Phase 5 — unit tests for the pass-through renderer base and the concrete subclasses that
+/// still behave as pure pass-through (KubernetesApi, KubernetesAgent, OpenClaw) plus the
+/// server variant. Every listed renderer must return
+/// <see cref="IntentRenderContext.LegacyRequest"/> unchanged.
+///
+/// <para>
+/// Phase 9i — SSH has been removed from this matrix because
+/// <see cref="Squid.Core.Services.DeploymentExecution.Ssh.Rendering.SshIntentRenderer"/>
+/// now natively renders <see cref="RunScriptIntent"/> from intent + context instead of
+/// forwarding the legacy request. Phase 9j will retire the remaining entries here.
+/// </para>
 /// </summary>
 public class PassThroughIntentRendererTests
 {
     public static IEnumerable<object[]> AllRenderers => new object[][]
     {
-        new object[] { new SshIntentRenderer(), CommunicationStyle.Ssh },
         new object[] { new KubernetesApiIntentRenderer(), CommunicationStyle.KubernetesApi },
         new object[] { new KubernetesAgentIntentRenderer(), CommunicationStyle.KubernetesAgent },
         new object[] { new OpenClawIntentRenderer(), CommunicationStyle.OpenClaw },
