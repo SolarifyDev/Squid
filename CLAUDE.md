@@ -124,7 +124,7 @@ ExecuteDeploymentStepsAsync(ct)                       — [Execute.cs]
            │      ├─ BuildScriptExecutionRequest
            │      ├─ IExecutionStrategy.ExecuteScriptAsync(request, ct)
            │      │   → ScriptExecutionResult { Success, LogLines, ExitCode }
-           │      ├─ CaptureOutputVariables (parse ##octopus[setVariable] from logs)
+           │      ├─ CaptureOutputVariables (parse ##squid[setVariable] from logs)
            │      └─ Update activity node status
            └─ MergeStepResult
                └─ _ctx.Variables += outputVariables, _ctx.FailureEncountered |= failed
@@ -240,7 +240,7 @@ Stage 6: Serialize for Execution
   └─ Sensitive → sensitiveVariables.json (AES encrypted, Calamari-compatible)
 
 Stage 7: Capture Output Variables (post-execution)
-  └─ Parse logs for ##octopus[setVariable name='X' value='Y' sensitive='True/False']
+  └─ Parse logs for ##squid[setVariable name='X' value='Y' sensitive='True/False']
       → Add to _ctx.Variables as "Squid.Action.{StepName}.{VarName}" + unqualified
 ```
 

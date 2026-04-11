@@ -121,7 +121,7 @@ ProcessAsync(serverTaskId)
         ObserveDeploymentScriptAsync()
           Loop GetStatusAsync -> fetch logs
           CompleteScriptAsync -> finalize
-          Parse Output Variables (##octopus[setVariable])
+          Parse Output Variables (##squid[setVariable])
 ```
 
 ## K8s Action Handlers

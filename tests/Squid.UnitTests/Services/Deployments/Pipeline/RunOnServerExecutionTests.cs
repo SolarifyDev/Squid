@@ -146,7 +146,7 @@ public class RunOnServerExecutionTests
     [Fact]
     public async Task RunOnServerStep_OutputVariables_PropagatedToContext()
     {
-        var outputLines = new List<string> { "##octopus[setVariable name='DeployResult' value='deployed-v2']" };
+        var outputLines = new List<string> { "##squid[setVariable name='DeployResult' value='deployed-v2']" };
         var (phase, ctx, _, _) = CreateRunOnServerTestHarness(new ScriptOutputStrategy(outputLines));
 
         ctx.Steps = new List<DeploymentStepDto> { MakeRunOnServerStep("Server Deploy", 1) };
@@ -160,7 +160,7 @@ public class RunOnServerExecutionTests
     [Fact]
     public async Task RunOnServerStep_OutputVariables_AvailableToSubsequentStep()
     {
-        var outputLines = new List<string> { "##octopus[setVariable name='ArtifactPath' value='/tmp/build.zip']" };
+        var outputLines = new List<string> { "##squid[setVariable name='ArtifactPath' value='/tmp/build.zip']" };
         var targetCaptured = new List<ScriptExecutionRequest>();
         var (phase, ctx, _, _) = CreateMixedTestHarness(new ScriptOutputStrategy(outputLines), new CapturingStrategy(targetCaptured));
 

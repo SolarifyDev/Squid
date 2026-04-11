@@ -273,7 +273,7 @@ public class SensitiveOutputVariableTests
         }
     }
 
-    private static readonly string[] ReservedPrefixes = { "Squid.", "Octopus.", "System." };
+    private static readonly string[] ReservedPrefixes = { "Squid.", "System." };
 
     private static bool IsReservedName(string name)
     {

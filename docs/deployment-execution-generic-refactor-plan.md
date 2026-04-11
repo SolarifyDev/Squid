@@ -83,7 +83,7 @@ The fix is a **generic capability-based architecture** where:
 | `ICapabilityValidator` | Returns a list of violations for an (intent, capabilities) pair (non-throwing) |
 | `IPackageStagingPlanner` | Decides how to get a package onto a target (upload / cache / remote download / delta) |
 | `IRuntimeBundleProvider` | Produces embedded helper script (`squid-runtime.sh`, `squid-runtime.ps1`) |
-| `IServiceMessageParser` | Existing — already supports `##squid[...]` / `##octopus[...]` with base64 + legacy |
+| `IServiceMessageParser` | Existing — parses `##squid[...]` envelopes with base64 attribute decoding |
 
 ---
 
@@ -347,7 +347,7 @@ Total estimated new tests: **~140**.
 
 ### Phase 8 — `IRuntimeBundleProvider` + bash/pwsh helpers
 
-**Goal**: Embed a helper script that gives user scripts `set_squidvariable`, `get_squidvariable`, `new_squidartifact`, plus legacy `*_octopus*` aliases. Close the loop with the existing `ServiceMessageParser`.
+**Goal**: Embed a helper script that gives user scripts `set_squidvariable`, `get_squidvariable`, `new_squidartifact`. Close the loop with the existing `ServiceMessageParser`.
 
 **New files** (under `Runtime/`):
 - `IRuntimeBundleProvider.cs`
@@ -364,8 +364,8 @@ Total estimated new tests: **~140**.
 
 **Tests**:
 - Unit: `BashRuntimeBundleTests` — placeholder replacement, sensitive var skip, sanitization, quote escaping (5)
-- Integration (real bash): `BashBundleShellIntegrationTests` — `set_squidvariable` round-trip, `new_squidartifact`, `fail_step` exit code, legacy alias (5)
-- E2E: `SshRuntimeBundleE2ETests` — `set_squidvariable` captured in output variables, `new_squidartifact` registered, sensitive not in exports, legacy `set_octopusvariable` still works (4)
+- Integration (real bash): `BashBundleShellIntegrationTests` — `set_squidvariable` round-trip, `new_squidartifact`, `fail_step` exit code (4)
+- E2E: `SshRuntimeBundleE2ETests` — `set_squidvariable` captured in output variables, `new_squidartifact` registered, sensitive not in exports (3)
 
 ---
 

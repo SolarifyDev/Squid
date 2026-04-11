@@ -204,51 +204,6 @@ public class ServiceMessageParserTests
         result.IsSensitive.ShouldBeTrue();
     }
 
-    // ========== Backward Compatibility — ##octopus[ prefix ==========
-
-    [Fact]
-    public void TryParse_OctopusPrefix_LegacyFormat_ParsesCorrectly()
-    {
-        var line = "##octopus[setVariable name='MyVar' value='Hello' sensitive='True']";
-
-        var result = _parser.TryParseOutputVariable(line);
-
-        result.ShouldNotBeNull();
-        result.Name.ShouldBe("MyVar");
-        result.Value.ShouldBe("Hello");
-        result.IsSensitive.ShouldBeTrue();
-    }
-
-    [Fact]
-    public void TryParse_OctopusPrefix_Base64Format_ParsesCorrectly()
-    {
-        var nameB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("OctoVar"));
-        var valueB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("OctoValue"));
-        var line = $"##octopus[setVariable name=\"{nameB64}\" value=\"{valueB64}\"]";
-
-        var result = _parser.TryParseOutputVariable(line);
-
-        result.ShouldNotBeNull();
-        result.Name.ShouldBe("OctoVar");
-        result.Value.ShouldBe("OctoValue");
-    }
-
-    [Fact]
-    public void ParseOutputVariables_OctopusPrefix_IncludedInResults()
-    {
-        var lines = new[]
-        {
-            "##squid[setVariable name='SquidVar' value='1']",
-            "##octopus[setVariable name='OctoVar' value='2']"
-        };
-
-        var result = _parser.ParseOutputVariables(lines);
-
-        result.Count.ShouldBe(2);
-        result["SquidVar"].Value.ShouldBe("1");
-        result["OctoVar"].Value.ShouldBe("2");
-    }
-
     // ========== Structured ParsedServiceMessage ==========
 
     [Fact]

@@ -423,7 +423,7 @@ Pod: squid-script-{ticketId[0:12]}
 execResult = await strategy.ExecuteScriptAsync(request, ct)
   ↓
 CaptureOutputVariables(actionResult, execResult.LogLines)
-  → 解析 ##octopus[setVariable name='X' value='Y' sensitive='True/False']
+  → 解析 ##squid[setVariable name='X' value='Y' sensitive='True/False']
   → 写入 actionResult.OutputVariables
   ↓
 PersistScriptOutputAsync(_ctx.Task.Id, execResult.LogLines, tc.Machine.Name, ct)
@@ -490,7 +490,7 @@ ProcessAsync(serverTaskId)
 │           │       └─ poll loop: GetStatus (1s→1.5s→...→10s max)
 │           │       └─ CompleteScript → final logs + cleanup
 │           │
-│           ├─ CaptureOutputVariables (##octopus[setVariable])
+│           ├─ CaptureOutputVariables (##squid[setVariable])
 │           ├─ PersistScriptOutputAsync → server_task_log
 │           └─ CollectOutputVariables → next batch available
 │

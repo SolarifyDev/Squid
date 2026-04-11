@@ -6,12 +6,11 @@ namespace Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 public sealed partial class ServiceMessageParser : IServiceMessageParser
 {
     private const string SquidPrefix = "##squid[";
-    private const string OctopusPrefix = "##octopus[";
 
-    // Matches the full envelope: ##(squid|octopus)[verb <attrs>]
+    // Matches the full envelope: ##squid[verb <attrs>]
     private static readonly Regex EnvelopeRegex = BuildEnvelopeRegex();
 
-    [GeneratedRegex(@"^##(?:squid|octopus)\[(?<verb>[A-Za-z][A-Za-z0-9]*)\s*(?<attrs>[^\]]*)\]$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"^##squid\[(?<verb>[A-Za-z][A-Za-z0-9]*)\s*(?<attrs>[^\]]*)\]$", RegexOptions.Compiled)]
     private static partial Regex BuildEnvelopeRegex();
 
     // Matches key="base64value" (double quotes = base64-encoded) or key='plain value' (single quotes = plaintext)
@@ -92,8 +91,7 @@ public sealed partial class ServiceMessageParser : IServiceMessageParser
     }
 
     private static bool IsServiceMessage(string line)
-        => !string.IsNullOrEmpty(line)
-           && (line.StartsWith(SquidPrefix, StringComparison.Ordinal) || line.StartsWith(OctopusPrefix, StringComparison.Ordinal));
+        => !string.IsNullOrEmpty(line) && line.StartsWith(SquidPrefix, StringComparison.Ordinal);
 
     private static ServiceMessageKind MapKind(string verb) => verb switch
     {

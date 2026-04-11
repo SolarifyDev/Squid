@@ -4,8 +4,7 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 
 /// <summary>
 /// Encapsulates all package acquisition data emitted through the deployment lifecycle.
-/// Mirrors the scope of Octopus's <c>PackageAcquisitionContext</c> but is constructed
-/// server-side (Squid) rather than per-target (Octopus).
+/// Constructed server-side (Squid) and shared across all target dispatches for a release.
 /// </summary>
 /// <param name="SelectedPackages">All packages selected for this release.</param>
 /// <param name="PackageId">The package ID being acquired in this event (per-package events only).</param>

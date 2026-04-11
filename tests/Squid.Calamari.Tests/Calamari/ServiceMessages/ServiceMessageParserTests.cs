@@ -6,8 +6,7 @@ public class ServiceMessageParserTests
 {
     [Theory]
     [InlineData("##squid[setVariable name='X' value='1']")]
-    [InlineData("##octopus[setVariable name='X' value='1']")]
-    public void IsServiceMessage_BothPrefixes_ReturnsTrue(string line)
+    public void IsServiceMessage_SquidPrefix_ReturnsTrue(string line)
     {
         ServiceMessageParser.IsServiceMessage(line).ShouldBeTrue();
     }
@@ -36,22 +35,9 @@ public class ServiceMessageParserTests
     }
 
     [Fact]
-    public void TryParse_OctopusPrefix_ParsesCorrectly()
+    public void TryParse_SquidPrefix_NotSensitive_DefaultsFalse()
     {
-        var line = "##octopus[setVariable name='MyVar' value='Hello' sensitive='True']";
-
-        var result = ServiceMessageParser.TryParse(line);
-
-        result.ShouldNotBeNull();
-        result.Name.ShouldBe("MyVar");
-        result.Value.ShouldBe("Hello");
-        result.IsSensitive.ShouldBeTrue();
-    }
-
-    [Fact]
-    public void TryParse_OctopusPrefix_NotSensitive_DefaultsFalse()
-    {
-        var line = "##octopus[setVariable name='Var' value='Val']";
+        var line = "##squid[setVariable name='Var' value='Val']";
 
         var result = ServiceMessageParser.TryParse(line);
 

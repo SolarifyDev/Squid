@@ -18,7 +18,6 @@ public class PodLogLineParserTests
     [InlineData("kubectl apply -f manifest.yaml")]
     [InlineData("## not a directive")]
     [InlineData("##squid malformed no brackets")]
-    [InlineData("##octopus malformed no brackets")]
     public void Parse_RegularLine_ReturnsStdOutNonDirective(string line)
     {
         var result = PodLogLineParser.Parse(line);
@@ -216,44 +215,4 @@ public class PodLogLineParserTests
         results[2].DirectiveArgs.ShouldContainKeyAndValue("name", "B");
     }
 
-    // ========================================================================
-    // Backward compatibility — ##octopus[ prefix still recognized
-    // ========================================================================
-
-    [Fact]
-    public void Parse_OctopusPrefix_SetVariable_StillRecognized()
-    {
-        var line = "##octopus[setVariable name='MyVar' value='hello']";
-
-        var result = PodLogLineParser.Parse(line);
-
-        result.IsDirective.ShouldBeTrue();
-        result.DirectiveType.ShouldBe("setVariable");
-        result.DirectiveArgs.ShouldContainKeyAndValue("name", "MyVar");
-        result.DirectiveArgs.ShouldContainKeyAndValue("value", "hello");
-    }
-
-    [Theory]
-    [InlineData("##octopus[stdout-error]", ProcessOutputSource.StdErr)]
-    [InlineData("##octopus[stdout-warning]", ProcessOutputSource.StdErr)]
-    [InlineData("##octopus[stdout-highlight]", ProcessOutputSource.StdOut)]
-    public void Parse_OctopusPrefix_StdoutDirective_StillRecognized(string line, ProcessOutputSource expectedSource)
-    {
-        var result = PodLogLineParser.Parse(line);
-
-        result.IsDirective.ShouldBeTrue();
-        result.Source.ShouldBe(expectedSource);
-    }
-
-    [Fact]
-    public void Parse_OctopusPrefix_Progress_StillRecognized()
-    {
-        var line = "##octopus[progress percentage='75']";
-
-        var result = PodLogLineParser.Parse(line);
-
-        result.IsDirective.ShouldBeTrue();
-        result.DirectiveType.ShouldBe("progress");
-        result.DirectiveArgs.ShouldContainKeyAndValue("percentage", "75");
-    }
 }
