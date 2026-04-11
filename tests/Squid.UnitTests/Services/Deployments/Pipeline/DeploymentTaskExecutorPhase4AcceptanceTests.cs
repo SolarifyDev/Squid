@@ -85,12 +85,13 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
         var registry = Mock.Of<IActionHandlerRegistry>(r =>
             r.Resolve(It.IsAny<DeploymentActionDto>()) == handler);
 
-        // OpenClaw renderer is still a pass-through (Phase 9j.3), so the legacy
-        // IScriptContextWrapper chain still runs end-to-end for this target style,
-        // which is what this parallel-isolation check needs. KubernetesApi/Agent
-        // renderers now bypass the wrapper (they do their own context wrapping
-        // natively inside the renderer).
-        var transport = new TestTransport(strategy, wrapper, CommunicationStyle.OpenClaw);
+        // The ServerIntentRenderer (CommunicationStyle.None) is the only remaining
+        // pass-through renderer (Phase 9j.4), so the legacy IScriptContextWrapper
+        // chain still runs end-to-end for this target style, which is what this
+        // parallel-isolation check needs. KubernetesApi / KubernetesAgent /
+        // OpenClaw / Ssh renderers now bypass the wrapper (they do their own
+        // context wrapping natively inside the renderer).
+        var transport = new TestTransport(strategy, wrapper, CommunicationStyle.None);
         var (lifecycle, _) = CreateLifecycle();
         var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext();

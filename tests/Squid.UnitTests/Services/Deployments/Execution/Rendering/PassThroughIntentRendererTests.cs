@@ -1,7 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Intents;
-using Squid.Core.Services.DeploymentExecution.OpenClaw.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -13,9 +12,10 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.UnitTests.Services.Deployments.Execution.Rendering;
 
 /// <summary>
-/// Phase 5 — unit tests for the pass-through renderer base and the concrete subclasses that
-/// still behave as pure pass-through (OpenClaw) plus the server variant. Every listed
-/// renderer must return <see cref="IntentRenderContext.LegacyRequest"/> unchanged.
+/// Phase 5 — unit tests for the pass-through renderer base and the only remaining concrete
+/// subclass that still behaves as pure pass-through: <see cref="ServerIntentRenderer"/>
+/// (<see cref="CommunicationStyle.None"/>). It must return
+/// <see cref="IntentRenderContext.LegacyRequest"/> unchanged.
 ///
 /// <para>
 /// Phase 9i — SSH has been removed from this matrix because
@@ -37,12 +37,19 @@ namespace Squid.UnitTests.Services.Deployments.Execution.Rendering;
 /// <see cref="KubernetesApplyIntent"/>, wrapping the script body with the
 /// <c>kubectl config set-context</c> namespace preamble for shell syntaxes.
 /// </para>
+///
+/// <para>
+/// Phase 9j.4 — OpenClaw has been removed from this matrix because
+/// <see cref="Squid.Core.Services.DeploymentExecution.OpenClaw.Rendering.OpenClawIntentRenderer"/>
+/// now natively renders <see cref="OpenClawInvokeIntent"/>, mapping
+/// <see cref="OpenClawInvocationKind"/> onto the legacy <c>ActionType</c> string the
+/// OpenClaw execution strategy dispatches on.
+/// </para>
 /// </summary>
 public class PassThroughIntentRendererTests
 {
     public static IEnumerable<object[]> AllRenderers => new object[][]
     {
-        new object[] { new OpenClawIntentRenderer(), CommunicationStyle.OpenClaw },
         new object[] { new ServerIntentRenderer(), CommunicationStyle.None },
     };
 
