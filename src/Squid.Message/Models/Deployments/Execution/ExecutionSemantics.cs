@@ -19,7 +19,8 @@ public enum ExecutionLocation
 {
     Unspecified = 0,
     ApiWorkerLocal = 1,
-    RemoteTentacle = 2
+    RemoteTentacle = 2,
+    RemoteSsh = 3
 }
 
 public enum ExecutionBackend
@@ -27,7 +28,8 @@ public enum ExecutionBackend
     Unspecified = 0,
     LocalProcess = 1,
     HalibutScriptService = 2,
-    HttpApi = 3
+    HttpApi = 3,
+    SshClient = 4
 }
 
 public enum PayloadKind

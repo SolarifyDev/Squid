@@ -13,6 +13,7 @@ using Squid.Message.Enums;
 using ScriptContext = Squid.Core.Services.DeploymentExecution.Transport.ScriptContext;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -155,24 +156,9 @@ public class KubernetesApiExecutionStrategyTests
     }
 
     [Fact]
-    public async Task ExecuteScriptAsync_PackagedPayload_WithContextPreparationApply_WrapsPayloadScript()
+    public async Task ExecuteScriptAsync_PackagedPayload_PowerShell_RunsPwsh()
     {
         string capturedArguments = null;
-
-        var contextBuilder = new Mock<IKubernetesApiContextScriptBuilder>();
-        contextBuilder
-            .Setup(b => b.WrapWithContext(
-                It.IsAny<string>(),
-                It.IsAny<ScriptContext>(),
-                It.IsAny<string>()))
-            .Returns((string userScript,
-                ScriptContext _,
-                string __) => $"WRAPPED::{userScript}");
-
-        var strategy = new LocalProcessExecutionStrategy(
-            _payloadBuilder.Object,
-            _processRunner.Object,
-            new KubernetesApiScriptContextWrapper(contextBuilder.Object));
 
         _processRunner
             .Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<Dictionary<string, string>>()))
@@ -191,11 +177,10 @@ public class KubernetesApiExecutionStrategyTests
             new TokenCredentials { Token = "secret" }));
         request.EndpointContext = endpointCtx;
 
-        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
 
         capturedArguments.ShouldContain("-File");
         capturedArguments.ShouldContain("calamari-deploy.ps1");
-        contextBuilder.VerifyAll();
     }
 
     // === Work Directory Lifecycle ===
@@ -326,15 +311,15 @@ public class KubernetesApiExecutionStrategyTests
     // === Path Traversal Prevention ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_PathTraversal_Throws()
+    public void ExecuteScriptAsync_PathTraversal_Throws()
     {
-        var request = CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
-        {
-            ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
-        });
-
-        await Should.ThrowAsync<InvalidOperationException>(() =>
-            _strategy.ExecuteScriptAsync(request, CancellationToken.None));
+        // DeploymentFileCollection.EnsureValid rejects '..' segments at construction time
+        // (when Files setter converts to DeploymentFileCollection via FromLegacyFiles).
+        Should.Throw<ArgumentException>(() =>
+            CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
+            {
+                ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
+            }));
     }
 
     [Fact]
@@ -397,7 +382,7 @@ public class KubernetesApiExecutionStrategyTests
             ExecutionMode = resolvedMode,
             Syntax = syntax,
             ReleaseVersion = "1.0.0",
-            Files = files ?? new Dictionary<string, byte[]>(),
+            DeploymentFiles = DeploymentFileCollection.FromLegacyFiles(files),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
         };
     }

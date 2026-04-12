@@ -2,7 +2,9 @@ using System.Text;
 using Squid.Core.Extensions;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -25,31 +27,43 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
 
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployRawYaml;
 
-    private record YamlDeploySource(Dictionary<string, byte[]> Files, string TargetPath, List<string> Warnings);
-
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>) and the namespace resolved from the action properties.
+    /// YAML source resolution (inline or external feed) is handled by
+    /// <see cref="ResolveYamlSourceAsync"/>.
+    /// </summary>
+    async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(ctx);
+
         var syntax = ScriptSyntaxHelper.ResolveSyntax(ctx.Action);
         var source = await ResolveYamlSourceAsync(ctx, syntax, ct).ConfigureAwait(false);
 
-        var targetPath = syntax == ScriptSyntax.Bash ? source.TargetPath : source.TargetPath.Replace("/", "\\");
-        var scriptBody = KubernetesApplyCommandBuilder.Build(targetPath, ctx.Action, syntax);
-
+        var yamlFiles = DeploymentFileCollection.FromLegacyFiles(source.Files).ToList();
         var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
-        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(source.Files, ctx.Action, namespace_, syntax);
 
-        return new ActionExecutionResult
+        var (serverSide, fieldManager, forceConflicts) = KubernetesApplyIntentFactory.ReadServerSideApply(ctx.Action);
+        var (objectStatusCheck, statusCheckTimeout) = KubernetesApplyIntentFactory.ReadObjectStatusCheck(ctx.Action);
+
+        return new KubernetesApplyIntent
         {
-            ScriptBody = scriptBody,
-            Files = source.Files,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
+            Name = "k8s-apply",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            YamlFiles = yamlFiles,
+            Assets = yamlFiles,
+            Namespace = namespace_,
             Syntax = syntax,
-            Warnings = source.Warnings
+            ServerSideApply = serverSide,
+            FieldManager = fieldManager,
+            ForceConflicts = forceConflicts,
+            ObjectStatusCheck = objectStatusCheck,
+            StatusCheckTimeoutSeconds = statusCheckTimeout
         };
     }
+
+    private record YamlDeploySource(Dictionary<string, byte[]> Files, string TargetPath, List<string> Warnings);
 
     private async Task<YamlDeploySource> ResolveYamlSourceAsync(ActionExecutionContext ctx, ScriptSyntax syntax, CancellationToken ct)
     {

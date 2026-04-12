@@ -39,7 +39,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -63,7 +63,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var prop = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -89,7 +89,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var prop = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -134,7 +134,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -167,7 +167,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -203,7 +203,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -239,7 +239,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -270,7 +270,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -301,7 +301,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -331,7 +331,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -358,7 +358,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var updatedProp = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");
@@ -385,7 +385,7 @@ public class ContainerImageResolutionTests
         var generator = CreateMockGenerator(canHandle: true);
         var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        await handler.PrepareAsync(ctx, CancellationToken.None);
+        await ((IActionHandler)handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var prop = ctx.Action.Properties
             .First(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers");

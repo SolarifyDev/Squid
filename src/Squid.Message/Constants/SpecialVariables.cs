@@ -26,6 +26,32 @@ public static class SpecialVariables
         public const string OpenClawAssert = "Squid.OpenClaw.Assert";
         public const string OpenClawFetchResult = "Squid.OpenClaw.FetchResult";
         public const string OpenClawChatCompletion = "Squid.OpenClaw.ChatCompletion";
+
+        public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Script,
+            KubernetesDeployRawYaml,
+            KubernetesDeployContainers,
+            HelmChartUpgrade,
+            KubernetesDeployIngress,
+            KubernetesDeployService,
+            KubernetesDeployConfigMap,
+            KubernetesDeploySecret,
+            TentaclePackage,
+            HttpRequest,
+            Manual,
+            HealthCheck,
+            DeployRelease,
+            DeployIngress,
+            KubernetesKustomize,
+            OpenClawInvokeTool,
+            OpenClawRunAgent,
+            OpenClawWake,
+            OpenClawWaitSession,
+            OpenClawAssert,
+            OpenClawFetchResult,
+            OpenClawChatCompletion
+        };
     }
 
     public static class StepTypes
@@ -135,6 +161,7 @@ public static class SpecialVariables
         public const string Id = "Squid.Machine.Id";
         public const string Name = "Squid.Machine.Name";
         public const string Roles = "Squid.Machine.Roles";
+        public const string Hostname = "Squid.Machine.Hostname";
     }
 
     public static class Account
@@ -182,6 +209,20 @@ public static class SpecialVariables
         public const string PfxSuffix = ".Pfx";
         public const string NotAfterSuffix = ".NotAfter";
         public const string HasPrivateKeySuffix = ".HasPrivateKey";
+    }
+
+    public static class Ssh
+    {
+        public const string Host = "Squid.Action.Ssh.Host";
+        public const string Port = "Squid.Action.Ssh.Port";
+        public const string Fingerprint = "Squid.Action.Ssh.Fingerprint";
+        public const string RemoteWorkingDirectory = "Squid.Action.Ssh.RemoteWorkingDirectory";
+        public const string ProxyType = "Squid.Action.Ssh.ProxyType";
+        public const string ProxyHost = "Squid.Action.Ssh.ProxyHost";
+        public const string ProxyPort = "Squid.Action.Ssh.ProxyPort";
+        public const string ProxyUsername = "Squid.Action.Ssh.ProxyUsername";
+        public const string ProxyPassword = "Squid.Action.Ssh.ProxyPassword";
+        public const string PackageBaseDirectory = "Squid.Action.Ssh.PackageBaseDirectory";
     }
 
     public static class OpenClaw

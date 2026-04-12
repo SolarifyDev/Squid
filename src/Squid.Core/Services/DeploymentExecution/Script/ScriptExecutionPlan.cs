@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Script;
@@ -12,6 +13,8 @@ internal abstract class ScriptExecutionPlan
     public ScriptExecutionRequest Request { get; }
 
     public abstract ExecutionMode Mode { get; }
+
+    public DeploymentFileCollection DeploymentFiles => Request.DeploymentFiles;
 }
 
 internal sealed class DirectScriptExecutionPlan : ScriptExecutionPlan
@@ -24,8 +27,6 @@ internal sealed class DirectScriptExecutionPlan : ScriptExecutionPlan
     public override ExecutionMode Mode => ExecutionMode.DirectScript;
 
     public string ScriptBody => Request.ScriptBody;
-
-    public Dictionary<string, byte[]> Files => Request.Files;
 }
 
 internal sealed class PackagedPayloadExecutionPlan : ScriptExecutionPlan
@@ -36,6 +37,4 @@ internal sealed class PackagedPayloadExecutionPlan : ScriptExecutionPlan
     }
 
     public override ExecutionMode Mode => ExecutionMode.PackagedPayload;
-
-    public Dictionary<string, byte[]> Files => Request.Files;
 }

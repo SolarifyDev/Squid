@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -145,11 +147,11 @@ data:
             });
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (HelmUpgradeIntent)await ((IActionHandler)_helmHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
+            var fullScript = _contextBuilder.WrapWithContext(BuildHelmScript(intent), scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
 
@@ -185,15 +187,15 @@ data:
             });
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (HelmUpgradeIntent)await ((IActionHandler)_helmHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-fail-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
 
-            foreach (var file in result.Files)
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+            foreach (var file in intent.ValuesFiles)
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
 
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\n{BuildHelmScript(intent)}";
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
@@ -227,20 +229,36 @@ data:
         };
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _yamlHandler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_yamlHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
         var tempDir = Path.Combine(Path.GetTempPath(), $"squid-fail-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
-        foreach (var file in result.Files)
-            await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+        foreach (var file in intent.YamlFiles)
+            await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
 
-        var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+        var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
         var scriptContext = MakeScriptContext(clusterUrl, token, contextNamespace);
 
         var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
         return await ExecuteBashScriptAsync(fullScript);
+    }
+
+    private static string BuildHelmScript(HelmUpgradeIntent intent)
+    {
+        var cmd = $"helm upgrade --install {intent.ReleaseName} {intent.ChartReference}";
+
+        if (!string.IsNullOrEmpty(intent.Namespace))
+            cmd += $" --namespace {intent.Namespace}";
+        if (intent.ResetValues)
+            cmd += " --reset-values";
+        foreach (var vf in intent.ValuesFiles)
+            cmd += $" -f {vf.RelativePath}";
+        if (!string.IsNullOrEmpty(intent.AdditionalArgs))
+            cmd += $" {intent.AdditionalArgs}";
+
+        return cmd;
     }
 
     private static ScriptContext MakeScriptContext(

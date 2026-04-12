@@ -18,8 +18,8 @@ public sealed class CalamariPayloadBuilder : ICalamariPayloadBuilder
 
     public CalamariPayload Build(ScriptExecutionRequest request, ScriptSyntax syntax)
     {
-        var packageBytes = request.Files?.Count > 0
-            ? _yamlNuGetPacker.CreateNuGetPackageFromYamlBytes(request.Files)
+        var packageBytes = request.DeploymentFiles.Any()
+            ? _yamlNuGetPacker.CreateNuGetPackageFromYamlBytes(request.DeploymentFiles.ToLegacyDictionary())
             : Array.Empty<byte>();
 
         var (variableBytes, sensitiveBytes, password) =

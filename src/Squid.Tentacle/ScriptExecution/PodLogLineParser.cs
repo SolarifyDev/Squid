@@ -6,7 +6,7 @@ namespace Squid.Tentacle.ScriptExecution;
 public static class PodLogLineParser
 {
     private static readonly Regex DirectivePattern = new(
-        @"^##(?:squid|octopus)\[(?<type>\S+?)(?:\s+(?<args>.+))?\]$",
+        @"^##squid\[(?<type>\S+?)(?:\s+(?<args>.+))?\]$",
         RegexOptions.Compiled);
 
     private static readonly Regex ArgPattern = new(

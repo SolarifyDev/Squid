@@ -38,17 +38,18 @@ public class OpenClawChatService : IOpenClawChatService
 
     public async Task<List<OpenClawChatResultItem>> SendAsync(SendOpenClawChatCommand command, CancellationToken ct)
     {
-        var prepared = await PrepareRequestsAsync(command, ct).ConfigureAwait(false);
-
-        var tasks = prepared.Select(p => ExecuteForMachineAsync(p.Machine, p.Request, ct)).ToList();
+        var machines = await ResolveMachinesAsync(command.TargetTags, ct).ConfigureAwait(false);
+        var tasks = machines.Select(m => ExecuteForMachineAsync(m, command, ct)).ToList();
 
         return (await Task.WhenAll(tasks).ConfigureAwait(false)).ToList();
     }
 
-    private async Task<OpenClawChatResultItem> ExecuteForMachineAsync(Machine machine, OpenClawChatRequest request, CancellationToken ct)
+    private async Task<OpenClawChatResultItem> ExecuteForMachineAsync(Machine machine, SendOpenClawChatCommand command, CancellationToken ct)
     {
         try
         {
+            var request = await BuildChatRequestAsync(machine, command, ct).ConfigureAwait(false);
+
             using var cts = new CancellationTokenSource(request.Timeout);
             var response = await _client.ChatCompletionAsync(request, cts.Token).ConfigureAwait(false);
 
@@ -90,9 +91,8 @@ public class OpenClawChatService : IOpenClawChatService
     {
         try
         {
-            var prepared = await PrepareRequestsAsync(command, ct).ConfigureAwait(false);
-
-            var tasks = prepared.Select(p => StreamForMachineAsync(p.Machine, p.Request, writer, ct)).ToList();
+            var machines = await ResolveMachinesAsync(command.TargetTags, ct).ConfigureAwait(false);
+            var tasks = machines.Select(m => StreamForMachineAsync(m, command, writer, ct)).ToList();
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
@@ -102,10 +102,12 @@ public class OpenClawChatService : IOpenClawChatService
         }
     }
 
-    private async Task StreamForMachineAsync(Machine machine, OpenClawChatRequest request, ChannelWriter<OpenClawChatStreamEvent> writer, CancellationToken ct)
+    private async Task StreamForMachineAsync(Machine machine, SendOpenClawChatCommand command, ChannelWriter<OpenClawChatStreamEvent> writer, CancellationToken ct)
     {
         try
         {
+            var request = await BuildChatRequestAsync(machine, command, ct).ConfigureAwait(false);
+
             await foreach (var chunk in _client.ChatCompletionStreamAsync(request, ct).ConfigureAwait(false))
             {
                 await writer.WriteAsync(new OpenClawChatStreamEvent
@@ -130,20 +132,6 @@ public class OpenClawChatService : IOpenClawChatService
     }
 
     // === Shared ===
-
-    private async Task<List<(Machine Machine, OpenClawChatRequest Request)>> PrepareRequestsAsync(SendOpenClawChatCommand command, CancellationToken ct)
-    {
-        var machines = await ResolveMachinesAsync(command.TargetTags, ct).ConfigureAwait(false);
-        var results = new List<(Machine, OpenClawChatRequest)>();
-
-        foreach (var machine in machines)
-        {
-            var request = await BuildChatRequestAsync(machine, command, ct).ConfigureAwait(false);
-            results.Add((machine, request));
-        }
-
-        return results;
-    }
 
     internal async Task<List<Machine>> ResolveMachinesAsync(List<string> targetTags, CancellationToken ct)
     {

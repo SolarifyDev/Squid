@@ -32,23 +32,13 @@ public class TargetScriptRunner : ITargetScriptRunner
         var endpointContext = await _endpointContextBuilder.BuildAsync(machine.Endpoint, transport.Variables, ct).ConfigureAwait(false);
         var variables = transport.Variables.ContributeVariables(endpointContext);
 
-        var scriptContext = new ScriptContext
-        {
-            Endpoint = endpointContext,
-            Syntax = syntax,
-            Variables = variables
-        };
-
-        var wrappedScript = transport.ScriptWrapper.WrapScript(scriptBody, scriptContext);
-
         var request = new ScriptExecutionRequest
         {
             Machine = machine,
-            ScriptBody = wrappedScript,
+            ScriptBody = scriptBody,
             ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Skip,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
             Syntax = syntax,
-            Files = new Dictionary<string, byte[]>(),
             Variables = variables,
             EndpointContext = endpointContext
         };

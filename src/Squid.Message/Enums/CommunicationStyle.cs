@@ -6,5 +6,6 @@ public enum CommunicationStyle
     KubernetesApi = 1,
     KubernetesAgent = 2,
     OpenClaw = 3,
+    Ssh = 4,
     None = 999,
 }

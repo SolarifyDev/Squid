@@ -1,8 +1,6 @@
-using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Message.Constants;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.UnitTests.Services.Deployments.Handlers;
@@ -42,11 +40,6 @@ public class RunScriptActionHandlerTests
 
         return action;
     }
-
-    private static ActionExecutionContext CreateContext(DeploymentActionDto action) => new()
-    {
-        Action = action
-    };
 
     // === CanHandle Tests (default interface implementation) ===
 
@@ -90,129 +83,4 @@ public class RunScriptActionHandlerTests
         _handler.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
     }
 
-    // === PrepareAsync Tests ===
-
-    [Fact]
-    public async Task PrepareAsync_WithScriptBody_ReturnsScriptInResult()
-    {
-        var action = CreateAction(scriptBody: "kubectl get pods -n production");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ShouldNotBeNull();
-        result.ScriptBody.ShouldBe("kubectl get pods -n production");
-    }
-
-    [Theory]
-    [InlineData("Bash", ScriptSyntax.Bash)]
-    [InlineData("PowerShell", ScriptSyntax.PowerShell)]
-    [InlineData("CSharp", ScriptSyntax.CSharp)]
-    [InlineData("FSharp", ScriptSyntax.FSharp)]
-    [InlineData("Python", ScriptSyntax.Python)]
-    public async Task PrepareAsync_Syntax_ResolvedCorrectly(string input, ScriptSyntax expected)
-    {
-        var action = CreateAction(scriptBody: "echo hi", syntax: input);
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(expected);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_NoSyntaxSpecified_DefaultsToBash()
-    {
-        var action = CreateAction(scriptBody: "echo hi");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(ScriptSyntax.Bash);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_UnknownSyntax_DefaultsToBash()
-    {
-        var action = CreateAction(scriptBody: "echo hi", syntax: "Ruby");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(ScriptSyntax.Bash);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_NoScriptBody_ReturnsEmptyString()
-    {
-        var action = CreateAction();
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ScriptBody.ShouldBe(string.Empty);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_CalamariCommand_IsNull()
-    {
-        var action = CreateAction(scriptBody: "echo hi");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.CalamariCommand.ShouldBeNull();
-        result.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
-        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
-        result.PayloadKind.ShouldBe(PayloadKind.None);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_MultiLineScript_PreservesContent()
-    {
-        var script = "kubectl get pods\nkubectl get services\nkubectl get ingress";
-        var action = CreateAction(scriptBody: script);
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ScriptBody.ShouldBe(script);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_BashSyntaxCaseInsensitive_SetsBash()
-    {
-        var action = CreateAction(scriptBody: "echo hi", syntax: "bash");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Syntax.ShouldBe(ScriptSyntax.Bash);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_FilesAlwaysEmpty()
-    {
-        var action = CreateAction(scriptBody: "kubectl get pods");
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.Files.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task PrepareAsync_NullProperties_ReturnsEmptyScriptBody()
-    {
-        var action = new DeploymentActionDto
-        {
-            ActionType = "Squid.Script",
-            Properties = null
-        };
-        var ctx = CreateContext(action);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ScriptBody.ShouldBe(string.Empty);
-    }
 }

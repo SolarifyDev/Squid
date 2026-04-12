@@ -15,7 +15,7 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
         _halibutClientFactory = halibutClientFactory;
     }
 
-    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct, MachineHealthCheckPolicyDto healthCheckPolicy = null)
     {
         var endpoint = ParseAgentEndpoint(machine);
 

@@ -1,3 +1,5 @@
+using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -8,7 +10,12 @@ namespace Squid.Core.Services.DeploymentExecution.Script;
 public class ScriptExecutionRequest
 {
     public string ScriptBody { get; set; }
-    public Dictionary<string, byte[]> Files { get; set; } = new();
+
+    /// <summary>
+    /// Typed, validated collection of files that must accompany the script on the target.
+    /// </summary>
+    public DeploymentFileCollection DeploymentFiles { get; set; } = DeploymentFileCollection.Empty;
+
     public string CalamariCommand { get; set; }
     public ExecutionMode ExecutionMode { get; set; } = ExecutionMode.Unspecified;
     public ContextPreparationPolicy ContextPreparationPolicy { get; set; } = ContextPreparationPolicy.Unspecified;
@@ -23,11 +30,11 @@ public class ScriptExecutionRequest
     public List<VariableDto> Variables { get; set; }
     public Persistence.Entities.Deployments.Machine Machine { get; set; }
     public string ReleaseVersion { get; set; }
-    public IScriptContextWrapper ContextWrapper { get; set; }
     public TimeSpan? Timeout { get; set; }
     public SensitiveValueMasker Masker { get; set; }
     public string? TargetNamespace { get; set; }
     public int ServerTaskId { get; set; }
+    public List<PackageAcquisitionResult> PackageReferences { get; set; } = new();
     public string StepName { get; set; }
     public string ActionName { get; set; }
 

@@ -19,6 +19,7 @@ using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -105,9 +106,9 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
         ctx.ResumeFromBatchIndex = 0;
@@ -132,9 +133,9 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -158,14 +159,14 @@ public class ResumeCheckpointTests
         var strategy = new RecordingStrategy();
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var transport = new TestTransport(strategy, scriptWrapper: null);
+        var transport = new TestTransport(strategy);
         var savedCheckpoints = new List<DeploymentExecutionCheckpoint>();
         var checkpointService = new Mock<IDeploymentCheckpointService>();
         checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
             .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(cp))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -289,20 +290,16 @@ public class ResumeCheckpointTests
 
     private sealed class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
     }
 
     private sealed class RecordingStrategy : IExecutionStrategy
@@ -320,15 +317,12 @@ public class ResumeCheckpointTests
     {
         public string ActionType => "Squid.Script";
 
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            return Task.FromResult(new ActionExecutionResult
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
             {
+                Name = "run-script",
                 ScriptBody = $"echo ACTION={ctx.Action.Name}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
+                Syntax = ScriptSyntax.Bash
             });
-        }
     }
 }

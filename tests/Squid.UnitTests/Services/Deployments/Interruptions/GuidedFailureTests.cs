@@ -11,13 +11,13 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.UnitTests.Services.Deployments.Execution.Handlers;
 
 namespace Squid.UnitTests.Services.Deployments.Interruptions;
 
@@ -74,7 +74,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true);
         lifecycle.Initialize(ctx);
 
@@ -107,7 +107,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, checkpointService.Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, checkpointService.Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true);
         lifecycle.Initialize(ctx);
 
@@ -138,7 +138,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: retryStrategy);
         lifecycle.Initialize(ctx);
 
@@ -164,7 +164,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -189,7 +189,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -206,7 +206,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: false);
         lifecycle.Initialize(ctx);
 
@@ -233,7 +233,7 @@ public class GuidedFailureTests
 
         var (lifecycle, _) = CreateLifecycle();
         var registry = CreateRegistry();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, serverTaskService.Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
         var ctx = CreateBaseContext(useGuidedFailure: true, isResume: true, strategy: strategy);
         lifecycle.Initialize(ctx);
 
@@ -257,15 +257,7 @@ public class GuidedFailureTests
     {
         var handler = new Mock<IActionHandler>();
         handler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
-        handler.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult
-            {
-                ScriptBody = "echo test",
-                Syntax = ScriptSyntax.Bash,
-                Files = new Dictionary<string, byte[]>(),
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
-            });
+        handler.SetupDescribeIntentAsRunScript();
 
         return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);
     }
@@ -274,7 +266,7 @@ public class GuidedFailureTests
     {
         var effectiveStrategy = strategy ?? new TestExecutionStrategy(_ =>
             new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "script failed" } });
-        var transport = new TestTransport(effectiveStrategy, scriptWrapper: null);
+        var transport = new TestTransport(effectiveStrategy);
 
         return new DeploymentTaskContext
         {
@@ -333,19 +325,15 @@ public class GuidedFailureTests
 
     private class TestTransport : IDeploymentTransport
     {
-        public TestTransport(IExecutionStrategy strategy, IScriptContextWrapper scriptWrapper)
+        public TestTransport(IExecutionStrategy strategy)
         {
             Strategy = strategy;
-            ScriptWrapper = scriptWrapper;
         }
 
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesApi;
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper { get; }
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
     }
 }

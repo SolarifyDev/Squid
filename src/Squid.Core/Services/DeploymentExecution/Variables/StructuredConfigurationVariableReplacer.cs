@@ -1,26 +1,12 @@
 using Serilog;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
-using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 internal static class StructuredConfigurationVariableReplacer
 {
     private static readonly string[] ReservedPrefixes = { "Squid.", "System." };
-
-    internal static void ReplaceIfEnabled(ActionExecutionResult prepared, VariableDictionary variableDictionary)
-    {
-        if (prepared.ActionProperties == null) return;
-        if (!IsEnabled(prepared.ActionProperties)) return;
-        if (prepared.Files == null || prepared.Files.Count == 0) return;
-
-        var replacements = BuildReplacementMap(variableDictionary);
-
-        if (replacements.Count == 0) return;
-
-        ReplaceInFiles(prepared.Files, replacements, prepared.Warnings);
-    }
 
     internal static bool IsEnabled(Dictionary<string, string> actionProperties)
     {

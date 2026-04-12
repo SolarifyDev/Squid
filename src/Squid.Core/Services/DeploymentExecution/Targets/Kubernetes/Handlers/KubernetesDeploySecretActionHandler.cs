@@ -1,5 +1,7 @@
 using System.Text;
 using Squid.Core.Extensions;
+using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -13,24 +15,57 @@ public class KubernetesDeploySecretActionHandler : IActionHandler
 
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeploySecret;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>). The generated Secret YAML is carried as a single
+    /// <c>secret.yaml</c> asset. Unconfigured or invalid actions produce an empty
+    /// <c>YamlFiles</c> collection (a semantic no-op).
+    /// </summary>
+    Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var properties = KubernetesPropertyParser.BuildPropertyDictionary(ctx.Action);
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var files = BuildYamlFiles(ctx.Action);
+        var yamlFiles = DeploymentFileCollection.FromLegacyFiles(files).ToList();
+        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
+
+        var (serverSide, fieldManager, forceConflicts) = KubernetesApplyIntentFactory.ReadServerSideApply(ctx.Action);
+        var (objectStatusCheck, statusCheckTimeout) = KubernetesApplyIntentFactory.ReadObjectStatusCheck(ctx.Action);
+
+        var intent = new KubernetesApplyIntent
+        {
+            Name = "k8s-apply",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            YamlFiles = yamlFiles,
+            Assets = yamlFiles,
+            Namespace = namespace_,
+            Syntax = ScriptSyntax.Bash,
+            ServerSideApply = serverSide,
+            FieldManager = fieldManager,
+            ForceConflicts = forceConflicts,
+            ObjectStatusCheck = objectStatusCheck,
+            StatusCheckTimeoutSeconds = statusCheckTimeout
+        };
+
+        return Task.FromResult<ExecutionIntent>(intent);
+    }
+
+    private Dictionary<string, byte[]> BuildYamlFiles(DeploymentActionDto action)
+    {
+        if (action == null)
+            return new Dictionary<string, byte[]>();
+
+        var properties = KubernetesPropertyParser.BuildPropertyDictionary(action);
 
         if (!_generator.CanGenerate(properties))
-            return Task.FromResult<ActionExecutionResult>(null);
+            return new Dictionary<string, byte[]>();
 
         var yaml = _generator.Generate(properties);
 
-        return Task.FromResult(new ActionExecutionResult
-        {
-            ScriptBody = KubernetesApplyCommandBuilder.Build("./secret.yaml", ctx.Action, ScriptSyntax.Bash),
-            Files = new Dictionary<string, byte[]> { ["secret.yaml"] = Encoding.UTF8.GetBytes(yaml) },
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = ScriptSyntax.Bash
-        });
+        if (string.IsNullOrWhiteSpace(yaml))
+            return new Dictionary<string, byte[]>();
+
+        return new Dictionary<string, byte[]> { ["secret.yaml"] = Encoding.UTF8.GetBytes(yaml) };
     }
 }

@@ -1,5 +1,6 @@
 using Squid.Core.Extensions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -17,14 +18,29 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Produces a <see cref="HealthCheckIntent"/> with a stable semantic name
+    /// (<c>health-check</c>). The <c>Squid.Action.HealthCheck.*</c> properties are
+    /// mapped onto semantic intent fields via the same <see cref="ParseSettings"/> helper
+    /// that powers <see cref="ExecuteStepLevelAsync"/>.
+    /// </summary>
+    Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        return Task.FromResult(new ActionExecutionResult
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var settings = ParseSettings(ctx.Action);
+
+        var intent = new HealthCheckIntent
         {
-            ActionName = ctx.Action.Name,
-            ExecutionMode = ExecutionMode.ManualIntervention,
-            ContextPreparationPolicy = ContextPreparationPolicy.Skip
-        });
+            Name = "health-check",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            CheckType = settings.CheckType,
+            ErrorHandling = settings.ErrorHandling,
+            IncludeNewTargets = settings.IncludeNewTargets
+        };
+
+        return Task.FromResult<ExecutionIntent>(intent);
     }
 
     public async Task ExecuteStepLevelAsync(StepActionContext ctx, CancellationToken ct)
@@ -139,18 +155,6 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
         return new HealthCheckSettings(checkType, errorHandling, includeNew);
     }
-}
-
-public enum HealthCheckType
-{
-    FullHealthCheck,
-    ConnectionTest
-}
-
-public enum HealthCheckErrorHandling
-{
-    FailDeployment,
-    SkipUnavailable
 }
 
 public record HealthCheckSettings(HealthCheckType CheckType, HealthCheckErrorHandling ErrorHandling, bool IncludeNewTargets);

@@ -637,6 +637,95 @@ public class KubernetesApiContextScriptBuilderTests
     }
 
     [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_WithAdminFlag_ContainsAdminFlag()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg", UseAdminCredentials = true })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Key = "sp-secret-key" }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash });
+
+        result.ShouldContain("AKS_ADMIN_FLAG=\"--admin\"");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_Bash_WithoutAdminFlag_DoesNotContainAdminFlag()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg", UseAdminCredentials = false })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Key = "sp-secret-key" }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash });
+
+        result.ShouldContain("AKS_ADMIN_FLAG=\"\"");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureServicePrincipal_PowerShell_WithAdminFlag_ContainsAdminFlag()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg", UseAdminCredentials = true })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureServicePrincipal,
+            JsonSerializer.Serialize(new AzureServicePrincipalCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Key = "sp-secret-key" }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.PowerShell });
+
+        result.ShouldContain("$aksAdminFlag = if ((B64D \"");
+        result.ShouldContain("\") -eq \"True\") { \"--admin\" }");
+    }
+
+    [Fact]
+    public void WrapWithContext_AzureOidc_Bash_WithAdminFlag_ContainsAdminFlag()
+    {
+        var endpoint = new EndpointContext
+        {
+            EndpointJson = JsonSerializer.Serialize(new KubernetesApiEndpointDto
+            {
+                ClusterUrl = "https://aks.example.com",
+                Namespace = "default",
+                SkipTlsVerification = "False",
+                ProviderType = KubernetesApiEndpointProviderType.AzureAks,
+                ProviderConfig = JsonSerializer.Serialize(new KubernetesApiAzureAksConfig { ClusterName = "my-aks-cluster", ResourceGroup = "my-rg", UseAdminCredentials = true })
+            })
+        };
+        endpoint.SetAccountData(AccountType.AzureOidc,
+            JsonSerializer.Serialize(new AzureOidcCredentials { SubscriptionNumber = "sub-123", ClientId = "client-id-456", TenantId = "tenant-id-789", Jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." }));
+
+        var result = _builder.WrapWithContext("echo hi", new ScriptContext { Endpoint = endpoint, Syntax = ScriptSyntax.Bash });
+
+        result.ShouldContain("AKS_ADMIN_FLAG=\"--admin\"");
+    }
+
+    [Fact]
     public void WrapWithContext_AzureServicePrincipal_Bash_Base64EncodesSpecialCharsInKey()
     {
         var endpoint = new EndpointContext

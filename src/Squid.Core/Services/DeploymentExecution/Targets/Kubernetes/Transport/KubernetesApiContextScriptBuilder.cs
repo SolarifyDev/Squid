@@ -112,6 +112,7 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
             .Replace("{{AzureOidcToken}}", B64(azureOidcCreds?.Jwt), StringComparison.Ordinal)
             .Replace("{{AksClusterName}}", B64(azureAks?.ClusterName), StringComparison.Ordinal)
             .Replace("{{AksClusterResourceGroup}}", B64(azureAks?.ResourceGroup), StringComparison.Ordinal)
+            .Replace("{{AksUseAdminCredentials}}", B64(azureAks?.UseAdminCredentials == true ? "True" : ""), StringComparison.Ordinal)
             // GCP
             .Replace("{{GcpJsonKey}}", B64(gcpCreds?.JsonKey), StringComparison.Ordinal)
             .Replace("{{GkeClusterName}}", B64(gcpGke?.ClusterName), StringComparison.Ordinal)

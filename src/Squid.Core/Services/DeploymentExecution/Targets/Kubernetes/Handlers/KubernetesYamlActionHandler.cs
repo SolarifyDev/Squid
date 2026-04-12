@@ -5,6 +5,8 @@ using Squid.Core.Extensions;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
@@ -36,91 +38,67 @@ public class KubernetesYamlActionHandler : IActionHandler
                && _yamlGenerators.Any(g => g.CanHandle(action));
     }
 
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>). YAML generation (container image resolution,
+    /// deployment id suffix injection, feed secret injection, generator invocation) is
+    /// handled by <see cref="ResolveGeneratedYamlFilesAsync"/>; the intent's
+    /// <c>YamlFiles</c> is filtered to valid YAML entries only.
+    /// </summary>
+    async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(ctx);
+
         var generator = _yamlGenerators.FirstOrDefault(g => g.CanHandle(ctx.Action));
+        var files = generator == null
+            ? new Dictionary<string, byte[]>()
+            : await ResolveGeneratedYamlFilesAsync(ctx, generator, ct).ConfigureAwait(false);
 
-        if (generator == null)
-            return null;
+        var yamlOnly = files.Where(kvp => IsYamlFile(kvp.Key))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        var yamlFiles = DeploymentFileCollection.FromLegacyFiles(yamlOnly).ToList();
+        var namespace_ = GetNamespaceFromAction(ctx.Action);
 
-        var syntax = ScriptSyntax.Bash;
+        var (serverSide, fieldManager, forceConflicts) = KubernetesApplyIntentFactory.ReadServerSideApply(ctx.Action);
+        var (objectStatusCheck, statusCheckTimeout) = KubernetesApplyIntentFactory.ReadObjectStatusCheck(ctx.Action);
 
+        return new KubernetesApplyIntent
+        {
+            Name = "k8s-apply",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = ctx.Action?.Name ?? string.Empty,
+            YamlFiles = yamlFiles,
+            Assets = yamlFiles,
+            Namespace = namespace_,
+            Syntax = ScriptSyntax.Bash,
+            ServerSideApply = serverSide,
+            FieldManager = fieldManager,
+            ForceConflicts = forceConflicts,
+            ObjectStatusCheck = objectStatusCheck,
+            StatusCheckTimeoutSeconds = statusCheckTimeout
+        };
+    }
+
+    private async Task<Dictionary<string, byte[]>> ResolveGeneratedYamlFilesAsync(
+        ActionExecutionContext ctx, IActionYamlGenerator generator, CancellationToken ct)
+    {
         await ResolveContainerImagesAsync(ctx, ct).ConfigureAwait(false);
         InjectDeploymentIdSuffix(ctx);
 
         var secretYaml = await GenerateFeedSecretAsync(ctx, ct).ConfigureAwait(false);
 
-        var yamlFiles = await generator.GenerateAsync(ctx.Step, ctx.Action, ct).ConfigureAwait(false)
+        var files = await generator.GenerateAsync(ctx.Step, ctx.Action, ct).ConfigureAwait(false)
             ?? new Dictionary<string, byte[]>();
 
         if (secretYaml != null)
-            yamlFiles["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
+            files["feedsecrets.yaml"] = Encoding.UTF8.GetBytes(secretYaml);
 
-        var scriptBody = BuildApplyScript(yamlFiles, ctx.Action, syntax);
-        scriptBody += ExtractAndAppendShellScripts(yamlFiles);
-
-        var namespace_ = GetNamespaceFromAction(ctx.Action);
-        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(yamlFiles, ctx.Action, namespace_, syntax);
-
-        RemoveNonYamlFiles(yamlFiles);
-
-        return new ActionExecutionResult
-        {
-            ScriptBody = scriptBody,
-            Files = yamlFiles,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = syntax
-        };
-    }
-
-    private static string BuildApplyScript(Dictionary<string, byte[]> yamlFiles, DeploymentActionDto action, ScriptSyntax syntax)
-    {
-        var sb = new StringBuilder();
-
-        foreach (var fileName in yamlFiles.Keys.Where(IsYamlFile).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var targetPath = syntax == ScriptSyntax.Bash ? $"./{fileName}" : $".\\{fileName}";
-            sb.AppendLine(KubernetesApplyCommandBuilder.Build(targetPath, action, syntax));
-        }
-
-        return sb.ToString();
-    }
-
-    private static string ExtractAndAppendShellScripts(Dictionary<string, byte[]> yamlFiles)
-    {
-        var sb = new StringBuilder();
-
-        foreach (var fileName in yamlFiles.Keys.Where(IsShellScript).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var content = Encoding.UTF8.GetString(yamlFiles[fileName]);
-
-            if (!string.IsNullOrWhiteSpace(content))
-            {
-                sb.AppendLine();
-                sb.AppendLine(content);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static void RemoveNonYamlFiles(Dictionary<string, byte[]> yamlFiles)
-    {
-        var nonYamlKeys = yamlFiles.Keys.Where(k => !IsYamlFile(k)).ToList();
-
-        foreach (var key in nonYamlKeys)
-            yamlFiles.Remove(key);
+        return files;
     }
 
     private static bool IsYamlFile(string fileName)
         => fileName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
            || fileName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsShellScript(string fileName)
-        => fileName.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string> GenerateFeedSecretAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

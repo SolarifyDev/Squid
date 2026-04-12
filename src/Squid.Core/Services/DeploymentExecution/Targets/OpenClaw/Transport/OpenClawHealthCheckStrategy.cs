@@ -23,7 +23,7 @@ public class OpenClawHealthCheckStrategy : IHealthCheckStrategy
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct, MachineHealthCheckPolicyDto healthCheckPolicy = null)
     {
         var endpoint = EndpointVariableFactory.TryDeserialize<OpenClawEndpointDto>(machine.Endpoint);
 

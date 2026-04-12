@@ -17,25 +17,22 @@ public class TransportCompositionTests
     [Fact]
     public void KubernetesApiTransport_ComposesExpectedDependencies()
     {
-        var builder = new Mock<IKubernetesApiContextScriptBuilder>();
         var payloadBuilder = new Mock<ICalamariPayloadBuilder>();
         var processRunner = new Mock<ILocalProcessRunner>();
 
         var variables = new KubernetesApiEndpointVariableContributor(Mock.Of<IExternalFeedDataProvider>());
-        var wrapper = new KubernetesApiScriptContextWrapper(builder.Object);
         var strategy = new LocalProcessExecutionStrategy(payloadBuilder.Object, processRunner.Object);
         var healthChecker = new KubernetesApiHealthCheckStrategy(Mock.Of<ITargetScriptRunner>());
 
-        var transport = new KubernetesApiTransport(variables, wrapper, strategy, healthChecker);
+        var transport = new KubernetesApiTransport(variables, strategy, healthChecker);
 
         transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesApi);
         transport.Variables.ShouldBeSameAs(variables);
-        transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.ApiWorkerLocal);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
+        transport.Capabilities.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]
@@ -46,7 +43,6 @@ public class TransportCompositionTests
         var observer = new Mock<IHalibutScriptObserver>();
 
         var variables = new KubernetesAgentEndpointVariableContributor();
-        var wrapper = new KubernetesAgentScriptContextWrapper();
         var strategy = new HalibutMachineExecutionStrategy(
             halibutFactory.Object,
             payloadBuilder.Object,
@@ -54,16 +50,15 @@ public class TransportCompositionTests
             new HalibutSetting());
         var healthChecker = new KubernetesAgentHealthCheckStrategy(halibutFactory.Object);
 
-        var transport = new KubernetesAgentTransport(variables, wrapper, strategy, healthChecker);
+        var transport = new KubernetesAgentTransport(variables, strategy, healthChecker);
 
         transport.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesAgent);
         transport.Variables.ShouldBeSameAs(variables);
-        transport.ScriptWrapper.ShouldBeSameAs(wrapper);
         transport.Strategy.ShouldBeSameAs(strategy);
         transport.HealthChecker.ShouldBeSameAs(healthChecker);
-        transport.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
-        transport.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
-        transport.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
+        transport.Capabilities.ExecutionLocation.ShouldBe(ExecutionLocation.RemoteTentacle);
+        transport.Capabilities.ExecutionBackend.ShouldBe(ExecutionBackend.HalibutScriptService);
+        transport.Capabilities.RequiresContextPreparationForPackagedPayload.ShouldBeTrue();
     }
 
     [Fact]

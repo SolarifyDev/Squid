@@ -15,6 +15,7 @@ using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Script;
 
@@ -146,7 +147,7 @@ public class RunOnServerExecutionTests
     [Fact]
     public async Task RunOnServerStep_OutputVariables_PropagatedToContext()
     {
-        var outputLines = new List<string> { "##octopus[setVariable name='DeployResult' value='deployed-v2']" };
+        var outputLines = new List<string> { "##squid[setVariable name='DeployResult' value='deployed-v2']" };
         var (phase, ctx, _, _) = CreateRunOnServerTestHarness(new ScriptOutputStrategy(outputLines));
 
         ctx.Steps = new List<DeploymentStepDto> { MakeRunOnServerStep("Server Deploy", 1) };
@@ -160,7 +161,7 @@ public class RunOnServerExecutionTests
     [Fact]
     public async Task RunOnServerStep_OutputVariables_AvailableToSubsequentStep()
     {
-        var outputLines = new List<string> { "##octopus[setVariable name='ArtifactPath' value='/tmp/build.zip']" };
+        var outputLines = new List<string> { "##squid[setVariable name='ArtifactPath' value='/tmp/build.zip']" };
         var targetCaptured = new List<ScriptExecutionRequest>();
         var (phase, ctx, _, _) = CreateMixedTestHarness(new ScriptOutputStrategy(outputLines), new CapturingStrategy(targetCaptured));
 
@@ -258,7 +259,7 @@ public class RunOnServerExecutionTests
         transportRegistryMock.Setup(r => r.Resolve(CommunicationStyle.None)).Returns(serverTransport);
 
         var lifecycle = CreateLifecycle(logs, nodes);
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, transportRegistryMock.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, transportRegistryMock.Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext>();
@@ -282,7 +283,7 @@ public class RunOnServerExecutionTests
         transportRegistryMock.Setup(r => r.Resolve(CommunicationStyle.None)).Returns(serverTransport);
 
         var lifecycle = CreateLifecycle(logs, nodes);
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, transportRegistryMock.Object);
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<Squid.Core.Services.Deployments.Checkpoints.IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, transportRegistryMock.Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext>
@@ -454,12 +455,13 @@ public class RunOnServerExecutionTests
 
         public CommunicationStyle CommunicationStyle { get; }
         public IEndpointVariableContributor Variables => null;
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy { get; }
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.ApiWorkerLocal;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.LocalProcess;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities
+        {
+            ExecutionLocation = ExecutionLocation.ApiWorkerLocal,
+            ExecutionBackend = ExecutionBackend.LocalProcess
+        };
     }
 
     private sealed class SuccessStrategy : IExecutionStrategy
@@ -508,15 +510,12 @@ public class RunOnServerExecutionTests
     {
         public string ActionType => "Squid.Script";
 
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            return Task.FromResult(new ActionExecutionResult
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
+            Task.FromResult<ExecutionIntent>(new RunScriptIntent
             {
+                Name = "run-script",
                 ScriptBody = $"echo ACTION={ctx.Action.Name}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Skip
+                Syntax = ScriptSyntax.Bash
             });
-        }
     }
 }

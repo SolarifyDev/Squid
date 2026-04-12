@@ -23,6 +23,8 @@ public class TransportRegistryTests
     [InlineData("KUBERNETESAPI", CommunicationStyle.KubernetesApi)]
     [InlineData("KubernetesAgent", CommunicationStyle.KubernetesAgent)]
     [InlineData("kubernetesagent", CommunicationStyle.KubernetesAgent)]
+    [InlineData("Ssh", CommunicationStyle.Ssh)]
+    [InlineData("ssh", CommunicationStyle.Ssh)]
     public void Parse_KnownStyle_ReturnsMappedEnum(string styleValue, CommunicationStyle expected)
     {
         var json = MakeEndpointJson(styleValue);
@@ -31,7 +33,6 @@ public class TransportRegistryTests
     }
 
     [Theory]
-    [InlineData("Ssh")]
     [InlineData("Docker")]
     [InlineData("")]
     public void Parse_UnknownStyle_ReturnsUnknown(string styleValue)
@@ -176,12 +177,9 @@ public class TransportRegistryTests
     {
         public CommunicationStyle CommunicationStyle { get; }
         public IEndpointVariableContributor Variables { get; }
-        public IScriptContextWrapper ScriptWrapper => null;
         public IExecutionStrategy Strategy => null;
         public IHealthCheckStrategy HealthChecker => null;
-        public ExecutionLocation ExecutionLocation => ExecutionLocation.Unspecified;
-        public ExecutionBackend ExecutionBackend => ExecutionBackend.Unspecified;
-        public bool RequiresContextPreparationForPackagedPayload => false;
+        public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
 
         public StubTransport(CommunicationStyle style, IEndpointVariableContributor variables = null)
         {

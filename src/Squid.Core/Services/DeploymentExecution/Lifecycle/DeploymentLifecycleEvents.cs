@@ -36,8 +36,21 @@ public class DeploymentEventContext
     public StepEligibilityResult? StepEligibility { get; init; }
     public ActionEligibilityResult? ActionEligibility { get; init; }
 
-    // Packages
+    // Packages — flat fields (backward-compatible; prefer Packages property)
     public List<ReleaseSelectedPackage> SelectedPackages { get; init; }
+    public string PackageId { get; init; }
+    public string PackageVersion { get; init; }
+    public int PackageFeedId { get; init; }
+    public long PackageSizeBytes { get; init; }
+    public string PackageHash { get; init; }
+    public string PackageLocalPath { get; init; }
+    public int PackageIndex { get; init; }
+    public int PackageCount { get; init; }
+    public long PackageTotalSizeBytes { get; init; }
+    public string PackageError { get; init; }
+
+    // Packages — nested context (primary accessor; populated alongside flat fields)
+    public DeploymentPackageContext Packages { get; init; }
 
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
@@ -77,6 +90,10 @@ public sealed record MachineConstraintsResolvedEvent(DeploymentEventContext Cont
 
 // === Packages ===
 public sealed record PackagesAcquiringEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record PackageDownloadingEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record PackageDownloadedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record PackageDownloadFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record PackagesAcquiredEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record PackagesReleasedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Steps ===

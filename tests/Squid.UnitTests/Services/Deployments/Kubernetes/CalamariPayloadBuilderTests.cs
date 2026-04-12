@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -180,7 +181,7 @@ public class CalamariPayloadBuilderTests
             Machine = new Squid.Core.Persistence.Entities.Deployments.Machine { Name = "test" },
             ExecutionMode = ExecutionMode.PackagedPayload,
             ReleaseVersion = releaseVersion,
-            Files = files ?? new Dictionary<string, byte[]>(),
+            DeploymentFiles = DeploymentFileCollection.FromLegacyFiles(files),
             Variables = variables ?? new List<VariableDto>()
         };
     }

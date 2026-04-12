@@ -13,7 +13,6 @@ using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -53,31 +52,6 @@ public class ManualInterventionTests
         var handler = CreateHandler();
 
         handler.ExecutionScope.ShouldBe(ExecutionScope.StepLevel);
-    }
-
-    [Theory]
-    [InlineData("Please approve", "Please approve")]
-    [InlineData(null, "")]
-    public async Task Handler_PrepareAsync_ReturnsManualInterventionMode(string instructions, string expectedInstructions)
-    {
-        var handler = CreateHandler();
-        var properties = new List<DeploymentActionPropertyDto>();
-
-        if (instructions != null)
-            properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = instructions });
-
-        var ctx = new ActionExecutionContext
-        {
-            Step = new DeploymentStepDto { Id = 1, Name = "Step" },
-            Action = new DeploymentActionDto { Id = 1, Name = "Manual Action", ActionType = "Squid.Manual", Properties = properties }
-        };
-
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ExecutionMode.ShouldBe(ExecutionMode.ManualIntervention);
-        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
-        result.ManualInterventionInstructions.ShouldBe(expectedInstructions);
-        result.ScriptBody.ShouldBeNull();
     }
 
     // ========== ExecuteStepLevelAsync Tests ==========
@@ -172,7 +146,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         var ctx = new DeploymentTaskContext
         {
@@ -232,7 +206,7 @@ public class ManualInterventionTests
         registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(manualHandler.Object);
         registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.StepLevel);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         // Deployment targets environment 1 (TEST), but action is configured for environment 99 (PRD)
         var ctx = new DeploymentTaskContext
@@ -283,7 +257,7 @@ public class ManualInterventionTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         lifecycle.Setup(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object);
+        var phase = new ExecuteStepsPhase(registry.Object, lifecycle.Object, new Mock<IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
 
         // Deployment targets environment 99 (PRD), action configured for environment 99 (PRD) — should execute
         var ctx = new DeploymentTaskContext

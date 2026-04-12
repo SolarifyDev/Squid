@@ -29,8 +29,10 @@ public class CreateReleaseResponse : SquidResponse<ReleaseDto>
 public class CreateReleaseSelectedPackageDto
 {
     public string ActionName { get; set; }
-    
+
     public string Version { get; set; }
-    
+
     public string PackageReferenceName { get; set; }
+
+    public int FeedId { get; set; }
 }

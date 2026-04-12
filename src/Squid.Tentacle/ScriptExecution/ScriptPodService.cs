@@ -108,7 +108,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         {
             // Script pod always created in agent namespace — PVC, ServiceAccount, and
             // ImagePullSecrets are namespace-scoped and only exist in the agent namespace.
-            // TargetNamespace is for kubectl context wrapping (handled by IScriptContextWrapper).
+            // TargetNamespace is for kubectl context wrapping (handled by the intent renderer).
             var podName = _podManager.CreatePod(ticketId, additionalLabels: command.Labels);
             RemovePendingSecret(ticketId);
 

@@ -12,7 +12,6 @@ public class LocalProcessExecutionStrategyPreparerTests
     private readonly Mock<ICalamariPayloadBuilder> _payloadBuilder = new();
     private readonly Mock<ILocalProcessRunner> _processRunner = new();
     private readonly Mock<IScriptContextPreparer> _preparer = new();
-    private readonly Mock<IScriptContextWrapper> _wrapper = new();
 
     public LocalProcessExecutionStrategyPreparerTests()
     {
@@ -63,33 +62,16 @@ public class LocalProcessExecutionStrategyPreparerTests
         capturedEnvVars.ShouldContainKeyAndValue("KUBECONFIG", "/tmp/kc");
     }
 
-    // === No preparer, falls back to wrapper ===
+    // === No preparer — runs as-is ===
 
     [Fact]
-    public async Task Execute_NoPreparer_FallsBackToWrapper()
-    {
-        _wrapper
-            .Setup(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()))
-            .Returns("wrapper-output");
-
-        var strategy = new LocalProcessExecutionStrategy(_payloadBuilder.Object, _processRunner.Object, scriptContextWrapper: _wrapper.Object);
-
-        await strategy.ExecuteScriptAsync(CreateDirectRequest(), CancellationToken.None);
-
-        _wrapper.Verify(w => w.WrapScript(It.IsAny<string>(), It.IsAny<ScriptContext>()), Times.Once);
-    }
-
-    // === No preparer, no wrapper — runs as-is ===
-
-    [Fact]
-    public async Task Execute_NoPreparer_NoWrapper_RunsAsIs()
+    public async Task Execute_NoPreparer_RunsAsIs()
     {
         var strategy = new LocalProcessExecutionStrategy(_payloadBuilder.Object, _processRunner.Object);
 
         await strategy.ExecuteScriptAsync(CreateDirectRequest(), CancellationToken.None);
 
         _preparer.VerifyNoOtherCalls();
-        _wrapper.VerifyNoOtherCalls();
     }
 
     // === Packaged payload — preparer not called ===
@@ -168,7 +150,6 @@ public class LocalProcessExecutionStrategyPreparerTests
             ExecutionMode = ExecutionMode.DirectScript,
             Syntax = syntax,
             ReleaseVersion = "1.0.0",
-            Files = new Dictionary<string, byte[]>(),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
         };
     }

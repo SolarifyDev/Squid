@@ -1,9 +1,10 @@
 using System.Text;
 using System.Text.Json;
 using Squid.Core.Extensions;
-using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Execution;
@@ -23,212 +24,187 @@ public class HelmUpgradeActionHandler : IActionHandler
 
     public string ActionType => SpecialVariables.ActionTypes.HelmChartUpgrade;
 
-    private record HelmChartSource(string ChartPath, string RepoSetupBlock, string ChartVersion);
-
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
+    internal class HelmValueSource
     {
-        var syntax = ScriptSyntaxHelper.ResolveSyntax(ctx.Action);
-        var template = LoadTemplate(syntax);
-        var chartSource = await ResolveChartSourceAsync(ctx, syntax, ct).ConfigureAwait(false);
+        public string Type { get; set; }
+        public string Value { get; set; }
+    }
 
-        var releaseName = ctx.Action.GetProperty(KubernetesHelmProperties.ReleaseName) ?? ctx.Action.Name ?? "release";
-        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
-        var helmExe = ctx.Action.GetProperty(KubernetesHelmProperties.CustomHelmExecutable) ?? string.Empty;
-        var resetValues = ctx.Action.GetProperty(KubernetesHelmProperties.ResetValues) ?? KubernetesBooleanValues.True;
-        var helmWait = ctx.Action.GetProperty(KubernetesHelmProperties.HelmWait)
-            ?? (ctx.Action.GetProperty(KubernetesHelmProperties.ClientVersion) != null ? KubernetesBooleanValues.True : KubernetesBooleanValues.False);
-        var waitForJobs = ctx.Action.GetProperty(KubernetesHelmProperties.WaitForJobs) ?? KubernetesBooleanValues.False;
-        var timeout = ctx.Action.GetProperty(KubernetesHelmProperties.Timeout) ?? string.Empty;
-        var additionalArgs = ctx.Action.GetProperty(KubernetesHelmProperties.AdditionalArgs) ?? string.Empty;
+    private static readonly IReadOnlyDictionary<string, string> EmptyInlineValues = new Dictionary<string, string>();
 
-        var files = new Dictionary<string, byte[]>();
-        var valuesFilesBlock = BuildValuesFilesBlock(ctx.Action, syntax, files);
-        var setValuesBlock = BuildSetValuesBlock(ctx.Action, syntax);
+    private record IntentChartSource(string ChartReference, string ChartVersion, HelmRepository Repository);
 
-        string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
+    /// <summary>
+    /// Direct intent emission. Produces a <see cref="HelmUpgradeIntent"/> with a stable
+    /// semantic name (<c>helm-upgrade</c>). Every action property is projected onto a
+    /// semantic intent field: flags (<c>ResetValues</c>, <c>Wait</c>, <c>WaitForJobs</c>),
+    /// options (<c>Timeout</c>, <c>AdditionalArgs</c>, <c>CustomHelmExecutable</c>),
+    /// rendered values files (<see cref="HelmUpgradeIntent.ValuesFiles"/>), inline
+    /// <c>--set</c> overrides (<see cref="HelmUpgradeIntent.InlineValues"/>), and any
+    /// attached feed-backed chart repository (<see cref="HelmRepository"/>).
+    /// </summary>
+    async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
 
-        var scriptBody = template
-            .Replace("{{ReleaseName}}", B64(releaseName), StringComparison.Ordinal)
-            .Replace("{{ChartPath}}", B64(chartSource.ChartPath), StringComparison.Ordinal)
-            .Replace("{{Namespace}}", B64(namespace_), StringComparison.Ordinal)
-            .Replace("{{HelmExe}}", B64(helmExe), StringComparison.Ordinal)
-            .Replace("{{ResetValues}}", B64(resetValues), StringComparison.Ordinal)
-            .Replace("{{HelmWait}}", B64(helmWait), StringComparison.Ordinal)
-            .Replace("{{WaitForJobs}}", B64(waitForJobs), StringComparison.Ordinal)
-            .Replace("{{Timeout}}", B64(timeout), StringComparison.Ordinal)
-            .Replace("{{AdditionalArgs}}", B64(additionalArgs), StringComparison.Ordinal)
-            .Replace("{{ChartVersion}}", B64(chartSource.ChartVersion), StringComparison.Ordinal)
-            .Replace("{{RepoSetupBlock}}", chartSource.RepoSetupBlock, StringComparison.Ordinal)
-            .Replace("{{ValuesFilesBlock}}", valuesFilesBlock, StringComparison.Ordinal)
-            .Replace("{{SetValuesBlock}}", setValuesBlock, StringComparison.Ordinal);
+        var action = ctx.Action;
+        var syntax = ScriptSyntaxHelper.ResolveSyntax(action);
+        var releaseName = BuildReleaseName(action);
+        var chartSource = await ResolveIntentChartSourceAsync(ctx, ct).ConfigureAwait(false);
+        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(action);
+        var valuesFiles = BuildValuesFilesForIntent(action);
+        var inlineValues = BuildInlineValuesForIntent(action);
 
-        return new ActionExecutionResult
+        return new HelmUpgradeIntent
         {
-            ScriptBody = scriptBody,
-            Files = files,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = syntax
+            Name = "helm-upgrade",
+            StepName = ctx.Step?.Name ?? string.Empty,
+            ActionName = action?.Name ?? string.Empty,
+            Syntax = syntax,
+            ReleaseName = releaseName,
+            ChartReference = chartSource.ChartReference,
+            ChartVersion = chartSource.ChartVersion,
+            Repository = chartSource.Repository,
+            Namespace = namespace_,
+            ValuesFiles = valuesFiles,
+            InlineValues = inlineValues,
+            CustomHelmExecutable = action?.GetProperty(KubernetesHelmProperties.CustomHelmExecutable) ?? string.Empty,
+            ResetValues = ReadBoolProperty(action, KubernetesHelmProperties.ResetValues, defaultValue: true),
+            Wait = ReadWaitFlag(action),
+            WaitForJobs = ReadBoolProperty(action, KubernetesHelmProperties.WaitForJobs, defaultValue: false),
+            Timeout = action?.GetProperty(KubernetesHelmProperties.Timeout) ?? string.Empty,
+            AdditionalArgs = action?.GetProperty(KubernetesHelmProperties.AdditionalArgs) ?? string.Empty
         };
     }
 
-    private static string LoadTemplate(ScriptSyntax syntax)
+    private static string BuildReleaseName(DeploymentActionDto action)
     {
-        var templateName = syntax == ScriptSyntax.Bash ? "HelmUpgrade.sh" : "HelmUpgrade.ps1";
-        return UtilService.GetEmbeddedScriptContent(templateName);
+        if (action == null) return "release";
+
+        return action.GetProperty(KubernetesHelmProperties.ReleaseName)
+            ?? action.Name
+            ?? "release";
     }
 
-    private async Task<HelmChartSource> ResolveChartSourceAsync(ActionExecutionContext ctx, ScriptSyntax syntax, CancellationToken ct)
+    private async Task<IntentChartSource> ResolveIntentChartSourceAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
-        var feedIdStr = ctx.Action.GetProperty(KubernetesHelmProperties.ChartFeedId);
+        var action = ctx.Action;
+        var localReference = action?.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
+        var localSource = new IntentChartSource(localReference, string.Empty, null);
+
+        var feedIdStr = action?.GetProperty(KubernetesHelmProperties.ChartFeedId);
 
         if (string.IsNullOrWhiteSpace(feedIdStr) || !int.TryParse(feedIdStr, out var feedId) || _externalFeedDataProvider == null)
-            return DefaultChartSource(ctx);
+            return localSource;
 
-        var packageId = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPackageId);
+        var packageId = action.GetProperty(KubernetesHelmProperties.ChartPackageId);
 
         if (string.IsNullOrWhiteSpace(packageId))
-            return DefaultChartSource(ctx);
+            return localSource;
 
         var feed = await _externalFeedDataProvider.GetFeedByIdAsync(feedId, ct).ConfigureAwait(false);
 
         if (feed == null)
-            return DefaultChartSource(ctx);
+            return localSource;
 
-        var chartPath = $"squid-helm-repo/{packageId}";
-        var repoSetupBlock = BuildRepoSetupBlock(feed, syntax);
-        var chartVersion = PackageVersionResolver.Resolve(ctx);
-
-        return new HelmChartSource(chartPath, repoSetupBlock, chartVersion);
-    }
-
-    private static HelmChartSource DefaultChartSource(ActionExecutionContext ctx)
-    {
-        var chartPath = ctx.Action.GetProperty(KubernetesHelmProperties.ChartPath) ?? ".";
-        return new HelmChartSource(chartPath, string.Empty, string.Empty);
-    }
-
-    private static string BuildRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, ScriptSyntax syntax)
-    {
-        var hasCredentials = !string.IsNullOrWhiteSpace(feed.Username) && !string.IsNullOrWhiteSpace(feed.Password);
-
-        return syntax == ScriptSyntax.Bash
-            ? BuildBashRepoSetupBlock(feed, hasCredentials)
-            : BuildPowerShellRepoSetupBlock(feed, hasCredentials);
-    }
-
-    private static string BuildBashRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, bool hasCredentials)
-    {
-        string B64(string value) => ShellEscapeHelper.Base64Encode(value ?? string.Empty);
-
-        var sb = new StringBuilder();
-        sb.AppendLine($"SQUID_REPO_URL=\"$(b64d '{B64(feed.FeedUri)}')\"");
-
-        sb.AppendLine("echo \"Adding Helm repo: $SQUID_REPO_URL\"");
-
-        if (hasCredentials)
+        var repository = new HelmRepository
         {
-            sb.AppendLine($"SQUID_REPO_USER=\"$(b64d '{B64(feed.Username)}')\"");
-            sb.AppendLine($"SQUID_REPO_PASS=\"$(b64d '{B64(feed.Password)}')\"");
-            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --username \"$SQUID_REPO_USER\" --password \"$SQUID_REPO_PASS\" --force-update");
-        }
-        else
-        {
-            sb.AppendLine("\"$HELM_EXE\" repo add squid-helm-repo \"$SQUID_REPO_URL\" --force-update");
-        }
+            Name = "squid-helm-repo",
+            Url = feed.FeedUri ?? string.Empty,
+            Username = string.IsNullOrWhiteSpace(feed.Username) ? null : feed.Username,
+            Password = string.IsNullOrWhiteSpace(feed.Password) ? null : feed.Password
+        };
 
-        sb.AppendLine("echo \"Updating Helm repo...\"");
-        sb.AppendLine("\"$HELM_EXE\" repo update squid-helm-repo");
-
-        return sb.ToString();
+        return new IntentChartSource(
+            ChartReference: $"squid-helm-repo/{packageId}",
+            ChartVersion: PackageVersionResolver.Resolve(ctx),
+            Repository: repository);
     }
 
-    private static string BuildPowerShellRepoSetupBlock(Persistence.Entities.Deployments.ExternalFeed feed, bool hasCredentials)
+    private static IReadOnlyList<DeploymentFile> BuildValuesFilesForIntent(DeploymentActionDto action)
     {
-        var sb = new StringBuilder();
-        var repoUrl = ShellEscapeHelper.EscapePowerShell(feed.FeedUri ?? string.Empty);
-        sb.AppendLine($"$squidRepoUrl = \"{repoUrl}\"");
-
-        if (hasCredentials)
-        {
-            var repoUser = ShellEscapeHelper.EscapePowerShell(feed.Username ?? string.Empty);
-            var repoPass = ShellEscapeHelper.EscapePowerShell(feed.Password ?? string.Empty);
-            sb.AppendLine($"$squidRepoUser = \"{repoUser}\"");
-            sb.AppendLine($"$squidRepoPass = \"{repoPass}\"");
-            sb.AppendLine("& $helmExe repo add squid-helm-repo $squidRepoUrl --username $squidRepoUser --password $squidRepoPass --force-update 2>$null");
-        }
-        else
-        {
-            sb.AppendLine("& $helmExe repo add squid-helm-repo $squidRepoUrl --force-update 2>$null");
-        }
-
-        sb.AppendLine("& $helmExe repo update squid-helm-repo 2>$null");
-
-        return sb.ToString();
-    }
-
-    private static string BuildValuesFilesBlock(DeploymentActionDto action, ScriptSyntax syntax, Dictionary<string, byte[]> files)
-    {
-        var sb = new StringBuilder();
+        if (action == null) return Array.Empty<DeploymentFile>();
 
         var valueSources = action.GetProperty(KubernetesHelmProperties.ValueSources);
 
         if (!string.IsNullOrWhiteSpace(valueSources))
-        {
-            BuildMultiSourceValues(valueSources, syntax, files, sb);
-            return sb.ToString();
-        }
+            return BuildMultiSourceValuesForIntent(valueSources);
 
-        var rawYaml = action.GetProperty(KubernetesHelmProperties.YamlValues);
-
-        if (string.IsNullOrWhiteSpace(rawYaml)) return string.Empty;
-
-        const string rawYamlFileName = "rawYamlValues.yaml";
-        files[rawYamlFileName] = Encoding.UTF8.GetBytes(rawYaml);
-
-        if (syntax == ScriptSyntax.Bash)
-            sb.AppendLine($"HELM_CMD+=(\"--values\" \"./{rawYamlFileName}\")");
-        else
-            sb.AppendLine($"$helmArgs += \"--values\"; $helmArgs += \".\\{rawYamlFileName}\"");
-
-        return sb.ToString();
+        return BuildSingleYamlValuesForIntent(action);
     }
 
-    private static void BuildMultiSourceValues(string valueSources, ScriptSyntax syntax, Dictionary<string, byte[]> files, StringBuilder sb)
+    private static IReadOnlyList<DeploymentFile> BuildMultiSourceValuesForIntent(string valueSources)
     {
+        try
+        {
+            var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources, SquidJsonDefaults.CaseInsensitive);
+
+            if (sources == null) return Array.Empty<DeploymentFile>();
+
+            var files = new List<DeploymentFile>();
+            var fileIndex = 0;
+
+            foreach (var source in sources)
+            {
+                if (string.IsNullOrWhiteSpace(source.Value)) continue;
+                if (!string.Equals(source.Type, "InlineYaml", StringComparison.OrdinalIgnoreCase)) continue;
+
+                files.Add(DeploymentFile.Asset($"values-{fileIndex++}.yaml", Encoding.UTF8.GetBytes(source.Value)));
+            }
+
+            return files;
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<DeploymentFile>();
+        }
+    }
+
+    private static IReadOnlyList<DeploymentFile> BuildSingleYamlValuesForIntent(DeploymentActionDto action)
+    {
+        var rawYaml = action.GetProperty(KubernetesHelmProperties.YamlValues);
+
+        if (string.IsNullOrWhiteSpace(rawYaml))
+            return Array.Empty<DeploymentFile>();
+
+        return new[] { DeploymentFile.Asset("rawYamlValues.yaml", Encoding.UTF8.GetBytes(rawYaml)) };
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildInlineValuesForIntent(DeploymentActionDto action)
+    {
+        if (action == null) return EmptyInlineValues;
+
+        var result = new Dictionary<string, string>();
+
+        MergeKeyValuesFromValueSources(action, result);
+        MergeKeyValuesFromProperty(action, result);
+
+        return result.Count > 0 ? result : EmptyInlineValues;
+    }
+
+    private static void MergeKeyValuesFromValueSources(DeploymentActionDto action, Dictionary<string, string> target)
+    {
+        var valueSources = action.GetProperty(KubernetesHelmProperties.ValueSources);
+
+        if (string.IsNullOrWhiteSpace(valueSources)) return;
+
         try
         {
             var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources, SquidJsonDefaults.CaseInsensitive);
 
             if (sources == null) return;
 
-            var fileIndex = 0;
-
             foreach (var source in sources)
             {
                 if (string.IsNullOrWhiteSpace(source.Value)) continue;
+                if (!string.Equals(source.Type, "KeyValues", StringComparison.OrdinalIgnoreCase)) continue;
 
-                if (string.Equals(source.Type, "InlineYaml", StringComparison.OrdinalIgnoreCase))
-                {
-                    var fileName = $"values-{fileIndex++}.yaml";
-                    files[fileName] = Encoding.UTF8.GetBytes(source.Value);
+                var kvp = JsonSerializer.Deserialize<Dictionary<string, string>>(source.Value, SquidJsonDefaults.CaseInsensitive);
 
-                    if (syntax == ScriptSyntax.Bash)
-                        sb.AppendLine($"HELM_CMD+=(\"--values\" \"./{fileName}\")");
-                    else
-                        sb.AppendLine($"$helmArgs += \"--values\"; $helmArgs += \".\\{fileName}\"");
-                }
-                else if (string.Equals(source.Type, "KeyValues", StringComparison.OrdinalIgnoreCase))
-                {
-                    var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(source.Value, SquidJsonDefaults.CaseInsensitive);
+                if (kvp == null) continue;
 
-                    if (keyValues == null) continue;
-
-                    foreach (var kvp in keyValues)
-                        AppendSetValue(sb, syntax, kvp.Key, kvp.Value);
-                }
+                foreach (var entry in kvp)
+                    target[entry.Key] = entry.Value;
             }
         }
         catch (JsonException)
@@ -237,66 +213,71 @@ public class HelmUpgradeActionHandler : IActionHandler
         }
     }
 
-    private static string BuildSetValuesBlock(DeploymentActionDto action, ScriptSyntax syntax)
+    private static void MergeKeyValuesFromProperty(DeploymentActionDto action, Dictionary<string, string> target)
     {
         var keyValuesRaw = action.GetProperty(KubernetesHelmProperties.KeyValues);
 
-        if (string.IsNullOrWhiteSpace(keyValuesRaw)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(keyValuesRaw)) return;
 
-        var sb = new StringBuilder();
+        var parsed = TryParseJsonKeyValues(keyValuesRaw) ?? ParseCommaSeparatedKeyValues(keyValuesRaw);
 
+        foreach (var entry in parsed)
+            target[entry.Key] = entry.Value;
+    }
+
+    private static Dictionary<string, string> TryParseJsonKeyValues(string raw)
+    {
         try
         {
-            var keyValues = JsonSerializer.Deserialize<Dictionary<string, string>>(keyValuesRaw, SquidJsonDefaults.CaseInsensitive);
-
-            if (keyValues == null) return string.Empty;
-
-            foreach (var kvp in keyValues)
-            {
-                AppendSetValue(sb, syntax, kvp.Key, kvp.Value);
-            }
+            var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(raw, SquidJsonDefaults.CaseInsensitive);
+            return dict ?? new Dictionary<string, string>();
         }
         catch (JsonException)
         {
-            var pairs = keyValuesRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-            foreach (var pair in pairs)
-            {
-                AppendSetValueRaw(sb, syntax, pair);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static void AppendSetValue(StringBuilder sb, ScriptSyntax syntax, string key, string value)
-    {
-        if (syntax == ScriptSyntax.Bash)
-        {
-            var escapedValue = value.Replace("'", "'\\''", StringComparison.Ordinal);
-            sb.AppendLine($"HELM_CMD+=(\"--set\" \"{key}='{escapedValue}'\")");
-        }
-        else
-        {
-            var escapedValue = ShellEscapeHelper.EscapePowerShell(value);
-            sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{key}={escapedValue}\"");
+            return null;
         }
     }
 
-    private static void AppendSetValueRaw(StringBuilder sb, ScriptSyntax syntax, string setValue)
+    private static Dictionary<string, string> ParseCommaSeparatedKeyValues(string raw)
     {
-        if (syntax == ScriptSyntax.Bash)
-            sb.AppendLine($"HELM_CMD+=(\"--set\" \"{setValue}\")");
-        else
+        var result = new Dictionary<string, string>();
+        var pairs = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var pair in pairs)
         {
-            var escapedSetValue = ShellEscapeHelper.EscapePowerShell(setValue);
-            sb.AppendLine($"$helmArgs += \"--set\"; $helmArgs += \"{escapedSetValue}\"");
+            var eq = pair.IndexOf('=', StringComparison.Ordinal);
+
+            if (eq <= 0) continue;
+
+            var key = pair.Substring(0, eq);
+            var value = pair.Substring(eq + 1);
+            result[key] = value;
         }
+
+        return result;
     }
 
-    internal class HelmValueSource
+    private static bool ReadBoolProperty(DeploymentActionDto action, string propertyName, bool defaultValue)
     {
-        public string Type { get; set; }
-        public string Value { get; set; }
+        if (action == null) return defaultValue;
+
+        var raw = action.GetProperty(propertyName);
+
+        if (string.IsNullOrWhiteSpace(raw)) return defaultValue;
+
+        return string.Equals(raw, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ReadWaitFlag(DeploymentActionDto action)
+    {
+        if (action == null) return false;
+
+        var explicitValue = action.GetProperty(KubernetesHelmProperties.HelmWait);
+
+        if (!string.IsNullOrWhiteSpace(explicitValue))
+            return string.Equals(explicitValue, KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
+
+        // Legacy quirk: ClientVersion presence defaults Wait to true (matches PrepareAsync).
+        return action.GetProperty(KubernetesHelmProperties.ClientVersion) != null;
     }
 }

@@ -26,27 +26,6 @@ public class KubernetesAgentPipelineBehaviorTests
         CommunicationStyleParser.Parse(endpointJson).ShouldBe(expected);
     }
 
-    // === Transport ScriptWrapper wiring ===
-
-    [Fact]
-    public void AgentWrapper_WrapsScriptWithNamespaceFromActionProperties()
-    {
-        var wrapper = new KubernetesAgentScriptContextWrapper();
-        var ctx = new ScriptContext
-        {
-            Endpoint = new EndpointContext { EndpointJson = "{}" },
-            Syntax = Message.Models.Deployments.Execution.ScriptSyntax.Bash,
-            ActionProperties = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
-            {
-                ["Squid.Action.KubernetesContainers.Namespace"] = "production"
-            }
-        };
-        var result = wrapper.WrapScript("kubectl get pods", ctx);
-
-        result.ShouldContain("--namespace=\"production\"");
-        result.ShouldContain("kubectl get pods");
-    }
-
     // === Endpoint Variable Isolation ===
 
     [Fact]

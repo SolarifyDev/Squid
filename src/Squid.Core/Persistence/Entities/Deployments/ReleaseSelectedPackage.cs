@@ -4,6 +4,7 @@ public class ReleaseSelectedPackage : IEntity<int>
 {
     public int Id { get; set; }
     public int ReleaseId { get; set; }
+    public int FeedId { get; set; }
     public string ActionName { get; set; }
     public string PackageReferenceName { get; set; } = string.Empty;
     public string Version { get; set; }

@@ -1,7 +1,7 @@
 using Halibut;
 using Halibut.Diagnostics;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Halibut;
 
@@ -49,8 +49,6 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             "./variables.json",
             "./sensitiveVariables.json");
 
-        scriptBody = ApplyContextPreparationIfRequired(request, scriptBody);
-
         var scriptFiles = new[]
         {
             new ScriptFile(payload.PackageFileName, DataStream.FromBytes(payload.PackageBytes), null),
@@ -88,7 +86,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var (variableBytes, sensitiveBytes, password) =
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
-        var scriptFiles = BuildDirectScriptFiles(request.Files, variableBytes, sensitiveBytes, password);
+        var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
 
@@ -113,13 +111,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(
-        Dictionary<string, byte[]> requestFiles,
+        DeploymentFileCollection deploymentFiles,
         byte[] variableBytes,
         byte[] sensitiveBytes,
         string password)
     {
-        var files = requestFiles
-            .Select(file => new ScriptFile(file.Key, DataStream.FromBytes(file.Value), null))
+        var files = deploymentFiles
+            .Select(file => new ScriptFile(file.RelativePath, DataStream.FromBytes(file.Content), null))
             .ToList();
 
         files.Add(new ScriptFile("variables.json", DataStream.FromBytes(variableBytes), null));
@@ -128,22 +126,6 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             files.Add(new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(sensitiveBytes), password));
 
         return files.ToArray();
-    }
-
-    private static string ApplyContextPreparationIfRequired(ScriptExecutionRequest request, string scriptBody)
-    {
-        if (request.ContextWrapper == null)
-            return scriptBody;
-
-        var scriptContext = new ScriptContext
-        {
-            Endpoint = request.EndpointContext,
-            Syntax = request.Syntax,
-            Variables = request.Variables,
-            ActionProperties = request.ActionProperties
-        };
-
-        return request.ContextWrapper.WrapScript(scriptBody, scriptContext);
     }
 
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)

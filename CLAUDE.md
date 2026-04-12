@@ -7,7 +7,7 @@
 | Pattern | Octopus Implementation | Squid Equivalent | Notes |
 |---------|----------------------|------------------|-------|
 | `IContributeVariables` | Interface on `Endpoint` / `Account` entities, each calls `ContributeVariables(VariableCollection)` in `MachineVariableCollector` | `IEndpointVariableContributor` — external contributors resolved by `CommunicationStyle` | Squid is more flexible (no entity coupling) |
-| `IScriptWrapper` chain | Multiple wrappers compose sequentially (kubectl, az login, etc.) | `IScriptContextWrapper` — single wrapper per `CommunicationStyle` via `FirstOrDefault` | Sufficient for 1:1 style-to-wrapper mapping |
+| `IScriptWrapper` chain | Multiple wrappers compose sequentially (kubectl, az login, etc.) | `IIntentRenderer` — per-transport renderer that translates an `ExecutionIntent` into a `ScriptExecutionRequest` (auth setup, kubectl context, etc. baked into the rendered script) | Phase 9 replaced the legacy wrapper chain |
 | Endpoint Polymorphism | `Endpoint` abstract base + `EndpointConverter` (maps `CommunicationStyle` enum → C# subclass) | JSON string + `ParseCommunicationStyle()` + per-contributor deserialization | Squid is more flexible (no class hierarchy) |
 | Account Polymorphism | `Account` abstract base + `AccountConverter` (maps `AccountType` enum → C# subclass) | Single flat `DeploymentAccount` entity with `AccountType` enum | Squid is simpler, adequate |
 | Convention Pipeline | 20+ `IInstallConvention` / `IRollbackConvention` in `ConventionProcessor` | Flat pipeline in `DeploymentTaskExecutor.ProcessAsync()` | Squid is simpler, sufficient for current scope |
@@ -22,27 +22,35 @@
 | **K8s Handlers** (RunScript, DeployYaml, Helm, Yaml) | Complete | Each handler returns `ActionExecutionResult` |
 | **Pipeline layer** (`DeploymentTaskExecutor`) | Generic | Zero target-type-specific code in executor |
 | **Variable contribution** (`IEndpointVariableContributor`) | Generic | Resolved once per deployment, cached in `_resolvedContributor` |
-| **Script context wrapping** (`IScriptContextWrapper`) | Generic | Target types implement to wrap scripts (kubectl context, etc.) |
+| **Intent rendering** (`IIntentRenderer`) | Generic | Per-transport renderer that maps a semantic `ExecutionIntent` to a `ScriptExecutionRequest` (e.g. kubectl context preamble, helm command, ssh bash bundle) |
+| **Capability description** (`ITransportCapabilities`) | Generic | Each transport exposes supported syntaxes, execution location/backend, staging modes, action types, and feature flags consumed by `ICapabilityValidator` |
 | **Calamari execution** (`DeploymentTaskExecutor.Calamari.cs`) | Generic | No target-type dependencies |
 | **DI auto-registration** (`IScopedDependency`) | Autofac scan | All implementations auto-discovered via `ApplicationStartup.RegisterDependency` |
 
 ### Extension Pattern (Adding a New Target Type)
 
-To add a new target type (e.g., SSH, Azure, Docker):
+To add a new target type, implement `ITransportCapabilities`, `IEndpointVariableContributor`, `IIntentRenderer`, `IExecutionStrategy`, `IHealthCheckStrategy` and wire them via a `DeploymentTransport` subclass.
 
-1. Implement `IEndpointVariableContributor` — parse account ID and contribute variables for the style. Use `EndpointVariableFactory.Make()` for variable creation and `EndpointVariableFactory.TryDeserialize<T>()` for endpoint JSON parsing.
-2. Implement `IScriptContextWrapper` — wrap scripts with target-specific context (auth, namespace, etc.)
-3. Implement `IExecutionStrategy` — execute scripts via the appropriate transport mechanism
-4. Create a `*Transport.cs` — 5-line declarative wire-up using the `DeploymentTransport` base class:
+Concretely:
+
+1. Implement `ITransportCapabilities` — declare supported script syntaxes, execution location/backend, package staging modes, supported action types, and feature flags. Expose a static `Capability` on the transport for tests and the capability validator.
+2. Implement `IEndpointVariableContributor` — parse account ID and contribute variables for the style. Use `EndpointVariableFactory.Make()` for variable creation and `EndpointVariableFactory.TryDeserialize<T>()` for endpoint JSON parsing.
+3. Implement `IIntentRenderer` — translate each supported `ExecutionIntent` (e.g. `RunScriptIntent`, `KubernetesApplyIntent`, `HelmUpgradeIntent`) into a `ScriptExecutionRequest` with target-specific setup baked into the script (auth, context, kubeconfig, etc.).
+4. Implement `IExecutionStrategy` — execute the rendered `ScriptExecutionRequest` via the appropriate transport mechanism.
+5. Implement `IHealthCheckStrategy` — probe target health on demand.
+6. Create a `*Transport.cs` — declarative wire-up using the `DeploymentTransport` base class:
    ```csharp
    public sealed class SshTransport(
        SshEndpointVariableContributor variables,
-       SshScriptContextWrapper scriptWrapper,
-       SshExecutionStrategy strategy)
-       : DeploymentTransport(CommunicationStyle.Ssh, variables, scriptWrapper, strategy);
+       SshExecutionStrategy strategy,
+       SshHealthCheckStrategy healthChecker)
+       : DeploymentTransport(CommunicationStyle.Ssh, variables, strategy, Capability, healthChecker)
+   {
+       public static ITransportCapabilities Capability { get; } = new TransportCapabilities { /* ... */ };
+   }
    ```
-5. (Optional) Implement `IActionHandler` subclasses if target needs custom action types
-6. No changes to `DeploymentTaskExecutor` required
+7. (Optional) Implement new `IActionHandler` subclasses if the target introduces custom action types — each handler emits a concrete `ExecutionIntent` from `DescribeIntentAsync`.
+8. No changes to `ExecuteStepsPhase` or `DeploymentTaskExecutor` required — the pipeline resolves the transport by `CommunicationStyle` and dispatches through the renderer/strategy/health-checker.
 
 ---
 
@@ -114,17 +122,16 @@ ExecuteDeploymentStepsAsync(ct)                       — [Execute.cs]
            │      ├─ ShouldExecuteAction (disabled, environment, channel)
            │      ├─ IActionHandlerRegistry.Resolve(action)
            │      ├─ ExpandActionProperties (variable substitution on properties)
-           │      ├─ IActionHandler.PrepareAsync(context)
-           │      │   → ActionExecutionResult { ScriptBody, Files, CalamariCommand }
-           │      ├─ ExpandString (variable substitution on script body)
-           │      └─ WrapScriptIfApplicable
-           │          └─ IScriptContextWrapper.WrapScript (only for direct scripts)
+           │      ├─ IActionHandler.DescribeIntentAsync(context)
+           │      │   → concrete ExecutionIntent (RunScript/KubernetesApply/HelmUpgrade/…)
+           │      └─ IIntentRenderer.RenderAsync(intent, target)
+           │          → ScriptExecutionRequest { ScriptBody, Files, CalamariCommand }
+           │            (renderer bakes in target-specific context: kubectl/helm/ssh preamble)
            ├─ ExecuteActionResultsAsync
            │   └─ foreach prepared action:
-           │      ├─ BuildScriptExecutionRequest
            │      ├─ IExecutionStrategy.ExecuteScriptAsync(request, ct)
            │      │   → ScriptExecutionResult { Success, LogLines, ExitCode }
-           │      ├─ CaptureOutputVariables (parse ##octopus[setVariable] from logs)
+           │      ├─ CaptureOutputVariables (parse ##squid[setVariable] from logs)
            │      └─ Update activity node status
            └─ MergeStepResult
                └─ _ctx.Variables += outputVariables, _ctx.FailureEncountered |= failed
@@ -240,7 +247,7 @@ Stage 6: Serialize for Execution
   └─ Sensitive → sensitiveVariables.json (AES encrypted, Calamari-compatible)
 
 Stage 7: Capture Output Variables (post-execution)
-  └─ Parse logs for ##octopus[setVariable name='X' value='Y' sensitive='True/False']
+  └─ Parse logs for ##squid[setVariable name='X' value='Y' sensitive='True/False']
       → Add to _ctx.Variables as "Squid.Action.{StepName}.{VarName}" + unqualified
 ```
 
@@ -253,10 +260,10 @@ Stage 7: Capture Output Variables (post-execution)
 ```csharp
 string ActionType { get; }
 bool CanHandle(DeploymentActionDto action);
-Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct);
+Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct);
 ```
 
-`ActionHandlerRegistry` resolves via `_handlers.FirstOrDefault(h => h.CanHandle(action))`.
+`ActionHandlerRegistry` resolves via `_handlers.FirstOrDefault(h => h.CanHandle(action))`. Handlers are target-agnostic: each returns a concrete `ExecutionIntent` (e.g. `RunScriptIntent`, `KubernetesApplyIntent`, `HelmUpgradeIntent`) that the per-target `IIntentRenderer` subsequently translates into a `ScriptExecutionRequest`.
 
 ### Handlers
 
@@ -267,12 +274,13 @@ Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, Cancellatio
 | `HelmUpgradeActionHandler` | `Squid.HelmChartUpgrade` | `helm upgrade --install ...` | `{"rawYamlValues.yaml": valuesBytes}` (if values) | `null` |
 | `KubernetesDeployContainersActionHandler` | `Squid.KubernetesDeployContainers` | `kubectl apply -f .` | `{deployment.yaml, service.yaml, configmap.yaml, ...}` | `null` |
 
-### Script Context Wrapping
+### Intent Rendering
 
-`IScriptContextWrapper.WrapScript` only applies when `CalamariCommand == null` (direct scripts).
+Per-transport `IIntentRenderer` implementations translate a semantic `ExecutionIntent` (`RunScriptIntent`, `KubernetesApplyIntent`, `HelmUpgradeIntent`, …) into a concrete `ScriptExecutionRequest` with all target-specific context baked into the script body.
 
-- `KubernetesApiScriptContextWrapper` — matches `"KubernetesApi"`, wraps script with kubectl context setup (cluster URL, auth token/cert, namespace, TLS config)
-- `KubernetesAgent` — **no wrapper** (agent already has kubeconfig context in its Pod)
+- `KubernetesApiIntentRenderer` — matches `"KubernetesApi"`, emits kubectl context preamble (cluster URL, auth token/cert, namespace, TLS config) before the intent payload
+- `KubernetesAgentIntentRenderer` — matches `"KubernetesAgent"`, emits plain scripts (agent Pod already owns the kubeconfig context)
+- `SshIntentRenderer` — matches `"Ssh"`, emits a bash runtime bundle via `IRuntimeBundleProvider`
 
 ---
 
@@ -339,7 +347,7 @@ Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, Cancellatio
 |------|---------|-------------|
 | `DeploymentTaskExecutor.cs` | Interface, constructor, `_ctx`, `ProcessAsync` pipeline | `ProcessAsync` |
 | `.Prepare.cs` | Data loading & target preparation | `LoadDeploymentDataAsync`, `PrepareAllTargetsAsync`, `LoadAccountForTarget`, `ContributeEndpointVariablesForTarget` |
-| `.Execute.cs` | Step/action orchestration | `ExecuteDeploymentStepsAsync`, `PrepareStepActionsAsync`, `ExecuteActionResultsAsync`, `BuildEffectiveVariables`, `WrapScriptIfApplicable` |
+| `.Execute.cs` | Step/action orchestration | `ExecuteDeploymentStepsAsync`, `PrepareStepActionsAsync`, `ExecuteActionResultsAsync`, `BuildEffectiveVariables` |
 | `.Filter.cs` | Pure static filtering | `ShouldExecuteStep`, `ShouldExecuteAction`, `EvaluateCondition`, `MatchesTargetRoles` |
 | `.Script.cs` | Output variable extraction | `CaptureOutputVariables` |
 | `.Logging.cs` | Activity logs, completion | `CreateTaskActivityNodeAsync`, `RecordSuccessAsync`, `RecordFailureAsync`, `PersistTaskLogAsync` |
@@ -356,15 +364,18 @@ Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, Cancellatio
 | `Services/DeploymentExecution/DeploymentTaskContext.cs` | Shared pipeline state |
 | `Services/DeploymentExecution/IExecutionStrategy.cs` | Strategy interface: `CanHandle`, `ExecuteScriptAsync` |
 | `Services/DeploymentExecution/IEndpointVariableContributor.cs` | `CanHandle`, `ParseAccountId`, `ContributeVariables`, `ContributeAdditionalVariablesAsync` |
-| `Services/DeploymentExecution/IScriptContextWrapper.cs` | `CanWrap`, `WrapScript` |
-| `Services/DeploymentExecution/IActionHandler.cs` | `ActionType`, `CanHandle`, `PrepareAsync` |
+| `Services/DeploymentExecution/Rendering/IIntentRenderer.cs` | `CommunicationStyle`, `CanRender`, `RenderAsync` |
+| `Services/DeploymentExecution/Transport/ITransportCapabilities.cs` | Per-transport capability contract (14 members) |
+| `Services/DeploymentExecution/Transport/IDeploymentTransport.cs` | Transport composition: `CommunicationStyle`, `Variables`, `Strategy`, `HealthChecker`, `Capabilities` |
+| `Services/DeploymentExecution/IActionHandler.cs` | `ActionType`, `CanHandle`, `DescribeIntentAsync` |
 | `Services/DeploymentExecution/ActionHandlerRegistry.cs` | Handler resolution via `FirstOrDefault` |
 | `Services/DeploymentExecution/Kubernetes/KubernetesAgentExecutionStrategy.cs` | Halibut polling: `ParseMachineEndpoint`, `ObserveAndCompleteAsync` |
 | `Services/DeploymentExecution/Kubernetes/KubernetesApiExecutionStrategy.cs` | Local script execution in temp dir |
 | `Services/DeploymentExecution/Kubernetes/KubernetesApiEndpointVariableContributor.cs` | 13+ K8s variables from endpoint JSON |
-| `Services/DeploymentExecution/Kubernetes/KubernetesApiScriptContextWrapper.cs` | kubectl context wrapping (only for KubernetesApi) |
-| `Services/DeploymentExecution/Handlers/RunScriptActionHandler.cs` | Returns user script, no files |
-| `Services/DeploymentExecution/Kubernetes/KubernetesDeployYamlActionHandler.cs` | Inline YAML → files dict + kubectl apply |
+| `Services/DeploymentExecution/Kubernetes/KubernetesApiIntentRenderer.cs` | kubectl context preamble + intent translation (KubernetesApi only) |
+| `Services/DeploymentExecution/Kubernetes/KubernetesAgentIntentRenderer.cs` | Plain renderer for `"KubernetesAgent"` (no preamble; agent owns kubeconfig) |
+| `Services/DeploymentExecution/Handlers/RunScriptActionHandler.cs` | Emits `RunScriptIntent` from user script properties |
+| `Services/DeploymentExecution/Kubernetes/KubernetesDeployYamlActionHandler.cs` | Emits `KubernetesApplyIntent` with inline YAML |
 | `Halibut/HalibutModule.cs` | Server HalibutRuntime builder + polling listener |
 | `Halibut/HalibutTrustInitializer.cs` | Startup: trust all polling machine thumbprints |
 | `Halibut/IHalibutClientFactory.cs` | Creates Halibut RPC client for agent communication |

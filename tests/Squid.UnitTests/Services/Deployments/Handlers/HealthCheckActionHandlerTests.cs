@@ -7,6 +7,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -112,7 +113,7 @@ public class HealthCheckActionHandlerTests
     {
         var handler = CreateHandler(out _);
         var throwingChecker = new Mock<IHealthCheckStrategy>();
-        throwingChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        throwingChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ThrowsAsync(new Exception("network error"));
 
         var ctx = CreateContextWithChecker("node-1", throwingChecker.Object);
@@ -228,7 +229,7 @@ public class HealthCheckActionHandlerTests
         var handler = CreateHandler(out _);
 
         var checker = new Mock<IHealthCheckStrategy>();
-        checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+        checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(new HealthCheckResult(true, "ok"));
 
         var transport = new Mock<IDeploymentTransport>();
@@ -254,7 +255,7 @@ public class HealthCheckActionHandlerTests
 
         await handler.ExecuteStepLevelAsync(ctx, CancellationToken.None);
 
-        checker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()), Times.Once);
+        checker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Once);
         ctx.DeploymentContext.AllTargetsContext.Single().IsExcluded.ShouldBeFalse();
     }
 
@@ -298,7 +299,7 @@ public class HealthCheckActionHandlerTests
         foreach (var (name, result) in targets)
         {
             var checker = new Mock<IHealthCheckStrategy>();
-            checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>()))
+            checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
                 .ReturnsAsync(result);
 
             var transport = new Mock<IDeploymentTransport>();

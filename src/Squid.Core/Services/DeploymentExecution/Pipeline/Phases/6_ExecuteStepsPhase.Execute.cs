@@ -1,6 +1,9 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -10,7 +13,7 @@ using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
-using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -23,7 +26,14 @@ public sealed partial class ExecuteStepsPhase
         if (IsSyntheticStep(step))
             return await ExecuteSyntheticStepAsync(step, stepSortOrder, ct).ConfigureAwait(false);
 
-        var (eligibleActions, skippedActions) = FilterEligibleActions(step);
+        var planned = LookupPlannedStep(step);
+
+        if (planned != null && IsSkippedByPlanner(planned.Status))
+            return stepResult;
+
+        var (eligibleActions, skippedActions) = planned != null
+            ? SplitActionsUsingPlan(step, planned)
+            : FilterEligibleActions(step);
 
         if (eligibleActions.Count == 0 && step.Actions.Count > 0)
             return stepResult;
@@ -39,16 +49,14 @@ public sealed partial class ExecuteStepsPhase
 
         if (HasTargetLevelActions(eligibleActions))
         {
-            if (RunOnServerEvaluator.IsRunOnServer(step))
+            if (IsRunOnServer(step, planned))
             {
                 var serverResult = await ExecuteStepOnServerAsync(step, eligibleActions, stepSortOrder, ct).ConfigureAwait(false);
                 stepResult.Absorb(serverResult);
             }
             else
             {
-                var matchingTargets = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
-
-                matchingTargets = matchingTargets.Where(tc => !tc.IsExcluded).ToList();
+                var matchingTargets = ResolveMatchingTargets(step, planned);
 
                 if (matchingTargets.Count == 0)
                 {
@@ -86,6 +94,61 @@ public sealed partial class ExecuteStepsPhase
         await lifecycle.EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, StepName = step.Name, Failed = stepResult.Failed, Skipped = skipped }), ct).ConfigureAwait(false);
 
         return stepResult;
+    }
+
+    private PlannedStep LookupPlannedStep(DeploymentStepDto step)
+    {
+        return _ctx.Plan?.Steps.FirstOrDefault(p => p.StepId == step.Id);
+    }
+
+    private static bool IsSkippedByPlanner(PlannedStepStatus status)
+    {
+        return status is PlannedStepStatus.Disabled or PlannedStepStatus.NoRunnableActions;
+    }
+
+    private static bool IsRunOnServer(DeploymentStepDto step, PlannedStep planned)
+    {
+        if (planned != null)
+            return planned.Status == PlannedStepStatus.RunOnServer;
+
+        return RunOnServerEvaluator.IsRunOnServer(step);
+    }
+
+    private (List<DeploymentActionDto> Eligible, List<(DeploymentActionDto Action, ActionEligibilityResult Eligibility)> Skipped) SplitActionsUsingPlan(DeploymentStepDto step, PlannedStep planned)
+    {
+        var plannedActionIds = planned.Actions.Select(a => a.ActionId).ToHashSet();
+        var evalCtx = BuildActionEvaluationContext();
+        var eligible = new List<DeploymentActionDto>();
+        var skipped = new List<(DeploymentActionDto, ActionEligibilityResult)>();
+
+        foreach (var action in step.Actions.OrderBy(p => p.ActionOrder))
+        {
+            if (plannedActionIds.Contains(action.Id))
+            {
+                eligible.Add(action);
+                continue;
+            }
+
+            var eligibility = StepEligibilityEvaluator.EvaluateAction(action, evalCtx);
+            skipped.Add((action, eligibility));
+        }
+
+        return (eligible, skipped);
+    }
+
+    private List<DeploymentTargetContext> ResolveMatchingTargets(DeploymentStepDto step, PlannedStep planned)
+    {
+        if (planned == null)
+        {
+            var legacy = TargetStepMatcher.FindMatchingTargetsForStep(step, _ctx.AllTargetsContext);
+            return legacy.Where(tc => !tc.IsExcluded).ToList();
+        }
+
+        var plannedMachineIds = planned.MatchedTargets.Select(t => t.MachineId).ToHashSet();
+
+        return _ctx.AllTargetsContext
+            .Where(tc => plannedMachineIds.Contains(tc.Machine.Id) && !tc.IsExcluded)
+            .ToList();
     }
 
     private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)
@@ -204,10 +267,12 @@ public sealed partial class ExecuteStepsPhase
         {
             ++actionSortOrder;
 
-            var directive = await ResolveResumeDirectiveAsync(step, prepared.Result, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+            var actionName = prepared.Context.Action.Name;
+
+            var directive = await ResolveResumeDirectiveAsync(step, actionName, tc, stepDisplayOrder, ct).ConfigureAwait(false);
 
             if (directive == ActionDirective.Abort)
-                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{prepared.Result.ActionName}\"");
+                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{actionName}\"");
 
             if (directive == ActionDirective.Skip)
             {
@@ -221,10 +286,10 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, TimeSpan? stepTimeout, CancellationToken ct)
     {
-        var actionResult = prepared.Result;
+        var actionName = prepared.Context.Action.Name;
         var effectiveVariables = prepared.EffectiveVariables;
 
-        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
+        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName }), ct).ConfigureAwait(false);
 
         try
         {
@@ -233,19 +298,20 @@ public sealed partial class ExecuteStepsPhase
             if (strategy == null)
                 throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
 
-            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, step, stepTimeout);
+            var request = await DescribeExpandAndRenderAsync(prepared, tc, step, effectiveVariables, stepTimeout, stepDisplayOrder, ct).ConfigureAwait(false);
+
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
-            CaptureOutputVariables(actionResult, execResult.LogLines);
+            var outputCapture = CaptureOutputVariables(execResult.LogLines);
 
             await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
 
             if (!execResult.Success)
                 throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
-            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
+            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
 
-            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, actionResult);
+            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, outputCapture);
 
             if (collectedNames.Count > 0)
                 await lifecycle.EmitAsync(new OutputVariablesCapturedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine?.Name, ActionSortOrder = actionSortOrder, OutputVariableNames = collectedNames }), ct).ConfigureAwait(false);
@@ -264,13 +330,51 @@ public sealed partial class ExecuteStepsPhase
 
             if (step.IsRequired && _ctx.UseGuidedFailure)
             {
-                await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                await HandleGuidedFailureAsync(step, actionName, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
                 // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
             }
 
             if (step.IsRequired)
                 throw;
         }
+    }
+
+    private async Task<Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest> DescribeExpandAndRenderAsync(
+        PreparedAction prepared,
+        DeploymentTargetContext tc,
+        DeploymentStepDto step,
+        List<VariableDto> effectiveVariables,
+        TimeSpan? stepTimeout,
+        int stepDisplayOrder,
+        CancellationToken ct)
+    {
+        var actionName = prepared.Context.Action.Name;
+
+        var intent = await prepared.Handler.DescribeIntentAsync(prepared.Context, ct).ConfigureAwait(false);
+
+        intent = IntentVariableExpander.Expand(intent, prepared.VariableDictionary);
+
+        var (expandedIntent, warnings) = IntentStructuredConfigReplacer.ReplaceIfEnabled(intent, prepared.Context.Action, prepared.VariableDictionary);
+
+        await EmitPreparationWarningsAsync(warnings, stepDisplayOrder, actionName, tc.Machine.Name, ct).ConfigureAwait(false);
+
+        var packageReferences = BuildPackageReferences(actionName);
+
+        var renderContext = new IntentRenderContext
+        {
+            Target = tc,
+            Step = step,
+            EffectiveVariables = effectiveVariables,
+            ServerTaskId = _ctx.ServerTaskId,
+            ReleaseVersion = _ctx.Release?.Version,
+            StepTimeout = stepTimeout,
+            PackageReferences = packageReferences,
+            TargetNamespace = effectiveVariables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value
+        };
+
+        var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
+
+        return await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
@@ -302,33 +406,42 @@ public sealed partial class ExecuteStepsPhase
         return executed;
     }
 
-    private static void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
+    private sealed class OutputVariableCapture
     {
-        var outputVars = ServiceMessageParser.ParseOutputVariables(logLines);
+        public Dictionary<string, string> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> SensitiveNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private OutputVariableCapture CaptureOutputVariables(List<string> logLines)
+    {
+        var capture = new OutputVariableCapture();
+        var outputVars = serviceMessageParser.ParseOutputVariables(logLines);
 
         foreach (var kv in outputVars)
         {
-            actionResult.OutputVariables[kv.Key] = kv.Value.Value;
+            capture.Variables[kv.Key] = kv.Value.Value;
 
             if (kv.Value.IsSensitive)
-                actionResult.SensitiveOutputVariableNames.Add(kv.Key);
+                capture.SensitiveNames.Add(kv.Key);
         }
+
+        return capture;
     }
 
-    private static readonly string[] ReservedPrefixes = { "Squid.", "Octopus.", "System." };
+    private static readonly string[] ReservedPrefixes = { "Squid.", "System." };
 
     private static bool IsReservedName(string name)
     {
         return ReservedPrefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static List<string> CollectOutputVariables(StepExecutionResult result, string stepName, string machineName, ActionExecutionResult actionResult)
+    private static List<string> CollectOutputVariables(StepExecutionResult result, string stepName, string machineName, OutputVariableCapture capture)
     {
         var collectedNames = new List<string>();
 
-        foreach (var kv in actionResult.OutputVariables)
+        foreach (var kv in capture.Variables)
         {
-            var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
+            var isSensitive = capture.SensitiveNames.Contains(kv.Key);
             var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });
@@ -366,7 +479,209 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task AcquirePackagesAsync(int stepSortOrder, CancellationToken ct)
     {
-        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext { StepDisplayOrder = stepSortOrder, SelectedPackages = _ctx.SelectedPackages }), ct).ConfigureAwait(false);
+        var packages = _ctx.SelectedPackages ?? [];
+        if (packages.Count == 0)
+        {
+            Log.Information("[Deploy] No packages selected for acquisition");
+            return;
+        }
+
+        // P0: collect only valid FeedIds — prevents unnecessary DB calls and null reference on ToDictionary
+        var feedIds = packages.Where(p => p.FeedId > 0).Select(p => p.FeedId).Distinct().ToList();
+        var feeds = feedIds.Count > 0
+            ? await externalFeedDataProvider.GetExternalFeedsByIdsAsync(feedIds, ct).ConfigureAwait(false)
+            : new List<ExternalFeed>();
+        var feedById = feeds.ToDictionary(f => f.Id);
+
+        var totalSize = 0L;
+        var packageCount = packages.Count;
+
+        await lifecycle.EmitAsync(new PackagesAcquiringEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = stepSortOrder,
+            SelectedPackages = packages,
+            PackageCount = packageCount,
+            PackageTotalSizeBytes = 0,
+            Packages = new DeploymentPackageContext(
+                SelectedPackages: packages,
+                PackageId: string.Empty,
+                PackageVersion: string.Empty,
+                PackageFeedId: 0,
+                PackageSizeBytes: 0,
+                PackageHash: string.Empty,
+                PackageLocalPath: string.Empty,
+                PackageIndex: 0,
+                PackageCount: packageCount,
+                PackageTotalSizeBytes: 0,
+                PackageError: string.Empty)
+        }), ct).ConfigureAwait(false);
+
+        for (var i = 0; i < packages.Count; i++)
+        {
+            var pkg = packages[i];
+
+            // P0: validate FeedId is positive — database enforces NOT NULL, service layer enforces semantic validity
+            if (pkg.FeedId <= 0)
+            {
+                Log.Error("[Deploy] Package {PackageId} v{Version} has invalid FeedId {FeedId}", pkg.PackageReferenceName, pkg.Version, pkg.FeedId);
+                await lifecycle.EmitAsync(new PackageDownloadFailedEvent(new DeploymentEventContext
+                {
+                    StepDisplayOrder = stepSortOrder,
+                    PackageIndex = i,
+                    PackageCount = packageCount,
+                    PackageId = pkg.PackageReferenceName,
+                    PackageVersion = pkg.Version,
+                    PackageFeedId = pkg.FeedId,
+                    PackageError = $"Invalid FeedId: {pkg.FeedId}. FeedId must be a positive integer.",
+                    Packages = new DeploymentPackageContext(
+                        SelectedPackages: packages,
+                        PackageId: pkg.PackageReferenceName,
+                        PackageVersion: pkg.Version,
+                        PackageFeedId: pkg.FeedId,
+                        PackageSizeBytes: 0,
+                        PackageHash: string.Empty,
+                        PackageLocalPath: string.Empty,
+                        PackageIndex: i,
+                        PackageCount: packageCount,
+                        PackageTotalSizeBytes: totalSize,
+                        PackageError: $"Invalid FeedId: {pkg.FeedId}. FeedId must be a positive integer.")
+                }), ct).ConfigureAwait(false);
+                continue;
+            }
+
+            if (!feedById.TryGetValue(pkg.FeedId, out var feed))
+            {
+                Log.Error("[Deploy] Feed {FeedId} not found for package {PackageId} v{Version}", pkg.FeedId, pkg.PackageReferenceName, pkg.Version);
+                await lifecycle.EmitAsync(new PackageDownloadFailedEvent(new DeploymentEventContext
+                {
+                    StepDisplayOrder = stepSortOrder,
+                    PackageIndex = i,
+                    PackageCount = packageCount,
+                    PackageId = pkg.PackageReferenceName,
+                    PackageVersion = pkg.Version,
+                    PackageFeedId = pkg.FeedId,
+                    PackageError = $"Feed {pkg.FeedId} not found",
+                    Packages = new DeploymentPackageContext(
+                        SelectedPackages: packages,
+                        PackageId: pkg.PackageReferenceName,
+                        PackageVersion: pkg.Version,
+                        PackageFeedId: pkg.FeedId,
+                        PackageSizeBytes: 0,
+                        PackageHash: string.Empty,
+                        PackageLocalPath: string.Empty,
+                        PackageIndex: i,
+                        PackageCount: packageCount,
+                        PackageTotalSizeBytes: totalSize,
+                        PackageError: $"Feed {pkg.FeedId} not found")
+                }), ct).ConfigureAwait(false);
+                continue;
+            }
+
+            var baseCtx = new DeploymentEventContext
+            {
+                StepDisplayOrder = stepSortOrder,
+                PackageIndex = i,
+                PackageCount = packageCount,
+                PackageId = pkg.PackageReferenceName,
+                PackageVersion = pkg.Version,
+                PackageFeedId = pkg.FeedId,
+                Packages = new DeploymentPackageContext(
+                    SelectedPackages: packages,
+                    PackageId: pkg.PackageReferenceName,
+                    PackageVersion: pkg.Version,
+                    PackageFeedId: pkg.FeedId,
+                    PackageSizeBytes: 0,
+                    PackageHash: string.Empty,
+                    PackageLocalPath: string.Empty,
+                    PackageIndex: i,
+                    PackageCount: packageCount,
+                    PackageTotalSizeBytes: totalSize,
+                    PackageError: string.Empty)
+            };
+
+            await lifecycle.EmitAsync(new PackageDownloadingEvent(baseCtx), ct).ConfigureAwait(false);
+
+            try
+            {
+                var result = await packageAcquisitionService.AcquireAsync(feed, pkg.PackageReferenceName, pkg.Version, _ctx.Deployment.Id, ct).ConfigureAwait(false);
+
+                _ctx.AcquiredPackages[pkg.PackageReferenceName] = result;
+                totalSize += result.SizeBytes;
+
+                var downloadedCtx = new DeploymentEventContext
+                {
+                    StepDisplayOrder = baseCtx.StepDisplayOrder,
+                    PackageIndex = baseCtx.PackageIndex,
+                    PackageCount = baseCtx.PackageCount,
+                    PackageId = baseCtx.PackageId,
+                    PackageVersion = baseCtx.PackageVersion,
+                    PackageFeedId = baseCtx.PackageFeedId,
+                    PackageSizeBytes = result.SizeBytes,
+                    PackageHash = result.Hash,
+                    PackageLocalPath = result.LocalPath,
+                    Packages = new DeploymentPackageContext(
+                        SelectedPackages: packages,
+                        PackageId: baseCtx.PackageId,
+                        PackageVersion: baseCtx.PackageVersion,
+                        PackageFeedId: baseCtx.PackageFeedId,
+                        PackageSizeBytes: result.SizeBytes,
+                        PackageHash: result.Hash,
+                        PackageLocalPath: result.LocalPath,
+                        PackageIndex: baseCtx.PackageIndex,
+                        PackageCount: baseCtx.PackageCount,
+                        PackageTotalSizeBytes: totalSize,
+                        PackageError: string.Empty)
+                };
+                await lifecycle.EmitAsync(new PackageDownloadedEvent(downloadedCtx), ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[Deploy] Failed to acquire package {PackageId} v{Version}", pkg.PackageReferenceName, pkg.Version);
+                var failedCtx = new DeploymentEventContext
+                {
+                    StepDisplayOrder = baseCtx.StepDisplayOrder,
+                    PackageIndex = baseCtx.PackageIndex,
+                    PackageCount = baseCtx.PackageCount,
+                    PackageId = baseCtx.PackageId,
+                    PackageVersion = baseCtx.PackageVersion,
+                    PackageFeedId = baseCtx.PackageFeedId,
+                    PackageError = ex.Message,
+                    Packages = new DeploymentPackageContext(
+                        SelectedPackages: packages,
+                        PackageId: baseCtx.PackageId,
+                        PackageVersion: baseCtx.PackageVersion,
+                        PackageFeedId: baseCtx.PackageFeedId,
+                        PackageSizeBytes: 0,
+                        PackageHash: string.Empty,
+                        PackageLocalPath: string.Empty,
+                        PackageIndex: baseCtx.PackageIndex,
+                        PackageCount: baseCtx.PackageCount,
+                        PackageTotalSizeBytes: totalSize,
+                        PackageError: ex.Message)
+                };
+                await lifecycle.EmitAsync(new PackageDownloadFailedEvent(failedCtx), ct).ConfigureAwait(false);
+            }
+        }
+
+        await lifecycle.EmitAsync(new PackagesAcquiredEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = stepSortOrder,
+            SelectedPackages = packages,
+            PackageCount = packageCount,
+            PackageTotalSizeBytes = totalSize,
+            Packages = new DeploymentPackageContext(
+                SelectedPackages: packages,
+                PackageId: string.Empty,
+                PackageVersion: string.Empty,
+                PackageFeedId: 0,
+                PackageSizeBytes: 0,
+                PackageHash: string.Empty,
+                PackageLocalPath: string.Empty,
+                PackageIndex: 0,
+                PackageCount: packageCount,
+                PackageTotalSizeBytes: totalSize,
+                PackageError: string.Empty)
+        }), ct).ConfigureAwait(false);
     }
 
     private static bool IsSyntheticStep(DeploymentStepDto step)

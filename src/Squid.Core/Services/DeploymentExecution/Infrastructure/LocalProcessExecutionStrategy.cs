@@ -1,6 +1,7 @@
 using System.Text;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
@@ -11,18 +12,15 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly ILocalProcessRunner _processRunner;
-    private readonly IScriptContextWrapper? _scriptContextWrapper;
     private readonly IScriptContextPreparer? _contextPreparer;
 
     public LocalProcessExecutionStrategy(
         ICalamariPayloadBuilder payloadBuilder,
         ILocalProcessRunner processRunner,
-        IScriptContextWrapper? scriptContextWrapper = null,
         IScriptContextPreparer? contextPreparer = null)
     {
         _payloadBuilder = payloadBuilder;
         _processRunner = processRunner;
-        _scriptContextWrapper = scriptContextWrapper;
         _contextPreparer = contextPreparer;
     }
 
@@ -51,7 +49,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteCalamariLocallyAsync(
         PackagedPayloadExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(plan.Files, workDir);
+        WriteFilesToDirectory(plan.DeploymentFiles, workDir);
 
         var request = plan.Request;
         var syntax = request.Syntax;
@@ -67,7 +65,6 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         await File.WriteAllBytesAsync(sensitivePath, payload.SensitiveBytes, ct).ConfigureAwait(false);
 
         var scriptBody = payload.FillTemplate(packagePath, variablePath, sensitivePath);
-        scriptBody = ApplyContextWrappingIfRequired(request, scriptBody);
 
         var (executable, args, scriptFileName) = BuildCalamariInvocation(syntax);
         var scriptPath = Path.Combine(workDir, scriptFileName);
@@ -81,7 +78,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     private async Task<ScriptExecutionResult> ExecuteScriptLocallyAsync(
         DirectScriptExecutionPlan plan, string workDir, CancellationToken ct)
     {
-        WriteFilesToDirectory(plan.Files, workDir);
+        WriteFilesToDirectory(plan.DeploymentFiles, workDir);
 
         var scriptBody = plan.ScriptBody;
         Dictionary<string, string> envVars = null;
@@ -104,7 +101,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
 
     private bool ShouldPrepareContext(ScriptExecutionRequest request)
     {
-        if (_contextPreparer == null && _scriptContextWrapper == null) return false;
+        if (_contextPreparer == null) return false;
 
         return request.ResolveContextPreparationPolicy() == ContextPreparationPolicy.Apply;
     }
@@ -113,16 +110,7 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
     {
         var scriptContext = BuildScriptContext(request);
 
-        if (_contextPreparer != null)
-            return await _contextPreparer.PrepareAsync(scriptBody, scriptContext, workDir, ct).ConfigureAwait(false);
-
-        if (_scriptContextWrapper != null)
-        {
-            var wrapped = _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
-            return new ScriptContextResult { Script = wrapped };
-        }
-
-        return new ScriptContextResult { Script = scriptBody };
+        return await _contextPreparer.PrepareAsync(scriptBody, scriptContext, workDir, ct).ConfigureAwait(false);
     }
 
     private static ScriptContext BuildScriptContext(ScriptExecutionRequest request)
@@ -136,37 +124,25 @@ public class LocalProcessExecutionStrategy : IExecutionStrategy
         };
     }
 
-    private string ApplyContextWrappingIfRequired(ScriptExecutionRequest request, string scriptBody)
+    private static void WriteFilesToDirectory(DeploymentFileCollection files, string workDir)
     {
-        if (_scriptContextWrapper == null) return scriptBody;
-
-        if (request.ResolveContextPreparationPolicy() != ContextPreparationPolicy.Apply)
-            return scriptBody;
-
-        var scriptContext = BuildScriptContext(request);
-
-        return _scriptContextWrapper.WrapScript(scriptBody, scriptContext);
-    }
-
-    private static void WriteFilesToDirectory(Dictionary<string, byte[]> files, string workDir)
-    {
-        if (files == null) return;
+        if (files == null || files.Count == 0) return;
 
         var normalizedWorkDir = Path.GetFullPath(workDir);
 
         foreach (var file in files)
         {
-            var filePath = Path.GetFullPath(Path.Combine(workDir, file.Key));
+            var filePath = Path.GetFullPath(Path.Combine(workDir, file.RelativePath));
 
             if (!filePath.StartsWith(normalizedWorkDir, StringComparison.Ordinal))
-                throw new InvalidOperationException($"Path traversal detected: file key '{file.Key}' resolves outside work directory.");
+                throw new InvalidOperationException($"Path traversal detected: file '{file.RelativePath}' resolves outside work directory.");
 
             var dir = Path.GetDirectoryName(filePath);
 
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
-            File.WriteAllBytes(filePath, file.Value);
+            File.WriteAllBytes(filePath, file.Content);
         }
     }
 

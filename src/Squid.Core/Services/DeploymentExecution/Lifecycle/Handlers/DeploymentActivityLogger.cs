@@ -169,7 +169,7 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
         await LogInfoAsync("Acquiring packages", SystemSource, ct, nodeId).ConfigureAwait(false);
 
-        var packages = ctx.SelectedPackages;
+        var packages = ctx.Packages?.SelectedPackages ?? ctx.SelectedPackages;
 
         if (packages?.Count > 0)
         {

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -37,7 +39,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
             var action = BuildServiceAction("e2e-svc-basic", testNs,
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\",\"protocol\":\"TCP\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Service failed: {scriptResult.StdErr}");
@@ -76,7 +78,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
 
             var action = BuildServiceAction("e2e-svc-multi", testNs, portsJson: portsJson);
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Service failed: {scriptResult.StdErr}");
@@ -111,7 +113,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\",\"nodePort\":30080,\"protocol\":\"TCP\"}]",
                 serviceType: "NodePort");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy NodePort Service failed: {scriptResult.StdErr}");
@@ -143,7 +145,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\"}]",
                 annotationsJson: "{\"service.beta.kubernetes.io/load-balancer-type\":\"nlb\",\"custom.io/team\":\"platform\"}");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Service failed: {scriptResult.StdErr}");
@@ -175,7 +177,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\"}]",
                 deploymentLabels: "{\"app\":\"custom-app\",\"tier\":\"frontend\"}");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Service failed: {scriptResult.StdErr}");
@@ -204,7 +206,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
             var action = BuildServiceAction("e2e-svc-defsel", testNs,
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Service failed: {scriptResult.StdErr}");
@@ -231,13 +233,13 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
 
             var firstAction = BuildServiceAction("e2e-svc-upd", testNs,
                 portsJson: "[{\"name\":\"http\",\"port\":80,\"targetPort\":\"8080\"}]");
-            var firstResult = await PrepareAndAssertNotNull(firstAction);
+            var firstResult = await DescribeAndAssertNotNull(firstAction);
             var firstScript = await ApplyToClusterAsync(firstResult, clusterUrl, token, testNs);
             firstScript.ExitCode.ShouldBe(0, $"First apply failed: {firstScript.StdErr}");
 
             var secondAction = BuildServiceAction("e2e-svc-upd", testNs,
                 portsJson: "[{\"name\":\"http\",\"port\":8080,\"targetPort\":\"9090\"}]");
-            var secondResult = await PrepareAndAssertNotNull(secondAction);
+            var secondResult = await DescribeAndAssertNotNull(secondAction);
             var secondScript = await ApplyToClusterAsync(secondResult, clusterUrl, token, testNs);
             secondScript.ExitCode.ShouldBe(0, $"Second apply failed: {secondScript.StdErr}");
 
@@ -254,26 +256,28 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
     }
 
     [Fact]
-    public async Task DeployService_NoName_ReturnsNull()
+    public async Task DeployService_NoName_ReturnsEmptyYamlFiles()
     {
         var action = BuildServiceAction("", "default",
             portsJson: "[{\"name\":\"http\",\"port\":80}]");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task DeployService_NoPorts_ReturnsNull()
+    public async Task DeployService_NoPorts_ReturnsEmptyYamlFiles()
     {
         var action = BuildServiceAction("some-svc", "default", portsJson: "[]");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
@@ -290,7 +294,7 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
             var action = BuildServiceAction("e2e-svc-udp", testNs,
                 portsJson: "[{\"name\":\"dns\",\"port\":53,\"targetPort\":\"53\",\"protocol\":\"UDP\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy UDP Service failed: {scriptResult.StdErr}");
@@ -338,28 +342,29 @@ public class KubernetesDeployServiceE2ETests : KubernetesApiE2ETestBase
         };
     }
 
-    private async Task<ActionExecutionResult> PrepareAndAssertNotNull(DeploymentActionDto action)
+    private async Task<KubernetesApplyIntent> DescribeAndAssertNotNull(DeploymentActionDto action)
     {
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldNotBeNull();
-        result.Files.ShouldContainKey("service.yaml");
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldNotBeEmpty();
+        applyIntent.YamlFiles.ShouldContain(f => f.RelativePath == "service.yaml");
 
-        return result;
+        return applyIntent;
     }
 
-    private async Task<ScriptResult> ApplyToClusterAsync(ActionExecutionResult result, string clusterUrl, string token, string ns)
+    private async Task<ScriptResult> ApplyToClusterAsync(KubernetesApplyIntent intent, string clusterUrl, string token, string ns)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"squid-svc-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            foreach (var file in result.Files)
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+            foreach (var file in intent.YamlFiles)
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
 
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
             var scriptContext = MakeScriptContext(clusterUrl, token, ns);
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 
