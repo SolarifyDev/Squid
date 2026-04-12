@@ -19,6 +19,8 @@ public partial class TestBase : IAsyncLifetime, IDisposable
 
         if (!Containers.TryGetValue(testTopic, out var root))
         {
+            RunDbUpIfRequired();
+
             var containerBuilder = new ContainerBuilder();
             RegisterBaseContainer(containerBuilder);
             extraRegistration?.Invoke(containerBuilder);
@@ -27,7 +29,6 @@ public partial class TestBase : IAsyncLifetime, IDisposable
         }
 
         CurrentScope = root.BeginLifetimeScope();
-        RunDbUpIfRequired();
     }
 
     protected async Task Run<T>(Func<T, Task> action, Action<ContainerBuilder> extraRegistration = null)
