@@ -11,13 +11,13 @@ public static class YamlExtractor
 
         foreach (var request in capture.CapturedRequests)
         {
-            foreach (var file in request.Files)
+            foreach (var file in request.DeploymentFiles)
             {
-                if (!file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) &&
-                    !file.Key.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
+                if (!file.RelativePath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) &&
+                    !file.RelativePath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                result[file.Key] = file.Value;
+                result[file.RelativePath] = file.Content;
             }
         }
 

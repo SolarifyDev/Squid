@@ -85,6 +85,29 @@ public class KubernetesApiIntentRendererTests
             async () => await _renderer.RenderAsync(NewRunScriptIntent(), null!, CancellationToken.None));
     }
 
+    // ========== TargetNamespace propagation ==========
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_TargetNamespace_PropagatedToRequest()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "production"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("production");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_TargetNamespace_PropagatedToRequest()
+    {
+        var intent = NewKubernetesApplyIntent();
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "staging"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("staging");
+    }
+
     // ========== RunScriptIntent: wrapping behaviour ==========
 
     [Fact]
@@ -336,7 +359,7 @@ public class KubernetesApiIntentRendererTests
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ShouldNotBeNull();
-        rendered.Files.ShouldNotBeNull();
+        rendered.DeploymentFiles.ShouldNotBeNull();
         rendered.PackageReferences.ShouldNotBeNull();
     }
 
@@ -387,7 +410,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     // ========== KubernetesApplyIntent: basic rendering ==========
@@ -456,7 +479,7 @@ public class KubernetesApiIntentRendererTests
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldBe(string.Empty);
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     // ========== KubernetesApplyIntent: server-side-apply flag combinations ==========
@@ -801,10 +824,10 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldNotBeNull();
-        rendered.Files.Count.ShouldBe(2);
-        rendered.Files["configmap.yaml"].ShouldBe(new byte[] { 0x43, 0x4D });
-        rendered.Files["secret.yaml"].ShouldBe(new byte[] { 0x53, 0x45 });
+        rendered.DeploymentFiles.ShouldNotBeNull();
+        rendered.DeploymentFiles.Count.ShouldBe(2);
+        rendered.DeploymentFiles.Single(f => f.RelativePath == "configmap.yaml").Content.ShouldBe(new byte[] { 0x43, 0x4D });
+        rendered.DeploymentFiles.Single(f => f.RelativePath == "secret.yaml").Content.ShouldBe(new byte[] { 0x53, 0x45 });
     }
 
     [Fact]
@@ -818,7 +841,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldContainKey("intent.yaml");
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "intent.yaml").ShouldBeTrue();
     }
 
     [Fact]
@@ -945,9 +968,9 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.Count.ShouldBe(2);
-        rendered.Files.ShouldContainKey("values-0.yaml");
-        rendered.Files.ShouldContainKey("values-1.yaml");
+        rendered.DeploymentFiles.Count.ShouldBe(2);
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "values-0.yaml").ShouldBeTrue();
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "values-1.yaml").ShouldBeTrue();
     }
 
     [Fact]
@@ -958,7 +981,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -1052,7 +1075,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -1167,7 +1190,8 @@ public class KubernetesApiIntentRendererTests
         int serverTaskId = 42,
         string? releaseVersion = "1.0.0",
         TimeSpan? stepTimeout = null,
-        List<PackageAcquisitionResult>? packageReferences = null)
+        List<PackageAcquisitionResult>? packageReferences = null,
+        string? targetNamespace = null)
     {
         return new IntentRenderContext
         {
@@ -1182,6 +1206,7 @@ public class KubernetesApiIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
+            TargetNamespace = targetNamespace,
             PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
         };
     }

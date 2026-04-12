@@ -368,7 +368,8 @@ public sealed partial class ExecuteStepsPhase
             ServerTaskId = _ctx.ServerTaskId,
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
-            PackageReferences = packageReferences
+            PackageReferences = packageReferences,
+            TargetNamespace = effectiveVariables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value
         };
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);

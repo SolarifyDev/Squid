@@ -182,7 +182,7 @@ public class SshIntentRendererTests
 
         rendered.ShouldNotBeNull();
         rendered.ScriptBody.ShouldBe("echo independent");
-        rendered.Files.ShouldNotBeNull();
+        rendered.DeploymentFiles.ShouldNotBeNull();
         rendered.PackageReferences.ShouldNotBeNull();
     }
 
@@ -229,7 +229,7 @@ public class SshIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     // ========== Unsupported intents throw ==========

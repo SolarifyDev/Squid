@@ -31,6 +31,13 @@ public sealed class IntentRenderContext
     public TimeSpan? StepTimeout { get; init; }
 
     /// <summary>
+    /// Target namespace for the deployment action, resolved from endpoint variables.
+    /// Transports that support namespace isolation (e.g. Kubernetes) use this to
+    /// scope script execution. <c>null</c> when the transport has no namespace concept.
+    /// </summary>
+    public string? TargetNamespace { get; init; }
+
+    /// <summary>
     /// Post-acquisition package references for this action, matched from acquired packages
     /// by action name. Populated by the pipeline at dispatch time.
     /// </summary>

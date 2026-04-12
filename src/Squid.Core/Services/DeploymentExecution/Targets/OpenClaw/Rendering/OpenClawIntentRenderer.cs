@@ -53,7 +53,6 @@ public sealed class OpenClawIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
             PackageReferences = new List<PackageAcquisitionResult>()
         };
     }

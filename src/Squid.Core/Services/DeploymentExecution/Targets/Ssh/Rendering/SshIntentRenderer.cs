@@ -50,7 +50,6 @@ public sealed class SshIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
             PackageReferences = context.PackageReferences.ToList()
         };
     }

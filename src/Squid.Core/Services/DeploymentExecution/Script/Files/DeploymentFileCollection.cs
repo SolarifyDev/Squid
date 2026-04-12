@@ -31,8 +31,8 @@ public sealed class DeploymentFileCollection : IReadOnlyList<DeploymentFile>
     /// <summary>
     /// Converts a legacy <see cref="Dictionary{TKey, TValue}"/>-shaped file map to a typed
     /// <see cref="DeploymentFileCollection"/>. Every entry is classified as
-    /// <see cref="DeploymentFileKind.Asset"/>. Used as a bridge while the handler layer
-    /// still emits raw dictionaries (Phase 1 of the execution-layer refactor).
+    /// <see cref="DeploymentFileKind.Asset"/>. Used by action handlers that produce
+    /// YAML dictionaries internally before converting to typed intent files.
     /// </summary>
     public static DeploymentFileCollection FromLegacyFiles(IReadOnlyDictionary<string, byte[]>? files)
     {
@@ -42,6 +42,22 @@ public sealed class DeploymentFileCollection : IReadOnlyList<DeploymentFile>
         var entries = files.Select(kvp => DeploymentFile.Asset(kvp.Key, kvp.Value));
 
         return new DeploymentFileCollection(entries);
+    }
+
+    /// <summary>
+    /// Converts this collection back to a legacy <c>Dictionary&lt;string, byte[]&gt;</c> keyed
+    /// by <see cref="DeploymentFile.RelativePath"/>. Used as a bridge while consumers
+    /// (e.g. <c>CalamariPayloadBuilder</c>, <c>KubernetesResourceWaitBuilder</c>) still
+    /// accept raw dictionaries.
+    /// </summary>
+    public Dictionary<string, byte[]> ToLegacyDictionary()
+    {
+        var result = new Dictionary<string, byte[]>(Count);
+
+        foreach (var file in _files)
+            result[file.RelativePath] = file.Content;
+
+        return result;
     }
 
     public int Count => _files.Count;

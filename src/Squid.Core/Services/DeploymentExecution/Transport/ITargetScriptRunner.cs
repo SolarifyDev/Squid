@@ -39,7 +39,6 @@ public class TargetScriptRunner : ITargetScriptRunner
             ExecutionMode = ExecutionMode.DirectScript,
             ContextPreparationPolicy = ContextPreparationPolicy.Apply,
             Syntax = syntax,
-            Files = new Dictionary<string, byte[]>(),
             Variables = variables,
             EndpointContext = endpointContext
         };

@@ -259,8 +259,8 @@ public class OpenClawIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldNotBeNull();
-        rendered.Files.Count.ShouldBe(0);
+        rendered.DeploymentFiles.ShouldNotBeNull();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     [Fact]

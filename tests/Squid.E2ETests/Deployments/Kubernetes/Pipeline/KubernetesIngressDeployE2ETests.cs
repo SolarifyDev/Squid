@@ -59,17 +59,11 @@ public class KubernetesIngressDeployE2ETests
             var capturedRequest = ExecutionCapture.CapturedRequests[0];
             capturedRequest.ScriptBody.ShouldContain("kubectl apply");
 
-            var yamlFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var ingressFile = capturedRequest.DeploymentFiles
+                .SingleOrDefault(f => f.RelativePath.Equals("ingress.yaml", StringComparison.OrdinalIgnoreCase));
+            ingressFile.ShouldNotBeNull();
 
-            foreach (var file in capturedRequest.Files)
-            {
-                if (file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
-                    yamlFiles[file.Key] = file.Value;
-            }
-
-            yamlFiles.ShouldContainKey("ingress.yaml");
-
-            var ingressYaml = Encoding.UTF8.GetString(yamlFiles["ingress.yaml"]);
+            var ingressYaml = Encoding.UTF8.GetString(ingressFile.Content);
             ingressYaml.ShouldContain("apiVersion: networking.k8s.io/v1");
             ingressYaml.ShouldContain("kind: Ingress");
             ingressYaml.ShouldContain("name: web-ingress");
@@ -78,6 +72,9 @@ public class KubernetesIngressDeployE2ETests
             ingressYaml.ShouldContain("ingressClassName: nginx");
 
             // Apply to Kind cluster
+            var yamlFiles = capturedRequest.DeploymentFiles
+                .Where(f => f.RelativePath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(f => f.RelativePath, f => f.Content, StringComparer.OrdinalIgnoreCase);
             var tempDir = await WriteYamlToTempDirAsync(yamlFiles);
 
             try
@@ -120,21 +117,18 @@ public class KubernetesIngressDeployE2ETests
             ExecutionCapture.CapturedRequests.ShouldNotBeEmpty();
 
             var capturedRequest = ExecutionCapture.CapturedRequests[0];
-            var yamlFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var ingressFile = capturedRequest.DeploymentFiles
+                .SingleOrDefault(f => f.RelativePath.Equals("ingress.yaml", StringComparison.OrdinalIgnoreCase));
+            ingressFile.ShouldNotBeNull();
 
-            foreach (var file in capturedRequest.Files)
-            {
-                if (file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
-                    yamlFiles[file.Key] = file.Value;
-            }
-
-            yamlFiles.ShouldContainKey("ingress.yaml");
-
-            var ingressYaml = Encoding.UTF8.GetString(yamlFiles["ingress.yaml"]);
+            var ingressYaml = Encoding.UTF8.GetString(ingressFile.Content);
             ingressYaml.ShouldNotContain("#{");
             ingressYaml.ShouldContain(testNs);
 
             // Apply to cluster to verify valid YAML
+            var yamlFiles = capturedRequest.DeploymentFiles
+                .Where(f => f.RelativePath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(f => f.RelativePath, f => f.Content, StringComparer.OrdinalIgnoreCase);
             var tempDir = await WriteYamlToTempDirAsync(yamlFiles);
 
             try

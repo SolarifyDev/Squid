@@ -21,14 +21,12 @@ internal static class HelmUpgradeScriptBuilder
             : BuildPowerShell(intent);
     }
 
-    internal static Dictionary<string, byte[]> BuildFiles(HelmUpgradeIntent intent)
+    internal static DeploymentFileCollection BuildDeploymentFiles(HelmUpgradeIntent intent)
     {
-        var files = new Dictionary<string, byte[]>(intent.ValuesFiles.Count);
+        if (intent.ValuesFiles.Count == 0)
+            return DeploymentFileCollection.Empty;
 
-        foreach (var file in intent.ValuesFiles)
-            files[file.RelativePath] = file.Content;
-
-        return files;
+        return new DeploymentFileCollection(intent.ValuesFiles);
     }
 
     private static string BuildBash(HelmUpgradeIntent intent)

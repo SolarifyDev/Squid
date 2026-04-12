@@ -56,21 +56,17 @@ public class KubernetesVariableSubstitutionE2ETests
             ExecutionCapture.CapturedRequests.ShouldNotBeEmpty("Pipeline should have executed at least one script");
 
             var capturedRequest = ExecutionCapture.CapturedRequests[0];
-            var yamlFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var file in capturedRequest.Files)
-            {
-                if (file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
-                    file.Key.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
-                    yamlFiles[file.Key] = file.Value;
-            }
+            var yamlFiles = capturedRequest.DeploymentFiles
+                .Where(f => f.RelativePath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+                            f.RelativePath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
+                .ToList();
 
             yamlFiles.ShouldNotBeEmpty("Should have YAML files in captured request");
 
             // Verify variables are resolved — no #{...} templates remaining
-            foreach (var yamlEntry in yamlFiles)
+            foreach (var yamlFile in yamlFiles)
             {
-                var content = Encoding.UTF8.GetString(yamlEntry.Value);
+                var content = Encoding.UTF8.GetString(yamlFile.Content);
 
                 content.ShouldNotContain("#{");
                 content.ShouldContain(testNs);
@@ -78,7 +74,8 @@ public class KubernetesVariableSubstitutionE2ETests
             }
 
             // Apply to cluster to verify the resolved YAML is valid
-            var tempDir = await WriteYamlToTempDirAsync(yamlFiles);
+            var yamlDict = yamlFiles.ToDictionary(f => f.RelativePath, f => f.Content, StringComparer.OrdinalIgnoreCase);
+            var tempDir = await WriteYamlToTempDirAsync(yamlDict);
 
             try
             {
@@ -126,11 +123,11 @@ public class KubernetesVariableSubstitutionE2ETests
             // The script body should NOT contain the raw sensitive value — it should be masked or handled
             // However, the YAML file itself will contain the value since it needs to be deployed
             // Verify that at minimum, the variable template was resolved
-            foreach (var file in capturedRequest.Files)
+            foreach (var file in capturedRequest.DeploymentFiles)
             {
-                if (!file.Key.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!file.RelativePath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)) continue;
 
-                var content = Encoding.UTF8.GetString(file.Value);
+                var content = Encoding.UTF8.GetString(file.Content);
                 content.ShouldNotContain("#{SensitiveKey}");
             }
 

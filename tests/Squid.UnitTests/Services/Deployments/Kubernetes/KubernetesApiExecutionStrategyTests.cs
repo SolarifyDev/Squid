@@ -13,6 +13,7 @@ using Squid.Message.Enums;
 using ScriptContext = Squid.Core.Services.DeploymentExecution.Transport.ScriptContext;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Script;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
@@ -310,17 +311,15 @@ public class KubernetesApiExecutionStrategyTests
     // === Path Traversal Prevention ===
 
     [Fact]
-    public async Task ExecuteScriptAsync_PathTraversal_Throws()
+    public void ExecuteScriptAsync_PathTraversal_Throws()
     {
-        var request = CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
-        {
-            ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
-        });
-
-        // DeploymentFileCollection.EnsureValid rejects '..' segments up-front, so the
-        // pipeline fails with ArgumentException before the filesystem guard is reached.
-        await Should.ThrowAsync<ArgumentException>(() =>
-            _strategy.ExecuteScriptAsync(request, CancellationToken.None));
+        // DeploymentFileCollection.EnsureValid rejects '..' segments at construction time
+        // (when Files setter converts to DeploymentFileCollection via FromLegacyFiles).
+        Should.Throw<ArgumentException>(() =>
+            CreateRequest(calamariCommand: null, files: new Dictionary<string, byte[]>
+            {
+                ["../../../etc/passwd"] = System.Text.Encoding.UTF8.GetBytes("evil")
+            }));
     }
 
     [Fact]
@@ -383,7 +382,7 @@ public class KubernetesApiExecutionStrategyTests
             ExecutionMode = resolvedMode,
             Syntax = syntax,
             ReleaseVersion = "1.0.0",
-            Files = files ?? new Dictionary<string, byte[]>(),
+            DeploymentFiles = DeploymentFileCollection.FromLegacyFiles(files),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
         };
     }

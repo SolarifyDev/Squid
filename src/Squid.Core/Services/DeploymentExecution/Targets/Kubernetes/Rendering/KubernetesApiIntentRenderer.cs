@@ -71,7 +71,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
+            TargetNamespace = context.TargetNamespace,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -86,10 +86,10 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
 
     private ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
     {
-        var files = ToLegacyFiles(intent.YamlFiles);
+        var deploymentFiles = new DeploymentFileCollection(intent.YamlFiles);
         var applyScript = BuildApplyScript(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
-            files, intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
+            deploymentFiles.ToLegacyDictionary(), intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
         var rawScript = applyScript + waitScript;
         var wrappedScript = WrapApplyBody(rawScript, intent, context);
 
@@ -108,7 +108,8 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = files,
+            TargetNamespace = context.TargetNamespace,
+            DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -141,19 +142,9 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         return syntax == ScriptSyntax.Bash ? prefixed : prefixed.Replace("/", "\\");
     }
 
-    private static Dictionary<string, byte[]> ToLegacyFiles(IReadOnlyList<DeploymentFile> yamlFiles)
-    {
-        var result = new Dictionary<string, byte[]>(yamlFiles.Count);
-
-        foreach (var file in yamlFiles)
-            result[file.RelativePath] = file.Content;
-
-        return result;
-    }
-
     private ScriptExecutionRequest RenderHelmUpgrade(HelmUpgradeIntent intent, IntentRenderContext context)
     {
-        var files = HelmUpgradeScriptBuilder.BuildFiles(intent);
+        var deploymentFiles = HelmUpgradeScriptBuilder.BuildDeploymentFiles(intent);
         var rawScript = HelmUpgradeScriptBuilder.Build(intent, intent.Syntax);
         var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context);
 
@@ -172,7 +163,8 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = ((ExecutionIntent)intent).Timeout ?? context.StepTimeout,
-            Files = files,
+            TargetNamespace = context.TargetNamespace,
+            DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -197,7 +189,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
+            TargetNamespace = context.TargetNamespace,
             PackageReferences = context.PackageReferences.ToList()
         };
     }

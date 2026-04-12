@@ -28,8 +28,7 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 /// create probe for non-default namespaces). Non-shell syntaxes (Python, ...) are left
 /// unwrapped. Namespace is resolved from <see cref="KubernetesApplyIntent.Namespace"/>
 /// for apply intents; for <see cref="RunScriptIntent"/> — which has no namespace field —
-/// the renderer reads <c>SpecialVariables.Kubernetes.Namespace</c> from
-/// <see cref="IntentRenderContext.EffectiveVariables"/>.
+/// the renderer reads <see cref="IntentRenderContext.TargetNamespace"/>.
 /// </summary>
 public class KubernetesAgentIntentRendererTests
 {
@@ -83,9 +82,8 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_BashSyntax_PrependsNamespaceContext()
     {
         var intent = NewRunScriptIntent(scriptBody: "echo from-intent", syntax: ScriptSyntax.Bash);
-        var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "production"), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("echo from-intent");
@@ -95,9 +93,8 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_BashSyntax_NamespacePreambleComesBeforeBody()
     {
         var intent = NewRunScriptIntent(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
-        var vars = NamespaceVariable("staging");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "staging"), CancellationToken.None);
 
         var preambleIdx = rendered.ScriptBody.IndexOf("set-context", StringComparison.Ordinal);
         var bodyIdx = rendered.ScriptBody.IndexOf("echo hello", StringComparison.Ordinal);
@@ -109,9 +106,8 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_PowerShellSyntax_PrependsNamespaceContext()
     {
         var intent = NewRunScriptIntent(scriptBody: "Write-Host hi", syntax: ScriptSyntax.PowerShell);
-        var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "production"), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("| Out-Null");
@@ -130,7 +126,7 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NoNamespaceVariable_FallsBackToDefaultNamespace()
+    public async Task RenderAsync_RunScriptIntent_NullNamespace_FallsBackToDefaultNamespace()
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
 
@@ -140,12 +136,11 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_EmptyNamespaceVariable_FallsBackToDefaultNamespace()
+    public async Task RenderAsync_RunScriptIntent_EmptyNamespace_FallsBackToDefaultNamespace()
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
-        var vars = NamespaceVariable("");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: ""), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--namespace=\"default\"");
     }
@@ -154,9 +149,8 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_CustomNamespace_UsesCreateNamespaceProbe()
     {
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
-        var vars = NamespaceVariable("my-ns");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "my-ns"), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
     }
@@ -165,11 +159,30 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_DefaultNamespace_DoesNotEmitCreateProbe()
     {
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
-        var vars = NamespaceVariable("default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "default"), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_TargetNamespace_PropagatedToRequest()
+    {
+        var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "production"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("production");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_TargetNamespace_PropagatedToRequest()
+    {
+        var intent = NewKubernetesApplyIntent();
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "staging"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("staging");
     }
 
     // ========== RunScriptIntent: intent-sourced + context-sourced fields ==========
@@ -274,8 +287,8 @@ public class KubernetesAgentIntentRendererTests
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ShouldNotBeNull();
-        rendered.Files.ShouldNotBeNull();
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.ShouldNotBeNull();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
         rendered.PackageReferences.ShouldNotBeNull();
         rendered.PackageReferences.ShouldBeEmpty();
     }
@@ -298,7 +311,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -357,7 +370,7 @@ public class KubernetesAgentIntentRendererTests
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl apply -f");
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     // ========== KubernetesApplyIntent: server-side-apply flag combinations ==========
@@ -625,10 +638,10 @@ public class KubernetesAgentIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldNotBeNull();
-        rendered.Files.Count.ShouldBe(2);
-        rendered.Files["configmap.yaml"].ShouldBe(new byte[] { 0x43, 0x4D });
-        rendered.Files["secret.yaml"].ShouldBe(new byte[] { 0x53, 0x45 });
+        rendered.DeploymentFiles.ShouldNotBeNull();
+        rendered.DeploymentFiles.Count.ShouldBe(2);
+        rendered.DeploymentFiles.Single(f => f.RelativePath == "configmap.yaml").Content.ShouldBe(new byte[] { 0x43, 0x4D });
+        rendered.DeploymentFiles.Single(f => f.RelativePath == "secret.yaml").Content.ShouldBe(new byte[] { 0x53, 0x45 });
     }
 
     [Fact]
@@ -641,7 +654,7 @@ public class KubernetesAgentIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldContainKey("intent.yaml");
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "intent.yaml").ShouldBeTrue();
     }
 
     [Fact]
@@ -752,9 +765,9 @@ public class KubernetesAgentIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.Files.Count.ShouldBe(2);
-        rendered.Files.ShouldContainKey("values-0.yaml");
-        rendered.Files.ShouldContainKey("values-1.yaml");
+        rendered.DeploymentFiles.Count.ShouldBe(2);
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "values-0.yaml").ShouldBeTrue();
+        rendered.DeploymentFiles.Any(f => f.RelativePath == "values-1.yaml").ShouldBeTrue();
     }
 
     [Fact]
@@ -844,7 +857,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(), CancellationToken.None);
 
-        rendered.Files.ShouldBeEmpty();
+        rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -922,14 +935,6 @@ public class KubernetesAgentIntentRendererTests
         };
     }
 
-    private static List<VariableDto> NamespaceVariable(string namespaceValue)
-    {
-        return new List<VariableDto>
-        {
-            new() { Name = "Squid.Action.Kubernetes.Namespace", Value = namespaceValue }
-        };
-    }
-
     private static HelmUpgradeIntent NewHelmUpgradeIntent(string releaseName = "my-release", string chartReference = "my-chart", ScriptSyntax syntax = ScriptSyntax.Bash, string namespace_ = "default")
     {
         return new HelmUpgradeIntent
@@ -965,7 +970,8 @@ public class KubernetesAgentIntentRendererTests
         int serverTaskId = 42,
         string? releaseVersion = "1.0.0",
         TimeSpan? stepTimeout = null,
-        List<PackageAcquisitionResult>? packageReferences = null)
+        List<PackageAcquisitionResult>? packageReferences = null,
+        string? targetNamespace = null)
     {
         return new IntentRenderContext
         {
@@ -980,6 +986,7 @@ public class KubernetesAgentIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
+            TargetNamespace = targetNamespace,
             PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
         };
     }

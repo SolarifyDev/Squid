@@ -9,22 +9,12 @@ namespace Squid.Core.Services.DeploymentExecution.Script;
 
 public class ScriptExecutionRequest
 {
-    private DeploymentFileCollection? _deploymentFiles;
-
     public string ScriptBody { get; set; }
-    public Dictionary<string, byte[]> Files { get; set; } = new();
 
     /// <summary>
-    /// Typed, validated view of the files that must accompany the script on the target.
-    /// When not explicitly set, derived on-demand from the legacy <see cref="Files"/>
-    /// dictionary (every entry classified as <see cref="DeploymentFileKind.Asset"/>).
-    /// Transports should prefer this property over <see cref="Files"/>.
+    /// Typed, validated collection of files that must accompany the script on the target.
     /// </summary>
-    public DeploymentFileCollection DeploymentFiles
-    {
-        get => _deploymentFiles ?? DeploymentFileCollection.FromLegacyFiles(Files);
-        set => _deploymentFiles = value;
-    }
+    public DeploymentFileCollection DeploymentFiles { get; set; } = DeploymentFileCollection.Empty;
 
     public string CalamariCommand { get; set; }
     public ExecutionMode ExecutionMode { get; set; } = ExecutionMode.Unspecified;

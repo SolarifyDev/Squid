@@ -375,7 +375,6 @@ public class HalibutMachineExecutionStrategyTests
             CalamariCommand = calamariCommand,
             ExecutionMode = resolvedMode,
             ReleaseVersion = releaseVersion,
-            Files = new Dictionary<string, byte[]>(),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
         };
     }

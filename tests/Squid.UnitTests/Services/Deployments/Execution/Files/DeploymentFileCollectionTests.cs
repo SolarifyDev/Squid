@@ -116,6 +116,32 @@ public class DeploymentFileCollectionTests
         paths.ShouldBe(new[] { "a.yaml", "b.yaml", "c.yaml" });
     }
 
+    // ========== ToLegacyDictionary ==========
+
+    [Fact]
+    public void ToLegacyDictionary_Empty_ReturnsEmptyDictionary()
+    {
+        var result = DeploymentFileCollection.Empty.ToLegacyDictionary();
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ToLegacyDictionary_PopulatedCollection_ReturnsDictionary()
+    {
+        var collection = new DeploymentFileCollection(new[]
+        {
+            DeploymentFile.Asset("deploy.yaml", new byte[] { 0x01 }),
+            DeploymentFile.Script("run.sh", new byte[] { 0x02 })
+        });
+
+        var result = collection.ToLegacyDictionary();
+
+        result.Count.ShouldBe(2);
+        result["deploy.yaml"].ShouldBe(new byte[] { 0x01 });
+        result["run.sh"].ShouldBe(new byte[] { 0x02 });
+    }
+
     // ========== FromLegacyFiles ==========
 
     [Fact]

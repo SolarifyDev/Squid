@@ -7,7 +7,6 @@ using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
-using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 
@@ -23,8 +22,7 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 /// <see cref="HelmUpgradeIntent"/>, <see cref="KubernetesKustomizeIntent"/>.</para>
 ///
 /// <para>Namespace resolution for <see cref="RunScriptIntent"/> reads
-/// <c>SpecialVariables.Kubernetes.Namespace</c> from
-/// <see cref="IntentRenderContext.EffectiveVariables"/>; other intents carry namespace directly.</para>
+/// <see cref="IntentRenderContext.TargetNamespace"/>; other intents carry namespace directly.</para>
 ///
 /// <para>Unsupported intents throw <see cref="IntentRenderingException"/>.</para>
 /// </summary>
@@ -71,17 +69,17 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
+            TargetNamespace = context.TargetNamespace,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
 
     private static ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
     {
-        var files = ToLegacyFiles(intent.YamlFiles);
+        var deploymentFiles = new DeploymentFileCollection(intent.YamlFiles);
         var applyScript = BuildApplyScript(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
-            files, intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
+            deploymentFiles.ToLegacyDictionary(), intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
         var rawScript = applyScript + waitScript;
         var wrappedScript = WrapBodyWithNamespace(rawScript, intent.Syntax, ResolveNamespaceForApply(intent.Namespace));
 
@@ -100,7 +98,8 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = files,
+            TargetNamespace = context.TargetNamespace,
+            DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -133,19 +132,9 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         return syntax == ScriptSyntax.Bash ? prefixed : prefixed.Replace("/", "\\");
     }
 
-    private static Dictionary<string, byte[]> ToLegacyFiles(IReadOnlyList<DeploymentFile> yamlFiles)
-    {
-        var result = new Dictionary<string, byte[]>(yamlFiles.Count);
-
-        foreach (var file in yamlFiles)
-            result[file.RelativePath] = file.Content;
-
-        return result;
-    }
-
     private static ScriptExecutionRequest RenderHelmUpgrade(HelmUpgradeIntent intent, IntentRenderContext context)
     {
-        var files = HelmUpgradeScriptBuilder.BuildFiles(intent);
+        var deploymentFiles = HelmUpgradeScriptBuilder.BuildDeploymentFiles(intent);
         var rawScript = HelmUpgradeScriptBuilder.Build(intent, intent.Syntax);
         var namespace_ = ResolveNamespaceForApply(intent.Namespace);
         var wrappedScript = WrapBodyWithNamespace(rawScript, intent.Syntax, namespace_);
@@ -165,7 +154,8 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = ((ExecutionIntent)intent).Timeout ?? context.StepTimeout,
-            Files = files,
+            TargetNamespace = context.TargetNamespace,
+            DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -191,17 +181,14 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = new Dictionary<string, byte[]>(),
+            TargetNamespace = context.TargetNamespace,
             PackageReferences = context.PackageReferences.ToList()
         };
     }
 
     private static string ResolveNamespace(IntentRenderContext context)
     {
-        var ns = context.EffectiveVariables
-            .FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value;
-
-        return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
+        return string.IsNullOrWhiteSpace(context.TargetNamespace) ? KubernetesDefaultValues.Namespace : context.TargetNamespace;
     }
 
     private static string ResolveNamespaceForApply(string intentNamespace)

@@ -150,7 +150,6 @@ public class LocalProcessExecutionStrategyPreparerTests
             ExecutionMode = ExecutionMode.DirectScript,
             Syntax = syntax,
             ReleaseVersion = "1.0.0",
-            Files = new Dictionary<string, byte[]>(),
             Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
         };
     }

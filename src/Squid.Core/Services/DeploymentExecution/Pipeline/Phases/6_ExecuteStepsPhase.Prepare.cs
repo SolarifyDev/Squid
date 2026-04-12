@@ -93,13 +93,6 @@ public sealed partial class ExecuteStepsPhase
             .ToList();
     }
 
-    private static string? ResolveTargetNamespace(List<VariableDto> variables)
-    {
-        var namespaceVar = variables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace);
-
-        return namespaceVar?.Value;
-    }
-
     private static SensitiveValueMasker BuildSensitiveMasker(List<VariableDto> variables)
     {
         var sensitiveValues = variables.Where(v => v.IsSensitive && !string.IsNullOrEmpty(v.Value)).Select(v => v.Value);

@@ -9,32 +9,7 @@ public class ScriptExecutionRequestTests
     private static readonly byte[] SampleContent = { 0x01, 0x02, 0x03 };
 
     [Fact]
-    public void DeploymentFiles_WhenUnset_DerivesFromLegacyFilesDictionary()
-    {
-        var request = new ScriptExecutionRequest
-        {
-            Files = new Dictionary<string, byte[]>
-            {
-                ["deploy.yaml"] = SampleContent,
-                ["content/values.yaml"] = SampleContent
-            }
-        };
-
-        request.DeploymentFiles.Count.ShouldBe(2);
-        request.DeploymentFiles.Select(f => f.RelativePath).ShouldBe(new[] { "deploy.yaml", "content/values.yaml" }, ignoreOrder: true);
-        request.DeploymentFiles.All(f => f.Kind == DeploymentFileKind.Asset).ShouldBeTrue();
-    }
-
-    [Fact]
-    public void DeploymentFiles_WhenFilesIsNull_ReturnsEmptyCollection()
-    {
-        var request = new ScriptExecutionRequest { Files = null };
-
-        request.DeploymentFiles.ShouldBeSameAs(DeploymentFileCollection.Empty);
-    }
-
-    [Fact]
-    public void DeploymentFiles_WhenFilesIsEmpty_ReturnsEmptyCollection()
+    public void DeploymentFiles_Default_IsEmpty()
     {
         var request = new ScriptExecutionRequest();
 
@@ -42,20 +17,36 @@ public class ScriptExecutionRequestTests
     }
 
     [Fact]
-    public void DeploymentFiles_WhenExplicitlySet_OverridesLegacyFiles()
+    public void DeploymentFiles_WhenSetDirectly_Works()
     {
-        var request = new ScriptExecutionRequest
+        var collection = new DeploymentFileCollection(new[]
         {
-            Files = new Dictionary<string, byte[]> { ["legacy.yaml"] = SampleContent },
-            DeploymentFiles = new DeploymentFileCollection(new[]
-            {
-                DeploymentFile.Script("deploy.sh", SampleContent),
-                DeploymentFile.Asset("content/values.yaml", SampleContent)
-            })
-        };
+            DeploymentFile.Script("deploy.sh", SampleContent),
+            DeploymentFile.Asset("content/values.yaml", SampleContent)
+        });
+
+        var request = new ScriptExecutionRequest { DeploymentFiles = collection };
 
         request.DeploymentFiles.Count.ShouldBe(2);
         request.DeploymentFiles[0].Kind.ShouldBe(DeploymentFileKind.Script);
         request.DeploymentFiles[1].RelativePath.ShouldBe("content/values.yaml");
+    }
+
+    [Fact]
+    public void DeploymentFiles_PreservesFileKinds()
+    {
+        var collection = new DeploymentFileCollection(new[]
+        {
+            DeploymentFile.Script("run.sh", SampleContent),
+            DeploymentFile.Asset("deploy.yaml", SampleContent),
+            DeploymentFile.Package("app.nupkg", SampleContent)
+        });
+
+        var request = new ScriptExecutionRequest { DeploymentFiles = collection };
+
+        request.DeploymentFiles.Count.ShouldBe(3);
+        request.DeploymentFiles[0].Kind.ShouldBe(DeploymentFileKind.Script);
+        request.DeploymentFiles[1].Kind.ShouldBe(DeploymentFileKind.Asset);
+        request.DeploymentFiles[2].Kind.ShouldBe(DeploymentFileKind.Package);
     }
 }
