@@ -198,31 +198,50 @@ public class SshIntentRendererTests
         rendered.PackageReferences.ShouldBeEmpty();
     }
 
-    // ========== RunScriptIntent: legacy-forwarded fields (Phase 9i bridge) ==========
+    // ========== RunScriptIntent: context-sourced PackageReferences ==========
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_ForwardsLegacyPackageReferencesWhenPresent()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesFromContext()
     {
         var packages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/acme.zip", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = packages };
+        var ctx = NewContext(legacy: null, packageReferences: packages);
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_ForwardsLegacyFilesWhenPresent()
+    public async Task RenderAsync_RunScriptIntent_IgnoresLegacyPackageReferences()
     {
-        var files = new Dictionary<string, byte[]> { { "extra.txt", new byte[] { 1, 2, 3 } } };
-        var legacy = new ScriptExecutionRequest { Files = files };
+        var legacyPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/old.zip", PackageId: "Old", Version: "1.0.0", SizeBytes: 100, Hash: "old")
+        };
+        var contextPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/new.zip", PackageId: "New", Version: "2.0.0", SizeBytes: 200, Hash: "new")
+        };
+        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
+        var ctx = NewContext(legacy, packageReferences: contextPackages);
+
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBe(contextPackages);
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_FilesAlwaysEmpty()
+    {
+        var legacyFiles = new Dictionary<string, byte[]> { { "extra.txt", new byte[] { 1, 2, 3 } } };
+        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
 
-        rendered.Files.ShouldBe(files);
+        rendered.Files.ShouldBeEmpty();
     }
 
     // ========== Non-RunScript intents still pass through ==========
@@ -271,7 +290,8 @@ public class SshIntentRendererTests
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
         string? releaseVersion = "1.0.0",
-        TimeSpan? stepTimeout = null)
+        TimeSpan? stepTimeout = null,
+        List<PackageAcquisitionResult>? packageReferences = null)
     {
         return new IntentRenderContext
         {
@@ -286,6 +306,7 @@ public class SshIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
+            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>(),
             LegacyRequest = legacy
         };
     }

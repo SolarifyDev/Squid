@@ -3,11 +3,11 @@ using System.Text.RegularExpressions;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 
@@ -37,10 +37,9 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 ///
 /// <para>
 /// Namespace resolution for <see cref="RunScriptIntent"/> — which has no namespace field —
-/// reads <c>IntentRenderContext.LegacyRequest.ActionProperties</c> via
-/// <see cref="KubernetesPropertyParser"/>, falling back to
-/// <see cref="KubernetesDefaultValues.Namespace"/>. This is the Phase 5 bridge that Phase 9k
-/// deletes in favour of handlers emitting namespace-aware intents.
+/// reads <c>SpecialVariables.Kubernetes.Namespace</c> from
+/// <see cref="IntentRenderContext.EffectiveVariables"/>, falling back to
+/// <see cref="KubernetesDefaultValues.Namespace"/>.
 /// </para>
 ///
 /// <para>
@@ -72,8 +71,7 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
 
     private static ScriptExecutionRequest RenderRunScript(RunScriptIntent intent, IntentRenderContext context)
     {
-        var legacy = context.LegacyRequest;
-        var namespace_ = ResolveNamespaceFromLegacy(legacy);
+        var namespace_ = ResolveNamespace(context);
         var wrappedBody = WrapBodyWithNamespace(intent.ScriptBody, intent.Syntax, namespace_);
 
         return new ScriptExecutionRequest
@@ -91,14 +89,13 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = legacy?.Files ?? new Dictionary<string, byte[]>(),
-            PackageReferences = legacy?.PackageReferences ?? new List<PackageAcquisitionResult>()
+            Files = new Dictionary<string, byte[]>(),
+            PackageReferences = context.PackageReferences.ToList()
         };
     }
 
     private static ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
     {
-        var legacy = context.LegacyRequest;
         var files = ToLegacyFiles(intent.YamlFiles);
         var applyScript = BuildApplyScript(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
@@ -122,7 +119,7 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
             Files = files,
-            PackageReferences = legacy?.PackageReferences ?? new List<PackageAcquisitionResult>()
+            PackageReferences = context.PackageReferences.ToList()
         };
     }
 
@@ -164,12 +161,12 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         return result;
     }
 
-    private static string ResolveNamespaceFromLegacy(ScriptExecutionRequest? legacy)
+    private static string ResolveNamespace(IntentRenderContext context)
     {
-        if (legacy?.ActionProperties != null && legacy.ActionProperties.Count > 0)
-            return KubernetesPropertyParser.GetNamespace(legacy.ActionProperties);
+        var ns = context.EffectiveVariables
+            .FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value;
 
-        return KubernetesDefaultValues.Namespace;
+        return string.IsNullOrWhiteSpace(ns) ? KubernetesDefaultValues.Namespace : ns;
     }
 
     private static string ResolveNamespaceForApply(string intentNamespace)

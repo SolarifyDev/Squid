@@ -2,7 +2,6 @@ using System.Text;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
-using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -73,7 +72,6 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
 
     private ScriptExecutionRequest RenderRunScript(RunScriptIntent intent, IntentRenderContext context)
     {
-        var legacy = context.LegacyRequest;
         var wrappedBody = WrapRunScriptBody(intent, context);
 
         return new ScriptExecutionRequest
@@ -91,8 +89,8 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = legacy?.Files ?? new Dictionary<string, byte[]>(),
-            PackageReferences = legacy?.PackageReferences ?? new List<PackageAcquisitionResult>()
+            Files = new Dictionary<string, byte[]>(),
+            PackageReferences = context.PackageReferences.ToList()
         };
     }
 
@@ -106,7 +104,6 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
 
     private ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
     {
-        var legacy = context.LegacyRequest;
         var files = ToLegacyFiles(intent.YamlFiles);
         var applyScript = BuildApplyScript(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
@@ -130,7 +127,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
             Files = files,
-            PackageReferences = legacy?.PackageReferences ?? new List<PackageAcquisitionResult>()
+            PackageReferences = context.PackageReferences.ToList()
         };
     }
 

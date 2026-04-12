@@ -1,5 +1,4 @@
 using Squid.Core.Services.DeploymentExecution.Intents;
-using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -48,8 +47,6 @@ public sealed class SshIntentRenderer : IIntentRenderer
 
     private static ScriptExecutionRequest RenderRunScript(RunScriptIntent intent, IntentRenderContext context)
     {
-        var legacy = context.LegacyRequest;
-
         return new ScriptExecutionRequest
         {
             ScriptBody = intent.ScriptBody,
@@ -65,8 +62,8 @@ public sealed class SshIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            Files = legacy?.Files ?? new Dictionary<string, byte[]>(),
-            PackageReferences = legacy?.PackageReferences ?? new List<PackageAcquisitionResult>()
+            Files = new Dictionary<string, byte[]>(),
+            PackageReferences = context.PackageReferences.ToList()
         };
     }
 

@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -357,6 +358,7 @@ public sealed partial class ExecuteStepsPhase
             ServerTaskId = _ctx.ServerTaskId,
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
+            PackageReferences = request?.PackageReferences ?? new List<PackageAcquisitionResult>(),
             LegacyRequest = request
         };
 

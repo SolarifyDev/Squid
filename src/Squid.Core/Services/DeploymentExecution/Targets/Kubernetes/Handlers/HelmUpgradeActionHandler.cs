@@ -396,30 +396,104 @@ public class HelmUpgradeActionHandler : IActionHandler
     {
         if (action == null) return Array.Empty<DeploymentFile>();
 
+        var valueSources = action.GetProperty(KubernetesHelmProperties.ValueSources);
+
+        if (!string.IsNullOrWhiteSpace(valueSources))
+            return BuildMultiSourceValuesForIntent(valueSources);
+
+        return BuildSingleYamlValuesForIntent(action);
+    }
+
+    private static IReadOnlyList<DeploymentFile> BuildMultiSourceValuesForIntent(string valueSources)
+    {
+        try
+        {
+            var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources, SquidJsonDefaults.CaseInsensitive);
+
+            if (sources == null) return Array.Empty<DeploymentFile>();
+
+            var files = new List<DeploymentFile>();
+            var fileIndex = 0;
+
+            foreach (var source in sources)
+            {
+                if (string.IsNullOrWhiteSpace(source.Value)) continue;
+                if (!string.Equals(source.Type, "InlineYaml", StringComparison.OrdinalIgnoreCase)) continue;
+
+                files.Add(DeploymentFile.Asset($"values-{fileIndex++}.yaml", Encoding.UTF8.GetBytes(source.Value)));
+            }
+
+            return files;
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<DeploymentFile>();
+        }
+    }
+
+    private static IReadOnlyList<DeploymentFile> BuildSingleYamlValuesForIntent(DeploymentActionDto action)
+    {
         var rawYaml = action.GetProperty(KubernetesHelmProperties.YamlValues);
 
         if (string.IsNullOrWhiteSpace(rawYaml))
             return Array.Empty<DeploymentFile>();
 
-        var content = Encoding.UTF8.GetBytes(rawYaml);
-
-        return new[]
-        {
-            DeploymentFile.Asset("rawYamlValues.yaml", content)
-        };
+        return new[] { DeploymentFile.Asset("rawYamlValues.yaml", Encoding.UTF8.GetBytes(rawYaml)) };
     }
 
     private static IReadOnlyDictionary<string, string> BuildInlineValuesForIntent(DeploymentActionDto action)
     {
         if (action == null) return EmptyInlineValues;
 
+        var result = new Dictionary<string, string>();
+
+        MergeKeyValuesFromValueSources(action, result);
+        MergeKeyValuesFromProperty(action, result);
+
+        return result.Count > 0 ? result : EmptyInlineValues;
+    }
+
+    private static void MergeKeyValuesFromValueSources(DeploymentActionDto action, Dictionary<string, string> target)
+    {
+        var valueSources = action.GetProperty(KubernetesHelmProperties.ValueSources);
+
+        if (string.IsNullOrWhiteSpace(valueSources)) return;
+
+        try
+        {
+            var sources = JsonSerializer.Deserialize<List<HelmValueSource>>(valueSources, SquidJsonDefaults.CaseInsensitive);
+
+            if (sources == null) return;
+
+            foreach (var source in sources)
+            {
+                if (string.IsNullOrWhiteSpace(source.Value)) continue;
+                if (!string.Equals(source.Type, "KeyValues", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var kvp = JsonSerializer.Deserialize<Dictionary<string, string>>(source.Value, SquidJsonDefaults.CaseInsensitive);
+
+                if (kvp == null) continue;
+
+                foreach (var entry in kvp)
+                    target[entry.Key] = entry.Value;
+            }
+        }
+        catch (JsonException)
+        {
+            // Parse failure should not block deployment
+        }
+    }
+
+    private static void MergeKeyValuesFromProperty(DeploymentActionDto action, Dictionary<string, string> target)
+    {
         var keyValuesRaw = action.GetProperty(KubernetesHelmProperties.KeyValues);
 
-        if (string.IsNullOrWhiteSpace(keyValuesRaw)) return EmptyInlineValues;
+        if (string.IsNullOrWhiteSpace(keyValuesRaw)) return;
 
-        var parsed = TryParseJsonKeyValues(keyValuesRaw);
+        var parsed = TryParseJsonKeyValues(keyValuesRaw) ?? ParseCommaSeparatedKeyValues(keyValuesRaw);
 
-        return parsed ?? ParseCommaSeparatedKeyValues(keyValuesRaw);
+        foreach (var entry in parsed)
+            target[entry.Key] = entry.Value;
     }
 
     private static Dictionary<string, string> TryParseJsonKeyValues(string raw)

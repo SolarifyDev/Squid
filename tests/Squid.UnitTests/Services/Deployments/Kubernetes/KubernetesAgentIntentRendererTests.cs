@@ -28,8 +28,8 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 /// create probe for non-default namespaces). Non-shell syntaxes (Python, ...) are left
 /// unwrapped. Namespace is resolved from <see cref="KubernetesApplyIntent.Namespace"/>
 /// for apply intents; for <see cref="RunScriptIntent"/> — which has no namespace field —
-/// the renderer pulls it from <see cref="IntentRenderContext.LegacyRequest"/>.ActionProperties
-/// (the Phase 5 bridge that Phase 9k deletes).
+/// the renderer reads <c>SpecialVariables.Kubernetes.Namespace</c> from
+/// <see cref="IntentRenderContext.EffectiveVariables"/>.
 /// </summary>
 public class KubernetesAgentIntentRendererTests
 {
@@ -83,9 +83,9 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_BashSyntax_PrependsNamespaceContext()
     {
         var intent = NewRunScriptIntent(scriptBody: "echo from-intent", syntax: ScriptSyntax.Bash);
-        var legacy = NewLegacy(namespaceValue: "production");
+        var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("echo from-intent");
@@ -95,9 +95,9 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_BashSyntax_NamespacePreambleComesBeforeBody()
     {
         var intent = NewRunScriptIntent(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
-        var legacy = NewLegacy(namespaceValue: "staging");
+        var vars = NamespaceVariable("staging");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         var preambleIdx = rendered.ScriptBody.IndexOf("set-context", StringComparison.Ordinal);
         var bodyIdx = rendered.ScriptBody.IndexOf("echo hello", StringComparison.Ordinal);
@@ -109,9 +109,9 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_PowerShellSyntax_PrependsNamespaceContext()
     {
         var intent = NewRunScriptIntent(scriptBody: "Write-Host hi", syntax: ScriptSyntax.PowerShell);
-        var legacy = NewLegacy(namespaceValue: "production");
+        var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("| Out-Null");
@@ -130,7 +130,7 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_FallsBackToDefaultNamespace()
+    public async Task RenderAsync_RunScriptIntent_NoNamespaceVariable_FallsBackToDefaultNamespace()
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
 
@@ -140,12 +140,12 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NoActionProperties_FallsBackToDefaultNamespace()
+    public async Task RenderAsync_RunScriptIntent_EmptyNamespaceVariable_FallsBackToDefaultNamespace()
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
-        var legacy = new ScriptExecutionRequest { ActionProperties = null };
+        var vars = NamespaceVariable("");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--namespace=\"default\"");
     }
@@ -154,9 +154,9 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_CustomNamespace_UsesCreateNamespaceProbe()
     {
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
-        var legacy = NewLegacy(namespaceValue: "my-ns");
+        var vars = NamespaceVariable("my-ns");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
     }
@@ -165,9 +165,9 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_DefaultNamespace_DoesNotEmitCreateProbe()
     {
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
-        var legacy = NewLegacy(namespaceValue: "default");
+        var vars = NamespaceVariable("default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
     }
@@ -269,7 +269,7 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_FilesAndPackagesEmpty()
+    public async Task RenderAsync_RunScriptIntent_FilesAndPackagesEmpty()
     {
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
 
@@ -281,19 +281,45 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_ForwardsLegacyFilesAndPackagesWhenPresent()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesFromContext()
     {
-        var files = new Dictionary<string, byte[]> { ["extra.txt"] = new byte[] { 1, 2, 3 } };
         var packages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/a.zip", PackageId: "A", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
-        var legacy = new ScriptExecutionRequest { Files = files, PackageReferences = packages };
+
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBe(packages);
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_FilesAlwaysEmpty()
+    {
+        var legacyFiles = new Dictionary<string, byte[]> { ["extra.txt"] = new byte[] { 1, 2, 3 } };
+        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
 
-        rendered.Files.ShouldBe(files);
-        rendered.PackageReferences.ShouldBe(packages);
+        rendered.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_IgnoresLegacyPackageReferences()
+    {
+        var legacyPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/old.zip", PackageId: "Old", Version: "1.0.0", SizeBytes: 100, Hash: "old")
+        };
+        var contextPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/new.zip", PackageId: "New", Version: "2.0.0", SizeBytes: 200, Hash: "new")
+        };
+        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
+
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBe(contextPackages);
     }
 
     // ========== KubernetesApplyIntent: basic rendering ==========
@@ -638,17 +664,34 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_ForwardsLegacyPackageReferencesWhenPresent()
+    public async Task RenderAsync_KubernetesApplyIntent_PackageReferencesFromContext()
     {
         var packages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = packages };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyPackageReferences()
+    {
+        var legacyPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/old.tgz", PackageId: "old-chart", Version: "1.0.0", SizeBytes: 100, Hash: "old")
+        };
+        var contextPackages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/new.tgz", PackageId: "new-chart", Version: "2.0.0", SizeBytes: 200, Hash: "new")
+        };
+        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
+
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+
+        rendered.PackageReferences.ShouldBe(contextPackages);
     }
 
     // ========== Non-native intents still pass through ==========
@@ -715,14 +758,11 @@ public class KubernetesAgentIntentRendererTests
         };
     }
 
-    private static ScriptExecutionRequest NewLegacy(string namespaceValue)
+    private static List<VariableDto> NamespaceVariable(string namespaceValue)
     {
-        return new ScriptExecutionRequest
+        return new List<VariableDto>
         {
-            ActionProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Squid.Action.KubernetesContainers.Namespace"] = namespaceValue
-            }
+            new() { Name = "Squid.Action.Kubernetes.Namespace", Value = namespaceValue }
         };
     }
 
@@ -734,7 +774,8 @@ public class KubernetesAgentIntentRendererTests
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
         string? releaseVersion = "1.0.0",
-        TimeSpan? stepTimeout = null)
+        TimeSpan? stepTimeout = null,
+        List<PackageAcquisitionResult>? packageReferences = null)
     {
         return new IntentRenderContext
         {
@@ -749,6 +790,7 @@ public class KubernetesAgentIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
+            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>(),
             LegacyRequest = legacy
         };
     }

@@ -532,4 +532,162 @@ public class HelmUpgradeActionHandlerDescribeIntentTests
         await Should.ThrowAsync<ArgumentNullException>(
             () => ((IActionHandler)_handler).DescribeIntentAsync(null!, CancellationToken.None));
     }
+
+    // ========== ValueSources: multi-source support ==========
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_SingleInlineYaml_EmitsValuesFile()
+    {
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "InlineYaml", Value = "replicaCount: 5" }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.Count.ShouldBe(1);
+        intent.ValuesFiles[0].RelativePath.ShouldBe("values-0.yaml");
+        Encoding.UTF8.GetString(intent.ValuesFiles[0].Content).ShouldBe("replicaCount: 5");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_MultipleInlineYaml_EmitsMultipleFiles()
+    {
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "InlineYaml", Value = "replicaCount: 3" },
+            new { Type = "InlineYaml", Value = "image:\n  tag: v2" }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.Count.ShouldBe(2);
+        intent.ValuesFiles[0].RelativePath.ShouldBe("values-0.yaml");
+        intent.ValuesFiles[1].RelativePath.ShouldBe("values-1.yaml");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_KeyValues_MergedIntoInlineValues()
+    {
+        var kvJson = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["image.tag"] = "v3.0",
+            ["replicaCount"] = "7"
+        });
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "KeyValues", Value = kvJson }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.InlineValues["image.tag"].ShouldBe("v3.0");
+        intent.InlineValues["replicaCount"].ShouldBe("7");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_TakesPrecedenceOverYamlValues()
+    {
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "InlineYaml", Value = "from: valueSources" }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources,
+            [KubernetesHelmProperties.YamlValues] = "from: yamlValues"
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.Count.ShouldBe(1);
+        Encoding.UTF8.GetString(intent.ValuesFiles[0].Content).ShouldBe("from: valueSources");
+        intent.ValuesFiles[0].RelativePath.ShouldBe("values-0.yaml");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_EmptyValue_Skipped()
+    {
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "InlineYaml", Value = "" },
+            new { Type = "InlineYaml", Value = "valid: true" }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.Count.ShouldBe(1);
+        intent.ValuesFiles[0].RelativePath.ShouldBe("values-0.yaml");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_InvalidJson_ReturnsEmpty()
+    {
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = "not-valid-json{"
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_MixedTypes_FilesAndInlineValues()
+    {
+        var kvJson = JsonSerializer.Serialize(new Dictionary<string, string> { ["env"] = "prod" });
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "InlineYaml", Value = "replicaCount: 3" },
+            new { Type = "KeyValues", Value = kvJson }
+        });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.ValuesFiles.Count.ShouldBe(1);
+        intent.ValuesFiles[0].RelativePath.ShouldBe("values-0.yaml");
+        intent.InlineValues["env"].ShouldBe("prod");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ValueSources_KeyValuesMergedWithKeyValuesProperty()
+    {
+        var vsKeyValues = JsonSerializer.Serialize(new Dictionary<string, string> { ["from"] = "valueSources" });
+        var sources = JsonSerializer.Serialize(new[]
+        {
+            new { Type = "KeyValues", Value = vsKeyValues }
+        });
+        var propKeyValues = JsonSerializer.Serialize(new Dictionary<string, string> { ["from2"] = "property" });
+        var ctx = CreateContext(action: CreateAction(properties: new Dictionary<string, string>
+        {
+            [KubernetesHelmProperties.ValueSources] = sources,
+            [KubernetesHelmProperties.KeyValues] = propKeyValues
+        }));
+
+        var intent = (HelmUpgradeIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+
+        intent.InlineValues["from"].ShouldBe("valueSources");
+        intent.InlineValues["from2"].ShouldBe("property");
+    }
 }

@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Models.Deployments.Process;
@@ -37,6 +38,13 @@ public sealed class IntentRenderContext
 
     /// <summary>Optional per-step wall-clock timeout; <c>null</c> means "transport default".</summary>
     public TimeSpan? StepTimeout { get; init; }
+
+    /// <summary>
+    /// Post-acquisition package references for this action, matched from acquired packages
+    /// by action name. Populated by the pipeline at dispatch time. Renderers should prefer
+    /// this over <see cref="LegacyRequest"/>.PackageReferences.
+    /// </summary>
+    public IReadOnlyList<PackageAcquisitionResult> PackageReferences { get; init; } = Array.Empty<PackageAcquisitionResult>();
 
     /// <summary>
     /// Phase 5 bridge: the <see cref="ScriptExecutionRequest"/> built by the legacy
