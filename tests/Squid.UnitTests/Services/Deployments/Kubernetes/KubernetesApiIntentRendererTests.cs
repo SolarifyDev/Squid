@@ -874,10 +874,225 @@ public class KubernetesApiIntentRendererTests
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
 
-    // ========== Non-native intents still pass through ==========
+    // ========== HelmUpgradeIntent: native rendering ==========
 
     [Fact]
-    public async Task RenderAsync_NonNativeIntent_NullLegacy_ThrowsIntentRenderingException()
+    public async Task RenderAsync_HelmUpgradeIntent_BashSyntax_InvokesBuilder()
+    {
+        SetupBuilder(returnValue: "wrapped-helm");
+        var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.Bash);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldBe("wrapped-helm");
+        _builderMock.Verify(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ScriptContainsHelmUpgrade()
+    {
+        string? capturedScript = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((script, _, _) => capturedScript = script)
+            .Returns("wrapped");
+
+        var intent = NewHelmUpgradeIntent(releaseName: "my-app", chartReference: "bitnami/nginx");
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        capturedScript.ShouldNotBeNull();
+        capturedScript.ShouldContain("upgrade --install");
+        capturedScript.ShouldContain("my-app");
+        capturedScript.ShouldContain("bitnami/nginx");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_SyntaxFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.PowerShell);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_StepAndActionNameFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewHelmUpgradeIntent() with { StepName = "Helm Step", ActionName = "Helm Action" };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.StepName.ShouldBe("Helm Step");
+        rendered.ActionName.ShouldBe("Helm Action");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ContextFieldsPopulated()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
+        };
+
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
+
+        rendered.ServerTaskId.ShouldBe(99);
+        rendered.ReleaseVersion.ShouldBe("2.0.0");
+        rendered.PackageReferences.ShouldBe(packages);
+        rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ValuesFilesIncludedInFiles()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var valuesFiles = new List<DeploymentFile>
+        {
+            DeploymentFile.Asset("values-0.yaml", BytesFor("key: value")),
+            DeploymentFile.Asset("values-1.yaml", BytesFor("other: data"))
+        };
+        var intent = NewHelmUpgradeIntent() with { ValuesFiles = valuesFiles };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.Count.ShouldBe(2);
+        rendered.Files.ShouldContainKey("values-0.yaml");
+        rendered.Files.ShouldContainKey("values-1.yaml");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_EmptyValuesFiles_EmptyFiles()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewHelmUpgradeIntent() with { ValuesFiles = Array.Empty<DeploymentFile>() };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_TimeoutFallsBackToStepTimeout()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var stepTimeout = TimeSpan.FromMinutes(10);
+
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, stepTimeout: stepTimeout), CancellationToken.None);
+
+        rendered.Timeout.ShouldBe(stepTimeout);
+    }
+
+    // ========== KubernetesKustomizeIntent: native rendering ==========
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_BashSyntax_InvokesBuilder()
+    {
+        SetupBuilder(returnValue: "wrapped-kustomize");
+        var intent = NewKustomizeIntent(syntax: ScriptSyntax.Bash);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldBe("wrapped-kustomize");
+        _builderMock.Verify(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ScriptContainsKustomizeBuildAndApply()
+    {
+        string? capturedScript = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((script, _, _) => capturedScript = script)
+            .Returns("wrapped");
+
+        var intent = NewKustomizeIntent(overlayPath: "overlays/production");
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        capturedScript.ShouldNotBeNull();
+        capturedScript.ShouldContain("kustomize");
+        capturedScript.ShouldContain("overlays/production");
+        capturedScript.ShouldContain("kubectl apply");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_SyntaxFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKustomizeIntent(syntax: ScriptSyntax.PowerShell);
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_StepAndActionNameFromIntent()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewKustomizeIntent() with { StepName = "Kustomize Step", ActionName = "Kustomize Action" };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.StepName.ShouldBe("Kustomize Step");
+        rendered.ActionName.ShouldBe("Kustomize Action");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ContextFieldsPopulated()
+    {
+        SetupBuilder(returnValue: "wrapped");
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/pkg.tgz", PackageId: "pkg", Version: "1.0.0", SizeBytes: 100, Hash: "h")
+        };
+
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null, serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
+
+        rendered.ServerTaskId.ShouldBe(77);
+        rendered.ReleaseVersion.ShouldBe("3.0.0");
+        rendered.PackageReferences.ShouldBe(packages);
+        rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_FilesAlwaysEmpty()
+    {
+        SetupBuilder(returnValue: "wrapped");
+
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ServerSideApply_IncludesFlags()
+    {
+        string? capturedScript = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((script, _, _) => capturedScript = script)
+            .Returns("wrapped");
+
+        var intent = NewKustomizeIntent() with { ServerSideApply = true, FieldManager = "my-mgr", ForceConflicts = true };
+
+        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        capturedScript.ShouldNotBeNull();
+        capturedScript.ShouldContain("--server-side");
+        capturedScript.ShouldContain("my-mgr");
+        capturedScript.ShouldContain("--force-conflicts");
+    }
+
+    // ========== Unsupported intents throw ==========
+
+    [Fact]
+    public async Task RenderAsync_UnsupportedIntent_ThrowsIntentRenderingException()
     {
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
@@ -931,6 +1146,31 @@ public class KubernetesApiIntentRendererTests
             ForceConflicts = false,
             ObjectStatusCheck = false,
             StatusCheckTimeoutSeconds = 300
+        };
+    }
+
+    private static HelmUpgradeIntent NewHelmUpgradeIntent(string releaseName = "my-release", string chartReference = "my-chart", ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        return new HelmUpgradeIntent
+        {
+            Name = "helm-upgrade",
+            StepName = "step-1",
+            ActionName = "action-1",
+            Syntax = syntax,
+            ReleaseName = releaseName,
+            ChartReference = chartReference
+        };
+    }
+
+    private static KubernetesKustomizeIntent NewKustomizeIntent(string overlayPath = ".", ScriptSyntax syntax = ScriptSyntax.Bash)
+    {
+        return new KubernetesKustomizeIntent
+        {
+            Name = "k8s-kustomize-apply",
+            StepName = "step-1",
+            ActionName = "action-1",
+            Syntax = syntax,
+            OverlayPath = overlayPath
         };
     }
 

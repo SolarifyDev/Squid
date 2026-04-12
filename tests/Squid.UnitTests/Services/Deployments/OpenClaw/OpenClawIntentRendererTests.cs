@@ -292,10 +292,10 @@ public class OpenClawIntentRendererTests
         rendered.ActionProperties.ShouldNotContainKey("stale");
     }
 
-    // ========== Non-native intents still pass through ==========
+    // ========== Unsupported intents throw ==========
 
     [Fact]
-    public async Task RenderAsync_NonNativeIntent_NullLegacy_ThrowsIntentRenderingException()
+    public async Task RenderAsync_UnsupportedIntent_ThrowsIntentRenderingException()
     {
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
@@ -304,17 +304,6 @@ public class OpenClawIntentRendererTests
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.OpenClaw);
         ex.IntentName.ShouldBe("manual-intervention");
-    }
-
-    [Fact]
-    public async Task RenderAsync_NonNativeIntent_WithLegacy_ReturnsLegacyUnchanged()
-    {
-        var legacy = new ScriptExecutionRequest { ScriptBody = "echo from legacy" };
-        var intent = new ManualInterventionIntent { Name = "manual-intervention" };
-
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
-
-        rendered.ShouldBeSameAs(legacy);
     }
 
     // ========== Helpers ==========

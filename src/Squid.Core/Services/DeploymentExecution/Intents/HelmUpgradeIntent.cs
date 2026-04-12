@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Intents;
 
@@ -23,6 +24,9 @@ public sealed record HelmUpgradeIntent : ExecutionIntent
     /// repo-qualified reference.
     /// </summary>
     public required string ChartReference { get; init; }
+
+    /// <summary>The script syntax to use for the rendered shell script (Bash or PowerShell).</summary>
+    public ScriptSyntax Syntax { get; init; } = ScriptSyntax.Bash;
 
     /// <summary>The target namespace. Empty string means "use the kubeconfig default namespace".</summary>
     public string Namespace { get; init; } = string.Empty;

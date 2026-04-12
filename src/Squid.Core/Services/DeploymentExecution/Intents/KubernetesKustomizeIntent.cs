@@ -1,3 +1,5 @@
+using Squid.Message.Models.Deployments.Execution;
+
 namespace Squid.Core.Services.DeploymentExecution.Intents;
 
 /// <summary>
@@ -28,6 +30,9 @@ public sealed record KubernetesKustomizeIntent : ExecutionIntent
     /// (e.g. <c>--enable-helm</c>, <c>--load-restrictor LoadRestrictionsNone</c>).
     /// </summary>
     public string AdditionalArgs { get; init; } = string.Empty;
+
+    /// <summary>The script syntax to use for the rendered shell script (Bash or PowerShell).</summary>
+    public ScriptSyntax Syntax { get; init; } = ScriptSyntax.Bash;
 
     /// <summary>The target namespace. Empty string means "use the kubeconfig default namespace".</summary>
     public string Namespace { get; init; } = string.Empty;

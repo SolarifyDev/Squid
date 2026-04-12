@@ -8,24 +8,12 @@ using Squid.Message.Models.Deployments.Execution;
 namespace Squid.Core.Services.DeploymentExecution.Ssh.Rendering;
 
 /// <summary>
-/// Phase 9i — the SSH renderer no longer behaves as a pure pass-through.
+/// Natively renders <see cref="RunScriptIntent"/> for the <c>Ssh</c> transport.
+/// Constructs a <see cref="ScriptExecutionRequest"/> from the intent plus
+/// <see cref="IntentRenderContext"/> — script body, syntax, step/action framing, timeout,
+/// variables, and target metadata come from the semantic inputs.
 ///
-/// <para>
-/// When it sees a <see cref="RunScriptIntent"/>, it constructs a fresh
-/// <see cref="ScriptExecutionRequest"/> from the intent plus
-/// <see cref="IntentRenderContext"/>: script body, syntax, step/action framing, timeout,
-/// variables, and target metadata come from the semantic inputs rather than the legacy
-/// request. Package references and legacy side-files are still forwarded from
-/// <see cref="IntentRenderContext.LegacyRequest"/> when present — that bridge goes away in
-/// Phase 9j once handlers emit <c>Assets</c>/<c>Packages</c> on the intent directly.
-/// </para>
-///
-/// <para>
-/// For non-RunScript intents the renderer falls back to the Phase-5 pass-through path
-/// (return <c>LegacyRequest</c> unchanged, throw <see cref="IntentRenderingException"/>
-/// when it is absent). Phase 9j lands transport-native renderers for the remaining
-/// intents and retires the fallback.
-/// </para>
+/// <para>Unsupported intents throw <see cref="IntentRenderingException"/>.</para>
 /// </summary>
 public sealed class SshIntentRenderer : IIntentRenderer
 {
@@ -41,7 +29,7 @@ public sealed class SshIntentRenderer : IIntentRenderer
         return intent switch
         {
             RunScriptIntent runScript => Task.FromResult(RenderRunScript(runScript, context)),
-            _ => Task.FromResult(FallbackToLegacy(intent, context))
+            _ => throw new IntentRenderingException(CommunicationStyle, intent, $"SshIntentRenderer has no native renderer for intent '{intent.Name}' ({intent.GetType().Name}).")
         };
     }
 
@@ -65,16 +53,5 @@ public sealed class SshIntentRenderer : IIntentRenderer
             Files = new Dictionary<string, byte[]>(),
             PackageReferences = context.PackageReferences.ToList()
         };
-    }
-
-    private ScriptExecutionRequest FallbackToLegacy(ExecutionIntent intent, IntentRenderContext context)
-    {
-        if (context.LegacyRequest is null)
-            throw new IntentRenderingException(
-                CommunicationStyle,
-                intent,
-                "SshIntentRenderer has no native renderer for this intent and IntentRenderContext.LegacyRequest is not populated.");
-
-        return context.LegacyRequest;
     }
 }

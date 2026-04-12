@@ -10,25 +10,11 @@ using Squid.Message.Models.Deployments.Execution;
 namespace Squid.Core.Services.DeploymentExecution.OpenClaw.Rendering;
 
 /// <summary>
-/// Phase 9j.4 — the OpenClaw renderer no longer behaves as a pure pass-through.
+/// Natively renders <see cref="OpenClawInvokeIntent"/> for the <c>OpenClaw</c> transport.
+/// <see cref="OpenClawInvokeIntent.Kind"/> is mapped to the legacy action type string and
+/// <see cref="OpenClawInvokeIntent.Parameters"/> are copied into action properties.
 ///
-/// <para>
-/// When it sees an <see cref="OpenClawInvokeIntent"/>, it constructs a fresh
-/// <see cref="ScriptExecutionRequest"/> from the intent plus <see cref="IntentRenderContext"/>.
-/// <see cref="OpenClawInvokeIntent.Kind"/> is mapped to the legacy
-/// <see cref="ScriptExecutionRequest.ActionType"/> string the
-/// <see cref="Squid.Core.Services.DeploymentExecution.OpenClaw.Transport.OpenClawExecutionStrategy"/>
-/// dispatches on, and <see cref="OpenClawInvokeIntent.Parameters"/> are copied verbatim
-/// into <see cref="ScriptExecutionRequest.ActionProperties"/>. Variables, machine,
-/// endpoint, server task id, release version and timeout are hydrated from the context —
-/// the legacy request is no longer consulted for OpenClaw invocations.
-/// </para>
-///
-/// <para>
-/// For intents the renderer doesn't know how to render natively yet, it falls back to the
-/// Phase-5 pass-through path (return <c>LegacyRequest</c> unchanged, throw
-/// <see cref="IntentRenderingException"/> when it is absent).
-/// </para>
+/// <para>Unsupported intents throw <see cref="IntentRenderingException"/>.</para>
 /// </summary>
 public sealed class OpenClawIntentRenderer : IIntentRenderer
 {
@@ -44,7 +30,7 @@ public sealed class OpenClawIntentRenderer : IIntentRenderer
         return intent switch
         {
             OpenClawInvokeIntent invoke => Task.FromResult(RenderInvoke(invoke, context)),
-            _ => Task.FromResult(FallbackToLegacy(intent, context))
+            _ => throw new IntentRenderingException(CommunicationStyle, intent, $"OpenClawIntentRenderer has no native renderer for intent '{intent.Name}' ({intent.GetType().Name}).")
         };
     }
 
@@ -84,14 +70,4 @@ public sealed class OpenClawIntentRenderer : IIntentRenderer
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"Unknown OpenClawInvocationKind: {kind}")
     };
 
-    private ScriptExecutionRequest FallbackToLegacy(ExecutionIntent intent, IntentRenderContext context)
-    {
-        if (context.LegacyRequest is null)
-            throw new IntentRenderingException(
-                CommunicationStyle,
-                intent,
-                "OpenClawIntentRenderer has no native renderer for this intent and IntentRenderContext.LegacyRequest is not populated.");
-
-        return context.LegacyRequest;
-    }
 }

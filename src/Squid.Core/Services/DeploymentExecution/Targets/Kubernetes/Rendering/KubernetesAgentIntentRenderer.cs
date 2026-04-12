@@ -14,39 +14,19 @@ using Squid.Message.Models.Deployments.Execution;
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 
 /// <summary>
-/// Phase 9j.3 — the KubernetesAgent renderer no longer behaves as a pure pass-through.
+/// Natively renders all Kubernetes intent types for the <c>KubernetesAgent</c> transport.
+/// Each intent is translated into a <see cref="ScriptExecutionRequest"/> from the intent
+/// plus <see cref="IntentRenderContext"/>, with namespace preamble wrapping
+/// (<c>kubectl config set-context</c> + optional namespace creation probe) for shell syntaxes.
 ///
-/// <para>
-/// When it sees a <see cref="RunScriptIntent"/>, it constructs a fresh
-/// <see cref="ScriptExecutionRequest"/> from the intent plus <see cref="IntentRenderContext"/>,
-/// prepending the kubectl namespace preamble (plus a <c>kubectl create namespace</c> probe
-/// when the target namespace is non-default) for shell syntaxes (bash / PowerShell). Non-shell
-/// syntaxes (Python, ...) pass the script body through unchanged.
-/// </para>
+/// <para>Supported intents: <see cref="RunScriptIntent"/>, <see cref="KubernetesApplyIntent"/>,
+/// <see cref="HelmUpgradeIntent"/>, <see cref="KubernetesKustomizeIntent"/>.</para>
 ///
-/// <para>
-/// When it sees a <see cref="KubernetesApplyIntent"/>, the renderer synthesises the
-/// <c>kubectl apply -f</c> pipeline (one invocation per file, server-side-apply flags from
-/// the intent), appends a <see cref="KubernetesResourceWaitBuilder"/> status-check block when
-/// <see cref="KubernetesApplyIntent.ObjectStatusCheck"/> is set, and wraps the resulting
-/// script with the namespace preamble from <see cref="KubernetesApplyIntent.Namespace"/> for
-/// shell syntaxes. <c>Files</c> on the returned request are derived directly from
-/// <see cref="KubernetesApplyIntent.YamlFiles"/> — the legacy request is no longer consulted
-/// for YAML content.
-/// </para>
+/// <para>Namespace resolution for <see cref="RunScriptIntent"/> reads
+/// <c>SpecialVariables.Kubernetes.Namespace</c> from
+/// <see cref="IntentRenderContext.EffectiveVariables"/>; other intents carry namespace directly.</para>
 ///
-/// <para>
-/// Namespace resolution for <see cref="RunScriptIntent"/> — which has no namespace field —
-/// reads <c>SpecialVariables.Kubernetes.Namespace</c> from
-/// <see cref="IntentRenderContext.EffectiveVariables"/>, falling back to
-/// <see cref="KubernetesDefaultValues.Namespace"/>.
-/// </para>
-///
-/// <para>
-/// For intents the renderer doesn't know how to render natively yet, it falls back to the
-/// Phase-5 pass-through path (return <c>LegacyRequest</c> unchanged, throw
-/// <see cref="IntentRenderingException"/> when it is absent).
-/// </para>
+/// <para>Unsupported intents throw <see cref="IntentRenderingException"/>.</para>
 /// </summary>
 public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
 {
@@ -65,7 +45,9 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         {
             RunScriptIntent runScript => Task.FromResult(RenderRunScript(runScript, context)),
             KubernetesApplyIntent apply => Task.FromResult(RenderKubernetesApply(apply, context)),
-            _ => Task.FromResult(FallbackToLegacy(intent, context))
+            HelmUpgradeIntent helm => Task.FromResult(RenderHelmUpgrade(helm, context)),
+            KubernetesKustomizeIntent kustomize => Task.FromResult(RenderKustomize(kustomize, context)),
+            _ => throw new IntentRenderingException(CommunicationStyle, intent, $"KubernetesAgentIntentRenderer has no native renderer for intent '{intent.Name}' ({intent.GetType().Name}).")
         };
     }
 
@@ -161,6 +143,59 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         return result;
     }
 
+    private static ScriptExecutionRequest RenderHelmUpgrade(HelmUpgradeIntent intent, IntentRenderContext context)
+    {
+        var files = HelmUpgradeScriptBuilder.BuildFiles(intent);
+        var rawScript = HelmUpgradeScriptBuilder.Build(intent, intent.Syntax);
+        var namespace_ = ResolveNamespaceForApply(intent.Namespace);
+        var wrappedScript = WrapBodyWithNamespace(rawScript, intent.Syntax, namespace_);
+
+        return new ScriptExecutionRequest
+        {
+            ScriptBody = wrappedScript,
+            Syntax = intent.Syntax,
+            StepName = intent.StepName,
+            ActionName = intent.ActionName,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Variables = context.EffectiveVariables.ToList(),
+            Machine = context.Target.Machine,
+            EndpointContext = context.Target.EndpointContext,
+            ServerTaskId = context.ServerTaskId,
+            ReleaseVersion = context.ReleaseVersion,
+            Timeout = ((ExecutionIntent)intent).Timeout ?? context.StepTimeout,
+            Files = files,
+            PackageReferences = context.PackageReferences.ToList()
+        };
+    }
+
+    private static ScriptExecutionRequest RenderKustomize(KubernetesKustomizeIntent intent, IntentRenderContext context)
+    {
+        var rawScript = KubernetesKustomizeScriptBuilder.Build(intent, intent.Syntax);
+        var namespace_ = ResolveNamespaceForApply(intent.Namespace);
+        var wrappedScript = WrapBodyWithNamespace(rawScript, intent.Syntax, namespace_);
+
+        return new ScriptExecutionRequest
+        {
+            ScriptBody = wrappedScript,
+            Syntax = intent.Syntax,
+            StepName = intent.StepName,
+            ActionName = intent.ActionName,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Variables = context.EffectiveVariables.ToList(),
+            Machine = context.Target.Machine,
+            EndpointContext = context.Target.EndpointContext,
+            ServerTaskId = context.ServerTaskId,
+            ReleaseVersion = context.ReleaseVersion,
+            Timeout = intent.Timeout ?? context.StepTimeout,
+            Files = new Dictionary<string, byte[]>(),
+            PackageReferences = context.PackageReferences.ToList()
+        };
+    }
+
     private static string ResolveNamespace(IntentRenderContext context)
     {
         var ns = context.EffectiveVariables
@@ -230,14 +265,4 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         return sb.ToString();
     }
 
-    private ScriptExecutionRequest FallbackToLegacy(ExecutionIntent intent, IntentRenderContext context)
-    {
-        if (context.LegacyRequest is null)
-            throw new IntentRenderingException(
-                CommunicationStyle,
-                intent,
-                "KubernetesAgentIntentRenderer has no native renderer for this intent and IntentRenderContext.LegacyRequest is not populated.");
-
-        return context.LegacyRequest;
-    }
 }

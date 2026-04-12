@@ -77,6 +77,7 @@ public class KubernetesKustomizeActionHandler : IActionHandler
         ArgumentNullException.ThrowIfNull(ctx);
 
         var action = ctx.Action;
+        var syntax = ScriptSyntaxHelper.ResolveSyntax(action);
 
         var overlayPath = action?.GetProperty(KubernetesKustomizeProperties.OverlayPath) ?? ".";
         var customKustomizePath = action?.GetProperty(KubernetesKustomizeProperties.CustomKustomizePath) ?? string.Empty;
@@ -93,6 +94,7 @@ public class KubernetesKustomizeActionHandler : IActionHandler
             Name = "k8s-kustomize-apply",
             StepName = ctx.Step?.Name ?? string.Empty,
             ActionName = action?.Name ?? string.Empty,
+            Syntax = syntax,
             OverlayPath = overlayPath,
             CustomKustomizePath = customKustomizePath,
             AdditionalArgs = additionalArgs,

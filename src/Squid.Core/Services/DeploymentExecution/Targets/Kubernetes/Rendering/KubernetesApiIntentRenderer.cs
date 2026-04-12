@@ -14,35 +14,15 @@ using Squid.Message.Models.Deployments.Execution;
 namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 
 /// <summary>
-/// Phase 9j.1 — the KubernetesApi renderer no longer behaves as a pure pass-through.
+/// Natively renders all Kubernetes intent types for the <c>KubernetesApi</c> transport.
+/// Each intent is translated into a <see cref="ScriptExecutionRequest"/> from the intent
+/// plus <see cref="IntentRenderContext"/>, with kubectl context wrapping via
+/// <see cref="IKubernetesApiContextScriptBuilder"/> for shell syntaxes.
 ///
-/// <para>
-/// When it sees a <see cref="RunScriptIntent"/>, it constructs a fresh
-/// <see cref="ScriptExecutionRequest"/> from the intent plus <see cref="IntentRenderContext"/>,
-/// applying kubectl context wrapping via <see cref="IKubernetesApiContextScriptBuilder"/>
-/// for shell syntaxes (bash / PowerShell). Non-shell syntaxes (Python, ...) pass the
-/// script body through unchanged.
-/// </para>
+/// <para>Supported intents: <see cref="RunScriptIntent"/>, <see cref="KubernetesApplyIntent"/>,
+/// <see cref="HelmUpgradeIntent"/>, <see cref="KubernetesKustomizeIntent"/>.</para>
 ///
-/// <para>
-/// Phase 9j.2 — <see cref="KubernetesApplyIntent"/> is also rendered natively. The
-/// renderer synthesises the <c>kubectl apply -f</c> pipeline (one invocation per
-/// file, server-side-apply flags from the intent), appends a
-/// <see cref="KubernetesResourceWaitBuilder"/> status-check block when
-/// <see cref="KubernetesApplyIntent.ObjectStatusCheck"/> is set, and wraps the resulting
-/// script with the cluster's kubectl context for shell syntaxes. <c>Files</c> on the
-/// returned request are derived directly from <see cref="KubernetesApplyIntent.YamlFiles"/>
-/// — the legacy request is no longer consulted for YAML content.
-/// </para>
-///
-/// <para>
-/// For intents the renderer doesn't know how to render natively yet, it falls back to
-/// the Phase-5 pass-through path (return <c>LegacyRequest</c> unchanged, throw
-/// <see cref="IntentRenderingException"/> when it is absent). Later Phase 9j sub-steps
-/// land native rendering for <see cref="KubernetesKustomizeIntent"/>,
-/// <see cref="HelmUpgradeIntent"/>, and <see cref="HealthCheckIntent"/> and retire the
-/// fallback.
-/// </para>
+/// <para>Unsupported intents throw <see cref="IntentRenderingException"/>.</para>
 /// </summary>
 public sealed class KubernetesApiIntentRenderer : IIntentRenderer
 {
@@ -66,7 +46,9 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         {
             RunScriptIntent runScript => Task.FromResult(RenderRunScript(runScript, context)),
             KubernetesApplyIntent apply => Task.FromResult(RenderKubernetesApply(apply, context)),
-            _ => Task.FromResult(FallbackToLegacy(intent, context))
+            HelmUpgradeIntent helm => Task.FromResult(RenderHelmUpgrade(helm, context)),
+            KubernetesKustomizeIntent kustomize => Task.FromResult(RenderKustomize(kustomize, context)),
+            _ => throw new IntentRenderingException(CommunicationStyle, intent, $"KubernetesApiIntentRenderer has no native renderer for intent '{intent.Name}' ({intent.GetType().Name}).")
         };
     }
 
@@ -169,12 +151,71 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         return result;
     }
 
+    private ScriptExecutionRequest RenderHelmUpgrade(HelmUpgradeIntent intent, IntentRenderContext context)
+    {
+        var files = HelmUpgradeScriptBuilder.BuildFiles(intent);
+        var rawScript = HelmUpgradeScriptBuilder.Build(intent, intent.Syntax);
+        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context);
+
+        return new ScriptExecutionRequest
+        {
+            ScriptBody = wrappedScript,
+            Syntax = intent.Syntax,
+            StepName = intent.StepName,
+            ActionName = intent.ActionName,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Variables = context.EffectiveVariables.ToList(),
+            Machine = context.Target.Machine,
+            EndpointContext = context.Target.EndpointContext,
+            ServerTaskId = context.ServerTaskId,
+            ReleaseVersion = context.ReleaseVersion,
+            Timeout = ((ExecutionIntent)intent).Timeout ?? context.StepTimeout,
+            Files = files,
+            PackageReferences = context.PackageReferences.ToList()
+        };
+    }
+
+    private ScriptExecutionRequest RenderKustomize(KubernetesKustomizeIntent intent, IntentRenderContext context)
+    {
+        var rawScript = KubernetesKustomizeScriptBuilder.Build(intent, intent.Syntax);
+        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context);
+
+        return new ScriptExecutionRequest
+        {
+            ScriptBody = wrappedScript,
+            Syntax = intent.Syntax,
+            StepName = intent.StepName,
+            ActionName = intent.ActionName,
+            ExecutionMode = ExecutionMode.DirectScript,
+            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
+            PayloadKind = PayloadKind.None,
+            Variables = context.EffectiveVariables.ToList(),
+            Machine = context.Target.Machine,
+            EndpointContext = context.Target.EndpointContext,
+            ServerTaskId = context.ServerTaskId,
+            ReleaseVersion = context.ReleaseVersion,
+            Timeout = intent.Timeout ?? context.StepTimeout,
+            Files = new Dictionary<string, byte[]>(),
+            PackageReferences = context.PackageReferences.ToList()
+        };
+    }
+
     private string WrapApplyBody(string scriptBody, KubernetesApplyIntent intent, IntentRenderContext context)
     {
         if (!ScriptSyntaxHelper.IsShellSyntax(intent.Syntax))
             return scriptBody;
 
         return WrapWithKubectlContext(scriptBody, intent.Syntax, context);
+    }
+
+    private string WrapShellBody(string scriptBody, ScriptSyntax syntax, IntentRenderContext context)
+    {
+        if (!ScriptSyntaxHelper.IsShellSyntax(syntax))
+            return scriptBody;
+
+        return WrapWithKubectlContext(scriptBody, syntax, context);
     }
 
     private string WrapWithKubectlContext(string scriptBody, ScriptSyntax syntax, IntentRenderContext context)
@@ -193,14 +234,4 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         return _contextScriptBuilder.WrapWithContext(scriptBody, scriptContext, customKubectl);
     }
 
-    private ScriptExecutionRequest FallbackToLegacy(ExecutionIntent intent, IntentRenderContext context)
-    {
-        if (context.LegacyRequest is null)
-            throw new IntentRenderingException(
-                CommunicationStyle,
-                intent,
-                "KubernetesApiIntentRenderer has no native renderer for this intent and IntentRenderContext.LegacyRequest is not populated.");
-
-        return context.LegacyRequest;
-    }
 }

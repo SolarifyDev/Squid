@@ -244,21 +244,10 @@ public class SshIntentRendererTests
         rendered.Files.ShouldBeEmpty();
     }
 
-    // ========== Non-RunScript intents still pass through ==========
+    // ========== Unsupported intents throw ==========
 
     [Fact]
-    public async Task RenderAsync_ManualInterventionIntent_PassesLegacyRequestThrough()
-    {
-        var legacy = new ScriptExecutionRequest { ScriptBody = "legacy-body" };
-        var intent = new ManualInterventionIntent { Name = "manual-intervention", Instructions = "Approve?" };
-
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
-
-        rendered.ShouldBeSameAs(legacy);
-    }
-
-    [Fact]
-    public async Task RenderAsync_NonRunScriptIntent_NullLegacy_ThrowsIntentRenderingException()
+    public async Task RenderAsync_UnsupportedIntent_ThrowsIntentRenderingException()
     {
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 

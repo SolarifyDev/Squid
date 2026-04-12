@@ -321,6 +321,7 @@ public class HelmUpgradeActionHandler : IActionHandler
         ArgumentNullException.ThrowIfNull(ctx);
 
         var action = ctx.Action;
+        var syntax = ScriptSyntaxHelper.ResolveSyntax(action);
         var releaseName = BuildReleaseName(action);
         var chartSource = await ResolveIntentChartSourceAsync(ctx, ct).ConfigureAwait(false);
         var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(action);
@@ -332,6 +333,7 @@ public class HelmUpgradeActionHandler : IActionHandler
             Name = "helm-upgrade",
             StepName = ctx.Step?.Name ?? string.Empty,
             ActionName = action?.Name ?? string.Empty,
+            Syntax = syntax,
             ReleaseName = releaseName,
             ChartReference = chartSource.ChartReference,
             ChartVersion = chartSource.ChartVersion,

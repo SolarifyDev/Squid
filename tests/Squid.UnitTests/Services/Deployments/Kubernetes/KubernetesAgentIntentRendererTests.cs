@@ -694,10 +694,201 @@ public class KubernetesAgentIntentRendererTests
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
 
-    // ========== Non-native intents still pass through ==========
+    // ========== HelmUpgradeIntent: native rendering ==========
 
     [Fact]
-    public async Task RenderAsync_NonNativeIntent_NullLegacy_ThrowsIntentRenderingException()
+    public async Task RenderAsync_HelmUpgradeIntent_BashSyntax_PrependsNamespaceContext()
+    {
+        var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.Bash, namespace_: "production");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
+        rendered.ScriptBody.ShouldContain("upgrade --install");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ScriptContainsHelmUpgrade()
+    {
+        var intent = NewHelmUpgradeIntent(releaseName: "my-app", chartReference: "bitnami/nginx");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("upgrade --install");
+        rendered.ScriptBody.ShouldContain("my-app");
+        rendered.ScriptBody.ShouldContain("bitnami/nginx");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_SyntaxFromIntent()
+    {
+        var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.PowerShell, namespace_: "default");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_StepAndActionNameFromIntent()
+    {
+        var intent = NewHelmUpgradeIntent() with { StepName = "Helm Step", ActionName = "Helm Action" };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.StepName.ShouldBe("Helm Step");
+        rendered.ActionName.ShouldBe("Helm Action");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ContextFieldsPopulated()
+    {
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
+        };
+
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
+
+        rendered.ServerTaskId.ShouldBe(99);
+        rendered.ReleaseVersion.ShouldBe("2.0.0");
+        rendered.PackageReferences.ShouldBe(packages);
+        rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_ValuesFilesIncludedInFiles()
+    {
+        var valuesFiles = new List<DeploymentFile>
+        {
+            DeploymentFile.Asset("values-0.yaml", BytesFor("key: value")),
+            DeploymentFile.Asset("values-1.yaml", BytesFor("other: data"))
+        };
+        var intent = NewHelmUpgradeIntent() with { ValuesFiles = valuesFiles };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.Count.ShouldBe(2);
+        rendered.Files.ShouldContainKey("values-0.yaml");
+        rendered.Files.ShouldContainKey("values-1.yaml");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_CustomNamespace_CreatesProbe()
+    {
+        var intent = NewHelmUpgradeIntent(namespace_: "my-ns");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_DefaultNamespace_NoCreateProbe()
+    {
+        var intent = NewHelmUpgradeIntent(namespace_: "default");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
+    }
+
+    // ========== KubernetesKustomizeIntent: native rendering ==========
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_BashSyntax_PrependsNamespaceContext()
+    {
+        var intent = NewKustomizeIntent(syntax: ScriptSyntax.Bash, namespace_: "staging");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"staging\"");
+        rendered.ScriptBody.ShouldContain("kubectl apply");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ScriptContainsKustomizeBuildAndApply()
+    {
+        var intent = NewKustomizeIntent(overlayPath: "overlays/production");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kustomize");
+        rendered.ScriptBody.ShouldContain("overlays/production");
+        rendered.ScriptBody.ShouldContain("kubectl apply");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_SyntaxFromIntent()
+    {
+        var intent = NewKustomizeIntent(syntax: ScriptSyntax.PowerShell, namespace_: "default");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_StepAndActionNameFromIntent()
+    {
+        var intent = NewKustomizeIntent() with { StepName = "Kustomize Step", ActionName = "Kustomize Action" };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.StepName.ShouldBe("Kustomize Step");
+        rendered.ActionName.ShouldBe("Kustomize Action");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ContextFieldsPopulated()
+    {
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/pkg.tgz", PackageId: "pkg", Version: "1.0.0", SizeBytes: 100, Hash: "h")
+        };
+
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null, serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
+
+        rendered.ServerTaskId.ShouldBe(77);
+        rendered.ReleaseVersion.ShouldBe("3.0.0");
+        rendered.PackageReferences.ShouldBe(packages);
+        rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_FilesAlwaysEmpty()
+    {
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null), CancellationToken.None);
+
+        rendered.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_ServerSideApply_IncludesFlags()
+    {
+        var intent = NewKustomizeIntent() with { ServerSideApply = true, FieldManager = "my-mgr", ForceConflicts = true };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("--server-side");
+        rendered.ScriptBody.ShouldContain("my-mgr");
+        rendered.ScriptBody.ShouldContain("--force-conflicts");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_CustomNamespace_CreatesProbe()
+    {
+        var intent = NewKustomizeIntent(namespace_: "custom-ns");
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("kubectl create namespace \"custom-ns\"");
+    }
+
+    // ========== Unsupported intents throw ==========
+
+    [Fact]
+    public async Task RenderAsync_UnsupportedIntent_ThrowsIntentRenderingException()
     {
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
@@ -706,17 +897,6 @@ public class KubernetesAgentIntentRendererTests
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesAgent);
         ex.IntentName.ShouldBe("manual-intervention");
-    }
-
-    [Fact]
-    public async Task RenderAsync_NonNativeIntent_WithLegacy_ReturnsLegacyUnchanged()
-    {
-        var legacy = new ScriptExecutionRequest { ScriptBody = "echo from legacy" };
-        var intent = new ManualInterventionIntent { Name = "manual-intervention" };
-
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
-
-        rendered.ShouldBeSameAs(legacy);
     }
 
     // ========== Helpers ==========
@@ -763,6 +943,33 @@ public class KubernetesAgentIntentRendererTests
         return new List<VariableDto>
         {
             new() { Name = "Squid.Action.Kubernetes.Namespace", Value = namespaceValue }
+        };
+    }
+
+    private static HelmUpgradeIntent NewHelmUpgradeIntent(string releaseName = "my-release", string chartReference = "my-chart", ScriptSyntax syntax = ScriptSyntax.Bash, string namespace_ = "default")
+    {
+        return new HelmUpgradeIntent
+        {
+            Name = "helm-upgrade",
+            StepName = "step-1",
+            ActionName = "action-1",
+            Syntax = syntax,
+            ReleaseName = releaseName,
+            ChartReference = chartReference,
+            Namespace = namespace_
+        };
+    }
+
+    private static KubernetesKustomizeIntent NewKustomizeIntent(string overlayPath = ".", ScriptSyntax syntax = ScriptSyntax.Bash, string namespace_ = "default")
+    {
+        return new KubernetesKustomizeIntent
+        {
+            Name = "k8s-kustomize-apply",
+            StepName = "step-1",
+            ActionName = "action-1",
+            Syntax = syntax,
+            OverlayPath = overlayPath,
+            Namespace = namespace_
         };
     }
 
