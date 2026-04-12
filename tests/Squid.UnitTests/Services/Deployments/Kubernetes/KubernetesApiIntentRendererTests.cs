@@ -108,6 +108,26 @@ public class KubernetesApiIntentRendererTests
         rendered.TargetNamespace.ShouldBe("staging");
     }
 
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_TargetNamespace_PropagatedToRequest()
+    {
+        var intent = NewHelmUpgradeIntent();
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "helm-ns"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("helm-ns");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_TargetNamespace_PropagatedToRequest()
+    {
+        var intent = NewKustomizeIntent();
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "kustomize-ns"), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("kustomize-ns");
+    }
+
     // ========== RunScriptIntent: wrapping behaviour ==========
 
     [Fact]

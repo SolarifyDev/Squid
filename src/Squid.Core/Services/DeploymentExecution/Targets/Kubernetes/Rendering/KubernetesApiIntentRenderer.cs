@@ -1,4 +1,3 @@
-using System.Text;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
@@ -87,7 +86,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
     private ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
     {
         var deploymentFiles = new DeploymentFileCollection(intent.YamlFiles);
-        var applyScript = BuildApplyScript(intent);
+        var applyScript = KubernetesApplyScriptBuilder.Build(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
             deploymentFiles.ToLegacyDictionary(), intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
         var rawScript = applyScript + waitScript;
@@ -114,33 +113,6 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         };
     }
 
-    private static string BuildApplyScript(KubernetesApplyIntent intent)
-    {
-        if (intent.YamlFiles.Count == 0)
-            return string.Empty;
-
-        var sb = new StringBuilder();
-
-        var sortedFiles = intent.YamlFiles
-            .OrderBy(f => f.RelativePath, StringComparer.Ordinal)
-            .ToList();
-
-        foreach (var file in sortedFiles)
-        {
-            var targetPath = ToTargetPath(file.RelativePath, intent.Syntax);
-            var cmd = KubernetesApplyCommandBuilder.Build(targetPath, intent.ServerSideApply, intent.FieldManager, intent.ForceConflicts);
-            sb.AppendLine(cmd);
-        }
-
-        return sb.ToString();
-    }
-
-    private static string ToTargetPath(string relativePath, ScriptSyntax syntax)
-    {
-        var prefixed = $"./{relativePath}";
-
-        return syntax == ScriptSyntax.Bash ? prefixed : prefixed.Replace("/", "\\");
-    }
 
     private ScriptExecutionRequest RenderHelmUpgrade(HelmUpgradeIntent intent, IntentRenderContext context)
     {
