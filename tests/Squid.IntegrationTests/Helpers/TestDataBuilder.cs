@@ -316,7 +316,7 @@ public class TestDataBuilder
         return entity;
     }
 
-    public async Task<Machine> CreateMachineAsync(int environmentId, string name = "Test Machine", string roles = "web-server")
+    public async Task<Machine> CreateMachineAsync(int environmentId, string name = "Test Machine", string roles = "web-server", string endpoint = """{"CommunicationStyle":"None"}""")
     {
         var entity = new Machine
         {
@@ -325,7 +325,7 @@ public class TestDataBuilder
             Roles = System.Text.Json.JsonSerializer.Serialize(new[] { roles }),
             EnvironmentIds = System.Text.Json.JsonSerializer.Serialize(new[] { environmentId }),
             SpaceId = 1,
-            Endpoint = "{}",
+            Endpoint = endpoint,
             Slug = name.ToLowerInvariant().Replace(" ", "-")
         };
 

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -57,16 +59,7 @@ public partial class TestBase
             .AsImplementedInterfaces()
             .InstancePerLifetimeScope();
 
-        var selfCertSetting = configuration.GetSection("SelfCert").Get<SelfCertSetting>();
-
-        if (string.IsNullOrEmpty(selfCertSetting?.Base64))
-        {
-            containerBuilder.RegisterInstance(new SelfCertSetting
-            {
-                Base64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64"),
-                Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty
-            }).AsSelf().SingleInstance();
-        }
+        containerBuilder.RegisterInstance(ResolveSelfCertSetting(configuration)).AsSelf().SingleInstance();
 
         containerBuilder.RegisterType<MockSquidBackgroundJobClient>()
             .As<ISquidBackgroundJobClient>()
@@ -123,5 +116,40 @@ public partial class TestBase
         };
 
         return builder.ToString();
+    }
+
+    private static SelfCertSetting ResolveSelfCertSetting(IConfiguration configuration)
+    {
+        var base64 = configuration["SelfCert:Base64"];
+
+        if (!string.IsNullOrEmpty(base64))
+            return new SelfCertSetting { Base64 = base64, Password = configuration["SelfCert:Password"] ?? string.Empty };
+
+        var envBase64 = Environment.GetEnvironmentVariable("HALIBUT_CERT_BASE64");
+
+        if (!string.IsNullOrEmpty(envBase64))
+            return new SelfCertSetting { Base64 = envBase64, Password = Environment.GetEnvironmentVariable("HALIBUT_CERT_PASSWORD") ?? string.Empty };
+
+        return new SelfCertSetting
+        {
+            Base64 = Convert.ToBase64String(CreateSelfSignedCertBytes()),
+            Password = string.Empty
+        };
+    }
+
+    private static byte[] CreateSelfSignedCertBytes()
+    {
+        using var rsa = RSA.Create(2048);
+
+        var request = new CertificateRequest(
+            "CN=squid-integration-test", rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+
+        using var cert = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddYears(1));
+
+        return cert.Export(X509ContentType.Pfx, string.Empty);
     }
 }
