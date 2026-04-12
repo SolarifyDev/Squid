@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -56,17 +58,17 @@ data:
             };
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _yamlHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_yamlHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             // Write files to temp dir
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-yaml-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
-            foreach (var file in result.Files)
+            foreach (var file in intent.YamlFiles)
             {
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
             }
 
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
@@ -123,16 +125,16 @@ data:
             };
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _yamlHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_yamlHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-yaml-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
-            foreach (var file in result.Files)
+            foreach (var file in intent.YamlFiles)
             {
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
             }
 
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);

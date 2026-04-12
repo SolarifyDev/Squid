@@ -15,31 +15,9 @@ public class KubernetesDeployConfigMapActionHandler : IActionHandler
 
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployConfigMap;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var properties = KubernetesPropertyParser.BuildPropertyDictionary(ctx.Action);
-
-        if (!_generator.CanGenerate(properties))
-            return Task.FromResult<ActionExecutionResult>(null);
-
-        var yaml = _generator.Generate(properties);
-
-        return Task.FromResult(new ActionExecutionResult
-        {
-            ScriptBody = KubernetesApplyCommandBuilder.Build("./configmap.yaml", ctx.Action, ScriptSyntax.Bash),
-            Files = new Dictionary<string, byte[]> { ["configmap.yaml"] = Encoding.UTF8.GetBytes(yaml) },
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = ScriptSyntax.Bash
-        });
-    }
-
     /// <summary>
-    /// Phase 9c.4 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
-    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
-    /// (<c>k8s-apply</c>). The generated ConfigMap YAML is carried as a single
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>). The generated ConfigMap YAML is carried as a single
     /// <c>configmap.yaml</c> asset. Unconfigured or invalid actions produce an empty
     /// <c>YamlFiles</c> collection (a semantic no-op).
     /// </summary>

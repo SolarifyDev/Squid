@@ -11,7 +11,6 @@ using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.UnitTests.Services.Deployments.Execution.Handlers;
@@ -123,17 +122,6 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
     {
         _handlerRegistryMock.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.TargetLevel);
         _handlerRegistryMock.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(_actionHandlerMock.Object);
-
-        _actionHandlerMock.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult
-            {
-                ActionName = actionName,
-                ActionType = "Squid.Script",
-                ScriptBody = "echo 'test'",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                Files = new Dictionary<string, byte[]>()
-            });
 
         _actionHandlerMock.SetupDescribeIntentAsRunScript(scriptBody: "echo 'test'");
     }
@@ -314,28 +302,6 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
 
         _handlerRegistryMock.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.TargetLevel);
         _handlerRegistryMock.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(_actionHandlerMock.Object);
-
-        _actionHandlerMock.Setup(h => h.PrepareAsync(It.Is<ActionExecutionContext>(ctx => ctx.Action.Name == action1Name), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult
-            {
-                ActionName = action1Name,
-                ActionType = "Squid.Script",
-                ScriptBody = "echo 'web'",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                Files = new Dictionary<string, byte[]>()
-            });
-
-        _actionHandlerMock.Setup(h => h.PrepareAsync(It.Is<ActionExecutionContext>(ctx => ctx.Action.Name == action2Name), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult
-            {
-                ActionName = action2Name,
-                ActionType = "Squid.Script",
-                ScriptBody = "echo 'db'",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                Files = new Dictionary<string, byte[]>()
-            });
 
         _actionHandlerMock.SetupDescribeIntentAsRunScript();
 

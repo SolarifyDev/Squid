@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -40,11 +42,11 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
                 rulesJson: $"[{{\"host\":\"basic.example.com\",\"http\":{{\"paths\":[{{\"path\":\"/\",\"pathType\":\"Prefix\",\"backend\":{{\"service\":{{\"name\":\"web-svc\",\"port\":{{\"number\":80}}}}}}}}]}}}}]");
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-            result.ShouldNotBeNull();
+            intent.YamlFiles.ShouldNotBeEmpty();
 
-            var tempDir = await WriteFilesAndWrapScriptAsync(result, clusterUrl, token, testNs);
+            var tempDir = await WriteFilesAndWrapScriptAsync(intent, clusterUrl, token, testNs);
 
             try
             {
@@ -85,11 +87,11 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
                 tlsJson: "[{\"hosts\":[\"secure.example.com\"],\"secretName\":\"tls-cert\"}]");
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-            result.ShouldNotBeNull();
+            intent.YamlFiles.ShouldNotBeEmpty();
 
-            var tempDir = await WriteFilesAndWrapScriptAsync(result, clusterUrl, token, testNs);
+            var tempDir = await WriteFilesAndWrapScriptAsync(intent, clusterUrl, token, testNs);
 
             try
             {
@@ -133,11 +135,11 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
                 ingressClassName: "nginx");
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-            result.ShouldNotBeNull();
+            intent.YamlFiles.ShouldNotBeEmpty();
 
-            var tempDir = await WriteFilesAndWrapScriptAsync(result, clusterUrl, token, testNs);
+            var tempDir = await WriteFilesAndWrapScriptAsync(intent, clusterUrl, token, testNs);
 
             try
             {
@@ -160,7 +162,7 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
     }
 
     [Fact]
-    public async Task DeployIngress_NoRules_ReturnsNull()
+    public async Task DeployIngress_NoRules_ReturnsEmptyYamlFiles()
     {
         var action = BuildIngressAction(
             ingressName: "no-rules",
@@ -168,9 +170,10 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
             rulesJson: null);
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
@@ -195,11 +198,11 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
                 rulesJson: rulesJson);
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-            result.ShouldNotBeNull();
+            intent.YamlFiles.ShouldNotBeEmpty();
 
-            var tempDir = await WriteFilesAndWrapScriptAsync(result, clusterUrl, token, testNs);
+            var tempDir = await WriteFilesAndWrapScriptAsync(intent, clusterUrl, token, testNs);
 
             try
             {
@@ -260,15 +263,15 @@ public class KubernetesDeployIngressE2ETests : KubernetesApiE2ETestBase
     }
 
     private async Task<(string Dir, string Script)> WriteFilesAndWrapScriptAsync(
-        ActionExecutionResult result, string clusterUrl, string token, string ns)
+        KubernetesApplyIntent intent, string clusterUrl, string token, string ns)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"squid-ing-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
-        foreach (var file in result.Files)
-            await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+        foreach (var file in intent.YamlFiles)
+            await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
 
-        var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+        var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
         var scriptContext = MakeScriptContext(clusterUrl, token, ns);
         var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 

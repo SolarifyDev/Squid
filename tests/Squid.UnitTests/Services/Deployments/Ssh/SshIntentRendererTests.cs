@@ -53,7 +53,7 @@ public class SshIntentRendererTests
     public async Task RenderAsync_NullIntent_Throws()
     {
         await Should.ThrowAsync<ArgumentNullException>(
-            async () => await _renderer.RenderAsync(null!, NewContext(legacy: new ScriptExecutionRequest()), CancellationToken.None));
+            async () => await _renderer.RenderAsync(null!, NewContext(), CancellationToken.None));
     }
 
     [Fact]
@@ -66,13 +66,11 @@ public class SshIntentRendererTests
     // ========== RunScriptIntent: intent-sourced fields ==========
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_ScriptBodyFromIntentNotLegacy()
+    public async Task RenderAsync_RunScriptIntent_ScriptBodyFromIntent()
     {
         var intent = NewRunScriptIntent(scriptBody: "echo from-intent");
-        var legacy = new ScriptExecutionRequest { ScriptBody = "echo from-legacy" };
-        var ctx = NewContext(legacy);
 
-        var rendered = await _renderer.RenderAsync(intent, ctx, CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("echo from-intent");
     }
@@ -81,9 +79,8 @@ public class SshIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_SyntaxFromIntent()
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.PowerShell);
-        var legacy = new ScriptExecutionRequest { ScriptBody = "legacy", Syntax = ScriptSyntax.Bash };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -92,9 +89,8 @@ public class SshIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_StepAndActionNameFromIntent()
     {
         var intent = NewRunScriptIntent() with { StepName = "Deploy Step", ActionName = "Deploy Action" };
-        var legacy = new ScriptExecutionRequest { StepName = "legacy-step", ActionName = "legacy-action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Deploy Step");
         rendered.ActionName.ShouldBe("Deploy Action");
@@ -108,7 +104,7 @@ public class SshIntentRendererTests
             new() { Name = "Foo", Value = "Bar" },
             new() { Name = "Secret", Value = "shh", IsSensitive = true }
         };
-        var ctx = NewContext(legacy: null, variables: contextVariables);
+        var ctx = NewContext(variables: contextVariables);
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -127,7 +123,7 @@ public class SshIntentRendererTests
             EndpointContext = endpoint,
             CommunicationStyle = CommunicationStyle.Ssh
         };
-        var ctx = NewContext(legacy: null, target: target);
+        var ctx = NewContext(target: target);
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -138,7 +134,7 @@ public class SshIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_ServerTaskIdAndReleaseVersionFromContext()
     {
-        var ctx = NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0");
+        var ctx = NewContext(serverTaskId: 99, releaseVersion: "2.5.0");
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -150,7 +146,7 @@ public class SshIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_TimeoutPrefersIntentOverStepTimeout()
     {
         var intent = NewRunScriptIntent() with { Timeout = TimeSpan.FromMinutes(3) };
-        var ctx = NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7));
+        var ctx = NewContext(stepTimeout: TimeSpan.FromMinutes(7));
 
         var rendered = await _renderer.RenderAsync(intent, ctx, CancellationToken.None);
 
@@ -160,7 +156,7 @@ public class SshIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_TimeoutFallsBackToStepTimeout()
     {
-        var ctx = NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7));
+        var ctx = NewContext(stepTimeout: TimeSpan.FromMinutes(7));
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -170,19 +166,19 @@ public class SshIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_ExecutionModeDirectScript()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
         rendered.PayloadKind.ShouldBe(PayloadKind.None);
     }
 
-    // ========== RunScriptIntent: works without LegacyRequest ==========
+    // ========== RunScriptIntent: native rendering ==========
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_DoesNotThrow()
+    public async Task RenderAsync_RunScriptIntent_NativeRendering_DoesNotThrow()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(scriptBody: "echo independent"), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(scriptBody: "echo independent"), NewContext(), CancellationToken.None);
 
         rendered.ShouldNotBeNull();
         rendered.ScriptBody.ShouldBe("echo independent");
@@ -191,9 +187,9 @@ public class SshIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_PackageReferencesEmpty()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesEmptyByDefault()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBeEmpty();
     }
@@ -207,7 +203,7 @@ public class SshIntentRendererTests
         {
             new(LocalPath: "/tmp/acme.zip", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
-        var ctx = NewContext(legacy: null, packageReferences: packages);
+        var ctx = NewContext(packageReferences: packages);
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -215,18 +211,13 @@ public class SshIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_IgnoresLegacyPackageReferences()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesFromContextOnly()
     {
-        var legacyPackages = new List<PackageAcquisitionResult>
-        {
-            new(LocalPath: "/tmp/old.zip", PackageId: "Old", Version: "1.0.0", SizeBytes: 100, Hash: "old")
-        };
         var contextPackages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/new.zip", PackageId: "New", Version: "2.0.0", SizeBytes: 200, Hash: "new")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
-        var ctx = NewContext(legacy, packageReferences: contextPackages);
+        var ctx = NewContext(packageReferences: contextPackages);
 
         var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), ctx, CancellationToken.None);
 
@@ -236,10 +227,7 @@ public class SshIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_FilesAlwaysEmpty()
     {
-        var legacyFiles = new Dictionary<string, byte[]> { { "extra.txt", new byte[] { 1, 2, 3 } } };
-        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
-
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
@@ -252,7 +240,7 @@ public class SshIntentRendererTests
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
         var ex = await Should.ThrowAsync<IntentRenderingException>(
-            async () => await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None));
+            async () => await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None));
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.Ssh);
         ex.IntentName.ShouldBe("manual-intervention");
@@ -274,7 +262,6 @@ public class SshIntentRendererTests
     }
 
     private static IntentRenderContext NewContext(
-        ScriptExecutionRequest? legacy,
         List<VariableDto>? variables = null,
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
@@ -295,8 +282,7 @@ public class SshIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
-            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>(),
-            LegacyRequest = legacy
+            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
         };
     }
 }

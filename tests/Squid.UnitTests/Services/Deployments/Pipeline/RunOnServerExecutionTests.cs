@@ -510,17 +510,6 @@ public class RunOnServerExecutionTests
     {
         public string ActionType => "Squid.Script";
 
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            return Task.FromResult(new ActionExecutionResult
-            {
-                ScriptBody = $"echo ACTION={ctx.Action.Name}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Skip
-            });
-        }
-
         public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
             Task.FromResult<ExecutionIntent>(new RunScriptIntent
             {

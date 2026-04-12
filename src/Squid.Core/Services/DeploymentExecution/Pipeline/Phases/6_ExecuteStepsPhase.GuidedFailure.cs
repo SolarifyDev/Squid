@@ -3,7 +3,6 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -17,11 +16,11 @@ internal enum ActionDirective
 
 public sealed partial class ExecuteStepsPhase
 {
-    private async Task<ActionDirective> ResolveResumeDirectiveAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
+    private async Task<ActionDirective> ResolveResumeDirectiveAsync(DeploymentStepDto step, string actionName, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
     {
         if (!_ctx.IsResume || !_ctx.UseGuidedFailure) return ActionDirective.Execute;
 
-        var outcome = await ResolveGuidedFailureOnResumeAsync(step, actionResult, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+        var outcome = await ResolveGuidedFailureOnResumeAsync(step, actionName, tc, stepDisplayOrder, ct).ConfigureAwait(false);
 
         return outcome switch
         {
@@ -32,9 +31,9 @@ public sealed partial class ExecuteStepsPhase
         };
     }
 
-    private async Task<InterruptionOutcome?> ResolveGuidedFailureOnResumeAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
+    private async Task<InterruptionOutcome?> ResolveGuidedFailureOnResumeAsync(DeploymentStepDto step, string actionName, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
     {
-        var existing = await interruptionService.FindResolvedInterruptionAsync(_ctx.ServerTaskId, step.Name, actionResult.ActionName, tc.Machine.Name, ct).ConfigureAwait(false);
+        var existing = await interruptionService.FindResolvedInterruptionAsync(_ctx.ServerTaskId, step.Name, actionName, tc.Machine.Name, ct).ConfigureAwait(false);
 
         if (existing == null) return null;
 
@@ -53,14 +52,14 @@ public sealed partial class ExecuteStepsPhase
         return outcome;
     }
 
-    private async Task HandleGuidedFailureAsync(DeploymentStepDto step, ActionExecutionResult actionResult, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
+    private async Task HandleGuidedFailureAsync(DeploymentStepDto step, string actionName, DeploymentTargetContext tc, Exception ex, int stepDisplayOrder, int actionSortOrder, CancellationToken ct)
     {
-        var form = InterruptionFormBuilder.BuildGuidedFailureForm(step.Name, actionResult.ActionName, tc.Machine.Name, ex.Message);
+        var form = InterruptionFormBuilder.BuildGuidedFailureForm(step.Name, actionName, tc.Machine.Name, ex.Message);
 
         await lifecycle.EmitAsync(new GuidedFailurePromptEvent(new DeploymentEventContext
         {
             StepDisplayOrder = stepDisplayOrder, StepName = step.Name,
-            ActionName = actionResult.ActionName, MachineName = tc.Machine.Name,
+            ActionName = actionName, MachineName = tc.Machine.Name,
             ActionSortOrder = actionSortOrder, Error = ex.Message,
             InterruptionType = InterruptionType.GuidedFailure
         }), ct).ConfigureAwait(false);
@@ -69,7 +68,7 @@ public sealed partial class ExecuteStepsPhase
         {
             ServerTaskId = _ctx.ServerTaskId, DeploymentId = _ctx.Deployment.Id,
             InterruptionType = InterruptionType.GuidedFailure, StepDisplayOrder = stepDisplayOrder,
-            StepName = step.Name, ActionName = actionResult.ActionName,
+            StepName = step.Name, ActionName = actionName,
             MachineName = tc.Machine.Name, ErrorMessage = ex.Message,
             Form = form, SpaceId = _ctx.Deployment.SpaceId
         }, ct).ConfigureAwait(false);

@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -50,11 +52,11 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             });
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (HelmUpgradeIntent)await ((IActionHandler)_helmHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
+            var fullScript = _contextBuilder.WrapWithContext(BuildHelmScript(intent), scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Helm upgrade failed: {scriptResult.StdErr}");
@@ -94,24 +96,25 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             });
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (HelmUpgradeIntent)await ((IActionHandler)_helmHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             // Verify the values file was created
-            result.Files.ShouldContainKey("rawYamlValues.yaml");
-            var valuesContent = Encoding.UTF8.GetString(result.Files["rawYamlValues.yaml"]);
+            intent.ValuesFiles.ShouldNotBeEmpty();
+            intent.ValuesFiles.ShouldContain(f => f.RelativePath == "rawYamlValues.yaml");
+            var valuesContent = Encoding.UTF8.GetString(intent.ValuesFiles.First(f => f.RelativePath == "rawYamlValues.yaml").Content);
             valuesContent.ShouldContain("replicaCount: 1");
 
             // Write values file to temp dir and modify script to reference it
             var tempDir = Path.Combine(Path.GetTempPath(), $"squid-helm-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
 
-            foreach (var file in result.Files)
+            foreach (var file in intent.ValuesFiles)
             {
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
             }
 
             // Prepend cd to temp dir in script so values file is found
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\n{BuildHelmScript(intent)}";
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
@@ -148,11 +151,11 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             });
 
             var ctx = new ActionExecutionContext { Action = action };
-            var result = await _helmHandler.PrepareAsync(ctx, CancellationToken.None);
+            var intent = (HelmUpgradeIntent)await ((IActionHandler)_helmHandler).DescribeIntentAsync(ctx, CancellationToken.None);
 
             var scriptContext = MakeScriptContext(clusterUrl, token, testNs);
 
-            var fullScript = _contextBuilder.WrapWithContext(result.ScriptBody, scriptContext);
+            var fullScript = _contextBuilder.WrapWithContext(BuildHelmScript(intent), scriptContext);
 
             var scriptResult = await ExecuteBashScriptAsync(fullScript);
             scriptResult.ExitCode.ShouldBe(0, $"Helm dry-run failed: {scriptResult.StdErr}");
@@ -187,6 +190,22 @@ public class HelmUpgradeE2ETests : KubernetesApiE2ETestBase
             Endpoint = endpoint,
             Syntax = ScriptSyntax.Bash
         };
+    }
+
+    private static string BuildHelmScript(HelmUpgradeIntent intent)
+    {
+        var cmd = $"helm upgrade --install {intent.ReleaseName} {intent.ChartReference}";
+
+        if (!string.IsNullOrEmpty(intent.Namespace))
+            cmd += $" --namespace {intent.Namespace}";
+        if (intent.ResetValues)
+            cmd += " --reset-values";
+        foreach (var vf in intent.ValuesFiles)
+            cmd += $" -f {vf.RelativePath}";
+        if (!string.IsNullOrEmpty(intent.AdditionalArgs))
+            cmd += $" {intent.AdditionalArgs}";
+
+        return cmd;
     }
 
     private static DeploymentActionDto CreateHelmAction(Dictionary<string, string> properties)

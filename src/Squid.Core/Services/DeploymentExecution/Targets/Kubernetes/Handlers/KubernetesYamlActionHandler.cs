@@ -38,46 +38,12 @@ public class KubernetesYamlActionHandler : IActionHandler
                && _yamlGenerators.Any(g => g.CanHandle(action));
     }
 
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var generator = _yamlGenerators.FirstOrDefault(g => g.CanHandle(ctx.Action));
-
-        if (generator == null)
-            return null;
-
-        var syntax = ScriptSyntax.Bash;
-
-        var yamlFiles = await ResolveGeneratedYamlFilesAsync(ctx, generator, ct).ConfigureAwait(false);
-
-        var scriptBody = BuildApplyScript(yamlFiles, ctx.Action, syntax);
-        scriptBody += ExtractAndAppendShellScripts(yamlFiles);
-
-        var namespace_ = GetNamespaceFromAction(ctx.Action);
-        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(yamlFiles, ctx.Action, namespace_, syntax);
-
-        RemoveNonYamlFiles(yamlFiles);
-
-        return new ActionExecutionResult
-        {
-            ScriptBody = scriptBody,
-            Files = yamlFiles,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = syntax
-        };
-    }
-
     /// <summary>
-    /// Phase 9c.2 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
-    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
-    /// (<c>k8s-apply</c>). YAML generation (container image resolution, deployment id
-    /// suffix injection, feed secret injection, generator invocation) is shared with
-    /// <see cref="PrepareAsync"/> via <see cref="ResolveGeneratedYamlFilesAsync"/>; the
-    /// intent's <c>YamlFiles</c> is then filtered to valid YAML entries only — non-YAML
-    /// helper scripts (e.g. <c>.sh</c>) are a legacy kubectl-wrapping concern that do not
-    /// belong in the intent model.
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>). YAML generation (container image resolution,
+    /// deployment id suffix injection, feed secret injection, generator invocation) is
+    /// handled by <see cref="ResolveGeneratedYamlFilesAsync"/>; the intent's
+    /// <c>YamlFiles</c> is filtered to valid YAML entries only.
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
@@ -130,51 +96,9 @@ public class KubernetesYamlActionHandler : IActionHandler
         return files;
     }
 
-    private static string BuildApplyScript(Dictionary<string, byte[]> yamlFiles, DeploymentActionDto action, ScriptSyntax syntax)
-    {
-        var sb = new StringBuilder();
-
-        foreach (var fileName in yamlFiles.Keys.Where(IsYamlFile).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var targetPath = syntax == ScriptSyntax.Bash ? $"./{fileName}" : $".\\{fileName}";
-            sb.AppendLine(KubernetesApplyCommandBuilder.Build(targetPath, action, syntax));
-        }
-
-        return sb.ToString();
-    }
-
-    private static string ExtractAndAppendShellScripts(Dictionary<string, byte[]> yamlFiles)
-    {
-        var sb = new StringBuilder();
-
-        foreach (var fileName in yamlFiles.Keys.Where(IsShellScript).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var content = Encoding.UTF8.GetString(yamlFiles[fileName]);
-
-            if (!string.IsNullOrWhiteSpace(content))
-            {
-                sb.AppendLine();
-                sb.AppendLine(content);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static void RemoveNonYamlFiles(Dictionary<string, byte[]> yamlFiles)
-    {
-        var nonYamlKeys = yamlFiles.Keys.Where(k => !IsYamlFile(k)).ToList();
-
-        foreach (var key in nonYamlKeys)
-            yamlFiles.Remove(key);
-    }
-
     private static bool IsYamlFile(string fileName)
         => fileName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
            || fileName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsShellScript(string fileName)
-        => fileName.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string> GenerateFeedSecretAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

@@ -1,7 +1,4 @@
-using System;
 using System.Linq;
-using Squid.Core.Services.DeploymentExecution;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 
@@ -20,8 +17,6 @@ public class ActionHandlerRegistryTests
         mock.Setup(h => h.ActionType).Returns(actionType);
         mock.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>()))
             .Returns<DeploymentActionDto>(a => string.Equals(a?.ActionType, actionType, StringComparison.OrdinalIgnoreCase));
-        mock.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult());
         return mock.Object;
     }
 

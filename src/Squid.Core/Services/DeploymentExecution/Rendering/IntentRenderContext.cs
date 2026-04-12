@@ -1,5 +1,4 @@
 using Squid.Core.Services.DeploymentExecution.Packages;
-using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -8,16 +7,8 @@ namespace Squid.Core.Services.DeploymentExecution.Rendering;
 
 /// <summary>
 /// Everything a renderer needs beyond the intent itself to produce a transport-specific
-/// <see cref="ScriptExecutionRequest"/>. Assembled by <c>ExecuteStepsPhase</c> at
+/// <see cref="Script.ScriptExecutionRequest"/>. Assembled by <c>ExecuteStepsPhase</c> at
 /// dispatch time and passed unchanged to the resolved <see cref="IIntentRenderer"/>.
-///
-/// <para>
-/// <b>Phase 5 bridge:</b> the <see cref="LegacyRequest"/> property carries the pre-built
-/// <see cref="ScriptExecutionRequest"/> produced by the legacy <c>BuildScriptExecutionRequest</c>
-/// path. In Phase 5 every concrete renderer simply returns it unchanged — preserving
-/// behaviour while the renderer abstraction is wired through the pipeline and covered
-/// with tests. Phase 9 removes this field once handlers emit real semantic intents.
-/// </para>
 /// </summary>
 public sealed class IntentRenderContext
 {
@@ -41,14 +32,7 @@ public sealed class IntentRenderContext
 
     /// <summary>
     /// Post-acquisition package references for this action, matched from acquired packages
-    /// by action name. Populated by the pipeline at dispatch time. Renderers should prefer
-    /// this over <see cref="LegacyRequest"/>.PackageReferences.
+    /// by action name. Populated by the pipeline at dispatch time.
     /// </summary>
     public IReadOnlyList<PackageAcquisitionResult> PackageReferences { get; init; } = Array.Empty<PackageAcquisitionResult>();
-
-    /// <summary>
-    /// Phase 5 bridge: the <see cref="ScriptExecutionRequest"/> built by the legacy
-    /// <c>BuildScriptExecutionRequest</c> path. Phase-5 renderers pass it through unchanged.
-    /// </summary>
-    public ScriptExecutionRequest? LegacyRequest { get; init; }
 }

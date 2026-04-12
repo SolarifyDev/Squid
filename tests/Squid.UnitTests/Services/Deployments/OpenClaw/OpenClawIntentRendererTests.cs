@@ -17,16 +17,14 @@ using Squid.Message.Models.Deployments.Variable;
 namespace Squid.UnitTests.Services.Deployments.OpenClaw;
 
 /// <summary>
-/// Phase 9j.4 — <see cref="OpenClawIntentRenderer"/> natively renders
+/// <see cref="OpenClawIntentRenderer"/> natively renders
 /// <see cref="OpenClawInvokeIntent"/> by constructing a fresh
 /// <see cref="ScriptExecutionRequest"/> from the intent plus <see cref="IntentRenderContext"/>.
-/// The renderer maps <see cref="OpenClawInvokeIntent.Kind"/> onto the legacy
+/// The renderer maps <see cref="OpenClawInvokeIntent.Kind"/> onto the
 /// <c>ScriptExecutionRequest.ActionType</c> string expected by
 /// <c>OpenClawExecutionStrategy</c>, forwards <see cref="OpenClawInvokeIntent.Parameters"/>
 /// as <c>ActionProperties</c>, and hydrates variables / machine / timeout from the render
-/// context. Non-native intents still fall back to the Phase 5 pass-through path
-/// (<see cref="IntentRenderContext.LegacyRequest"/>) and throw
-/// <see cref="IntentRenderingException"/> when it is absent.
+/// context. Unsupported intents throw <see cref="IntentRenderingException"/>.
 /// </summary>
 public class OpenClawIntentRendererTests
 {
@@ -64,7 +62,7 @@ public class OpenClawIntentRendererTests
     public async Task RenderAsync_NullIntent_Throws()
     {
         await Should.ThrowAsync<ArgumentNullException>(
-            async () => await _renderer.RenderAsync(null!, NewContext(legacy: new ScriptExecutionRequest()), CancellationToken.None));
+            async () => await _renderer.RenderAsync(null!, NewContext(), CancellationToken.None));
     }
 
     [Fact]
@@ -88,7 +86,7 @@ public class OpenClawIntentRendererTests
     {
         var intent = NewInvokeIntent(kind: kind);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ActionType.ShouldBe(expectedActionType);
     }
@@ -106,7 +104,7 @@ public class OpenClawIntentRendererTests
         };
         var intent = NewInvokeIntent(kind: OpenClawInvocationKind.InvokeTool, parameters: parameters);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ActionProperties.ShouldNotBeNull();
         rendered.ActionProperties[SpecialVariables.OpenClaw.PropTool].ShouldBe("kubectl");
@@ -119,7 +117,7 @@ public class OpenClawIntentRendererTests
     {
         var intent = NewInvokeIntent(parameters: new Dictionary<string, string>());
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ActionProperties.ShouldNotBeNull();
         rendered.ActionProperties.Count.ShouldBe(0);
@@ -135,7 +133,7 @@ public class OpenClawIntentRendererTests
             // Parameters defaults to empty dictionary via record init
         };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ActionProperties.ShouldNotBeNull();
     }
@@ -147,7 +145,7 @@ public class OpenClawIntentRendererTests
     {
         var vars = new List<VariableDto> { new() { Name = SpecialVariables.OpenClaw.BaseUrl, Value = "https://gateway" } };
 
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(variables: vars), CancellationToken.None);
 
         rendered.Variables.ShouldNotBeNull();
         rendered.Variables.Select(v => v.Name).ShouldContain(SpecialVariables.OpenClaw.BaseUrl);
@@ -165,7 +163,7 @@ public class OpenClawIntentRendererTests
             CommunicationStyle = CommunicationStyle.OpenClaw
         };
 
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(target: target), CancellationToken.None);
 
         rendered.Machine.ShouldBeSameAs(machine);
         rendered.EndpointContext.ShouldBeSameAs(endpoint);
@@ -176,7 +174,7 @@ public class OpenClawIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(
             NewInvokeIntent(),
-            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            NewContext(serverTaskId: 99, releaseVersion: "2.5.0"),
             CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
@@ -188,7 +186,7 @@ public class OpenClawIntentRendererTests
     {
         var intent = NewInvokeIntent() with { StepName = "Wake Prod", ActionName = "Wake Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Wake Prod");
         rendered.ActionName.ShouldBe("Wake Action");
@@ -201,7 +199,7 @@ public class OpenClawIntentRendererTests
     {
         var intent = NewInvokeIntent() with { Timeout = TimeSpan.FromMinutes(3) };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
     }
@@ -209,7 +207,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_TimeoutFallsBackToStepTimeout()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
     }
@@ -217,7 +215,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_NoTimeoutAnywhere_IsNull()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.Timeout.ShouldBeNull();
     }
@@ -227,7 +225,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_ExecutionModeDirectScript()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
     }
@@ -235,7 +233,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_ContextPreparationPolicySkip()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
     }
@@ -243,7 +241,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_PayloadKindNone()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.PayloadKind.ShouldBe(PayloadKind.None);
     }
@@ -251,7 +249,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_SyntaxBash()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.Bash);
     }
@@ -259,7 +257,7 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_FilesEmpty()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldNotBeNull();
         rendered.Files.Count.ShouldBe(0);
@@ -268,28 +266,20 @@ public class OpenClawIntentRendererTests
     [Fact]
     public async Task RenderAsync_InvokeIntent_PackageReferencesEmpty()
     {
-        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewInvokeIntent(), NewContext(), CancellationToken.None);
 
         rendered.PackageReferences.ShouldNotBeNull();
         rendered.PackageReferences.Count.ShouldBe(0);
     }
 
     [Fact]
-    public async Task RenderAsync_InvokeIntent_IgnoresLegacyRequestFields()
+    public async Task RenderAsync_InvokeIntent_SetsActionTypeFromKind()
     {
-        var legacy = new ScriptExecutionRequest
-        {
-            ScriptBody = "legacy body",
-            ActionType = SpecialVariables.ActionTypes.Script,
-            ActionProperties = new Dictionary<string, string> { ["stale"] = "value" }
-        };
         var intent = NewInvokeIntent(kind: OpenClawInvocationKind.Wake);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
-        rendered.ShouldNotBeSameAs(legacy);
         rendered.ActionType.ShouldBe(SpecialVariables.ActionTypes.OpenClawWake);
-        rendered.ActionProperties.ShouldNotContainKey("stale");
     }
 
     // ========== Unsupported intents throw ==========
@@ -300,7 +290,7 @@ public class OpenClawIntentRendererTests
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
         var ex = await Should.ThrowAsync<IntentRenderingException>(
-            async () => await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None));
+            async () => await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None));
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.OpenClaw);
         ex.IntentName.ShouldBe("manual-intervention");
@@ -323,7 +313,6 @@ public class OpenClawIntentRendererTests
     }
 
     private static IntentRenderContext NewContext(
-        ScriptExecutionRequest? legacy,
         List<VariableDto>? variables = null,
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
@@ -342,8 +331,7 @@ public class OpenClawIntentRendererTests
             EffectiveVariables = variables ?? new List<VariableDto>(),
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
-            StepTimeout = stepTimeout,
-            LegacyRequest = legacy
+            StepTimeout = stepTimeout
         };
     }
 }

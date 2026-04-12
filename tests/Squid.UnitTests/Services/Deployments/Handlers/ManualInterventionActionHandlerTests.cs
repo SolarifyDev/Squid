@@ -1,10 +1,8 @@
-using System.Collections.Generic;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Constants;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.UnitTests.Services.Deployments.Handlers;
@@ -55,65 +53,4 @@ public class ManualInterventionActionHandlerTests
         ((IActionHandler)_handler).CanHandle(null).ShouldBeFalse();
     }
 
-    [Fact]
-    public async Task PrepareAsync_ReturnsManualInterventionExecutionMode()
-    {
-        var ctx = BuildContext();
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ExecutionMode.ShouldBe(ExecutionMode.ManualIntervention);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_ExtractsInstructionsFromActionProperties()
-    {
-        var instructions = "Please approve this deployment before continuing.";
-        var ctx = BuildContext(instructions);
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ManualInterventionInstructions.ShouldBe(instructions);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_MissingInstructions_DefaultsToEmptyString()
-    {
-        var ctx = BuildContext();
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ManualInterventionInstructions.ShouldBe("");
-    }
-
-    [Fact]
-    public async Task PrepareAsync_ContextPreparationPolicy_IsSkip()
-    {
-        var ctx = BuildContext();
-
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
-    }
-
-    // === Helpers ===
-
-    private static ActionExecutionContext BuildContext(string instructions = null)
-    {
-        var properties = new List<DeploymentActionPropertyDto>();
-
-        if (instructions != null)
-            properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = instructions });
-
-        return new ActionExecutionContext
-        {
-            Step = new DeploymentStepDto { Name = "Manual Step" },
-            Action = new DeploymentActionDto
-            {
-                Name = "Manual Intervention",
-                ActionType = "Squid.Manual",
-                Properties = properties
-            }
-        };
-    }
 }

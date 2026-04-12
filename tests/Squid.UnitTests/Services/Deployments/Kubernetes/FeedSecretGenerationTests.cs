@@ -12,6 +12,7 @@ using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
@@ -349,10 +350,10 @@ public class FeedSecretGenerationTests
         KubernetesYamlActionHandler.GetNamespaceFromAction(action).ShouldBe("containers-ns");
     }
 
-    // === Integration: PrepareAsync ===
+    // === Integration: DescribeIntentAsync ===
 
     [Fact]
-    public async Task PrepareAsync_CreateFeedSecretsTrue_GeneratesFeedSecretsYaml()
+    public async Task DescribeIntentAsync_CreateFeedSecretsTrue_GeneratesFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -387,13 +388,14 @@ public class FeedSecretGenerationTests
             });
 
         var generator = CreateMockGenerator(canHandle: true);
-        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldContainKey("feedsecrets.yaml");
+        var feedSecretsFile = intent.Assets.FirstOrDefault(f => f.RelativePath == "feedsecrets.yaml");
+        feedSecretsFile.ShouldNotBeNull();
 
-        var secretYaml = Encoding.UTF8.GetString(result.Files["feedsecrets.yaml"]);
+        var secretYaml = Encoding.UTF8.GetString(feedSecretsFile.Content);
         secretYaml.ShouldContain("kind: Secret");
         secretYaml.ShouldContain("name: \"myregistry-registry-secret\"");
         secretYaml.ShouldContain("namespace: \"staging\"");
@@ -405,7 +407,7 @@ public class FeedSecretGenerationTests
     }
 
     [Fact]
-    public async Task PrepareAsync_CreateFeedSecretsFalse_NoFeedSecretsYaml()
+    public async Task DescribeIntentAsync_CreateFeedSecretsFalse_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -424,15 +426,15 @@ public class FeedSecretGenerationTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         var generator = CreateMockGenerator(canHandle: true);
-        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+        intent.Assets.ShouldNotContain(f => f.RelativePath == "feedsecrets.yaml");
     }
 
     [Fact]
-    public async Task PrepareAsync_FeedNoCredentials_NoFeedSecretsYaml()
+    public async Task DescribeIntentAsync_FeedNoCredentials_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -460,15 +462,15 @@ public class FeedSecretGenerationTests
             });
 
         var generator = CreateMockGenerator(canHandle: true);
-        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+        intent.Assets.ShouldNotContain(f => f.RelativePath == "feedsecrets.yaml");
     }
 
     [Fact]
-    public async Task PrepareAsync_FeedNotFound_NoFeedSecretsYaml()
+    public async Task DescribeIntentAsync_FeedNotFound_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -490,15 +492,15 @@ public class FeedSecretGenerationTests
             .ReturnsAsync((ExternalFeed)null);
 
         var generator = CreateMockGenerator(canHandle: true);
-        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+        intent.Assets.ShouldNotContain(f => f.RelativePath == "feedsecrets.yaml");
     }
 
     [Fact]
-    public async Task PrepareAsync_NoFeedId_NoFeedSecretsYaml()
+    public async Task DescribeIntentAsync_NoFeedId_NoFeedSecretsYaml()
     {
         var containerJson = JsonSerializer.Serialize(new[]
         {
@@ -515,11 +517,11 @@ public class FeedSecretGenerationTests
 
         var feedProvider = new Mock<IExternalFeedDataProvider>();
         var generator = CreateMockGenerator(canHandle: true);
-        var handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { generator.Object }, feedProvider.Object);
 
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.Files.ShouldNotContainKey("feedsecrets.yaml");
+        intent.Assets.ShouldNotContain(f => f.RelativePath == "feedsecrets.yaml");
     }
 
     // === Helpers ===

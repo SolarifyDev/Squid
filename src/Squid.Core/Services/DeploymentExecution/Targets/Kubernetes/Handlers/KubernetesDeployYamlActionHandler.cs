@@ -28,11 +28,10 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployRawYaml;
 
     /// <summary>
-    /// Phase 9c.1 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
-    /// produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
-    /// (<c>k8s-apply</c>) and the namespace resolved from the action properties. The YAML
-    /// source resolution (inline or external feed) is shared with <see cref="PrepareAsync"/>
-    /// via <see cref="ResolveYamlSourceAsync"/>.
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>) and the namespace resolved from the action properties.
+    /// YAML source resolution (inline or external feed) is handled by
+    /// <see cref="ResolveYamlSourceAsync"/>.
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
@@ -65,30 +64,6 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
     }
 
     private record YamlDeploySource(Dictionary<string, byte[]> Files, string TargetPath, List<string> Warnings);
-
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var syntax = ScriptSyntaxHelper.ResolveSyntax(ctx.Action);
-        var source = await ResolveYamlSourceAsync(ctx, syntax, ct).ConfigureAwait(false);
-
-        var targetPath = syntax == ScriptSyntax.Bash ? source.TargetPath : source.TargetPath.Replace("/", "\\");
-        var scriptBody = KubernetesApplyCommandBuilder.Build(targetPath, ctx.Action, syntax);
-
-        var namespace_ = KubernetesYamlActionHandler.GetNamespaceFromAction(ctx.Action);
-        scriptBody += KubernetesResourceWaitBuilder.BuildWaitScript(source.Files, ctx.Action, namespace_, syntax);
-
-        return new ActionExecutionResult
-        {
-            ScriptBody = scriptBody,
-            Files = source.Files,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = syntax,
-            Warnings = source.Warnings
-        };
-    }
 
     private async Task<YamlDeploySource> ResolveYamlSourceAsync(ActionExecutionContext ctx, ScriptSyntax syntax, CancellationToken ct)
     {

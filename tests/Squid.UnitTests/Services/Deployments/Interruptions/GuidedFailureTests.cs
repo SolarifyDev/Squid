@@ -11,7 +11,6 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
@@ -258,15 +257,6 @@ public class GuidedFailureTests
     {
         var handler = new Mock<IActionHandler>();
         handler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>())).Returns(true);
-        handler.Setup(h => h.PrepareAsync(It.IsAny<ActionExecutionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ActionExecutionResult
-            {
-                ScriptBody = "echo test",
-                Syntax = ScriptSyntax.Bash,
-                Files = new Dictionary<string, byte[]>(),
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
-            });
         handler.SetupDescribeIntentAsRunScript();
 
         return Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == handler.Object);

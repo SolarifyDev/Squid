@@ -267,10 +267,12 @@ public sealed partial class ExecuteStepsPhase
         {
             ++actionSortOrder;
 
-            var directive = await ResolveResumeDirectiveAsync(step, prepared.Result, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+            var actionName = prepared.Context.Action.Name;
+
+            var directive = await ResolveResumeDirectiveAsync(step, actionName, tc, stepDisplayOrder, ct).ConfigureAwait(false);
 
             if (directive == ActionDirective.Abort)
-                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{prepared.Result.ActionName}\"");
+                throw new DeploymentAbortedException($"Guided failure aborted for step \"{step.Name}\" action \"{actionName}\"");
 
             if (directive == ActionDirective.Skip)
             {
@@ -284,10 +286,10 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task ExecuteSingleActionAsync(PreparedAction prepared, DeploymentStepDto step, int stepDisplayOrder, int actionSortOrder, StepExecutionResult result, DeploymentTargetContext tc, TimeSpan? stepTimeout, CancellationToken ct)
     {
-        var actionResult = prepared.Result;
+        var actionName = prepared.Context.Action.Name;
         var effectiveVariables = prepared.EffectiveVariables;
 
-        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName }), ct).ConfigureAwait(false);
+        await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName }), ct).ConfigureAwait(false);
 
         try
         {
@@ -296,22 +298,20 @@ public sealed partial class ExecuteStepsPhase
             if (strategy == null)
                 throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
 
-            var request = BuildScriptExecutionRequest(actionResult, tc, effectiveVariables, step, stepTimeout);
-
-            request = await RenderIntentAsync(prepared, request, tc, step, effectiveVariables, stepTimeout, ct).ConfigureAwait(false);
+            var request = await DescribeExpandAndRenderAsync(prepared, tc, step, effectiveVariables, stepTimeout, stepDisplayOrder, ct).ConfigureAwait(false);
 
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
-            CaptureOutputVariables(actionResult, execResult.LogLines);
+            var outputCapture = CaptureOutputVariables(execResult.LogLines);
 
             await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
 
             if (!execResult.Success)
                 throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
 
-            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionResult.ActionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
+            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
 
-            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, actionResult);
+            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, outputCapture);
 
             if (collectedNames.Count > 0)
                 await lifecycle.EmitAsync(new OutputVariablesCapturedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine?.Name, ActionSortOrder = actionSortOrder, OutputVariableNames = collectedNames }), ct).ConfigureAwait(false);
@@ -330,7 +330,7 @@ public sealed partial class ExecuteStepsPhase
 
             if (step.IsRequired && _ctx.UseGuidedFailure)
             {
-                await HandleGuidedFailureAsync(step, actionResult, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                await HandleGuidedFailureAsync(step, actionName, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
                 // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
             }
 
@@ -339,16 +339,26 @@ public sealed partial class ExecuteStepsPhase
         }
     }
 
-    private async Task<Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest> RenderIntentAsync(
+    private async Task<Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest> DescribeExpandAndRenderAsync(
         PreparedAction prepared,
-        Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionRequest request,
         DeploymentTargetContext tc,
         DeploymentStepDto step,
         List<VariableDto> effectiveVariables,
         TimeSpan? stepTimeout,
+        int stepDisplayOrder,
         CancellationToken ct)
     {
+        var actionName = prepared.Context.Action.Name;
+
         var intent = await prepared.Handler.DescribeIntentAsync(prepared.Context, ct).ConfigureAwait(false);
+
+        intent = IntentVariableExpander.Expand(intent, prepared.VariableDictionary);
+
+        var (expandedIntent, warnings) = IntentStructuredConfigReplacer.ReplaceIfEnabled(intent, prepared.Context.Action, prepared.VariableDictionary);
+
+        await EmitPreparationWarningsAsync(warnings, stepDisplayOrder, actionName, tc.Machine.Name, ct).ConfigureAwait(false);
+
+        var packageReferences = BuildPackageReferences(actionName);
 
         var renderContext = new IntentRenderContext
         {
@@ -358,13 +368,12 @@ public sealed partial class ExecuteStepsPhase
             ServerTaskId = _ctx.ServerTaskId,
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
-            PackageReferences = request?.PackageReferences ?? new List<PackageAcquisitionResult>(),
-            LegacyRequest = request
+            PackageReferences = packageReferences
         };
 
-        var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, intent);
+        var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
 
-        return await renderer.RenderAsync(intent, renderContext, ct).ConfigureAwait(false);
+        return await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)
@@ -396,17 +405,26 @@ public sealed partial class ExecuteStepsPhase
         return executed;
     }
 
-    private void CaptureOutputVariables(ActionExecutionResult actionResult, List<string> logLines)
+    private sealed class OutputVariableCapture
     {
+        public Dictionary<string, string> Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> SensitiveNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private OutputVariableCapture CaptureOutputVariables(List<string> logLines)
+    {
+        var capture = new OutputVariableCapture();
         var outputVars = serviceMessageParser.ParseOutputVariables(logLines);
 
         foreach (var kv in outputVars)
         {
-            actionResult.OutputVariables[kv.Key] = kv.Value.Value;
+            capture.Variables[kv.Key] = kv.Value.Value;
 
             if (kv.Value.IsSensitive)
-                actionResult.SensitiveOutputVariableNames.Add(kv.Key);
+                capture.SensitiveNames.Add(kv.Key);
         }
+
+        return capture;
     }
 
     private static readonly string[] ReservedPrefixes = { "Squid.", "System." };
@@ -416,13 +434,13 @@ public sealed partial class ExecuteStepsPhase
         return ReservedPrefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static List<string> CollectOutputVariables(StepExecutionResult result, string stepName, string machineName, ActionExecutionResult actionResult)
+    private static List<string> CollectOutputVariables(StepExecutionResult result, string stepName, string machineName, OutputVariableCapture capture)
     {
         var collectedNames = new List<string>();
 
-        foreach (var kv in actionResult.OutputVariables)
+        foreach (var kv in capture.Variables)
         {
-            var isSensitive = actionResult.SensitiveOutputVariableNames.Contains(kv.Key);
+            var isSensitive = capture.SensitiveNames.Contains(kv.Key);
             var qualifiedName = SpecialVariables.Output.Variable(stepName, kv.Key);
 
             result.OutputVariables.Add(new VariableDto { Name = qualifiedName, Value = kv.Value, IsSensitive = isSensitive });

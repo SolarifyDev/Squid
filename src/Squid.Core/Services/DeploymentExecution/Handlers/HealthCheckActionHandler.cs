@@ -18,20 +18,9 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        return Task.FromResult(new ActionExecutionResult
-        {
-            ActionName = ctx.Action.Name,
-            ExecutionMode = ExecutionMode.ManualIntervention,
-            ContextPreparationPolicy = ContextPreparationPolicy.Skip
-        });
-    }
-
     /// <summary>
-    /// Phase 9e — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely and
-    /// produces a <see cref="HealthCheckIntent"/> with a stable semantic name
-    /// (<c>health-check</c>). The legacy <c>Squid.Action.HealthCheck.*</c> properties are
+    /// Produces a <see cref="HealthCheckIntent"/> with a stable semantic name
+    /// (<c>health-check</c>). The <c>Squid.Action.HealthCheck.*</c> properties are
     /// mapped onto semantic intent fields via the same <see cref="ParseSettings"/> helper
     /// that powers <see cref="ExecuteStepLevelAsync"/>.
     /// </summary>

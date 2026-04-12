@@ -19,19 +19,6 @@ public sealed class ManualInterventionActionHandler(
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
 
-    public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var instructions = ReadInstructions(ctx.Action);
-
-        return Task.FromResult(new ActionExecutionResult
-        {
-            ActionName = ctx.Action.Name,
-            ExecutionMode = ExecutionMode.ManualIntervention,
-            ContextPreparationPolicy = ContextPreparationPolicy.Skip,
-            ManualInterventionInstructions = instructions
-        });
-    }
-
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(ctx);

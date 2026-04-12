@@ -75,7 +75,7 @@ public class KubernetesApiIntentRendererTests
     public async Task RenderAsync_NullIntent_Throws()
     {
         await Should.ThrowAsync<ArgumentNullException>(
-            async () => await _renderer.RenderAsync(null!, NewContext(legacy: new ScriptExecutionRequest()), CancellationToken.None));
+            async () => await _renderer.RenderAsync(null!, NewContext(), CancellationToken.None));
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped-bash-body");
         var intent = NewRunScriptIntent(scriptBody: "echo from-intent", syntax: ScriptSyntax.Bash);
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         _builderMock.Verify(b => b.WrapWithContext(
             "echo from-intent",
@@ -107,7 +107,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped-bash-body");
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("wrapped-bash-body");
     }
@@ -118,7 +118,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped-pwsh-body");
         var intent = NewRunScriptIntent(scriptBody: "Write-Host hi", syntax: ScriptSyntax.PowerShell);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("wrapped-pwsh-body");
         _builderMock.Verify(b => b.WrapWithContext(
@@ -132,7 +132,7 @@ public class KubernetesApiIntentRendererTests
     {
         var intent = NewRunScriptIntent(scriptBody: "print('hi')", syntax: ScriptSyntax.Python);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("print('hi')");
         _builderMock.Verify(b => b.WrapWithContext(
@@ -153,7 +153,7 @@ public class KubernetesApiIntentRendererTests
 
         await _renderer.RenderAsync(
             NewRunScriptIntent(syntax: ScriptSyntax.PowerShell),
-            NewContext(legacy: null),
+            NewContext(),
             CancellationToken.None);
 
         captured.ShouldNotBeNull();
@@ -178,7 +178,7 @@ public class KubernetesApiIntentRendererTests
             CommunicationStyle = CommunicationStyle.KubernetesApi
         };
 
-        await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(target: target), CancellationToken.None);
 
         captured!.Endpoint.ShouldBeSameAs(endpoint);
     }
@@ -200,7 +200,7 @@ public class KubernetesApiIntentRendererTests
 
         await _renderer.RenderAsync(
             NewRunScriptIntent(),
-            NewContext(legacy: null, variables: vars),
+            NewContext(variables: vars),
             CancellationToken.None);
 
         captured!.Variables.ShouldNotBeNull();
@@ -224,7 +224,7 @@ public class KubernetesApiIntentRendererTests
 
         await _renderer.RenderAsync(
             NewRunScriptIntent(),
-            NewContext(legacy: null, variables: vars),
+            NewContext(variables: vars),
             CancellationToken.None);
 
         capturedKubectl.ShouldBe("/opt/bin/kubectl");
@@ -238,7 +238,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewRunScriptIntent() with { StepName = "Deploy Step", ActionName = "Deploy Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Deploy Step");
         rendered.ActionName.ShouldBe("Deploy Action");
@@ -254,7 +254,7 @@ public class KubernetesApiIntentRendererTests
             new() { Name = "Secret", Value = "shh", IsSensitive = true }
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(variables: vars), CancellationToken.None);
 
         rendered.Variables.ShouldNotBeNull();
         rendered.Variables.Select(v => v.Name).ShouldBe(new[] { "Foo", "Secret" });
@@ -273,7 +273,7 @@ public class KubernetesApiIntentRendererTests
             CommunicationStyle = CommunicationStyle.KubernetesApi
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(target: target), CancellationToken.None);
 
         rendered.Machine.ShouldBeSameAs(machine);
         rendered.EndpointContext.ShouldBeSameAs(endpoint);
@@ -286,7 +286,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(
             NewRunScriptIntent(),
-            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            NewContext(serverTaskId: 99, releaseVersion: "2.5.0"),
             CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
@@ -299,7 +299,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewRunScriptIntent() with { Timeout = TimeSpan.FromMinutes(3) };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
     }
@@ -309,7 +309,7 @@ public class KubernetesApiIntentRendererTests
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
     }
@@ -319,21 +319,21 @@ public class KubernetesApiIntentRendererTests
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
         rendered.PayloadKind.ShouldBe(PayloadKind.None);
     }
 
-    // ========== RunScriptIntent: works without LegacyRequest ==========
+    // ========== RunScriptIntent: native rendering ==========
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_DoesNotThrow()
+    public async Task RenderAsync_RunScriptIntent_NativeRendering_DoesNotThrow()
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ShouldNotBeNull();
         rendered.Files.ShouldNotBeNull();
@@ -341,11 +341,11 @@ public class KubernetesApiIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_NullLegacyRequest_PackageReferencesEmpty()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesEmptyByDefault()
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBeEmpty();
     }
@@ -361,26 +361,21 @@ public class KubernetesApiIntentRendererTests
             new(LocalPath: "/tmp/acme.zip", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(packageReferences: packages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_IgnoresLegacyPackageReferences()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesFromContextOnly()
     {
         SetupBuilder(returnValue: "wrapped");
-        var legacyPackages = new List<PackageAcquisitionResult>
-        {
-            new(LocalPath: "/tmp/old.zip", PackageId: "Old", Version: "1.0.0", SizeBytes: 100, Hash: "old")
-        };
         var contextPackages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/new.zip", PackageId: "New", Version: "2.0.0", SizeBytes: 200, Hash: "new")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(packageReferences: contextPackages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
@@ -389,10 +384,8 @@ public class KubernetesApiIntentRendererTests
     public async Task RenderAsync_RunScriptIntent_FilesAlwaysEmpty()
     {
         SetupBuilder(returnValue: "wrapped");
-        var legacyFiles = new Dictionary<string, byte[]> { { "extra.txt", new byte[] { 1, 2, 3 } } };
-        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
@@ -415,7 +408,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("b.yaml", new byte[] { 0x42 })
         });
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain("kubectl apply -f \"./a.yaml\"");
@@ -438,7 +431,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("alpha.yaml", new byte[] { 0x41 })
         });
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         var alphaIdx = captured!.IndexOf("alpha.yaml", StringComparison.Ordinal);
@@ -460,7 +453,7 @@ public class KubernetesApiIntentRendererTests
 
         var intent = NewKubernetesApplyIntent(files: Array.Empty<DeploymentFile>());
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldBe(string.Empty);
         rendered.Files.ShouldBeEmpty();
@@ -480,7 +473,7 @@ public class KubernetesApiIntentRendererTests
 
         var intent = NewKubernetesApplyIntent() with { ServerSideApply = false };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldNotContain("--server-side");
@@ -503,7 +496,7 @@ public class KubernetesApiIntentRendererTests
             ForceConflicts = false
         };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain("--server-side");
@@ -528,7 +521,7 @@ public class KubernetesApiIntentRendererTests
             ForceConflicts = true
         };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain("--force-conflicts");
@@ -551,7 +544,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("deployment.yaml", BytesFor("kind: Deployment\nmetadata:\n  name: api\n"))
         }) with { ObjectStatusCheck = false };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldNotContain("kubectl rollout status");
@@ -578,7 +571,7 @@ public class KubernetesApiIntentRendererTests
             StatusCheckTimeoutSeconds = 120
         };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain("kubectl rollout status \"deployment/api\" -n \"prod\" --timeout=120s");
@@ -601,7 +594,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
         }) with { Syntax = ScriptSyntax.PowerShell };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain(".\\content\\deploy.yaml");
@@ -622,7 +615,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
         }) with { Syntax = ScriptSyntax.Bash };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         captured.ShouldNotBeNull();
         captured.ShouldContain("./content/deploy.yaml");
@@ -639,7 +632,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("deploy.yaml", new byte[] { 0x41 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("wrapped-apply");
         _builderMock.Verify(b => b.WrapWithContext(
@@ -656,7 +649,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("deploy.yaml", new byte[] { 0x41 })
         }) with { Syntax = ScriptSyntax.Python };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl apply -f");
         _builderMock.Verify(b => b.WrapWithContext(
@@ -682,7 +675,7 @@ public class KubernetesApiIntentRendererTests
 
         await _renderer.RenderAsync(
             NewKubernetesApplyIntent(),
-            NewContext(legacy: null, variables: vars),
+            NewContext(variables: vars),
             CancellationToken.None);
 
         capturedKubectl.ShouldBe("/opt/bin/kubectl");
@@ -696,7 +689,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewKubernetesApplyIntent() with { StepName = "Apply Step", ActionName = "Apply Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Apply Step");
         rendered.ActionName.ShouldBe("Apply Action");
@@ -708,7 +701,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewKubernetesApplyIntent() with { Syntax = ScriptSyntax.PowerShell };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -722,7 +715,7 @@ public class KubernetesApiIntentRendererTests
             new() { Name = "Foo", Value = "Bar" }
         };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(variables: vars), CancellationToken.None);
 
         rendered.Variables.ShouldNotBeNull();
         rendered.Variables.Select(v => v.Name).ShouldContain("Foo");
@@ -741,7 +734,7 @@ public class KubernetesApiIntentRendererTests
             CommunicationStyle = CommunicationStyle.KubernetesApi
         };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(target: target), CancellationToken.None);
 
         rendered.Machine.ShouldBeSameAs(machine);
         rendered.EndpointContext.ShouldBeSameAs(endpoint);
@@ -754,7 +747,7 @@ public class KubernetesApiIntentRendererTests
 
         var rendered = await _renderer.RenderAsync(
             NewKubernetesApplyIntent(),
-            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            NewContext(serverTaskId: 99, releaseVersion: "2.5.0"),
             CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
@@ -767,7 +760,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewKubernetesApplyIntent() with { Timeout = TimeSpan.FromMinutes(3) };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
     }
@@ -777,7 +770,7 @@ public class KubernetesApiIntentRendererTests
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
     }
@@ -787,14 +780,14 @@ public class KubernetesApiIntentRendererTests
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
         rendered.PayloadKind.ShouldBe(PayloadKind.None);
     }
 
-    // ========== KubernetesApplyIntent: Files derived from intent (not LegacyRequest) ==========
+    // ========== KubernetesApplyIntent: Files derived from intent ==========
 
     [Fact]
     public async Task RenderAsync_KubernetesApplyIntent_FilesComeFromIntent()
@@ -806,7 +799,7 @@ public class KubernetesApiIntentRendererTests
             DeploymentFile.Asset("secret.yaml", new byte[] { 0x53, 0x45 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldNotBeNull();
         rendered.Files.Count.ShouldBe(2);
@@ -815,28 +808,25 @@ public class KubernetesApiIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyFiles()
+    public async Task RenderAsync_KubernetesApplyIntent_FilesFromIntentOnly()
     {
         SetupBuilder(returnValue: "wrapped");
-        var legacyFiles = new Dictionary<string, byte[]> { { "legacy.yaml", new byte[] { 0xFF } } };
-        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
         var intent = NewKubernetesApplyIntent(files: new[]
         {
             DeploymentFile.Asset("intent.yaml", new byte[] { 0x01 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldContainKey("intent.yaml");
-        rendered.Files.ShouldNotContainKey("legacy.yaml");
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_NullLegacy_PackageReferencesEmpty()
+    public async Task RenderAsync_KubernetesApplyIntent_PackageReferencesEmptyByDefault()
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBeEmpty();
     }
@@ -850,26 +840,21 @@ public class KubernetesApiIntentRendererTests
             new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(packageReferences: packages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyPackageReferences()
+    public async Task RenderAsync_KubernetesApplyIntent_PackageReferencesFromContextOnly()
     {
         SetupBuilder(returnValue: "wrapped");
-        var legacyPackages = new List<PackageAcquisitionResult>
-        {
-            new(LocalPath: "/tmp/old.tgz", PackageId: "old-chart", Version: "1.0.0", SizeBytes: 100, Hash: "old")
-        };
         var contextPackages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/new.tgz", PackageId: "new-chart", Version: "2.0.0", SizeBytes: 200, Hash: "new")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(packageReferences: contextPackages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
@@ -882,7 +867,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped-helm");
         var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.Bash);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("wrapped-helm");
         _builderMock.Verify(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()), Times.Once);
@@ -899,7 +884,7 @@ public class KubernetesApiIntentRendererTests
 
         var intent = NewHelmUpgradeIntent(releaseName: "my-app", chartReference: "bitnami/nginx");
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         capturedScript.ShouldNotBeNull();
         capturedScript.ShouldContain("upgrade --install");
@@ -913,7 +898,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.PowerShell);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -924,7 +909,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewHelmUpgradeIntent() with { StepName = "Helm Step", ActionName = "Helm Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Helm Step");
         rendered.ActionName.ShouldBe("Helm Action");
@@ -939,7 +924,7 @@ public class KubernetesApiIntentRendererTests
             new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
         rendered.ReleaseVersion.ShouldBe("2.0.0");
@@ -958,7 +943,7 @@ public class KubernetesApiIntentRendererTests
         };
         var intent = NewHelmUpgradeIntent() with { ValuesFiles = valuesFiles };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.Count.ShouldBe(2);
         rendered.Files.ShouldContainKey("values-0.yaml");
@@ -971,7 +956,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewHelmUpgradeIntent() with { ValuesFiles = Array.Empty<DeploymentFile>() };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
@@ -982,7 +967,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var stepTimeout = TimeSpan.FromMinutes(10);
 
-        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, stepTimeout: stepTimeout), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(stepTimeout: stepTimeout), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(stepTimeout);
     }
@@ -995,7 +980,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped-kustomize");
         var intent = NewKustomizeIntent(syntax: ScriptSyntax.Bash);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("wrapped-kustomize");
         _builderMock.Verify(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()), Times.Once);
@@ -1012,7 +997,7 @@ public class KubernetesApiIntentRendererTests
 
         var intent = NewKustomizeIntent(overlayPath: "overlays/production");
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         capturedScript.ShouldNotBeNull();
         capturedScript.ShouldContain("kustomize");
@@ -1026,7 +1011,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewKustomizeIntent(syntax: ScriptSyntax.PowerShell);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -1037,7 +1022,7 @@ public class KubernetesApiIntentRendererTests
         SetupBuilder(returnValue: "wrapped");
         var intent = NewKustomizeIntent() with { StepName = "Kustomize Step", ActionName = "Kustomize Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Kustomize Step");
         rendered.ActionName.ShouldBe("Kustomize Action");
@@ -1052,7 +1037,7 @@ public class KubernetesApiIntentRendererTests
             new(LocalPath: "/tmp/pkg.tgz", PackageId: "pkg", Version: "1.0.0", SizeBytes: 100, Hash: "h")
         };
 
-        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null, serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(77);
         rendered.ReleaseVersion.ShouldBe("3.0.0");
@@ -1065,7 +1050,7 @@ public class KubernetesApiIntentRendererTests
     {
         SetupBuilder(returnValue: "wrapped");
 
-        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
@@ -1081,7 +1066,7 @@ public class KubernetesApiIntentRendererTests
 
         var intent = NewKustomizeIntent() with { ServerSideApply = true, FieldManager = "my-mgr", ForceConflicts = true };
 
-        await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         capturedScript.ShouldNotBeNull();
         capturedScript.ShouldContain("--server-side");
@@ -1097,7 +1082,7 @@ public class KubernetesApiIntentRendererTests
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
         var ex = await Should.ThrowAsync<IntentRenderingException>(
-            async () => await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None));
+            async () => await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None));
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesApi);
         ex.IntentName.ShouldBe("manual-intervention");
@@ -1177,7 +1162,6 @@ public class KubernetesApiIntentRendererTests
     private static byte[] BytesFor(string content) => Encoding.UTF8.GetBytes(content);
 
     private static IntentRenderContext NewContext(
-        ScriptExecutionRequest? legacy,
         List<VariableDto>? variables = null,
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
@@ -1198,8 +1182,7 @@ public class KubernetesApiIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
-            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>(),
-            LegacyRequest = legacy
+            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
         };
     }
 }

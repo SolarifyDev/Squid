@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -104,39 +105,19 @@ public class ExecuteStepsPhaseDescribeIntentFlipTests : IDisposable
     // ------------------------------------------------------------------
 
     private const string DescribeIntentScriptBody = "echo from-describe-intent-override";
-    private const string PrepareAsyncScriptBody = "echo from-legacy-prepare-async";
     private const string DescribeIntentName = "probe-describe-intent-name";
 
     /// <summary>
-    /// Fake handler whose explicit <c>DescribeIntentAsync</c> override returns a
-    /// distinctive <see cref="RunScriptIntent"/>. Its legacy <c>PrepareAsync</c> returns
-    /// a DIFFERENT script body so tests can prove which code path produced the intent
-    /// that reached the renderer.
+    /// Fake handler whose <c>DescribeIntentAsync</c> returns a distinctive
+    /// <see cref="RunScriptIntent"/> so tests can verify the intent that reaches the renderer.
     /// </summary>
     private sealed class ProbeHandler : IActionHandler
     {
         public string ActionType => SpecialVariables.ActionTypes.Script;
 
-        public int PrepareCallCount { get; private set; }
-
         public int DescribeIntentCallCount { get; private set; }
 
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            PrepareCallCount++;
-            return Task.FromResult(new ActionExecutionResult
-            {
-                ActionName = ctx.Action?.Name,
-                ActionType = ActionType,
-                ScriptBody = PrepareAsyncScriptBody,
-                Syntax = ScriptSyntax.Bash,
-                Files = new Dictionary<string, byte[]>(),
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Skip
-            });
-        }
-
-        Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
+        public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
             DescribeIntentCallCount++;
             return Task.FromResult<ExecutionIntent>(new RunScriptIntent
@@ -152,8 +133,8 @@ public class ExecuteStepsPhaseDescribeIntentFlipTests : IDisposable
     }
 
     /// <summary>
-    /// Probe renderer that captures every intent it receives. Returns the legacy
-    /// request unchanged so the execution strategy still sees the normal shape.
+    /// Probe renderer that captures every intent it receives. Returns a basic
+    /// <see cref="ScriptExecutionRequest"/> so the execution strategy sees a valid shape.
     /// </summary>
     private sealed class CapturingProbeRenderer : IIntentRenderer
     {
@@ -171,7 +152,13 @@ public class ExecuteStepsPhaseDescribeIntentFlipTests : IDisposable
         public Task<ScriptExecutionRequest> RenderAsync(ExecutionIntent intent, IntentRenderContext context, CancellationToken ct)
         {
             CapturedIntents.Add(intent);
-            return Task.FromResult(context.LegacyRequest!);
+            return Task.FromResult(new ScriptExecutionRequest
+            {
+                ScriptBody = intent is RunScriptIntent rs ? rs.ScriptBody : "rendered",
+                Variables = context.EffectiveVariables.ToList(),
+                Machine = context.Target.Machine,
+                EndpointContext = context.Target.EndpointContext
+            });
         }
     }
 

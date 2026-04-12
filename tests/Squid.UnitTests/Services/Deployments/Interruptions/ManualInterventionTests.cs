@@ -13,7 +13,6 @@ using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
-using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -53,31 +52,6 @@ public class ManualInterventionTests
         var handler = CreateHandler();
 
         handler.ExecutionScope.ShouldBe(ExecutionScope.StepLevel);
-    }
-
-    [Theory]
-    [InlineData("Please approve", "Please approve")]
-    [InlineData(null, "")]
-    public async Task Handler_PrepareAsync_ReturnsManualInterventionMode(string instructions, string expectedInstructions)
-    {
-        var handler = CreateHandler();
-        var properties = new List<DeploymentActionPropertyDto>();
-
-        if (instructions != null)
-            properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Manual.Instructions", PropertyValue = instructions });
-
-        var ctx = new ActionExecutionContext
-        {
-            Step = new DeploymentStepDto { Id = 1, Name = "Step" },
-            Action = new DeploymentActionDto { Id = 1, Name = "Manual Action", ActionType = "Squid.Manual", Properties = properties }
-        };
-
-        var result = await handler.PrepareAsync(ctx, CancellationToken.None);
-
-        result.ExecutionMode.ShouldBe(ExecutionMode.ManualIntervention);
-        result.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Skip);
-        result.ManualInterventionInstructions.ShouldBe(expectedInstructions);
-        result.ScriptBody.ShouldBeNull();
     }
 
     // ========== ExecuteStepLevelAsync Tests ==========

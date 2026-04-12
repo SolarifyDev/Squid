@@ -67,7 +67,7 @@ public class KubernetesAgentIntentRendererTests
     public async Task RenderAsync_NullIntent_Throws()
     {
         await Should.ThrowAsync<ArgumentNullException>(
-            async () => await _renderer.RenderAsync(null!, NewContext(legacy: new ScriptExecutionRequest()), CancellationToken.None));
+            async () => await _renderer.RenderAsync(null!, NewContext(), CancellationToken.None));
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(scriptBody: "echo from-intent", syntax: ScriptSyntax.Bash);
         var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("echo from-intent");
@@ -97,7 +97,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(scriptBody: "echo hello", syntax: ScriptSyntax.Bash);
         var vars = NamespaceVariable("staging");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         var preambleIdx = rendered.ScriptBody.IndexOf("set-context", StringComparison.Ordinal);
         var bodyIdx = rendered.ScriptBody.IndexOf("echo hello", StringComparison.Ordinal);
@@ -111,7 +111,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(scriptBody: "Write-Host hi", syntax: ScriptSyntax.PowerShell);
         var vars = NamespaceVariable("production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("| Out-Null");
@@ -123,7 +123,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewRunScriptIntent(scriptBody: "print('hi')", syntax: ScriptSyntax.Python);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldBe("print('hi')");
         rendered.ScriptBody.ShouldNotContain("kubectl config set-context");
@@ -134,7 +134,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--namespace=\"default\"");
     }
@@ -145,7 +145,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
         var vars = NamespaceVariable("");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--namespace=\"default\"");
     }
@@ -156,7 +156,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
         var vars = NamespaceVariable("my-ns");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
     }
@@ -167,7 +167,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = NewRunScriptIntent(scriptBody: "true", syntax: ScriptSyntax.Bash);
         var vars = NamespaceVariable("default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: vars), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
     }
@@ -179,7 +179,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewRunScriptIntent() with { StepName = "Deploy Step", ActionName = "Deploy Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Deploy Step");
         rendered.ActionName.ShouldBe("Deploy Action");
@@ -190,7 +190,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewRunScriptIntent(syntax: ScriptSyntax.PowerShell);
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -204,7 +204,7 @@ public class KubernetesAgentIntentRendererTests
             new() { Name = "Secret", Value = "shh", IsSensitive = true }
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(variables: vars), CancellationToken.None);
 
         rendered.Variables.ShouldNotBeNull();
         rendered.Variables.Select(v => v.Name).ShouldBe(new[] { "Foo", "Secret" });
@@ -222,7 +222,7 @@ public class KubernetesAgentIntentRendererTests
             CommunicationStyle = CommunicationStyle.KubernetesAgent
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(target: target), CancellationToken.None);
 
         rendered.Machine.ShouldBeSameAs(machine);
         rendered.EndpointContext.ShouldBeSameAs(endpoint);
@@ -233,7 +233,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(
             NewRunScriptIntent(),
-            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            NewContext(serverTaskId: 99, releaseVersion: "2.5.0"),
             CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
@@ -245,7 +245,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewRunScriptIntent() with { Timeout = TimeSpan.FromMinutes(3) };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
     }
@@ -253,7 +253,7 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_TimeoutFallsBackToStepTimeout()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
     }
@@ -261,7 +261,7 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_ExecutionModeDirectScript()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
@@ -271,7 +271,7 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_FilesAndPackagesEmpty()
     {
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.ShouldNotBeNull();
         rendered.Files.ShouldNotBeNull();
@@ -288,7 +288,7 @@ public class KubernetesAgentIntentRendererTests
             new(LocalPath: "/tmp/a.zip", PackageId: "A", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(packageReferences: packages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
     }
@@ -296,28 +296,20 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_RunScriptIntent_FilesAlwaysEmpty()
     {
-        var legacyFiles = new Dictionary<string, byte[]> { ["extra.txt"] = new byte[] { 1, 2, 3 } };
-        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
-
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task RenderAsync_RunScriptIntent_IgnoresLegacyPackageReferences()
+    public async Task RenderAsync_RunScriptIntent_PackageReferencesFromContextOnly()
     {
-        var legacyPackages = new List<PackageAcquisitionResult>
-        {
-            new(LocalPath: "/tmp/old.zip", PackageId: "Old", Version: "1.0.0", SizeBytes: 100, Hash: "old")
-        };
         var contextPackages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/new.zip", PackageId: "New", Version: "2.0.0", SizeBytes: 200, Hash: "new")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
 
-        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewRunScriptIntent(), NewContext(packageReferences: contextPackages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
@@ -333,7 +325,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("b.yaml", new byte[] { 0x42 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl apply -f \"./a.yaml\"");
         rendered.ScriptBody.ShouldContain("kubectl apply -f \"./b.yaml\"");
@@ -348,7 +340,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("alpha.yaml", new byte[] { 0x41 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         var alphaIdx = rendered.ScriptBody.IndexOf("alpha.yaml", StringComparison.Ordinal);
         var zetaIdx = rendered.ScriptBody.IndexOf("zeta.yaml", StringComparison.Ordinal);
@@ -362,7 +354,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent(files: Array.Empty<DeploymentFile>());
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl apply -f");
         rendered.Files.ShouldBeEmpty();
@@ -375,7 +367,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { ServerSideApply = false };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("--server-side");
     }
@@ -390,7 +382,7 @@ public class KubernetesAgentIntentRendererTests
             ForceConflicts = false
         };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--server-side");
         rendered.ScriptBody.ShouldContain("--field-manager=\"my-manager\"");
@@ -407,7 +399,7 @@ public class KubernetesAgentIntentRendererTests
             ForceConflicts = true
         };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--force-conflicts");
     }
@@ -422,7 +414,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("deployment.yaml", BytesFor("kind: Deployment\nmetadata:\n  name: api\n"))
         }) with { ObjectStatusCheck = false };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl rollout status");
     }
@@ -440,7 +432,7 @@ public class KubernetesAgentIntentRendererTests
             StatusCheckTimeoutSeconds = 120
         };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl rollout status \"deployment/api\" -n \"prod\" --timeout=120s");
     }
@@ -455,7 +447,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
         }) with { Syntax = ScriptSyntax.Bash };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("./content/deploy.yaml");
     }
@@ -468,7 +460,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("content/deploy.yaml", new byte[] { 0x41 })
         }) with { Syntax = ScriptSyntax.PowerShell };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain(".\\content\\deploy.yaml");
     }
@@ -480,7 +472,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Namespace = "production", Syntax = ScriptSyntax.Bash };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
     }
@@ -490,7 +482,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Namespace = "production", Syntax = ScriptSyntax.PowerShell };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("| Out-Null");
@@ -501,7 +493,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Namespace = "production", Syntax = ScriptSyntax.Python };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl config set-context");
         rendered.ScriptBody.ShouldContain("kubectl apply -f");
@@ -512,7 +504,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Namespace = "my-ns", Syntax = ScriptSyntax.Bash };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
     }
@@ -522,7 +514,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Namespace = string.Empty, Syntax = ScriptSyntax.Bash };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--namespace=\"default\"");
         rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
@@ -535,7 +527,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { StepName = "Apply Step", ActionName = "Apply Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Apply Step");
         rendered.ActionName.ShouldBe("Apply Action");
@@ -546,7 +538,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Syntax = ScriptSyntax.PowerShell };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -556,7 +548,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var vars = new List<VariableDto> { new() { Name = "Foo", Value = "Bar" } };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, variables: vars), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(variables: vars), CancellationToken.None);
 
         rendered.Variables.ShouldNotBeNull();
         rendered.Variables.Select(v => v.Name).ShouldContain("Foo");
@@ -574,7 +566,7 @@ public class KubernetesAgentIntentRendererTests
             CommunicationStyle = CommunicationStyle.KubernetesAgent
         };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, target: target), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(target: target), CancellationToken.None);
 
         rendered.Machine.ShouldBeSameAs(machine);
         rendered.EndpointContext.ShouldBeSameAs(endpoint);
@@ -585,7 +577,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var rendered = await _renderer.RenderAsync(
             NewKubernetesApplyIntent(),
-            NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.5.0"),
+            NewContext(serverTaskId: 99, releaseVersion: "2.5.0"),
             CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
@@ -597,7 +589,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKubernetesApplyIntent() with { Timeout = TimeSpan.FromMinutes(3) };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
     }
@@ -605,7 +597,7 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_KubernetesApplyIntent_TimeoutFallsBackToStepTimeout()
     {
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(stepTimeout: TimeSpan.FromMinutes(7)), CancellationToken.None);
 
         rendered.Timeout.ShouldBe(TimeSpan.FromMinutes(7));
     }
@@ -613,14 +605,14 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_KubernetesApplyIntent_ExecutionModeDirectScript()
     {
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(), CancellationToken.None);
 
         rendered.ExecutionMode.ShouldBe(ExecutionMode.DirectScript);
         rendered.ContextPreparationPolicy.ShouldBe(ContextPreparationPolicy.Apply);
         rendered.PayloadKind.ShouldBe(PayloadKind.None);
     }
 
-    // ========== KubernetesApplyIntent: Files derived from intent (not LegacyRequest) ==========
+    // ========== KubernetesApplyIntent: Files derived from intent ==========
 
     [Fact]
     public async Task RenderAsync_KubernetesApplyIntent_FilesComeFromIntent()
@@ -631,7 +623,7 @@ public class KubernetesAgentIntentRendererTests
             DeploymentFile.Asset("secret.yaml", new byte[] { 0x53, 0x45 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldNotBeNull();
         rendered.Files.Count.ShouldBe(2);
@@ -640,25 +632,22 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyFiles()
+    public async Task RenderAsync_KubernetesApplyIntent_FilesFromIntentOnly()
     {
-        var legacyFiles = new Dictionary<string, byte[]> { ["legacy.yaml"] = new byte[] { 0xFF } };
-        var legacy = new ScriptExecutionRequest { Files = legacyFiles };
         var intent = NewKubernetesApplyIntent(files: new[]
         {
             DeploymentFile.Asset("intent.yaml", new byte[] { 0x01 })
         });
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldContainKey("intent.yaml");
-        rendered.Files.ShouldNotContainKey("legacy.yaml");
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_NullLegacy_PackageReferencesEmpty()
+    public async Task RenderAsync_KubernetesApplyIntent_PackageReferencesEmptyByDefault()
     {
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBeEmpty();
     }
@@ -671,25 +660,20 @@ public class KubernetesAgentIntentRendererTests
             new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy: null, packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(packageReferences: packages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(packages);
     }
 
     [Fact]
-    public async Task RenderAsync_KubernetesApplyIntent_IgnoresLegacyPackageReferences()
+    public async Task RenderAsync_KubernetesApplyIntent_PackageReferencesFromContextOnly()
     {
-        var legacyPackages = new List<PackageAcquisitionResult>
-        {
-            new(LocalPath: "/tmp/old.tgz", PackageId: "old-chart", Version: "1.0.0", SizeBytes: 100, Hash: "old")
-        };
         var contextPackages = new List<PackageAcquisitionResult>
         {
             new(LocalPath: "/tmp/new.tgz", PackageId: "new-chart", Version: "2.0.0", SizeBytes: 200, Hash: "new")
         };
-        var legacy = new ScriptExecutionRequest { PackageReferences = legacyPackages };
 
-        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(legacy, packageReferences: contextPackages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(packageReferences: contextPackages), CancellationToken.None);
 
         rendered.PackageReferences.ShouldBe(contextPackages);
     }
@@ -701,7 +685,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.Bash, namespace_: "production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"production\"");
         rendered.ScriptBody.ShouldContain("upgrade --install");
@@ -712,7 +696,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent(releaseName: "my-app", chartReference: "bitnami/nginx");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("upgrade --install");
         rendered.ScriptBody.ShouldContain("my-app");
@@ -724,7 +708,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent(syntax: ScriptSyntax.PowerShell, namespace_: "default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -734,7 +718,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent() with { StepName = "Helm Step", ActionName = "Helm Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Helm Step");
         rendered.ActionName.ShouldBe("Helm Action");
@@ -748,7 +732,7 @@ public class KubernetesAgentIntentRendererTests
             new(LocalPath: "/tmp/chart.tgz", PackageId: "chart", Version: "1.0.0", SizeBytes: 123, Hash: "abc")
         };
 
-        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(legacy: null, serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewHelmUpgradeIntent(), NewContext(serverTaskId: 99, releaseVersion: "2.0.0", packageReferences: packages), CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(99);
         rendered.ReleaseVersion.ShouldBe("2.0.0");
@@ -766,7 +750,7 @@ public class KubernetesAgentIntentRendererTests
         };
         var intent = NewHelmUpgradeIntent() with { ValuesFiles = valuesFiles };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Files.Count.ShouldBe(2);
         rendered.Files.ShouldContainKey("values-0.yaml");
@@ -778,7 +762,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent(namespace_: "my-ns");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"my-ns\"");
     }
@@ -788,7 +772,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewHelmUpgradeIntent(namespace_: "default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("kubectl create namespace");
     }
@@ -800,7 +784,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent(syntax: ScriptSyntax.Bash, namespace_: "staging");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl config set-context --current --namespace=\"staging\"");
         rendered.ScriptBody.ShouldContain("kubectl apply");
@@ -811,7 +795,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent(overlayPath: "overlays/production");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kustomize");
         rendered.ScriptBody.ShouldContain("overlays/production");
@@ -823,7 +807,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent(syntax: ScriptSyntax.PowerShell, namespace_: "default");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.Syntax.ShouldBe(ScriptSyntax.PowerShell);
     }
@@ -833,7 +817,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent() with { StepName = "Kustomize Step", ActionName = "Kustomize Action" };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.StepName.ShouldBe("Kustomize Step");
         rendered.ActionName.ShouldBe("Kustomize Action");
@@ -847,7 +831,7 @@ public class KubernetesAgentIntentRendererTests
             new(LocalPath: "/tmp/pkg.tgz", PackageId: "pkg", Version: "1.0.0", SizeBytes: 100, Hash: "h")
         };
 
-        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null, serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(serverTaskId: 77, releaseVersion: "3.0.0", packageReferences: packages), CancellationToken.None);
 
         rendered.ServerTaskId.ShouldBe(77);
         rendered.ReleaseVersion.ShouldBe("3.0.0");
@@ -858,7 +842,7 @@ public class KubernetesAgentIntentRendererTests
     [Fact]
     public async Task RenderAsync_KustomizeIntent_FilesAlwaysEmpty()
     {
-        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(NewKustomizeIntent(), NewContext(), CancellationToken.None);
 
         rendered.Files.ShouldBeEmpty();
     }
@@ -868,7 +852,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent() with { ServerSideApply = true, FieldManager = "my-mgr", ForceConflicts = true };
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("--server-side");
         rendered.ScriptBody.ShouldContain("my-mgr");
@@ -880,7 +864,7 @@ public class KubernetesAgentIntentRendererTests
     {
         var intent = NewKustomizeIntent(namespace_: "custom-ns");
 
-        var rendered = await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None);
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldContain("kubectl create namespace \"custom-ns\"");
     }
@@ -893,7 +877,7 @@ public class KubernetesAgentIntentRendererTests
         var intent = new ManualInterventionIntent { Name = "manual-intervention" };
 
         var ex = await Should.ThrowAsync<IntentRenderingException>(
-            async () => await _renderer.RenderAsync(intent, NewContext(legacy: null), CancellationToken.None));
+            async () => await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None));
 
         ex.CommunicationStyle.ShouldBe(CommunicationStyle.KubernetesAgent);
         ex.IntentName.ShouldBe("manual-intervention");
@@ -976,7 +960,6 @@ public class KubernetesAgentIntentRendererTests
     private static byte[] BytesFor(string content) => Encoding.UTF8.GetBytes(content);
 
     private static IntentRenderContext NewContext(
-        ScriptExecutionRequest? legacy,
         List<VariableDto>? variables = null,
         DeploymentTargetContext? target = null,
         int serverTaskId = 42,
@@ -997,8 +980,7 @@ public class KubernetesAgentIntentRendererTests
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
-            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>(),
-            LegacyRequest = legacy
+            PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
         };
     }
 }

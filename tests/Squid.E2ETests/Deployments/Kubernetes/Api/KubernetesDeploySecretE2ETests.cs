@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Handlers;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.E2ETests.Infrastructure;
 using Squid.Message.Enums;
@@ -37,7 +39,7 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
             var action = BuildSecretAction("e2e-sec-single", testNs,
                 "[{\"Key\":\"api-key\",\"Value\":\"sk-abc123\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Secret failed: {scriptResult.StdErr}");
@@ -65,7 +67,7 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
             var action = BuildSecretAction("e2e-sec-multi", testNs,
                 "[{\"Key\":\"username\",\"Value\":\"admin\"},{\"Key\":\"password\",\"Value\":\"s3cret!\"},{\"Key\":\"host\",\"Value\":\"db.internal\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Secret failed: {scriptResult.StdErr}");
@@ -98,7 +100,7 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
             var action = BuildSecretAction("e2e-sec-obj", testNs,
                 "{\"db-user\":\"postgres\",\"db-pass\":\"p@ssw0rd\"}");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Secret failed: {scriptResult.StdErr}");
@@ -127,7 +129,7 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
             var action = BuildSecretAction("e2e-sec-lower", testNs,
                 "[{\"key\":\"token\",\"value\":\"xyz789\"}]");
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Secret failed: {scriptResult.StdErr}");
@@ -154,13 +156,13 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
 
             var firstAction = BuildSecretAction("e2e-sec-update", testNs,
                 "[{\"Key\":\"secret-val\",\"Value\":\"old-value\"}]");
-            var firstResult = await PrepareAndAssertNotNull(firstAction);
+            var firstResult = await DescribeAndAssertNotNull(firstAction);
             var firstScript = await ApplyToClusterAsync(firstResult, clusterUrl, token, testNs);
             firstScript.ExitCode.ShouldBe(0, $"First apply failed: {firstScript.StdErr}");
 
             var secondAction = BuildSecretAction("e2e-sec-update", testNs,
                 "[{\"Key\":\"secret-val\",\"Value\":\"new-value\"}]");
-            var secondResult = await PrepareAndAssertNotNull(secondAction);
+            var secondResult = await DescribeAndAssertNotNull(secondAction);
             var secondScript = await ApplyToClusterAsync(secondResult, clusterUrl, token, testNs);
             secondScript.ExitCode.ShouldBe(0, $"Second apply failed: {secondScript.StdErr}");
 
@@ -194,7 +196,7 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
 
             var action = BuildSecretAction("e2e-sec-special", testNs, valuesJson);
 
-            var result = await PrepareAndAssertNotNull(action);
+            var result = await DescribeAndAssertNotNull(action);
             var scriptResult = await ApplyToClusterAsync(result, clusterUrl, token, testNs);
 
             scriptResult.ExitCode.ShouldBe(0, $"Deploy Secret failed: {scriptResult.StdErr}");
@@ -210,48 +212,52 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
     }
 
     [Fact]
-    public async Task DeploySecret_NoName_ReturnsNull()
+    public async Task DeploySecret_NoName_ReturnsEmptyYamlFiles()
     {
         var action = BuildSecretAction("", "default",
             "[{\"Key\":\"k\",\"Value\":\"v\"}]");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task DeploySecret_NoValues_ReturnsNull()
+    public async Task DeploySecret_NoValues_ReturnsEmptyYamlFiles()
     {
         var action = BuildSecretAction("some-secret", "default", "");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task DeploySecret_InvalidJson_ReturnsNull()
+    public async Task DeploySecret_InvalidJson_ReturnsEmptyYamlFiles()
     {
         var action = BuildSecretAction("bad-json-secret", "default", "not-json");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task DeploySecret_EmptyArrayValues_ReturnsNull()
+    public async Task DeploySecret_EmptyArrayValues_ReturnsEmptyYamlFiles()
     {
         var action = BuildSecretAction("empty-arr-secret", "default", "[]");
 
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldBeNull();
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldBeEmpty();
     }
 
     // ========================================================================
@@ -276,28 +282,29 @@ public class KubernetesDeploySecretE2ETests : KubernetesApiE2ETestBase
         };
     }
 
-    private async Task<ActionExecutionResult> PrepareAndAssertNotNull(DeploymentActionDto action)
+    private async Task<KubernetesApplyIntent> DescribeAndAssertNotNull(DeploymentActionDto action)
     {
         var ctx = new ActionExecutionContext { Action = action };
-        var result = await _handler.PrepareAsync(ctx, CancellationToken.None);
+        var intent = await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        result.ShouldNotBeNull();
-        result.Files.ShouldContainKey("secret.yaml");
+        var applyIntent = intent.ShouldBeOfType<KubernetesApplyIntent>();
+        applyIntent.YamlFiles.ShouldNotBeEmpty();
+        applyIntent.YamlFiles.ShouldContain(f => f.RelativePath == "secret.yaml");
 
-        return result;
+        return applyIntent;
     }
 
-    private async Task<ScriptResult> ApplyToClusterAsync(ActionExecutionResult result, string clusterUrl, string token, string ns)
+    private async Task<ScriptResult> ApplyToClusterAsync(KubernetesApplyIntent intent, string clusterUrl, string token, string ns)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"squid-sec-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            foreach (var file in result.Files)
-                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.Key), file.Value);
+            foreach (var file in intent.YamlFiles)
+                await File.WriteAllBytesAsync(Path.Combine(tempDir, file.RelativePath), file.Content);
 
-            var modifiedScript = $"cd \"{tempDir}\"\n{result.ScriptBody}";
+            var modifiedScript = $"cd \"{tempDir}\"\nkubectl apply -f .";
             var scriptContext = MakeScriptContext(clusterUrl, token, ns);
             var fullScript = _contextBuilder.WrapWithContext(modifiedScript, scriptContext);
 

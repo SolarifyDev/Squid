@@ -14,31 +14,9 @@ public class KubernetesDeployIngressActionHandler : IActionHandler
 
     public string ActionType => SpecialVariables.ActionTypes.KubernetesDeployIngress;
 
-    public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-    {
-        var files = await _generator.GenerateAsync(ctx.Step, ctx.Action, ct).ConfigureAwait(false);
-
-        if (files == null || files.Count == 0)
-            return null;
-
-        var result = new ActionExecutionResult
-        {
-            ScriptBody = KubernetesApplyCommandBuilder.Build("./ingress.yaml", ctx.Action, ScriptSyntax.Bash),
-            Files = files,
-            CalamariCommand = null,
-            ExecutionMode = ExecutionMode.DirectScript,
-            ContextPreparationPolicy = ContextPreparationPolicy.Apply,
-            PayloadKind = PayloadKind.None,
-            Syntax = ScriptSyntax.Bash
-        };
-
-        return result;
-    }
-
     /// <summary>
-    /// Phase 9c.4 — direct intent emission. Bypasses <see cref="PrepareAsync"/> entirely
-    /// and produces a <see cref="KubernetesApplyIntent"/> with a stable semantic name
-    /// (<c>k8s-apply</c>). The generated Ingress YAML is carried as a single
+    /// Direct intent emission. Produces a <see cref="KubernetesApplyIntent"/> with a stable
+    /// semantic name (<c>k8s-apply</c>). The generated Ingress YAML is carried as a single
     /// <c>ingress.yaml</c> asset. Unconfigured or invalid actions produce an empty
     /// <c>YamlFiles</c> collection (a semantic no-op).
     /// </summary>

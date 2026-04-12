@@ -19,17 +19,11 @@ public interface IActionHandler : IScopedDependency
     bool CanHandle(DeploymentActionDto action)
         => string.Equals(action?.ActionType, ActionType, StringComparison.OrdinalIgnoreCase);
 
-    Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct);
-
     /// <summary>
-    /// Phase 9 intent seam: every handler emits an <see cref="ExecutionIntent"/>
-    /// directly. Post Phase 9k.1 there is no legacy adapter fallback — every concrete
-    /// handler must provide an explicit implementation of this method (bypassing
-    /// <see cref="PrepareAsync"/> entirely). The pipeline reaches handlers via this
-    /// method only; <see cref="PrepareAsync"/> remains on the interface so legacy
-    /// preparation state (<see cref="ActionExecutionResult.Files"/>, warnings, masker,
-    /// etc.) can still flow through <see cref="IntentRenderContext.LegacyRequest"/>
-    /// until Phase 10.
+    /// Emits an <see cref="ExecutionIntent"/> describing what the action wants to do.
+    /// The pipeline expands variables in the intent, applies structured config replacement,
+    /// then passes the intent to the per-transport <see cref="Rendering.IIntentRenderer"/>
+    /// which produces a <see cref="Script.ScriptExecutionRequest"/>.
     /// </summary>
     Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct);
 

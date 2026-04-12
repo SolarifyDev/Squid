@@ -541,22 +541,6 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
 
         public string ActionType => "Squid.Script";
 
-        public async Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            if (ctx.Action.Name is "Action1" or "Action2" or "ActionA" or "ActionB")
-                await _barrier.SignalAndWaitAsync(ct).ConfigureAwait(false);
-
-            var seesX = ctx.Variables?.Any(v => v.Name == "X") == true;
-
-            return new ActionExecutionResult
-            {
-                ScriptBody = $"ACTION={ctx.Action.Name};SEES_X={seesX}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
-            };
-        }
-
         public async Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
         {
             if (ctx.Action.Name is "Action1" or "Action2" or "ActionA" or "ActionB")
@@ -576,17 +560,6 @@ public class DeploymentTaskExecutorPhase4AcceptanceTests
     private sealed class SimpleRunScriptHandler : IActionHandler
     {
         public string ActionType => "Squid.Script";
-
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            return Task.FromResult(new ActionExecutionResult
-            {
-                ScriptBody = $"ACTION={ctx.Action.Name}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
-            });
-        }
 
         public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
             Task.FromResult<ExecutionIntent>(new RunScriptIntent

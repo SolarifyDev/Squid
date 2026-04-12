@@ -813,17 +813,6 @@ public class DeploymentExecutionLoggingTests
     {
         public string ActionType => "Squid.Script";
 
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-        {
-            return Task.FromResult(new ActionExecutionResult
-            {
-                ScriptBody = $"echo ACTION={ctx.Action.Name}",
-                Syntax = ScriptSyntax.Bash,
-                ExecutionMode = ExecutionMode.DirectScript,
-                ContextPreparationPolicy = ContextPreparationPolicy.Apply
-            });
-        }
-
         public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
             Task.FromResult<ExecutionIntent>(new RunScriptIntent
             {
@@ -838,9 +827,6 @@ public class DeploymentExecutionLoggingTests
         public string ActionType => "Squid.Manual";
 
         public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
-
-        public Task<ActionExecutionResult> PrepareAsync(ActionExecutionContext ctx, CancellationToken ct)
-            => Task.FromResult(new ActionExecutionResult());
 
         public Task<ExecutionIntent> DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct) =>
             Task.FromResult<ExecutionIntent>(new ManualInterventionIntent { Name = "manual-intervention" });
