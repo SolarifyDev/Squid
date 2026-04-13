@@ -5,7 +5,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class RegisterTentaclePollingCommand : ICommand, ISpaceScoped
+public class RegisterLinuxPollingCommand : ICommand, ISpaceScoped
 {
     public string MachineName { get; set; }
     public string Thumbprint { get; set; }

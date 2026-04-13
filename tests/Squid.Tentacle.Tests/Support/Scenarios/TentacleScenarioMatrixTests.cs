@@ -11,7 +11,7 @@ public class TentacleScenarioMatrixTests
         var cases = TentacleScenarioMatrix.KubernetesAgentRuntimeSmoke().ToList();
 
         cases.ShouldNotBeEmpty();
-        cases.Select(c => c.Name).ShouldAllBe(n => n.Contains("KubernetesAgent"));
+        cases.ShouldAllBe(c => c.Name.Contains(c.FlavorId, StringComparison.Ordinal));
         cases.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count().ShouldBe(cases.Count);
     }
 

@@ -8,7 +8,7 @@ namespace Squid.Core.Services.Machines;
 
 public partial class MachineRegistrationService
 {
-    public async Task<RegisterMachineResponseData> RegisterTentaclePollingAsync(RegisterTentaclePollingCommand command, CancellationToken cancellationToken = default)
+    public async Task<RegisterMachineResponseData> RegisterLinuxPollingAsync(RegisterLinuxPollingCommand command, CancellationToken cancellationToken = default)
     {
         var resolvedEnvironmentIds = await ResolveEnvironmentIdsAsync(command.Environments, cancellationToken).ConfigureAwait(false);
 
@@ -53,7 +53,7 @@ public partial class MachineRegistrationService
         };
     }
 
-    private static string BuildTentaclePollingEndpointJson(RegisterTentaclePollingCommand command, string agentVersion)
+    private static string BuildTentaclePollingEndpointJson(RegisterLinuxPollingCommand command, string agentVersion)
     {
         return JsonSerializer.Serialize(new TentaclePollingEndpointDto
         {
@@ -64,7 +64,7 @@ public partial class MachineRegistrationService
         });
     }
 
-    private Machine BuildTentaclePollingMachine(RegisterTentaclePollingCommand command, string resolvedEnvironmentIds)
+    private Machine BuildTentaclePollingMachine(RegisterLinuxPollingCommand command, string resolvedEnvironmentIds)
     {
         var endpointJson = BuildTentaclePollingEndpointJson(command, command.AgentVersion);
 

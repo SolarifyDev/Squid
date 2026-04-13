@@ -20,6 +20,11 @@ public sealed class NoOpRegistrar : ITentacleRegistrar
 
     public Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(_settings.ServerCertificate))
+            throw new InvalidOperationException(
+                "Listening mode requires the Server certificate thumbprint to be configured. " +
+                "Set Tentacle:ServerCertificate to the Squid Server's certificate thumbprint.");
+
         Log.Information("Listening mode — skipping auto-registration. Machine must be added on Server manually");
 
         return Task.FromResult(new TentacleRegistration

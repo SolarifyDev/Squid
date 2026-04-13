@@ -18,7 +18,9 @@ public interface IMachineRegistrationService : IScopedDependency
 
     Task<RegisterMachineResponseData> RegisterSshAsync(RegisterSshCommand command, CancellationToken cancellationToken = default);
 
-    Task<RegisterMachineResponseData> RegisterTentaclePollingAsync(RegisterTentaclePollingCommand command, CancellationToken cancellationToken = default);
+    Task<RegisterMachineResponseData> RegisterLinuxPollingAsync(RegisterLinuxPollingCommand command, CancellationToken cancellationToken = default);
+
+    Task<RegisterMachineResponseData> RegisterLinuxListeningAsync(RegisterLinuxListeningCommand command, CancellationToken cancellationToken = default);
 }
 
 public partial class MachineRegistrationService : IMachineRegistrationService

@@ -37,7 +37,7 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         var serverThumbprint = GetServerThumbprint();
 
-        Stub = new TentacleStub(serverThumbprint, _pollingPort, KindClusterFixture.DefaultKubeconfigPath);
+        Stub = TentacleStub.CreatePolling(serverThumbprint, _pollingPort, KindClusterFixture.DefaultKubeconfigPath);
 
         var halibutRuntime = LifetimeScope.Resolve<HalibutRuntime>();
         halibutRuntime.Trust(Stub.Thumbprint);

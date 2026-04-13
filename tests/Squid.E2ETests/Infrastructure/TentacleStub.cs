@@ -12,32 +12,27 @@ public partial class TentacleStub : IAsyncDisposable
 {
     public string Thumbprint { get; }
     public string SubscriptionId { get; }
+    public int? ListeningPort { get; }
 
     private readonly HalibutRuntime _agentRuntime;
 
-    public TentacleStub(string serverThumbprint, int serverPollingPort, string kubeconfigPath)
+    /// <summary>Creates a Polling-mode TentacleStub that connects outbound to the Server's polling listener.</summary>
+    public static TentacleStub CreatePolling(string serverThumbprint, int serverPollingPort, string kubeconfigPath = null)
+        => new(serverThumbprint, serverPollingPort, kubeconfigPath);
+
+    /// <summary>Creates a Listening-mode TentacleStub that accepts inbound connections from the Server.</summary>
+    public static TentacleStub CreateListening(int listeningPort, string kubeconfigPath = null)
+        => new(listeningPort, kubeconfigPath);
+
+    // Polling mode constructor
+    private TentacleStub(string serverThumbprint, int serverPollingPort, string kubeconfigPath)
     {
         SubscriptionId = Guid.NewGuid().ToString("N");
 
         var agentCert = CreateSelfSignedCert();
         Thumbprint = agentCert.Thumbprint;
 
-        var scriptRunner = new ScriptRunner(kubeconfigPath);
-        var asyncAdapter = new AsyncScriptServiceAdapter(scriptRunner);
-
-        var capsService = new CapabilitiesService();
-        var asyncCapsAdapter = new AsyncCapabilitiesServiceAdapter(capsService);
-
-        var serviceFactory = new DelegateServiceFactory();
-        serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
-        serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => asyncCapsAdapter);
-
-        _agentRuntime = new HalibutRuntimeBuilder()
-            .WithServiceFactory(serviceFactory)
-            .WithServerCertificate(agentCert)
-            .WithHalibutTimeoutsAndLimits(HalibutTimeoutsAndLimits.RecommendedValues())
-            .Build();
-
+        _agentRuntime = BuildRuntime(agentCert, kubeconfigPath);
         _agentRuntime.Trust(serverThumbprint);
 
         var timeouts = HalibutTimeoutsAndLimits.RecommendedValues();
@@ -51,9 +46,47 @@ public partial class TentacleStub : IAsyncDisposable
             CancellationToken.None);
     }
 
+    // Listening mode constructor
+    private TentacleStub(int listeningPort, string kubeconfigPath)
+    {
+        SubscriptionId = Guid.NewGuid().ToString("N");
+        ListeningPort = listeningPort;
+
+        var agentCert = CreateSelfSignedCert();
+        Thumbprint = agentCert.Thumbprint;
+
+        _agentRuntime = BuildRuntime(agentCert, kubeconfigPath);
+        _agentRuntime.Listen(listeningPort);
+    }
+
+    /// <summary>Trust a Server certificate (required for Listening mode so the TLS handshake succeeds).</summary>
+    public void Trust(string serverThumbprint)
+    {
+        _agentRuntime.Trust(serverThumbprint);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _agentRuntime.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private static HalibutRuntime BuildRuntime(X509Certificate2 agentCert, string kubeconfigPath)
+    {
+        var scriptRunner = new ScriptRunner(kubeconfigPath);
+        var asyncAdapter = new AsyncScriptServiceAdapter(scriptRunner);
+
+        var capsService = new CapabilitiesService();
+        var asyncCapsAdapter = new AsyncCapabilitiesServiceAdapter(capsService);
+
+        var serviceFactory = new DelegateServiceFactory();
+        serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
+        serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => asyncCapsAdapter);
+
+        return new HalibutRuntimeBuilder()
+            .WithServiceFactory(serviceFactory)
+            .WithServerCertificate(agentCert)
+            .WithHalibutTimeoutsAndLimits(HalibutTimeoutsAndLimits.RecommendedValues())
+            .Build();
     }
 
     private static X509Certificate2 CreateSelfSignedCert()

@@ -52,11 +52,20 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost("register/tentacle-polling")]
+    [HttpPost("register/linux-polling")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
-    public async Task<IActionResult> RegisterTentaclePollingAsync([FromBody] RegisterTentaclePollingCommand command, CancellationToken ct)
+    public async Task<IActionResult> RegisterLinuxPollingAsync([FromBody] RegisterLinuxPollingCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<RegisterTentaclePollingCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterLinuxPollingCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("register/linux-listening")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterLinuxListeningAsync([FromBody] RegisterLinuxListeningCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<RegisterLinuxListeningCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

@@ -11,7 +11,7 @@ public sealed class LinuxTentacleRegistrar : ITentacleRegistrar
     public LinuxTentacleRegistrar(TentacleSettings tentacleSettings)
     {
         _client = new TentacleRegistrationClient(
-            tentacleSettings, "/api/machines/register/tentacle-polling");
+            tentacleSettings, "/api/machines/register/linux-polling");
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)

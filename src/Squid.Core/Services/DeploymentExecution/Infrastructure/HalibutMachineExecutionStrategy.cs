@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Halibut;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
@@ -68,6 +69,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ticketId,
             scriptFiles)
         {
+            ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
@@ -99,6 +101,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ticketId,
             scriptFiles)
         {
+            ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
@@ -126,6 +129,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             files.Add(new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(sensitiveBytes), password));
 
         return files.ToArray();
+    }
+
+    internal static ScriptType MapSyntax(Message.Models.Deployments.Execution.ScriptSyntax syntax)
+    {
+        return syntax switch
+        {
+            Message.Models.Deployments.Execution.ScriptSyntax.PowerShell => ScriptType.PowerShell,
+            _ => ScriptType.Bash
+        };
     }
 
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
