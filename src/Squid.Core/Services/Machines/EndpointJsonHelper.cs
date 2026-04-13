@@ -60,4 +60,24 @@ public static class EndpointJsonHelper
             return null;
         }
     }
+
+    public static ServiceEndPoint ParseTentacleListeningEndpoint(string endpointJson)
+    {
+        if (string.IsNullOrWhiteSpace(endpointJson)) return null;
+
+        try
+        {
+            var uri = GetField(endpointJson, "Uri");
+            var thumbprint = GetField(endpointJson, "Thumbprint");
+
+            if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(thumbprint))
+                return null;
+
+            return new ServiceEndPoint(new Uri(uri), thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

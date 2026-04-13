@@ -72,7 +72,10 @@ public sealed class TentacleApp
             halibutHost.StartPolling(registration.ServerThumbprint, subscriptionId, registration.SubscriptionUri);
         }
         else
-            halibutHost.StartListening(runtime.ListeningPort ?? tentacleSettings.ListeningPort);
+        {
+            var listeningPort = runtime.ListeningPort ?? tentacleSettings.ListeningPort;
+            halibutHost.StartListening(listeningPort, registration.ServerThumbprint);
+        }
 
         var isReady = true;
         Func<bool> readinessCheck = runtime.ReadinessCheck != null

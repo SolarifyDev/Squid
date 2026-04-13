@@ -135,14 +135,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return Convert.ToHexString(hash)[..32].ToLowerInvariant();
     }
 
-    private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
+    internal static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
     {
         try
         {
-            var endpoint = Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
+            var style = Machines.EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
+
+            var endpoint = style == nameof(Message.Enums.CommunicationStyle.LinuxListening)
+                ? Machines.EndpointJsonHelper.ParseTentacleListeningEndpoint(machine.Endpoint)
+                : Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 
             if (endpoint == null)
-                Log.Warning("[Deploy] Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
+                Log.Warning("[Deploy] Machine {MachineName} has missing endpoint connection fields in endpoint JSON", machine.Name);
 
             return endpoint;
         }

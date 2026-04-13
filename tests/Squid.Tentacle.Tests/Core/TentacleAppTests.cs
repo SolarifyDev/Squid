@@ -425,7 +425,7 @@ public class TentacleAppTests : TimedTestBase
             SubscriptionUri = subscriptionUri ?? string.Empty;
         }
 
-        public void StartListening(int port)
+        public void StartListening(int port, string serverThumbprint = null)
         {
             StartCalls++;
             ListeningPort = port;
