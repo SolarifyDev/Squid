@@ -9,6 +9,7 @@ jobs:
     name: Squid UnitTests
     runs-on: ubuntu-latest
     env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
       UNIT_TEST_PROJECT: ${{ github.workspace }}/tests/Squid.UnitTests/Squid.UnitTests.csproj
 
     steps:
@@ -20,8 +21,11 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
       - name: Restore Squid.UnitTests
-        run: dotnet restore "$UNIT_TEST_PROJECT" --ignore-failed-sources
+        run: dotnet restore "$UNIT_TEST_PROJECT" --configfile "$NUGET_CONFIG"
 
       - name: Run Squid.UnitTests
         run: dotnet test "$UNIT_TEST_PROJECT" --configuration Release --no-restore
