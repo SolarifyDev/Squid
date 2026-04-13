@@ -1,0 +1,27 @@
+name: UnitTests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Squid UnitTests
+    runs-on: ubuntu-latest
+    env:
+      UNIT_TEST_PROJECT: ${{ github.workspace }}/tests/Squid.UnitTests/Squid.UnitTests.csproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore Squid.UnitTests
+        run: dotnet restore "$UNIT_TEST_PROJECT" --ignore-failed-sources
+
+      - name: Run Squid.UnitTests
+        run: dotnet test "$UNIT_TEST_PROJECT" --configuration Release --no-restore
