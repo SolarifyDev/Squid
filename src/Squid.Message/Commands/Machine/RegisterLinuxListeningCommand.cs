@@ -10,8 +10,8 @@ public class RegisterLinuxListeningCommand : ICommand, ISpaceScoped
     public string MachineName { get; set; }
     public int SpaceId { get; set; }
     int? ISpaceScoped.SpaceId => SpaceId;
-    public List<string> Roles { get; set; }
-    public List<int> EnvironmentIds { get; set; }
+    public string Roles { get; set; }
+    public string Environments { get; set; }
     public string Uri { get; set; }
     public string Thumbprint { get; set; }
     public string AgentVersion { get; set; }

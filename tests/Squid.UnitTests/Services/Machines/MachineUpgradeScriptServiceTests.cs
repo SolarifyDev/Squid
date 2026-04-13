@@ -20,7 +20,8 @@ public class MachineUpgradeScriptServiceTests
         _service = new MachineScriptService(
             _accountService.Object,
             _machineDataProvider.Object,
-            _agentVersionProvider.Object);
+            _agentVersionProvider.Object,
+            new Squid.Core.Settings.SelfCert.SelfCertSetting());
     }
 
     [Fact]

@@ -10,19 +10,20 @@ public partial class MachineRegistrationService
 {
     public async Task<RegisterMachineResponseData> RegisterLinuxListeningAsync(RegisterLinuxListeningCommand command, CancellationToken cancellationToken = default)
     {
+        var resolvedEnvironmentIds = await ResolveEnvironmentIdsAsync(command.Environments, cancellationToken).ConfigureAwait(false);
+
         var existing = await _dataProvider.GetMachineByEndpointUriAsync(command.Uri, cancellationToken).ConfigureAwait(false);
 
         Machine machine;
+
+        var serializedRoles = SerializeRolesFromCsv(command.Roles);
 
         if (existing != null)
         {
             existing.Endpoint = BuildLinuxListeningEndpointJson(command);
 
-            var serializedRoles = command.Roles != null ? JsonSerializer.Serialize(command.Roles) : null;
-            var serializedEnvIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
-
             if (serializedRoles != null) existing.Roles = serializedRoles;
-            if (serializedEnvIds != null) existing.EnvironmentIds = serializedEnvIds;
+            if (resolvedEnvironmentIds != null) existing.EnvironmentIds = resolvedEnvironmentIds;
 
             await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -32,7 +33,7 @@ public partial class MachineRegistrationService
         }
         else
         {
-            machine = BuildLinuxListeningMachine(command, BuildLinuxListeningEndpointJson(command));
+            machine = BuildLinuxListeningMachine(command, BuildLinuxListeningEndpointJson(command), serializedRoles, resolvedEnvironmentIds);
 
             await EnsureUniqueNameAsync(machine.Name, command.SpaceId, cancellationToken).ConfigureAwait(false);
             await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
@@ -59,13 +60,10 @@ public partial class MachineRegistrationService
         });
     }
 
-    private static Machine BuildLinuxListeningMachine(RegisterLinuxListeningCommand command, string endpointJson)
+    private static Machine BuildLinuxListeningMachine(RegisterLinuxListeningCommand command, string endpointJson, string serializedRoles, string resolvedEnvironmentIds)
     {
-        var serializedRoles = command.Roles != null ? JsonSerializer.Serialize(command.Roles) : null;
-        var serializedEnvIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
-
         return BuildMachineDefaults(
             command.MachineName ?? $"linux-{Guid.NewGuid():N}"[..20],
-            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
+            serializedRoles, resolvedEnvironmentIds, command.SpaceId, endpointJson);
     }
 }

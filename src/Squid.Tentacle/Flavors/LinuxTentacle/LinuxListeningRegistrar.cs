@@ -69,8 +69,8 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
             ["uri"] = listeningUri,
             ["thumbprint"] = identity.Thumbprint,
             ["spaceId"] = _settings.SpaceId,
-            ["roles"] = ParseCsvToList(_settings.Roles),
-            ["environmentIds"] = ParseEnvironmentIds(_settings.Environments),
+            ["roles"] = _settings.Roles ?? string.Empty,
+            ["environments"] = _settings.Environments ?? string.Empty,
             ["agentVersion"] = _settings.AgentVersion
         };
 
@@ -100,31 +100,6 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
         var port = _settings.ListeningPort > 0 ? _settings.ListeningPort : 10933;
 
         return $"https://{host}:{port}/";
-    }
-
-    private static List<string> ParseCsvToList(string csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv)) return new List<string>();
-
-        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-    }
-
-    private static List<int> ParseEnvironmentIds(string environments)
-    {
-        // The server will resolve environment names to IDs — for Listening registration,
-        // the command takes environmentIds (int[]), not names.
-        // If the user provides numeric IDs, parse them; otherwise return empty (server will ignore).
-        if (string.IsNullOrWhiteSpace(environments)) return new List<int>();
-
-        var ids = new List<int>();
-
-        foreach (var part in environments.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (int.TryParse(part, out var id))
-                ids.Add(id);
-        }
-
-        return ids;
     }
 
     private class RegistrationResponse

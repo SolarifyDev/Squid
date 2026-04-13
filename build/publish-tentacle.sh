@@ -23,9 +23,14 @@ for RID in linux-x64 linux-arm64; do
         -c Release -r "$RID" --self-contained true \
         -o "$OUTPUT_DIR"
 
+    # Versioned archive (for specific version downloads)
     ARCHIVE="${OUTPUT_BASE}/squid-tentacle-${VERSION}-${RID}.tar.gz"
     echo "Creating archive: ${ARCHIVE}"
     tar czf "$ARCHIVE" -C "$OUTPUT_DIR" .
+
+    # Unversioned archive (for "latest" downloads)
+    LATEST_ARCHIVE="${OUTPUT_BASE}/squid-tentacle-${RID}.tar.gz"
+    cp "$ARCHIVE" "$LATEST_ARCHIVE"
 
     echo "Created: ${ARCHIVE} ($(du -h "$ARCHIVE" | cut -f1))"
 done
@@ -33,3 +38,11 @@ done
 echo ""
 echo "=== Done ==="
 ls -lh "${OUTPUT_BASE}"/squid-tentacle-*.tar.gz
+
+echo ""
+echo "To create a GitHub release:"
+echo "  gh release create v${VERSION} \\"
+echo "    ${OUTPUT_BASE}/squid-tentacle-${VERSION}-linux-x64.tar.gz \\"
+echo "    ${OUTPUT_BASE}/squid-tentacle-${VERSION}-linux-arm64.tar.gz \\"
+echo "    ${OUTPUT_BASE}/squid-tentacle-linux-x64.tar.gz \\"
+echo "    ${OUTPUT_BASE}/squid-tentacle-linux-arm64.tar.gz"

@@ -70,6 +70,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("generate-linux-tentacle-install-script")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateLinuxTentacleInstallScriptResponse))]
+    public async Task<IActionResult> GenerateLinuxTentacleInstallScriptAsync([FromBody] GenerateLinuxTentacleInstallScriptCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<GenerateLinuxTentacleInstallScriptCommand, GenerateLinuxTentacleInstallScriptResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("generate-kubernetes-agent-install-script")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
     public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)
