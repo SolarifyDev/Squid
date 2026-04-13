@@ -1,3 +1,4 @@
+using Squid.Core.Persistence;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -26,6 +27,8 @@ public interface IMachineDataProvider : IScopedDependency
     Task<bool> ExistsBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<string>> GetPollingThumbprintsAsync(CancellationToken cancellationToken = default);
+
+    Task<Machine?> GetMachineByEndpointUriAsync(string uri, CancellationToken cancellationToken = default);
 
     Task<List<Machine>> GetMachinesByPolicyIdAsync(int policyId, CancellationToken cancellationToken = default);
 
@@ -96,9 +99,8 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<Machine?> GetMachineBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)
     {
         return await repository
-            .FromSqlRaw<Machine>(
-                "SELECT * FROM machine WHERE endpoint::jsonb ->> 'SubscriptionId' = {0}",
-                subscriptionId)
+            .Query<Machine>()
+            .Where(m => PostgresFunctions.JsonValue(m.Endpoint, "SubscriptionId") == subscriptionId)
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
@@ -106,9 +108,8 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<bool> ExistsBySubscriptionIdAsync(string subscriptionId, CancellationToken cancellationToken = default)
     {
         return await repository
-            .FromSqlRaw<Machine>(
-                "SELECT * FROM machine WHERE endpoint::jsonb ->> 'SubscriptionId' = {0}",
-                subscriptionId)
+            .Query<Machine>()
+            .Where(m => PostgresFunctions.JsonValue(m.Endpoint, "SubscriptionId") == subscriptionId)
             .AnyAsync(cancellationToken)
             .ConfigureAwait(false);
     }
@@ -123,10 +124,21 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     public async Task<IReadOnlyList<string>> GetPollingThumbprintsAsync(CancellationToken cancellationToken = default)
     {
         return await repository
-            .SqlQueryRawAsync<string>(
-                "SELECT endpoint::jsonb ->> 'Thumbprint' FROM machine " +
-                "WHERE endpoint::jsonb ->> 'SubscriptionId' IS NOT NULL " +
-                "AND endpoint::jsonb ->> 'Thumbprint' IS NOT NULL")
+            .Query<Machine>()
+            .Where(m => PostgresFunctions.JsonValue(m.Endpoint, "SubscriptionId") != null)
+            .Select(m => PostgresFunctions.JsonValue(m.Endpoint, "Thumbprint"))
+            .Where(t => t != null)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<Machine?> GetMachineByEndpointUriAsync(string uri, CancellationToken cancellationToken = default)
+    {
+        return await repository
+            .Query<Machine>()
+            .Where(m => PostgresFunctions.JsonValue(m.Endpoint, "Uri") == uri)
+            .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 

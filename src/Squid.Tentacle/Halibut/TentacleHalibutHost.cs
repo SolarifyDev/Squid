@@ -91,8 +91,14 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         }
     }
 
-    public void StartListening(int port)
+    public void StartListening(int port, string serverThumbprint = null)
     {
+        if (!string.IsNullOrWhiteSpace(serverThumbprint))
+        {
+            _runtime.Trust(serverThumbprint);
+            Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", serverThumbprint);
+        }
+
         _runtime.Listen(port);
 
         Log.Information("Halibut listening on port {Port}", port);

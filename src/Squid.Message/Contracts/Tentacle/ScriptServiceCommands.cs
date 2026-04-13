@@ -81,6 +81,7 @@ public class StartScriptCommand
 
     public TimeSpan ScriptIsolationMutexTimeout { get; }
     public string? IsolationMutexName { get; }
+    public ScriptType ScriptSyntax { get; init; } = ScriptType.Bash;
     public string? TargetNamespace { get; init; }
     public Dictionary<string, string>? Labels { get; init; }
 }

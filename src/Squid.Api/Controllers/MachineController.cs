@@ -52,6 +52,33 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("register/linux-polling")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterLinuxPollingAsync([FromBody] RegisterLinuxPollingCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<RegisterLinuxPollingCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("register/linux-listening")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
+    public async Task<IActionResult> RegisterLinuxListeningAsync([FromBody] RegisterLinuxListeningCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<RegisterLinuxListeningCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("generate-linux-tentacle-install-script")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateLinuxTentacleInstallScriptResponse))]
+    public async Task<IActionResult> GenerateLinuxTentacleInstallScriptAsync([FromBody] GenerateLinuxTentacleInstallScriptCommand command, CancellationToken ct)
+    {
+        var response = await _mediator.SendAsync<GenerateLinuxTentacleInstallScriptCommand, GenerateLinuxTentacleInstallScriptResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("generate-kubernetes-agent-install-script")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateKubernetesAgentInstallScriptResponse))]
     public async Task<IActionResult> GenerateKubernetesAgentInstallScriptAsync([FromBody] GenerateKubernetesAgentInstallScriptCommand command, CancellationToken ct)

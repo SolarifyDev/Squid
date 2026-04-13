@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Halibut;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
@@ -68,6 +69,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ticketId,
             scriptFiles)
         {
+            ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
@@ -99,6 +101,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ticketId,
             scriptFiles)
         {
+            ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
@@ -128,6 +131,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return files.ToArray();
     }
 
+    internal static ScriptType MapSyntax(Message.Models.Deployments.Execution.ScriptSyntax syntax)
+    {
+        return syntax switch
+        {
+            Message.Models.Deployments.Execution.ScriptSyntax.PowerShell => ScriptType.PowerShell,
+            _ => ScriptType.Bash
+        };
+    }
+
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
     {
         var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
@@ -135,14 +147,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return Convert.ToHexString(hash)[..32].ToLowerInvariant();
     }
 
-    private static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
+    internal static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
     {
         try
         {
-            var endpoint = Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
+            var style = Machines.EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
+
+            var endpoint = style == nameof(Message.Enums.CommunicationStyle.LinuxListening)
+                ? Machines.EndpointJsonHelper.ParseTentacleListeningEndpoint(machine.Endpoint)
+                : Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 
             if (endpoint == null)
-                Log.Warning("[Deploy] Machine {MachineName} has missing SubscriptionId or Thumbprint in endpoint JSON", machine.Name);
+                Log.Warning("[Deploy] Machine {MachineName} has missing endpoint connection fields in endpoint JSON", machine.Name);
 
             return endpoint;
         }

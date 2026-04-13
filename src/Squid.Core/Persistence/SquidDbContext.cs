@@ -18,6 +18,8 @@ public class SquidDbContext : DbContext, IUnitOfWork
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(DeploymentConfiguration).Assembly);
+
+        modelBuilder.HasDbFunction(typeof(PostgresFunctions).GetMethod(nameof(PostgresFunctions.JsonValue))!).HasName("jsonb_extract_path_text");
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

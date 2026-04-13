@@ -1,0 +1,22 @@
+services:
+  squid-tentacle:
+    image: squidcd/squid-tentacle-linux:latest
+    environment:
+      Tentacle__ServerUrl: https://squid-server:7078
+      Tentacle__ServerCommsUrl: https://squid-server:10943
+      Tentacle__BearerToken: ${SQUID_BEARER_TOKEN}
+      Tentacle__Roles: web-server,linux
+      Tentacle__Environments: Production
+    volumes:
+      - tentacle-certs:/opt/squid/certs
+      - tentacle-work:/opt/squid/work
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  tentacle-certs:
+  tentacle-work:

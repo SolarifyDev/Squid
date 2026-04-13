@@ -1,0 +1,16 @@
+**/.git
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/.vs
+**/.idea
+**/.vscode
+**/TestResults
+tests/
+docs/
+deploy/
+*.md
+*.sln.DotSettings
+.editorconfig
+.gitignore

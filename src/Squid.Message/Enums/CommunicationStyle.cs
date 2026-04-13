@@ -7,5 +7,7 @@ public enum CommunicationStyle
     KubernetesAgent = 2,
     OpenClaw = 3,
     Ssh = 4,
+    LinuxListening = 5,
+    LinuxPolling = 6,
     None = 999,
 }

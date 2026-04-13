@@ -22,6 +22,48 @@ public class ScriptIsolationMutex
     public bool TryAcquire(StartScriptCommand command, out IDisposable? handle)
         => TryAcquire(command.Isolation, command.IsolationMutexName, out handle);
 
+    public async Task<IDisposable?> AcquireAsync(ScriptIsolationLevel isolation, string? isolationMutexName, TimeSpan timeout, CancellationToken ct = default)
+    {
+        var mutexName = isolationMutexName ?? "default";
+        var state = _mutexes.GetOrAdd(mutexName, _ => new ReaderWriterLockState());
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+
+        var pollInterval = TimeSpan.FromMilliseconds(100);
+
+        while (!cts.Token.IsCancellationRequested)
+        {
+            IDisposable? handle;
+            var acquired = isolation == ScriptIsolationLevel.FullIsolation
+                ? state.TryAcquireWriter(mutexName, out handle)
+                : state.TryAcquireReader(mutexName, out handle);
+
+            if (acquired)
+                return handle;
+
+            try
+            {
+                await Task.Delay(pollInterval, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Timeout reached (not external cancellation)
+                Log.Warning("Isolation mutex {MutexName} acquire timeout ({Timeout}s) for {Level}",
+                    mutexName, timeout.TotalSeconds, isolation);
+                return null;
+            }
+
+            pollInterval = TimeSpan.FromMilliseconds(Math.Min(pollInterval.TotalMilliseconds * 1.5, 1000));
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return null;
+    }
+
+    public Task<IDisposable?> AcquireAsync(StartScriptCommand command, CancellationToken ct = default)
+        => AcquireAsync(command.Isolation, command.IsolationMutexName, command.ScriptIsolationMutexTimeout, ct);
+
     private sealed class ReaderWriterLockState
     {
         private readonly object _gate = new();
@@ -34,7 +76,6 @@ public class ScriptIsolationMutex
             {
                 if (_writerActive)
                 {
-                    Log.Information("Isolation mutex {MutexName} has active writer, deferring reader", mutexName);
                     handle = null;
                     return false;
                 }
@@ -54,7 +95,6 @@ public class ScriptIsolationMutex
             {
                 if (_writerActive || _activeReaders > 0)
                 {
-                    Log.Information("Isolation mutex {MutexName} is held (writer: {Writer}, readers: {Readers}), deferring writer", mutexName, _writerActive, _activeReaders);
                     handle = null;
                     return false;
                 }

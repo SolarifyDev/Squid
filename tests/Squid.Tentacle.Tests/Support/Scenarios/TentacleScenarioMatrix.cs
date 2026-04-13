@@ -10,6 +10,18 @@ public static class TentacleScenarioMatrix
             FlavorId: "KubernetesAgent",
             ExecutionBackend: TentacleExecutionBackendKind.LocalProcess,
             Communication: TentacleCommunicationKind.HalibutPolling);
+
+        yield return new TentacleScenarioCase(
+            Name: "LinuxTentacle.LocalProcess.HalibutPolling",
+            FlavorId: "LinuxTentacle",
+            ExecutionBackend: TentacleExecutionBackendKind.LocalProcess,
+            Communication: TentacleCommunicationKind.HalibutPolling);
+
+        yield return new TentacleScenarioCase(
+            Name: "LinuxTentacle.LocalProcess.HalibutListening",
+            FlavorId: "LinuxTentacle",
+            ExecutionBackend: TentacleExecutionBackendKind.LocalProcess,
+            Communication: TentacleCommunicationKind.HalibutListening);
     }
 
     // Future E2E/cluster-backed scenarios. Kept here so new suites reuse the same case names.

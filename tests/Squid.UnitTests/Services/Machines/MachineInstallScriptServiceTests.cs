@@ -23,7 +23,8 @@ public class MachineInstallScriptServiceTests
         _service = new MachineScriptService(
             _accountService.Object,
             _machineDataProvider.Object,
-            _agentVersionProvider.Object);
+            _agentVersionProvider.Object,
+            new Squid.Core.Settings.SelfCert.SelfCertSetting());
     }
 
     private static GenerateKubernetesAgentInstallScriptCommand CreateCommand(
