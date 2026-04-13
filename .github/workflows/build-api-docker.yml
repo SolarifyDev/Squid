@@ -10,6 +10,9 @@ on:
         description: 'Version tag for the Docker image (overrides auto-generated tag)'
         required: false
 
+permissions:
+  contents: read
+
 env:
   DOCKER_HUB: ${{ vars.DOCKER_HUB }}
   DOCKER_NAME: ${{ vars.DOCKER_NAME }}
@@ -55,6 +58,7 @@ jobs:
           TAG="${RAW//+/-}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # Prune builder cache before arm64 build to free disk space for QEMU emulation
       - name: Docker builder prune
         if: matrix.platform == 'arm64'
         run: docker builder prune --all --force 2>/dev/null || true
@@ -97,6 +101,7 @@ jobs:
           TAG="${RAW//+/-}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # NOTE: Platform suffixes below must match the matrix.platform values in the build job
       - name: Create and push manifest
         run: |
           docker manifest create \
