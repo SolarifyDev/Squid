@@ -24,7 +24,7 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
 
         var registrar = communicationMode == TentacleCommunicationMode.Polling
             ? (ITentacleRegistrar)new LinuxTentacleRegistrar(tentacleSettings)
-            : new NoOpRegistrar(tentacleSettings);
+            : new LinuxListeningRegistrar(tentacleSettings);
 
         var backend = new LocalScriptService();
 

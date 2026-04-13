@@ -33,6 +33,9 @@ public sealed class RegisterCommand : ITentacleCommand
         ["--comms-url"] = "Tentacle:ServerCommsUrl",
         ["--flavor"] = "Tentacle:Flavor",
         ["--name"] = "Tentacle:MachineName",
+        ["--listening-host"] = "Tentacle:ListeningHostName",
+        ["--listening-port"] = "Tentacle:ListeningPort",
+        ["--server-cert"] = "Tentacle:ServerCertificate",
     };
 
     public async Task<int> ExecuteAsync(string[] args, IConfiguration config, CancellationToken ct)

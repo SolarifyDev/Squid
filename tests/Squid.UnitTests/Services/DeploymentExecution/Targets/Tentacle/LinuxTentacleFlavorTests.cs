@@ -59,16 +59,16 @@ public class LinuxTentacleFlavorTests
         var runtime = _flavor.CreateRuntime(BuildContext(settings));
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
-        runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
+        runtime.Registrar.ShouldBeOfType<LinuxListeningRegistrar>();
     }
 
     [Fact]
-    public void CreateRuntime_ListeningMode_EmptyServerCertificate_RegistrationThrows()
+    public async Task CreateRuntime_ListeningMode_NoServerUrl_SkipsRegistration()
     {
         var settings = new TentacleSettings
         {
-            ServerUrl = "https://server:7078",
-            ServerCertificate = "",
+            ServerUrl = "https://localhost:7078",
+            ServerCertificate = "AABBCCDD",
             Flavor = "LinuxTentacle"
         };
 
@@ -76,10 +76,11 @@ public class LinuxTentacleFlavorTests
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
 
-        Should.Throw<InvalidOperationException>(
-            () => runtime.Registrar.RegisterAsync(
-                new TentacleIdentity("sub-1", "THUMB"), CancellationToken.None).GetAwaiter().GetResult())
-            .Message.ShouldContain("ServerCertificate");
+        var registration = await runtime.Registrar.RegisterAsync(
+            new TentacleIdentity("sub-1", "THUMB"), CancellationToken.None);
+
+        registration.MachineId.ShouldBe(0);
+        registration.ServerThumbprint.ShouldBe("AABBCCDD");
     }
 
     [Fact]

@@ -10,18 +10,41 @@ public partial class MachineRegistrationService
 {
     public async Task<RegisterMachineResponseData> RegisterLinuxListeningAsync(RegisterLinuxListeningCommand command, CancellationToken cancellationToken = default)
     {
-        var endpointJson = BuildLinuxListeningEndpointJson(command);
-        var machine = BuildLinuxListeningMachine(command, endpointJson);
+        var existing = await _dataProvider.GetMachineByEndpointUriAsync(command.Uri, cancellationToken).ConfigureAwait(false);
 
-        await EnsureUniqueNameAsync(machine.Name, command.SpaceId, cancellationToken).ConfigureAwait(false);
-        await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
-        await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+        Machine machine;
 
-        Log.Information("Registered LinuxListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
+        if (existing != null)
+        {
+            existing.Endpoint = BuildLinuxListeningEndpointJson(command);
+
+            var serializedRoles = command.Roles != null ? JsonSerializer.Serialize(command.Roles) : null;
+            var serializedEnvIds = command.EnvironmentIds != null ? JsonSerializer.Serialize(command.EnvironmentIds) : null;
+
+            if (serializedRoles != null) existing.Roles = serializedRoles;
+            if (serializedEnvIds != null) existing.EnvironmentIds = serializedEnvIds;
+
+            await _dataProvider.UpdateMachineAsync(existing, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            machine = existing;
+
+            Log.Information("Updated existing LinuxListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
+        }
+        else
+        {
+            machine = BuildLinuxListeningMachine(command, BuildLinuxListeningEndpointJson(command));
+
+            await EnsureUniqueNameAsync(machine.Name, command.SpaceId, cancellationToken).ConfigureAwait(false);
+            await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+            await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            Log.Information("Registered new LinuxListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
+        }
 
         return new RegisterMachineResponseData
         {
-            MachineId = machine.Id
+            MachineId = machine.Id,
+            ServerThumbprint = GetServerThumbprint()
         };
     }
 
