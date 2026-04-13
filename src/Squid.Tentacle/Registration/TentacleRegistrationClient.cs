@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
@@ -73,7 +74,8 @@ public class TentacleRegistrationClient
         string subscriptionId, string thumbprint, CancellationToken ct)
     {
         using var handler = new HttpClientHandler();
-        handler.ServerCertificateCustomValidationCallback = (_, _, _, _) => true;
+        handler.ServerCertificateCustomValidationCallback =
+            ServerCertificateValidator.Create(_settings.ServerCertificate);
 
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);

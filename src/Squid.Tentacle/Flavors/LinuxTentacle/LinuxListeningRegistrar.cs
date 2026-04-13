@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
@@ -47,7 +48,8 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
         Log.Information("Registering Listening Tentacle at {Uri} with {ServerUrl}", listeningUri, _settings.ServerUrl);
 
         using var handler = new HttpClientHandler();
-        handler.ServerCertificateCustomValidationCallback = (_, _, _, _) => true;
+        handler.ServerCertificateCustomValidationCallback =
+            ServerCertificateValidator.Create(_settings.ServerCertificate);
 
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
