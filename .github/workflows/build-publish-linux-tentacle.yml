@@ -154,12 +154,14 @@ jobs:
         run: |
           tar czf dist/squid-tentacle-${IMAGE_TAG}-${{ matrix.rid }}.tar.gz \
             -C dist/${{ matrix.rid }} .
+          cp dist/squid-tentacle-${IMAGE_TAG}-${{ matrix.rid }}.tar.gz \
+            dist/squid-tentacle-${{ matrix.rid }}.tar.gz
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: squid-tentacle-${{ matrix.rid }}
-          path: dist/squid-tentacle-*-${{ matrix.rid }}.tar.gz
+          path: dist/squid-tentacle-*${{ matrix.rid }}.tar.gz
 
   # ── Step 4: Upload tar.gz to GitHub Releases (tag-only) ───────────────
   release:
