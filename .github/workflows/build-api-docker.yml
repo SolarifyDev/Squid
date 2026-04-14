@@ -41,9 +41,12 @@ jobs:
             # Tag push: use tag name directly (e.g. 1.2.4)
             RAW="$GIT_REF_NAME"
           else
-            # Main branch push: <latest-tag>-<run_number> (e.g. 1.2.4-10)
+            # Main branch push: auto-increment patch from latest tag
+            # e.g. latest tag 1.2.4 → next version 1.2.5-<run_number>
             BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
-            RAW="${BASE}-${RUN_NUMBER}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            RAW="${NEXT}-${RUN_NUMBER}"
           fi
           # Replace + with - for valid Docker tag
           TAG="${RAW//+/-}"
