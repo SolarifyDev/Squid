@@ -44,8 +44,11 @@ jobs:
             # Main branch push: auto-increment patch from latest tag
             # e.g. latest tag 1.2.4 → next version 1.2.5-<run_number>
             BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
-            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            # Strip optional 'v' prefix and any pre-release suffix (e.g. v1.2.4-rc1 → 1.2.4)
+            CLEAN="${BASE#v}"
+            CLEAN="${CLEAN%%-*}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CLEAN"
+            NEXT="${MAJOR:-0}.${MINOR:-0}.$((${PATCH:-0} + 1))"
             RAW="${NEXT}-${RUN_NUMBER}"
           fi
           # Replace + with - for valid Docker tag
