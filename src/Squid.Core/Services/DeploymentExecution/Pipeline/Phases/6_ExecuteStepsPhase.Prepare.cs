@@ -1,6 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.VariableSubstitution;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Process;
@@ -31,11 +32,18 @@ public sealed partial class ExecuteStepsPhase
         CancellationToken ct)
     {
         var stepResults = new List<PreparedAction>();
+        var planned = LookupPlannedStep(step);
 
         foreach (var action in eligibleActions)
         {
             if (actionHandlerRegistry.ResolveScope(action) == ExecutionScope.StepLevel)
                 continue;
+
+            if (IsDispatchBlockedByCapability(planned, action.Id, tc.Machine.Id))
+            {
+                await EmitCapabilityFilteredAsync(planned, action, tc, stepDisplayOrder, ct).ConfigureAwait(false);
+                continue;
+            }
 
             var handler = actionHandlerRegistry.Resolve(action);
 
@@ -109,6 +117,42 @@ public sealed partial class ExecuteStepsPhase
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return DeploymentTargetFinder.ParseCsvRoles(rolesProp.PropertyValue);
+    }
+
+    private static bool IsDispatchBlockedByCapability(PlannedStep? planned, int actionId, int machineId)
+    {
+        if (planned == null) return false;
+
+        var dispatch = planned.Actions
+            .FirstOrDefault(a => a.ActionId == actionId)
+            ?.Dispatches
+            .FirstOrDefault(d => d.Target.MachineId == machineId);
+
+        return dispatch is { Validation.IsValid: false };
+    }
+
+    private async Task EmitCapabilityFilteredAsync(PlannedStep planned, DeploymentActionDto action, DeploymentTargetContext tc, int stepDisplayOrder, CancellationToken ct)
+    {
+        var dispatch = planned.Actions
+            .FirstOrDefault(a => a.ActionId == action.Id)
+            ?.Dispatches
+            .FirstOrDefault(d => d.Target.MachineId == tc.Machine.Id);
+
+        var message = dispatch != null
+            ? string.Join("; ", dispatch.Validation.Violations.Select(v => v.Message))
+            : "dispatch blocked by capability validation";
+
+        Log.Warning("[Deploy] Action {ActionName} skipped on {MachineName}: {Message}", action.Name, tc.Machine.Name, message);
+
+        await lifecycle.EmitAsync(new ActionCapabilityFilteredEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = stepDisplayOrder,
+            ActionName = action.Name,
+            ActionType = action.ActionType,
+            MachineName = tc.Machine.Name,
+            CommunicationStyle = tc.CommunicationStyle,
+            Message = message
+        }), ct).ConfigureAwait(false);
     }
 
     private async Task EmitPreparationWarningsAsync(List<string> warnings, int stepDisplayOrder, string actionName, string machineName, CancellationToken ct)

@@ -15,11 +15,23 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 ///
 /// <para>
 /// Phase 6c-i (shadow mode): the planner is invoked in <see cref="PlanMode.Preview"/> so it
-/// never throws on blockers. The plan is observed but not consumed — existing execute-time
-/// filtering continues to be the source of truth for behavior. Phase 6c-iii will rewire
-/// <see cref="ExecuteStepsPhase"/> to consume <c>ctx.Plan.Steps</c> directly and switch this
-/// phase to <see cref="PlanMode.Execute"/> so blocker detection short-circuits the deployment
-/// before any action runs.
+/// never throws on blockers. The plan is stashed on <see cref="DeploymentTaskContext.Plan"/>
+/// for consumption by later phases.
+/// </para>
+///
+/// <para>
+/// Phase 6c-iii Tier 2 (per-dispatch filtering): <see cref="ExecuteStepsPhase"/> now reads
+/// <c>ctx.Plan.Steps</c> and skips any (action × target) dispatch whose
+/// <c>PlannedTargetDispatch.Validation.IsValid</c> is <c>false</c>, emitting an
+/// <c>ActionCapabilityFilteredEvent</c> instead of letting the renderer crash. This is a
+/// non-breaking, graceful skip — unsupported dispatches are silently filtered rather than
+/// causing deployment failure.
+/// </para>
+///
+/// <para>
+/// Tier 1 (future): switch this phase to <see cref="PlanMode.Execute"/> so blocker
+/// detection short-circuits the deployment <em>before</em> any action runs. This changes
+/// deployment success/failure semantics and requires its own rollout strategy.
 /// </para>
 ///
 /// <para>
