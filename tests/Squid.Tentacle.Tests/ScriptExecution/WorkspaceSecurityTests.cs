@@ -46,40 +46,43 @@ public class WorkspaceSecurityTests : IDisposable
     [Fact]
     public void WriteAdditionalFiles_PathTraversal_Skipped()
     {
+        var uniqueName = $"squid-traversal-{Guid.NewGuid():N}";
         var files = new List<ScriptFile>
         {
-            new("../../etc/passwd", DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
+            new($"../../tmp/{uniqueName}", DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
         };
 
         ScriptPodService.WriteAdditionalFiles(_workDir, files);
 
-        File.Exists(Path.Combine(_workDir, "../../etc/passwd")).ShouldBeFalse();
+        File.Exists(Path.GetFullPath(Path.Combine(_workDir, $"../../tmp/{uniqueName}"))).ShouldBeFalse();
     }
 
     [Fact]
     public void WriteAdditionalFiles_AbsolutePath_Skipped()
     {
+        var absPath = $"/tmp/squid-abs-{Guid.NewGuid():N}";
         var files = new List<ScriptFile>
         {
-            new("/tmp/evil", DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
+            new(absPath, DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
         };
 
         ScriptPodService.WriteAdditionalFiles(_workDir, files);
 
-        File.Exists("/tmp/evil").ShouldBeFalse();
+        File.Exists(absPath).ShouldBeFalse();
     }
 
     [Fact]
     public void WriteAdditionalFiles_DotDotInSubdir_Skipped()
     {
+        var uniqueName = $"squid-traversal-{Guid.NewGuid():N}";
         var files = new List<ScriptFile>
         {
-            new("foo/../../../etc/passwd", DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
+            new($"foo/../../../tmp/{uniqueName}", DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes("evil")))
         };
 
         ScriptPodService.WriteAdditionalFiles(_workDir, files);
 
-        var traversedPath = Path.GetFullPath(Path.Combine(_workDir, "foo/../../../etc/passwd"));
+        var traversedPath = Path.GetFullPath(Path.Combine(_workDir, $"foo/../../../tmp/{uniqueName}"));
         File.Exists(traversedPath).ShouldBeFalse();
     }
 

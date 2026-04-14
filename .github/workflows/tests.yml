@@ -1,0 +1,123 @@
+name: Integration Tests and Unit Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Squid UnitTests
+    runs-on: ubuntu-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Restore
+        run: dotnet restore tests/Squid.UnitTests/Squid.UnitTests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Run Squid.UnitTests
+        run: dotnet test tests/Squid.UnitTests/Squid.UnitTests.csproj --configuration Release --no-restore
+
+  calamari-tests:
+    name: Squid Calamari Tests
+    runs-on: ubuntu-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Restore
+        run: dotnet restore tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Run Squid.Calamari.Tests
+        run: dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configuration Release --no-restore
+
+  tentacle-tests:
+    name: Squid Tentacle Tests
+    runs-on: ubuntu-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Restore
+        run: dotnet restore tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Run Squid.Tentacle.Tests
+        run: dotnet test tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj --configuration Release --no-restore
+
+  integration-tests:
+    name: Squid Integration Tests
+    runs-on: ubuntu-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: "123456"
+          POSTGRES_DB: squid
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Restore
+        run: dotnet restore tests/Squid.IntegrationTests/Squid.IntegrationTests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Build
+        run: dotnet build tests/Squid.IntegrationTests/Squid.IntegrationTests.csproj --configuration Release --no-restore
+
+      - name: Run Squid.IntegrationTests
+        run: dotnet test tests/Squid.IntegrationTests/Squid.IntegrationTests.csproj --configuration Release --no-build --verbosity normal
