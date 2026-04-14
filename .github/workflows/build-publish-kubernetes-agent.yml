@@ -223,8 +223,9 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
-          sed -i "s/^version:.*/version: ${IMAGE_TAG}/" deploy/helm/kubernetes-agent/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${IMAGE_TAG}\"/" deploy/helm/kubernetes-agent/Chart.yaml
-          helm package deploy/helm/kubernetes-agent/
+          cp -r deploy/helm/kubernetes-agent /tmp/kubernetes-agent
+          sed -i "s/^version:.*/version: ${IMAGE_TAG}/" /tmp/kubernetes-agent/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${IMAGE_TAG}\"/" /tmp/kubernetes-agent/Chart.yaml
+          helm package /tmp/kubernetes-agent/
           helm push kubernetes-agent-${IMAGE_TAG}.tgz oci://registry-1.docker.io/${{ env.DOCKER_HUB }}
           rm -f kubernetes-agent-${IMAGE_TAG}.tgz
