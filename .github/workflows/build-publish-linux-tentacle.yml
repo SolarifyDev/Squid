@@ -103,11 +103,19 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
+          # Versioned tag
           docker manifest create \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG} \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-amd64 \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-arm64
           docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}
+
+          # Latest tag
+          docker manifest create --amend \
+            ${{ env.DOCKER_HUB }}/squid-tentacle-linux:latest \
+            ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-amd64 \
+            ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-arm64
+          docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle-linux:latest
 
   # ── Step 2b: Build self-contained binaries → tar.gz (parallel with Docker) ─
   build-binary:

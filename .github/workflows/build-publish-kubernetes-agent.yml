@@ -177,31 +177,55 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
+          # Versioned tag
           docker manifest create \
             ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG} \
             ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-amd64 \
             ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-arm64
           docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}
 
+          # Latest tag
+          docker manifest create --amend \
+            ${{ env.DOCKER_HUB }}/squid-tentacle:latest \
+            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-amd64 \
+            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-arm64
+          docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle:latest
+
       - name: Create and push squid-watchdog manifest
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
+          # Versioned tag
           docker manifest create \
             ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG} \
             ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-amd64 \
             ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-arm64
           docker manifest push ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}
 
+          # Latest tag
+          docker manifest create --amend \
+            ${{ env.DOCKER_HUB }}/squid-watchdog:latest \
+            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-amd64 \
+            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-arm64
+          docker manifest push ${{ env.DOCKER_HUB }}/squid-watchdog:latest
+
       - name: Create and push nfs-server manifest
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
+          # Versioned tag
           docker manifest create \
             ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG} \
             ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-amd64 \
             ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-arm64
           docker manifest push ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}
+
+          # Latest tag
+          docker manifest create --amend \
+            ${{ env.DOCKER_HUB }}/nfs-server:latest \
+            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-amd64 \
+            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-arm64
+          docker manifest push ${{ env.DOCKER_HUB }}/nfs-server:latest
 
   # ── Step 4: Helm package & push ────────────────────────────────────────
   helm:
