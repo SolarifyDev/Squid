@@ -7,7 +7,7 @@ public class EndpointJsonHelperTentacleTests
     [Fact]
     public void ParseTentacleListeningEndpoint_ValidJson_ReturnsHttpsEndpoint()
     {
-        var json = """{"CommunicationStyle":"LinuxListening","Uri":"https://192.168.1.100:10933/","Thumbprint":"AABBCCDD"}""";
+        var json = """{"CommunicationStyle":"TentacleListening","Uri":"https://192.168.1.100:10933/","Thumbprint":"AABBCCDD"}""";
 
         var endpoint = EndpointJsonHelper.ParseTentacleListeningEndpoint(json);
 
@@ -18,7 +18,7 @@ public class EndpointJsonHelperTentacleTests
     [Fact]
     public void ParseTentacleListeningEndpoint_MissingUri_ReturnsNull()
     {
-        var json = """{"CommunicationStyle":"LinuxListening","Thumbprint":"AABBCCDD"}""";
+        var json = """{"CommunicationStyle":"TentacleListening","Thumbprint":"AABBCCDD"}""";
 
         EndpointJsonHelper.ParseTentacleListeningEndpoint(json).ShouldBeNull();
     }
@@ -26,7 +26,7 @@ public class EndpointJsonHelperTentacleTests
     [Fact]
     public void ParseTentacleListeningEndpoint_MissingThumbprint_ReturnsNull()
     {
-        var json = """{"CommunicationStyle":"LinuxListening","Uri":"https://192.168.1.100:10933/"}""";
+        var json = """{"CommunicationStyle":"TentacleListening","Uri":"https://192.168.1.100:10933/"}""";
 
         EndpointJsonHelper.ParseTentacleListeningEndpoint(json).ShouldBeNull();
     }
@@ -50,9 +50,9 @@ public class EndpointJsonHelperTentacleTests
     }
 
     [Fact]
-    public void ParseHalibutEndpoint_LinuxPolling_ConstructsPollUri()
+    public void ParseHalibutEndpoint_TentaclePolling_ConstructsPollUri()
     {
-        var json = """{"CommunicationStyle":"LinuxPolling","SubscriptionId":"tentacle-01","Thumbprint":"EEFF0011"}""";
+        var json = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"tentacle-01","Thumbprint":"EEFF0011"}""";
 
         var endpoint = EndpointJsonHelper.ParseHalibutEndpoint(json);
 

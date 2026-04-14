@@ -5,7 +5,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class GenerateLinuxTentacleInstallScriptCommand : ICommand, ISpaceScoped
+public class GenerateTentacleInstallScriptCommand : ICommand, ISpaceScoped
 {
     public string MachineName { get; set; }
     public string ServerUrl { get; set; }
@@ -20,11 +20,11 @@ public class GenerateLinuxTentacleInstallScriptCommand : ICommand, ISpaceScoped
     public string DockerImage { get; set; }
 }
 
-public class GenerateLinuxTentacleInstallScriptResponse : SquidResponse<GenerateLinuxTentacleInstallScriptData>
+public class GenerateTentacleInstallScriptResponse : SquidResponse<GenerateTentacleInstallScriptData>
 {
 }
 
-public class GenerateLinuxTentacleInstallScriptData
+public class GenerateTentacleInstallScriptData
 {
     public string DockerRunScript { get; set; }
     public string ScriptInstallScript { get; set; }

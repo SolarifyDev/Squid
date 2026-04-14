@@ -7,46 +7,46 @@ namespace Squid.Core.Services.Machines;
 
 public partial class MachineScriptService
 {
-    private const string DefaultLinuxTentacleImage = "squidcd/squid-tentacle-linux:latest";
+    private const string DefaultTentacleImage = "squidcd/squid-tentacle-linux:latest";
 
-    public async Task<GenerateLinuxTentacleInstallScriptResponse> GenerateLinuxTentacleInstallScriptAsync(
-        GenerateLinuxTentacleInstallScriptCommand command, CancellationToken ct)
+    public async Task<GenerateTentacleInstallScriptResponse> GenerateTentacleInstallScriptAsync(
+        GenerateTentacleInstallScriptCommand command, CancellationToken ct)
     {
         if (command == null)
-            return Fail<GenerateLinuxTentacleInstallScriptResponse, GenerateLinuxTentacleInstallScriptData>(
+            return Fail<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(
                 HttpStatusCode.BadRequest, "Command cannot be null");
 
         try
         {
-            var apiKeyResult = await TryCreateLinuxTentacleApiKeyAsync(ct).ConfigureAwait(false);
+            var apiKeyResult = await TryCreateTentacleApiKeyAsync(ct).ConfigureAwait(false);
 
             if (!apiKeyResult.Success)
-                return Fail<GenerateLinuxTentacleInstallScriptResponse, GenerateLinuxTentacleInstallScriptData>(
+                return Fail<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(
                     apiKeyResult.Code, apiKeyResult.Message);
 
             var isListening = IsListeningMode(command.CommunicationMode);
             var serverThumbprint = GetServerThumbprint();
 
-            var data = new GenerateLinuxTentacleInstallScriptData
+            var data = new GenerateTentacleInstallScriptData
             {
-                DockerRunScript = BuildDockerRunScript(command, apiKeyResult.ApiKey, isListening),
-                ScriptInstallScript = BuildScriptInstallScript(command, apiKeyResult.ApiKey, isListening, serverThumbprint),
-                DockerComposeScript = BuildDockerComposeScript(command, apiKeyResult.ApiKey, isListening),
+                DockerRunScript = BuildTentacleDockerRunScript(command, apiKeyResult.ApiKey, isListening),
+                ScriptInstallScript = BuildTentacleScriptInstallScript(command, apiKeyResult.ApiKey, isListening, serverThumbprint),
+                DockerComposeScript = BuildTentacleDockerComposeScript(command, apiKeyResult.ApiKey, isListening),
                 ServerThumbprint = serverThumbprint
             };
 
-            return Success<GenerateLinuxTentacleInstallScriptResponse, GenerateLinuxTentacleInstallScriptData>(data);
+            return Success<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(data);
         }
         catch (Exception ex)
         {
-            return Fail<GenerateLinuxTentacleInstallScriptResponse, GenerateLinuxTentacleInstallScriptData>(
+            return Fail<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(
                 HttpStatusCode.InternalServerError, ex.Message);
         }
     }
 
-    private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateLinuxTentacleApiKeyAsync(CancellationToken ct)
+    private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateTentacleApiKeyAsync(CancellationToken ct)
     {
-        var description = $"LinuxTentacle:{Guid.NewGuid():N}";
+        var description = $"Tentacle:{Guid.NewGuid():N}";
         var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, description, ct).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(result?.ApiKey))
@@ -78,10 +78,10 @@ public partial class MachineScriptService
     // Docker Run
     // ========================================================================
 
-    private static string BuildDockerRunScript(
-        GenerateLinuxTentacleInstallScriptCommand command, string apiKey, bool isListening)
+    private static string BuildTentacleDockerRunScript(
+        GenerateTentacleInstallScriptCommand command, string apiKey, bool isListening)
     {
-        var image = string.IsNullOrWhiteSpace(command.DockerImage) ? DefaultLinuxTentacleImage : command.DockerImage;
+        var image = string.IsNullOrWhiteSpace(command.DockerImage) ? DefaultTentacleImage : command.DockerImage;
         var roles = string.Join(",", command.Tags ?? []);
         var environments = string.Join(",", command.Environments ?? []);
 
@@ -119,8 +119,8 @@ public partial class MachineScriptService
     // Script Install
     // ========================================================================
 
-    private static string BuildScriptInstallScript(
-        GenerateLinuxTentacleInstallScriptCommand command, string apiKey, bool isListening, string serverThumbprint)
+    private static string BuildTentacleScriptInstallScript(
+        GenerateTentacleInstallScriptCommand command, string apiKey, bool isListening, string serverThumbprint)
     {
         var roles = string.Join(",", command.Tags ?? []);
         var environments = string.Join(",", command.Environments ?? []);
@@ -178,10 +178,10 @@ public partial class MachineScriptService
     // Docker Compose
     // ========================================================================
 
-    private static string BuildDockerComposeScript(
-        GenerateLinuxTentacleInstallScriptCommand command, string apiKey, bool isListening)
+    private static string BuildTentacleDockerComposeScript(
+        GenerateTentacleInstallScriptCommand command, string apiKey, bool isListening)
     {
-        var image = string.IsNullOrWhiteSpace(command.DockerImage) ? DefaultLinuxTentacleImage : command.DockerImage;
+        var image = string.IsNullOrWhiteSpace(command.DockerImage) ? DefaultTentacleImage : command.DockerImage;
         var roles = string.Join(",", command.Tags ?? []);
         var environments = string.Join(",", command.Environments ?? []);
 

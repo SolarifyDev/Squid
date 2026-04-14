@@ -3,9 +3,9 @@ using Squid.Message.Commands.Machine;
 
 namespace Squid.Core.Validators.Machines;
 
-public class RegisterLinuxListeningCommandValidator : FluentMessageValidator<RegisterLinuxListeningCommand>
+public class RegisterTentacleListeningCommandValidator : FluentMessageValidator<RegisterTentacleListeningCommand>
 {
-    public RegisterLinuxListeningCommandValidator()
+    public RegisterTentacleListeningCommandValidator()
     {
         RuleFor(c => c.Uri).NotEmpty();
         RuleFor(c => c.Thumbprint).NotEmpty();

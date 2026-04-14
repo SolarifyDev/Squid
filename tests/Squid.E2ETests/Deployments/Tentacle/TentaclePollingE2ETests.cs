@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -11,41 +12,92 @@ using Xunit;
 
 namespace Squid.E2ETests.Deployments.Tentacle;
 
-/// <summary>
-/// Verifies that a single deployment step can target BOTH a Polling and a Listening
-/// Linux Tentacle simultaneously. Both stubs must receive and execute the script.
-/// </summary>
 [Trait("Category", "E2E")]
-public class LinuxMixedModeE2ETests
-    : IClassFixture<LinuxMixedModeE2EFixture<LinuxMixedModeE2ETests>>
+public class TentaclePollingE2ETests
+    : IClassFixture<TentaclePollingE2EFixture<TentaclePollingE2ETests>>
 {
-    private readonly LinuxMixedModeE2EFixture<LinuxMixedModeE2ETests> _fixture;
+    private readonly TentaclePollingE2EFixture<TentaclePollingE2ETests> _fixture;
 
-    public LinuxMixedModeE2ETests(LinuxMixedModeE2EFixture<LinuxMixedModeE2ETests> fixture)
+    public TentaclePollingE2ETests(TentaclePollingE2EFixture<TentaclePollingE2ETests> fixture)
     {
         _fixture = fixture;
     }
 
     [Fact]
-    public async Task MixedMode_SingleDeployment_BothTargetsExecute()
+    public async Task Polling_EchoScript_Success()
     {
-        _fixture.LogSink.Clear();
-
-        var serverTaskId = await SeedRunScriptAsync("echo 'mixed-mode-ok'");
+        var serverTaskId = await SeedRunScriptAsync("echo 'hello-from-tentacle-polling'");
 
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("mixed-mode-ok").ShouldBeTrue(
-            "Expected 'mixed-mode-ok' from at least one target in logs");
+        _fixture.LogSink.ContainsMessage("hello-from-tentacle-polling").ShouldBeTrue(
+            "Expected script output in logs");
+    }
+
+    [Fact]
+    public async Task Polling_NonZeroExitCode_TaskFails()
+    {
+        var serverTaskId = await SeedRunScriptAsync("exit 1");
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed);
+    }
+
+    [Fact]
+    public async Task Polling_MultiLineOutput_AllCaptured()
+    {
+        var script = """
+            echo 'line-one'
+            echo 'line-two'
+            echo 'line-three'
+            """;
+
+        var serverTaskId = await SeedRunScriptAsync(script);
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success);
+        _fixture.LogSink.ContainsMessage("line-one").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("line-two").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("line-three").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Polling_MultipleScripts_Sequential_BothSucceed()
+    {
+        var task1 = await SeedRunScriptAsync("echo 'first-deployment'");
+        await ExecutePipelineAsync(task1);
+        await AssertTaskStateAsync(task1, TaskState.Success);
+        _fixture.LogSink.ContainsMessage("first-deployment").ShouldBeTrue();
+
+        var task2 = await SeedRunScriptAsync("echo 'second-deployment'");
+        await ExecutePipelineAsync(task2);
+        await AssertTaskStateAsync(task2, TaskState.Success);
+        _fixture.LogSink.ContainsMessage("second-deployment").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Polling_StderrOutput_CapturedInLogs()
+    {
+        var serverTaskId = await SeedRunScriptAsync("echo 'stderr-message' >&2");
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success);
+        _fixture.LogSink.ContainsMessage("stderr-message").ShouldBeTrue(
+            "Expected stderr output in logs");
     }
 
     // ========================================================================
-    // Seeder — targets both machines via "linux-server" role
+    // Seeder
     // ========================================================================
 
     private async Task<int> SeedRunScriptAsync(string scriptBody)
     {
+        _fixture.LogSink.Clear();
+
         var serverTaskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
@@ -59,7 +111,7 @@ public class LinuxMixedModeE2ETests
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
 
-            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Mixed Mode Step").ConfigureAwait(false);
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Tentacle Script Step").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step.Id, ("Squid.Action.TargetRoles", "linux-server")).ConfigureAwait(false);
 
             var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", actionType: "Squid.Script").ConfigureAwait(false);
@@ -73,7 +125,7 @@ public class LinuxMixedModeE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Mixed Mode Deployment",
+                Name = "Tentacle Polling Deployment",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -89,8 +141,8 @@ public class LinuxMixedModeE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Mixed Mode Task",
-                Description = "Mixed Polling+Listening E2E",
+                Name = "Tentacle Polling Task",
+                Description = "Tentacle Polling E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
                 ServerTaskType = "Deploy",
@@ -122,6 +174,10 @@ public class LinuxMixedModeE2ETests
         return serverTaskId;
     }
 
+    // ========================================================================
+    // Execution + Assertion
+    // ========================================================================
+
     private async Task ExecutePipelineAsync(int serverTaskId)
     {
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
@@ -132,7 +188,7 @@ public class LinuxMixedModeE2ETests
             }
             catch (DeploymentScriptException)
             {
-                // Controlled failure
+                // Controlled script failure — task state recorded in DB
             }
         }).ConfigureAwait(false);
     }
@@ -143,8 +199,8 @@ public class LinuxMixedModeE2ETests
         {
             var task = await provider.GetServerTaskByIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
 
-            task.ShouldNotBeNull();
-            task.State.ShouldBe(expectedState);
+            task.ShouldNotBeNull($"ServerTask {serverTaskId} not found");
+            task.State.ShouldBe(expectedState, $"Expected '{expectedState}' but got '{task.State}'");
         }).ConfigureAwait(false);
     }
 }

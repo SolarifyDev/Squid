@@ -12,7 +12,7 @@ public interface IMachineScriptService : IScopedDependency
 
     Task<GenerateKubernetesAgentUpgradeScriptResponse> GenerateKubernetesAgentUpgradeScriptAsync(GenerateKubernetesAgentUpgradeScriptCommand command, CancellationToken ct);
 
-    Task<GenerateLinuxTentacleInstallScriptResponse> GenerateLinuxTentacleInstallScriptAsync(GenerateLinuxTentacleInstallScriptCommand command, CancellationToken ct);
+    Task<GenerateTentacleInstallScriptResponse> GenerateTentacleInstallScriptAsync(GenerateTentacleInstallScriptCommand command, CancellationToken ct);
 }
 
 public partial class MachineScriptService : IMachineScriptService

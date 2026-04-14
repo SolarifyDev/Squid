@@ -4,14 +4,14 @@ using Squid.Tentacle.Registration;
 
 namespace Squid.Tentacle.Flavors.LinuxTentacle;
 
-public sealed class LinuxTentacleRegistrar : ITentacleRegistrar
+public sealed class TentaclePollingRegistrar : ITentacleRegistrar
 {
     private readonly TentacleRegistrationClient _client;
 
-    public LinuxTentacleRegistrar(TentacleSettings tentacleSettings)
+    public TentaclePollingRegistrar(TentacleSettings tentacleSettings)
     {
         _client = new TentacleRegistrationClient(
-            tentacleSettings, "/api/machines/register/linux-polling");
+            tentacleSettings, "/api/machines/register/tentacle-polling");
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)

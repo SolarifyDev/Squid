@@ -153,7 +153,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         {
             var style = Machines.EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
 
-            var endpoint = style == nameof(Message.Enums.CommunicationStyle.LinuxListening)
+            var endpoint = style == nameof(Message.Enums.CommunicationStyle.TentacleListening)
                 ? Machines.EndpointJsonHelper.ParseTentacleListeningEndpoint(machine.Endpoint)
                 : Machines.EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
 

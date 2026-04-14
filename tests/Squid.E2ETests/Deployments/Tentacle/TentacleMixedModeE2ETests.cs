@@ -11,77 +11,41 @@ using Xunit;
 
 namespace Squid.E2ETests.Deployments.Tentacle;
 
+/// <summary>
+/// Verifies that a single deployment step can target BOTH a Polling and a Listening
+/// Tentacle simultaneously. Both stubs must receive and execute the script.
+/// </summary>
 [Trait("Category", "E2E")]
-public class LinuxListeningE2ETests
-    : IClassFixture<LinuxListeningE2EFixture<LinuxListeningE2ETests>>
+public class TentacleMixedModeE2ETests
+    : IClassFixture<TentacleMixedModeE2EFixture<TentacleMixedModeE2ETests>>
 {
-    private readonly LinuxListeningE2EFixture<LinuxListeningE2ETests> _fixture;
+    private readonly TentacleMixedModeE2EFixture<TentacleMixedModeE2ETests> _fixture;
 
-    public LinuxListeningE2ETests(LinuxListeningE2EFixture<LinuxListeningE2ETests> fixture)
+    public TentacleMixedModeE2ETests(TentacleMixedModeE2EFixture<TentacleMixedModeE2ETests> fixture)
     {
         _fixture = fixture;
     }
 
     [Fact]
-    public async Task Listening_EchoScript_Success()
+    public async Task MixedMode_SingleDeployment_BothTargetsExecute()
     {
-        var serverTaskId = await SeedRunScriptAsync("echo 'hello-from-linux-listening'");
+        _fixture.LogSink.Clear();
+
+        var serverTaskId = await SeedRunScriptAsync("echo 'mixed-mode-ok'");
 
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("hello-from-linux-listening").ShouldBeTrue(
-            "Expected script output in logs");
-    }
-
-    [Fact]
-    public async Task Listening_NonZeroExitCode_TaskFails()
-    {
-        var serverTaskId = await SeedRunScriptAsync("exit 1");
-
-        await ExecutePipelineAsync(serverTaskId);
-
-        await AssertTaskStateAsync(serverTaskId, TaskState.Failed);
-    }
-
-    [Fact]
-    public async Task Listening_MultiLineOutput_AllCaptured()
-    {
-        var script = """
-            echo 'listen-one'
-            echo 'listen-two'
-            echo 'listen-three'
-            """;
-
-        var serverTaskId = await SeedRunScriptAsync(script);
-
-        await ExecutePipelineAsync(serverTaskId);
-
-        await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("listen-one").ShouldBeTrue();
-        _fixture.LogSink.ContainsMessage("listen-two").ShouldBeTrue();
-        _fixture.LogSink.ContainsMessage("listen-three").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task Listening_StderrOutput_CapturedInLogs()
-    {
-        var serverTaskId = await SeedRunScriptAsync("echo 'listening-stderr' >&2");
-
-        await ExecutePipelineAsync(serverTaskId);
-
-        await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("listening-stderr").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("mixed-mode-ok").ShouldBeTrue(
+            "Expected 'mixed-mode-ok' from at least one target in logs");
     }
 
     // ========================================================================
-    // Seeder
+    // Seeder — targets both machines via "linux-server" role
     // ========================================================================
 
     private async Task<int> SeedRunScriptAsync(string scriptBody)
     {
-        _fixture.LogSink.Clear();
-
         var serverTaskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
@@ -95,7 +59,7 @@ public class LinuxListeningE2ETests
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
 
-            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Linux Listening Step").ConfigureAwait(false);
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Mixed Mode Step").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step.Id, ("Squid.Action.TargetRoles", "linux-server")).ConfigureAwait(false);
 
             var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", actionType: "Squid.Script").ConfigureAwait(false);
@@ -109,7 +73,7 @@ public class LinuxListeningE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Linux Listening Deployment",
+                Name = "Mixed Mode Deployment",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -125,8 +89,8 @@ public class LinuxListeningE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Linux Listening Task",
-                Description = "Linux Tentacle Listening E2E",
+                Name = "Mixed Mode Task",
+                Description = "Mixed Polling+Listening E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
                 ServerTaskType = "Deploy",
@@ -158,10 +122,6 @@ public class LinuxListeningE2ETests
         return serverTaskId;
     }
 
-    // ========================================================================
-    // Execution + Assertion
-    // ========================================================================
-
     private async Task ExecutePipelineAsync(int serverTaskId)
     {
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
@@ -172,7 +132,7 @@ public class LinuxListeningE2ETests
             }
             catch (DeploymentScriptException)
             {
-                // Controlled script failure
+                // Controlled failure
             }
         }).ConfigureAwait(false);
     }
@@ -183,8 +143,8 @@ public class LinuxListeningE2ETests
         {
             var task = await provider.GetServerTaskByIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
 
-            task.ShouldNotBeNull($"ServerTask {serverTaskId} not found");
-            task.State.ShouldBe(expectedState, $"Expected '{expectedState}' but got '{task.State}'");
+            task.ShouldNotBeNull();
+            task.State.ShouldBe(expectedState);
         }).ConfigureAwait(false);
     }
 }
