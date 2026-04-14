@@ -648,6 +648,256 @@ public class MachineRegistrationServiceTests
             Times.Never);
     }
 
+    // ========================================================================
+    // MachinePolicyId — explicit policy selection (generic across all types)
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterAgent_ExplicitPolicyId_OverridesDefault()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 1, IsDefault = true, Name = "Default" });
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateCommand();
+        command.MachinePolicyId = 99;
+
+        await _service.RegisterKubernetesAgentAsync(command, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(99);
+    }
+
+    [Fact]
+    public async Task RegisterAgent_NullPolicyId_FallsBackToDefault()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 42, IsDefault = true, Name = "Default" });
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateCommand();
+        command.MachinePolicyId = null;
+
+        await _service.RegisterKubernetesAgentAsync(command, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(42);
+    }
+
+    // ========================================================================
+    // Linux Listening Registration
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterLinuxListening_NewMachine_CreatesWithCorrectEndpoint()
+    {
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment> { new() { Id = 1, Name = "Production" } });
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineByEndpointUriAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        {
+            MachineName = "linux-web-01",
+            SpaceId = 1,
+            Roles = "web-server",
+            Environments = "Production",
+            Uri = "https://192.168.1.100:10933/",
+            Thumbprint = "AABBCCDD",
+            AgentVersion = "1.0.0"
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.Name.ShouldBe("linux-web-01");
+        captured.EnvironmentIds.ShouldBe("[1]");
+        captured.Roles.ShouldBe("[\"web-server\"]");
+        captured.Endpoint.ShouldContain("LinuxListening");
+        captured.Endpoint.ShouldContain("192.168.1.100:10933");
+        captured.Endpoint.ShouldContain("AABBCCDD");
+    }
+
+    [Fact]
+    public async Task RegisterLinuxListening_ExistingUri_UpdatesMachine()
+    {
+        var existing = new Machine
+        {
+            Id = 10, Name = "linux-web-01", EnvironmentIds = "[1]", Roles = "[\"old\"]",
+            Endpoint = "{}"
+        };
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineByEndpointUriAsync("https://192.168.1.100:10933/", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment> { new() { Id = 2, Name = "Staging" } });
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        var result = await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        {
+            MachineName = "linux-web-01",
+            SpaceId = 1,
+            Roles = "web-server",
+            Environments = "Staging",
+            Uri = "https://192.168.1.100:10933/",
+            Thumbprint = "NEWTHUMB"
+        }, CancellationToken.None);
+
+        result.MachineId.ShouldBe(10);
+        captured.ShouldNotBeNull();
+        captured.Roles.ShouldBe("[\"web-server\"]");
+        captured.EnvironmentIds.ShouldBe("[2]");
+        captured.Endpoint.ShouldContain("NEWTHUMB");
+    }
+
+    [Fact]
+    public async Task RegisterLinuxListening_ExplicitPolicyId_UsesIt()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 1, IsDefault = true, Name = "Default" });
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineByEndpointUriAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        {
+            MachineName = "linux-policy-test",
+            SpaceId = 1,
+            Uri = "https://10.0.0.5:10933/",
+            Thumbprint = "AABB",
+            MachinePolicyId = 55
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(55);
+    }
+
+    // ========================================================================
+    // Linux Polling Registration
+    // ========================================================================
+
+    [Fact]
+    public async Task RegisterLinuxPolling_NewMachine_CreatesWithCorrectEndpoint()
+    {
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment> { new() { Id = 3, Name = "Dev" } });
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+        {
+            MachineName = "linux-poll-01",
+            SpaceId = 1,
+            Roles = "web-server",
+            Environments = "Dev",
+            Thumbprint = "EEFF0011",
+            SubscriptionId = "poll-sub-001",
+            AgentVersion = "1.0.0"
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.Name.ShouldBe("linux-poll-01");
+        captured.EnvironmentIds.ShouldBe("[3]");
+        captured.Roles.ShouldBe("[\"web-server\"]");
+        captured.Endpoint.ShouldContain("LinuxPolling");
+        captured.Endpoint.ShouldContain("poll-sub-001");
+        captured.Endpoint.ShouldContain("EEFF0011");
+    }
+
+    [Fact]
+    public async Task RegisterLinuxPolling_ExplicitPolicyId_UsesIt()
+    {
+        _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = 1, IsDefault = true, Name = "Default" });
+
+        _environmentDataProvider
+            .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DeploymentEnvironment>());
+
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await _service.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+        {
+            MachineName = "linux-poll-policy",
+            SpaceId = 1,
+            Thumbprint = "AABB",
+            SubscriptionId = "poll-sub-002",
+            MachinePolicyId = 77
+        }, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.MachinePolicyId.ShouldBe(77);
+    }
+
     private static RegisterKubernetesAgentCommand CreateCommand(
         string machineName = "test-agent",
         string thumbprint = "AABBCCDD",

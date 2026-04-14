@@ -48,7 +48,7 @@ public partial class MachineRegistrationService
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"ssh-{Guid.NewGuid():N}"[..20],
-            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
+            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson, command.MachinePolicyId);
 
         return machine;
     }

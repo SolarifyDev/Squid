@@ -70,7 +70,7 @@ public partial class MachineRegistrationService
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"tentacle-{command.SubscriptionId[..8]}",
-            SerializeRolesFromCsv(command.Roles), resolvedEnvironmentIds, command.SpaceId, endpointJson);
+            SerializeRolesFromCsv(command.Roles), resolvedEnvironmentIds, command.SpaceId, endpointJson, command.MachinePolicyId);
 
         return machine;
     }
