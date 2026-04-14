@@ -8,8 +8,8 @@
 
     <ItemGroup>
         <PackageReference Include="Halibut" Version="8.1.1052" />
-        <PackageReference Include="Mediator.Net" Version="4.9.1" />
-        <PackageReference Include="Mediator.Net.Autofac" Version="4.9.1" />
+        <PackageReference Include="Mediator.Net" Version="4.9.0" />
+        <PackageReference Include="Mediator.Net.Autofac" Version="4.9.0" />
     </ItemGroup>
 
 </Project>
