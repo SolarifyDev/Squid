@@ -108,6 +108,7 @@ public sealed record StepCompletedEvent(DeploymentEventContext Context) : Deploy
 public sealed record ActionManuallyExcludedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionSkippedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionNoHandlerEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
+public sealed record ActionCapabilityFilteredEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionRunningEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionPreparationFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ActionPreparationWarningEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);

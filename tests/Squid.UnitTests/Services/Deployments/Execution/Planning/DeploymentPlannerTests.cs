@@ -11,6 +11,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
+using Squid.Core.Services.DeploymentExecution.Ssh;
 
 namespace Squid.UnitTests.Services.Deployments.Execution.Planning;
 
@@ -347,6 +348,83 @@ public class DeploymentPlannerTests
 
         plan.CandidateTargets.Select(t => t.MachineName).ShouldBe(new[] { "aaa", "zzz" });
         plan.CandidateTargets[0].Roles.ShouldBe(new[] { "db", "web" });
+    }
+
+    // ---------- SSH transport capability scenarios -----------------------
+
+    [Fact]
+    public async Task PlanAsync_SshTargetWithHelmAction_EmitsUnsupportedActionTypeViolation()
+    {
+        var step = BuildStep(id: 10, order: 1, name: "Deploy");
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: "Squid.HelmChartUpgrade", name: "Helm Upgrade"));
+
+        var targets = new[] { BuildTargetContext(1, "ssh-prod-1", "web", CommunicationStyle.Ssh, SshTransport.Capability) };
+
+        var plan = await BuildPlanner().PlanAsync(BuildRequest(PlanMode.Preview, [step], targets), CancellationToken.None);
+
+        var dispatch = plan.Steps.Single().Actions.Single().Dispatches.Single();
+        dispatch.Validation.IsValid.ShouldBeFalse();
+        dispatch.Validation.Violations.ShouldContain(v => v.Code == ViolationCodes.UnsupportedActionType);
+
+        plan.BlockingReasons.ShouldContain(r =>
+            r.Code == PlanBlockingReasonCodes.CapabilityViolation
+            && r.Detail == ViolationCodes.UnsupportedActionType);
+    }
+
+    [Fact]
+    public async Task PlanAsync_MixedTargets_OnlySshTargetHasViolation()
+    {
+        var step = BuildStep(id: 10, order: 1, name: "Deploy");
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: "Squid.HelmChartUpgrade", name: "Helm Upgrade"));
+
+        var targets = new[]
+        {
+            BuildTargetContext(1, "k8s-web-1", "web", CommunicationStyle.KubernetesApi),
+            BuildTargetContext(2, "ssh-web-1", "web", CommunicationStyle.Ssh, SshTransport.Capability)
+        };
+
+        var plan = await BuildPlanner().PlanAsync(BuildRequest(PlanMode.Preview, [step], targets), CancellationToken.None);
+
+        var dispatches = plan.Steps.Single().Actions.Single().Dispatches;
+        dispatches.Count.ShouldBe(2);
+
+        var k8sDispatch = dispatches.Single(d => d.Target.MachineId == 1);
+        var sshDispatch = dispatches.Single(d => d.Target.MachineId == 2);
+
+        k8sDispatch.Validation.IsValid.ShouldBeTrue();
+        sshDispatch.Validation.IsValid.ShouldBeFalse();
+        sshDispatch.Validation.Violations.ShouldContain(v => v.Code == ViolationCodes.UnsupportedActionType);
+    }
+
+    [Fact]
+    public async Task PlanAsync_SshTargetWithScriptAction_NoViolation()
+    {
+        var step = BuildStep(id: 10, order: 1, name: "Deploy");
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: SpecialVariables.ActionTypes.Script, name: "Run Script"));
+
+        var targets = new[] { BuildTargetContext(1, "ssh-prod-1", "web", CommunicationStyle.Ssh, SshTransport.Capability) };
+
+        var plan = await BuildPlanner().PlanAsync(BuildRequest(PlanMode.Preview, [step], targets), CancellationToken.None);
+
+        var dispatch = plan.Steps.Single().Actions.Single().Dispatches.Single();
+        dispatch.Validation.IsValid.ShouldBeTrue();
+
+        plan.BlockingReasons.Where(r => r.Code == PlanBlockingReasonCodes.CapabilityViolation).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PlanAsync_ExecuteModeWithSshCapabilityViolation_Throws()
+    {
+        var step = BuildStep(id: 10, order: 1, name: "Deploy");
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: "Squid.HelmChartUpgrade", name: "Helm Upgrade"));
+
+        var targets = new[] { BuildTargetContext(1, "ssh-prod-1", "web", CommunicationStyle.Ssh, SshTransport.Capability) };
+
+        var ex = await Should.ThrowAsync<DeploymentPlanValidationException>(() =>
+            BuildPlanner().PlanAsync(BuildRequest(PlanMode.Execute, [step], targets), CancellationToken.None));
+
+        ex.Plan.Mode.ShouldBe(PlanMode.Execute);
+        ex.Reasons.ShouldContain(r => r.Code == PlanBlockingReasonCodes.CapabilityViolation);
     }
 
     // ---------- helpers ------------------------------------------------

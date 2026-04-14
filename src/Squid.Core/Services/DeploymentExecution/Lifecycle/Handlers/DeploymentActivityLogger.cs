@@ -313,6 +313,13 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogWarningAsync($"No handler found for action type \"{ctx.ActionType}\", skipping", SystemSource, ct, stepNodeId);
     }
 
+    protected override Task OnActionCapabilityFilteredAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
+
+        return LogWarningAsync($"Action \"{ctx.ActionName}\" skipped on target \"{ctx.MachineName}\": {ctx.Message}", SystemSource, ct, stepNodeId);
+    }
+
     protected override Task OnActionRunningAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);

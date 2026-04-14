@@ -15,8 +15,8 @@
     <PackageReference Include="Hangfire.MemoryStorage" Version="1.8.0" />
     <PackageReference Include="Hangfire.Pro.Redis" Version="3.0.0" />
     <PackageReference Include="Hangfire.Throttling" Version="1.0.0-beta1" />
-    <PackageReference Include="Mediator.Net" Version="4.9.1" />
-    <PackageReference Include="Mediator.Net.Autofac" Version="4.9.1" />
+    <PackageReference Include="Mediator.Net" Version="4.9.0" />
+    <PackageReference Include="Mediator.Net.Autofac" Version="4.9.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.8" />
     <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.6" />
