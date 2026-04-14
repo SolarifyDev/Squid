@@ -1,0 +1,7 @@
+mode: ContinuousDeployment
+tag-prefix: '[vV]?'
+branches:
+  main:
+    regex: ^main$
+    tag: ''
+    increment: Patch
