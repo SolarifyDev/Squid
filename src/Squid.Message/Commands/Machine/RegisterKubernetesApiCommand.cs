@@ -1,4 +1,5 @@
 using Squid.Message.Attributes;
+using Squid.Message.Contracts;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Response;
@@ -6,8 +7,9 @@ using Squid.Message.Response;
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class RegisterKubernetesApiCommand : ICommand, ISpaceScoped
+public class RegisterKubernetesApiCommand : ICommand, ISpaceScoped, IMachinePolicyScoped
 {
+    public int? MachinePolicyId { get; set; }
     public string MachineName { get; set; }
     public int SpaceId { get; set; }
     int? ISpaceScoped.SpaceId => SpaceId;

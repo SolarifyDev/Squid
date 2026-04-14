@@ -44,7 +44,7 @@ public partial class MachineRegistrationService
 
         var machine = BuildMachineDefaults(
             command.MachineName ?? $"k8s-api-{Guid.NewGuid():N[..8]}",
-            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson);
+            serializedRoles, serializedEnvIds, command.SpaceId, endpointJson, command.MachinePolicyId);
 
         return machine;
     }

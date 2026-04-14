@@ -64,6 +64,6 @@ public partial class MachineRegistrationService
     {
         return BuildMachineDefaults(
             command.MachineName ?? $"linux-{Guid.NewGuid():N}"[..20],
-            serializedRoles, resolvedEnvironmentIds, command.SpaceId, endpointJson);
+            serializedRoles, resolvedEnvironmentIds, command.SpaceId, endpointJson, command.MachinePolicyId);
     }
 }

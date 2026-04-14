@@ -1,11 +1,12 @@
 using Squid.Message.Attributes;
+using Squid.Message.Contracts;
 using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
 
 [RequiresPermission(Permission.MachineCreate)]
-public class RegisterKubernetesAgentCommand : ICommand, ISpaceScoped
+public class RegisterKubernetesAgentCommand : ICommand, ISpaceScoped, IMachinePolicyScoped
 {
     public string MachineName { get; set; }
     public string Thumbprint { get; set; }
@@ -19,6 +20,7 @@ public class RegisterKubernetesAgentCommand : ICommand, ISpaceScoped
     public string ReleaseName { get; set; }
     public string HelmNamespace { get; set; }
     public string ChartRef { get; set; }
+    public int? MachinePolicyId { get; set; }
 }
 
 public class RegisterMachineResponse : SquidResponse<RegisterMachineResponseData>

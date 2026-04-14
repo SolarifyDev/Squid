@@ -53,7 +53,7 @@ public partial class MachineRegistrationService : IMachineRegistrationService
             throw new InvalidOperationException($"A machine named \"{name}\" already exists in this space");
     }
 
-    private static Machine BuildMachineDefaults(string name, string roles, string environmentIds, int spaceId, string endpointJson)
+    private static Machine BuildMachineDefaults(string name, string roles, string environmentIds, int spaceId, string endpointJson, int? machinePolicyId = null)
     {
         return new Machine
         {
@@ -64,6 +64,7 @@ public partial class MachineRegistrationService : IMachineRegistrationService
             Endpoint = endpointJson,
             SpaceId = spaceId,
             Slug = $"machine-{Guid.NewGuid():N}",
+            MachinePolicyId = machinePolicyId
         };
     }
 
