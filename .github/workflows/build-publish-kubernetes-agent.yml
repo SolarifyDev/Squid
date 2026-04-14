@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  DOCKER_HUB: ${{ vars.DOCKER_HUB }}
+  DOCKER_HUB: ${{ vars.SQUID_DOCKER_HUB }}
 
 jobs:
   # ── Step 1: Resolve version tag via GitVersion ─────────────────────────
@@ -71,8 +71,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
       - name: Docker builder prune
         if: matrix.platform == 'arm64'
@@ -108,8 +108,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
       - name: Docker builder prune
         if: matrix.platform == 'arm64'
@@ -145,8 +145,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
       - name: Docker builder prune
         if: matrix.platform == 'arm64'
@@ -170,8 +170,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
       - name: Create and push squid-tentacle manifest
         env:
@@ -215,8 +215,8 @@ jobs:
 
       - name: Login to Docker Hub OCI registry
         env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.SQUID_DOCKER_PASSWORD }}
         run: echo "$DOCKER_PASSWORD" | helm registry login registry-1.docker.io -u "$DOCKER_USERNAME" --password-stdin
 
       - name: Package and push Helm chart
