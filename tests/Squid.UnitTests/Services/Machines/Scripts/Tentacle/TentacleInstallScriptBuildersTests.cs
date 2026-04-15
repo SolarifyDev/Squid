@@ -50,6 +50,30 @@ public class TentacleInstallScriptBuildersTests
         script.Content.ShouldNotContain("squidcd/squid-tentacle-linux:latest");
     }
 
+    [Fact]
+    public void DockerRun_EmitsServerCertificateEnv_BothModes()
+    {
+        // Regression guard: TLS thumbprint pinning env var must be present for both
+        // Polling and Listening. Earlier versions of this builder omitted it entirely.
+        new LinuxDockerRunScriptBuilder().Build(ListeningContext(serverThumbprint: "FAF04764"))
+            .Content.ShouldContain("Tentacle__ServerCertificate=\"FAF04764\"");
+
+        new LinuxDockerRunScriptBuilder().Build(PollingContext())
+            .Content.ShouldContain("Tentacle__ServerCertificate=\"FAF04764\"");
+    }
+
+    [Fact]
+    public void DockerRun_NoServerCertificate_OmitsEnvVar()
+    {
+        // When the server can't supply a thumbprint (shouldn't normally happen in
+        // production) we just skip the env var rather than emit an empty quoted value
+        // that would confuse Kestrel/Halibut during registration.
+        var ctx = ListeningContext(serverThumbprint: "");
+        var script = new LinuxDockerRunScriptBuilder().Build(ctx);
+
+        script.Content.ShouldNotContain("Tentacle__ServerCertificate");
+    }
+
     // ========================================================================
     // LinuxDockerComposeScriptBuilder
     // ========================================================================
@@ -80,6 +104,16 @@ public class TentacleInstallScriptBuildersTests
         script.Content.ShouldNotContain("ListeningHostName");
     }
 
+    [Fact]
+    public void DockerCompose_EmitsServerCertificateEnv_BothModes()
+    {
+        new LinuxDockerComposeScriptBuilder().Build(ListeningContext(serverThumbprint: "FAF04764"))
+            .Content.ShouldContain("Tentacle__ServerCertificate: \"FAF04764\"");
+
+        new LinuxDockerComposeScriptBuilder().Build(PollingContext())
+            .Content.ShouldContain("Tentacle__ServerCertificate: \"FAF04764\"");
+    }
+
     // ========================================================================
     // LinuxBinaryScriptBuilder
     // ========================================================================
@@ -102,13 +136,17 @@ public class TentacleInstallScriptBuildersTests
     }
 
     [Fact]
-    public void Binary_Polling_IncludesCommsUrl_NoServerCert()
+    public void Binary_Polling_IncludesCommsUrlAndServerCert()
     {
+        // --server-cert is required for BOTH Polling and Listening now: Polling tentacles
+        // need to pin the Server's Halibut cert on every poll handshake. Earlier versions
+        // only emitted --server-cert in the Listening branch, which left Polling deployments
+        // silently relying on backward-compat accept-with-warning behaviour.
         var script = new LinuxBinaryScriptBuilder().Build(PollingContext());
 
         script.Content.ShouldContain("--comms-url \"https://squid:10943\"");
+        script.Content.ShouldContain("--server-cert \"FAF04764\"");
         script.Content.ShouldNotContain("--listening-host");
-        script.Content.ShouldNotContain("--server-cert");
     }
 
     [Fact]
