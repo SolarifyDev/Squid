@@ -40,7 +40,12 @@ public sealed class ShowConfigCommand : ITentacleCommand
 
             Console.WriteLine($"Thumbprint:          {cert.Thumbprint}");
             Console.WriteLine($"SubscriptionId:      {subscriptionId}");
-            Console.WriteLine($"CertExpires:         {cert.NotAfter:yyyy-MM-dd}");
+
+            var daysToExpiry = (int)(cert.NotAfter - DateTime.UtcNow).TotalDays;
+            var expiryWarning = daysToExpiry < 180
+                ? $" ⚠️  expires in {daysToExpiry} day(s) — run 'squid-tentacle new-certificate' and re-register"
+                : string.Empty;
+            Console.WriteLine($"CertExpires:         {cert.NotAfter:yyyy-MM-dd} ({daysToExpiry} days){expiryWarning}");
         }
         catch (Exception ex)
         {
