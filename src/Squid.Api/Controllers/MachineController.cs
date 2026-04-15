@@ -52,29 +52,29 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
-    [HttpPost("register/linux-polling")]
+    [HttpPost("register/tentacle-polling")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
-    public async Task<IActionResult> RegisterLinuxPollingAsync([FromBody] RegisterLinuxPollingCommand command, CancellationToken ct)
+    public async Task<IActionResult> RegisterTentaclePollingAsync([FromBody] RegisterTentaclePollingCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<RegisterLinuxPollingCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterTentaclePollingCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
 
-    [HttpPost("register/linux-listening")]
+    [HttpPost("register/tentacle-listening")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RegisterMachineResponse))]
-    public async Task<IActionResult> RegisterLinuxListeningAsync([FromBody] RegisterLinuxListeningCommand command, CancellationToken ct)
+    public async Task<IActionResult> RegisterTentacleListeningAsync([FromBody] RegisterTentacleListeningCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<RegisterLinuxListeningCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<RegisterTentacleListeningCommand, RegisterMachineResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }
 
-    [HttpPost("generate-linux-tentacle-install-script")]
-    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateLinuxTentacleInstallScriptResponse))]
-    public async Task<IActionResult> GenerateLinuxTentacleInstallScriptAsync([FromBody] GenerateLinuxTentacleInstallScriptCommand command, CancellationToken ct)
+    [HttpPost("generate-tentacle-install-script")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GenerateTentacleInstallScriptResponse))]
+    public async Task<IActionResult> GenerateTentacleInstallScriptAsync([FromBody] GenerateTentacleInstallScriptCommand command, CancellationToken ct)
     {
-        var response = await _mediator.SendAsync<GenerateLinuxTentacleInstallScriptCommand, GenerateLinuxTentacleInstallScriptResponse>(command, ct).ConfigureAwait(false);
+        var response = await _mediator.SendAsync<GenerateTentacleInstallScriptCommand, GenerateTentacleInstallScriptResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

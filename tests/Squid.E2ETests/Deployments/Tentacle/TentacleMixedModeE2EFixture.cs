@@ -20,7 +20,7 @@ namespace Squid.E2ETests.Deployments.Tentacle;
 /// E2E fixture with BOTH a Polling and a Listening TentacleStub.
 /// Tests that a single deployment can target both communication styles simultaneously.
 /// </summary>
-public class LinuxMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
+public class TentacleMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 {
     public CapturingLogSink LogSink { get; } = new();
     public int EnvironmentId { get; private set; }
@@ -76,7 +76,7 @@ public class LinuxMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         await Run<IRepository, IUnitOfWork>(async (repo, uow) =>
         {
             var builder = new TestDataBuilder(repo, uow);
-            var env = await builder.CreateEnvironmentAsync("Linux Mixed Mode E2E Env").ConfigureAwait(false);
+            var env = await builder.CreateEnvironmentAsync("Tentacle Mixed Mode E2E Env").ConfigureAwait(false);
 
             EnvironmentId = env.Id;
             EnvironmentName = env.Name;
@@ -108,7 +108,7 @@ public class LinuxMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     {
         var registration = await Run<IMachineRegistrationService, RegisterMachineResponseData>(async svc =>
         {
-            return await svc.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+            return await svc.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
             {
                 MachineName = $"mixed-polling-{PollingSubscriptionId[..8]}",
                 Thumbprint = PollingThumbprint,
@@ -128,7 +128,7 @@ public class LinuxMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         {
             var endpointJson = JsonSerializer.Serialize(new
             {
-                CommunicationStyle = "LinuxListening",
+                CommunicationStyle = "TentacleListening",
                 Uri = $"https://localhost:{ListeningPort}/",
                 Thumbprint = ListeningThumbprint
             });

@@ -45,7 +45,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     {
         var style = EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
 
-        return style == nameof(Message.Enums.CommunicationStyle.LinuxListening)
+        return style == nameof(Message.Enums.CommunicationStyle.TentacleListening)
             ? EndpointJsonHelper.ParseTentacleListeningEndpoint(machine.Endpoint)
             : EndpointJsonHelper.ParseHalibutEndpoint(machine.Endpoint);
     }

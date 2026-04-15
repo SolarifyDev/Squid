@@ -15,7 +15,7 @@ public class TentacleHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_ListeningEndpoint_ReturnsHealthy()
     {
-        var machine = MachineWithEndpoint("""{"CommunicationStyle":"LinuxListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABB"}""");
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentacleListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABB"}""");
         var capsClient = SetupCapabilitiesClient("2.1.0", "IScriptService");
 
         var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object);
@@ -29,7 +29,7 @@ public class TentacleHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_PollingEndpoint_ReturnsHealthy()
     {
-        var machine = MachineWithEndpoint("""{"CommunicationStyle":"LinuxPolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
         var capsClient = SetupCapabilitiesClient("2.0.0", "IScriptService");
 
         var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object);
@@ -42,7 +42,7 @@ public class TentacleHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_MissingThumbprint_ReturnsUnhealthy()
     {
-        var machine = MachineWithEndpoint("""{"CommunicationStyle":"LinuxListening","Uri":"https://10.0.0.5:10933/"}""");
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentacleListening","Uri":"https://10.0.0.5:10933/"}""");
 
         var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object);
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
@@ -54,7 +54,7 @@ public class TentacleHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_NullCapabilitiesResponse_ReturnsUnhealthy()
     {
-        var machine = MachineWithEndpoint("""{"CommunicationStyle":"LinuxPolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
         var capsClient = new Mock<IAsyncCapabilitiesService>();
         capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
             .ReturnsAsync((CapabilitiesResponse)null);
@@ -72,7 +72,7 @@ public class TentacleHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_HalibutThrows_ReturnsUnhealthy()
     {
-        var machine = MachineWithEndpoint("""{"CommunicationStyle":"LinuxPolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""");
         var capsClient = new Mock<IAsyncCapabilitiesService>();
         capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
             .ThrowsAsync(new HalibutClientException("Connection refused"));

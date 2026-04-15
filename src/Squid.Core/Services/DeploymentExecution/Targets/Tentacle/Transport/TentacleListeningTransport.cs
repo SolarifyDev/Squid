@@ -31,7 +31,7 @@ public sealed class TentacleListeningTransport : DeploymentTransport
         TentacleEndpointVariableContributor variables,
         HalibutMachineExecutionStrategy strategy,
         TentacleHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.LinuxListening, variables, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.TentacleListening, variables, strategy, Capability, healthChecker)
     {
     }
 }

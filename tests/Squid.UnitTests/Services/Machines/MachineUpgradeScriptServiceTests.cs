@@ -21,7 +21,8 @@ public class MachineUpgradeScriptServiceTests
             _accountService.Object,
             _machineDataProvider.Object,
             _agentVersionProvider.Object,
-            new Squid.Core.Settings.SelfCert.SelfCertSetting());
+            new Squid.Core.Settings.SelfCert.SelfCertSetting(),
+            []);
     }
 
     [Fact]

@@ -11,10 +11,10 @@ namespace Squid.Tentacle.Flavors.LinuxTentacle;
 
 /// <summary>
 /// Registers a Listening Tentacle with the Squid Server via
-/// <c>POST /api/machines/register/linux-listening</c>.
+/// <c>POST /api/machines/register/tentacle-listening</c>.
 /// The Agent sends its URI (host:port) and thumbprint so the Server knows how to connect back.
 /// </summary>
-public sealed class LinuxListeningRegistrar : ITentacleRegistrar
+public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 {
     private readonly TentacleSettings _settings;
 
@@ -24,7 +24,7 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
         PropertyNameCaseInsensitive = true
     };
 
-    public LinuxListeningRegistrar(TentacleSettings settings)
+    public TentacleListeningRegistrar(TentacleSettings settings)
     {
         _settings = settings;
     }
@@ -60,7 +60,7 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.BearerToken);
 
         var machineName = string.IsNullOrEmpty(_settings.MachineName)
-            ? $"linux-{Dns.GetHostName()}"
+            ? $"tentacle-{Dns.GetHostName()}"
             : _settings.MachineName;
 
         var payload = new Dictionary<string, object>
@@ -74,7 +74,7 @@ public sealed class LinuxListeningRegistrar : ITentacleRegistrar
             ["agentVersion"] = _settings.AgentVersion
         };
 
-        var response = await client.PostAsJsonAsync("/api/machines/register/linux-listening", payload, JsonOptions, ct).ConfigureAwait(false);
+        var response = await client.PostAsJsonAsync("/api/machines/register/tentacle-listening", payload, JsonOptions, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

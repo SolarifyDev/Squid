@@ -8,34 +8,34 @@ public class TentacleEndpointVariableContributorTests
     private readonly TentacleEndpointVariableContributor _contributor = new();
 
     [Fact]
-    public void ContributeVariables_LinuxListening_ContributesStyleAndUri()
+    public void ContributeVariables_TentacleListening_ContributesStyleAndUri()
     {
         var context = new EndpointContext
         {
-            EndpointJson = """{"CommunicationStyle":"LinuxListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABB"}"""
+            EndpointJson = """{"CommunicationStyle":"TentacleListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABB"}"""
         };
 
         var vars = _contributor.ContributeVariables(context);
 
         vars.ShouldNotBeEmpty();
-        vars.ShouldContain(v => v.Name == "Squid.Tentacle.CommunicationStyle" && v.Value == "LinuxListening");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.CommunicationStyle" && v.Value == "TentacleListening");
         vars.ShouldContain(v => v.Name == "Squid.Tentacle.Thumbprint" && v.Value == "AABB");
         vars.ShouldContain(v => v.Name == "Squid.Tentacle.Uri" && v.Value == "https://10.0.0.5:10933/");
         vars.ShouldNotContain(v => v.Name == "Squid.Tentacle.SubscriptionId");
     }
 
     [Fact]
-    public void ContributeVariables_LinuxPolling_ContributesStyleAndSubscriptionId()
+    public void ContributeVariables_TentaclePolling_ContributesStyleAndSubscriptionId()
     {
         var context = new EndpointContext
         {
-            EndpointJson = """{"CommunicationStyle":"LinuxPolling","SubscriptionId":"tentacle-01","Thumbprint":"CCDD"}"""
+            EndpointJson = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"tentacle-01","Thumbprint":"CCDD"}"""
         };
 
         var vars = _contributor.ContributeVariables(context);
 
         vars.ShouldNotBeEmpty();
-        vars.ShouldContain(v => v.Name == "Squid.Tentacle.CommunicationStyle" && v.Value == "LinuxPolling");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.CommunicationStyle" && v.Value == "TentaclePolling");
         vars.ShouldContain(v => v.Name == "Squid.Tentacle.Thumbprint" && v.Value == "CCDD");
         vars.ShouldContain(v => v.Name == "Squid.Tentacle.SubscriptionId" && v.Value == "tentacle-01");
         vars.ShouldNotContain(v => v.Name == "Squid.Tentacle.Uri");
@@ -64,7 +64,7 @@ public class TentacleEndpointVariableContributorTests
     [Fact]
     public void ParseResourceReferences_AlwaysReturnsEmpty()
     {
-        var refs = _contributor.ParseResourceReferences("""{"CommunicationStyle":"LinuxListening"}""");
+        var refs = _contributor.ParseResourceReferences("""{"CommunicationStyle":"TentacleListening"}""");
 
         refs.ShouldNotBeNull();
         refs.References.ShouldBeEmpty();

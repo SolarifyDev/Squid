@@ -28,7 +28,7 @@ public class LinuxTentacleFlavorTests
         var runtime = _flavor.CreateRuntime(BuildContext(settings));
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
-        runtime.Registrar.ShouldBeOfType<LinuxTentacleRegistrar>();
+        runtime.Registrar.ShouldBeOfType<TentaclePollingRegistrar>();
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class LinuxTentacleFlavorTests
         var runtime = _flavor.CreateRuntime(BuildContext(settings));
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
-        runtime.Registrar.ShouldBeOfType<LinuxListeningRegistrar>();
+        runtime.Registrar.ShouldBeOfType<TentacleListeningRegistrar>();
     }
 
     [Fact]

@@ -26,7 +26,7 @@ public class TentacleEndpointVariableContributor : IEndpointVariableContributor
             EndpointVariableFactory.Make("Squid.Tentacle.Thumbprint", thumbprint ?? string.Empty)
         };
 
-        if (style == nameof(Message.Enums.CommunicationStyle.LinuxListening))
+        if (style == nameof(Message.Enums.CommunicationStyle.TentacleListening))
         {
             var uri = EndpointJsonHelper.GetField(context.EndpointJson, "Uri");
             vars.Add(EndpointVariableFactory.Make("Squid.Tentacle.Uri", uri ?? string.Empty));

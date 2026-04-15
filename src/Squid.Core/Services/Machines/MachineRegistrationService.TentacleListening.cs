@@ -8,7 +8,7 @@ namespace Squid.Core.Services.Machines;
 
 public partial class MachineRegistrationService
 {
-    public async Task<RegisterMachineResponseData> RegisterLinuxListeningAsync(RegisterLinuxListeningCommand command, CancellationToken cancellationToken = default)
+    public async Task<RegisterMachineResponseData> RegisterTentacleListeningAsync(RegisterTentacleListeningCommand command, CancellationToken cancellationToken = default)
     {
         var resolvedEnvironmentIds = await ResolveEnvironmentIdsAsync(command.Environments, cancellationToken).ConfigureAwait(false);
 
@@ -20,7 +20,7 @@ public partial class MachineRegistrationService
 
         if (existing != null)
         {
-            existing.Endpoint = BuildLinuxListeningEndpointJson(command);
+            existing.Endpoint = BuildTentacleListeningEndpointJson(command);
 
             if (serializedRoles != null) existing.Roles = serializedRoles;
             if (resolvedEnvironmentIds != null) existing.EnvironmentIds = resolvedEnvironmentIds;
@@ -29,17 +29,17 @@ public partial class MachineRegistrationService
 
             machine = existing;
 
-            Log.Information("Updated existing LinuxListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
+            Log.Information("Updated existing TentacleListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
         }
         else
         {
-            machine = BuildLinuxListeningMachine(command, BuildLinuxListeningEndpointJson(command), serializedRoles, resolvedEnvironmentIds);
+            machine = BuildTentacleListeningMachine(command, BuildTentacleListeningEndpointJson(command), serializedRoles, resolvedEnvironmentIds);
 
             await EnsureUniqueNameAsync(machine.Name, command.SpaceId, cancellationToken).ConfigureAwait(false);
             await AssignDefaultPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
             await _dataProvider.AddMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            Log.Information("Registered new LinuxListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
+            Log.Information("Registered new TentacleListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
         }
 
         return new RegisterMachineResponseData
@@ -49,21 +49,21 @@ public partial class MachineRegistrationService
         };
     }
 
-    private static string BuildLinuxListeningEndpointJson(RegisterLinuxListeningCommand command)
+    private static string BuildTentacleListeningEndpointJson(RegisterTentacleListeningCommand command)
     {
         return JsonSerializer.Serialize(new TentacleListeningEndpointDto
         {
-            CommunicationStyle = nameof(CommunicationStyleEnum.LinuxListening),
+            CommunicationStyle = nameof(CommunicationStyleEnum.TentacleListening),
             Uri = command.Uri,
             Thumbprint = command.Thumbprint,
             AgentVersion = command.AgentVersion
         });
     }
 
-    private static Machine BuildLinuxListeningMachine(RegisterLinuxListeningCommand command, string endpointJson, string serializedRoles, string resolvedEnvironmentIds)
+    private static Machine BuildTentacleListeningMachine(RegisterTentacleListeningCommand command, string endpointJson, string serializedRoles, string resolvedEnvironmentIds)
     {
         return BuildMachineDefaults(
-            command.MachineName ?? $"linux-{Guid.NewGuid():N}"[..20],
+            command.MachineName ?? $"tentacle-{Guid.NewGuid():N}"[..20],
             serializedRoles, resolvedEnvironmentIds, command.SpaceId, endpointJson, command.MachinePolicyId);
     }
 }
