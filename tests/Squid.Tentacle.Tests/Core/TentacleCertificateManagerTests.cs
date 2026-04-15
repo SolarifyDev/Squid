@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography.X509Certificates;
 using Squid.Tentacle.Certificate;
 
 namespace Squid.Tentacle.Tests.Core;
@@ -70,6 +71,58 @@ public class TentacleCertificateManagerTests : IDisposable
         var id2 = manager2.LoadOrCreateSubscriptionId();
 
         id2.ShouldBe(id1);
+    }
+
+    [Fact]
+    public void LoadOrCreateCertificate_UsesOctopusAlignedValidityPeriod()
+    {
+        // Aligned with Octopus Tentacle's 100-year cert. The TLS pinning model
+        // (server trusts by thumbprint, not CA chain) makes NotAfter a non-security
+        // concern — so we maximise it to eliminate renewal operations.
+        var cert = new TentacleCertificateManager(_tempCertsPath).LoadOrCreateCertificate();
+
+        var validityYears = (cert.NotAfter - cert.NotBefore).TotalDays / 365.25;
+
+        validityYears.ShouldBeGreaterThan(99.0, "Tentacle certs should be valid for ~100 years (Octopus alignment)");
+        validityYears.ShouldBeLessThan(101.0);
+
+        // Sanity: not yet expired
+        cert.NotAfter.ShouldBeGreaterThan(DateTime.UtcNow.AddYears(99));
+    }
+
+    [Fact]
+    public void LoadOrCreateCertificate_BackdatesNotBefore_ToTolerateClockSkew()
+    {
+        // Aligned with Octopus: NotBefore = now - 1 day. Prevents freshly minted
+        // certs from being rejected as "not yet valid" by peers whose clocks
+        // are even slightly ahead. Without this buffer, registration can fail
+        // intermittently across NTP drift / DST boundaries / misconfigured TZ.
+        var before = DateTime.UtcNow;
+        var cert = new TentacleCertificateManager(_tempCertsPath).LoadOrCreateCertificate();
+        var after = DateTime.UtcNow;
+
+        // NotBefore should be roughly one day before cert creation time.
+        var lowerBound = before.AddDays(-1).AddMinutes(-5);
+        var upperBound = after.AddDays(-1).AddMinutes(5);
+
+        cert.NotBefore.ToUniversalTime().ShouldBeGreaterThan(lowerBound);
+        cert.NotBefore.ToUniversalTime().ShouldBeLessThan(upperBound);
+
+        // Sanity: cert is valid RIGHT NOW (the whole point of backdating)
+        var nowLocal = DateTime.Now;
+        cert.NotBefore.ShouldBeLessThan(nowLocal);
+        cert.NotAfter.ShouldBeGreaterThan(nowLocal);
+    }
+
+    [Fact]
+    public void LoadOrCreateCertificate_UsesRsa2048_WithSha256()
+    {
+        var cert = new TentacleCertificateManager(_tempCertsPath).LoadOrCreateCertificate();
+
+        cert.SignatureAlgorithm.FriendlyName.ShouldContain("RSA", Case.Insensitive);
+        cert.PublicKey.Oid.FriendlyName.ShouldContain("RSA", Case.Insensitive);
+        // 2048-bit key → ~256-byte modulus
+        cert.GetRSAPublicKey()!.KeySize.ShouldBe(2048);
     }
 
     [Fact]

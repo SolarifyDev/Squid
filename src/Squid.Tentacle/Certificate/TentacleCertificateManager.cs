@@ -69,6 +69,31 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         return newId;
     }
 
+    /// <summary>
+    /// How long generated Tentacle certificates are valid for.
+    ///
+    /// Aligned with Octopus Tentacle (100 years) — see
+    /// <c>OctopusTentacle/source/Octopus.Tentacle/Certificates/CertificateGenerator.cs</c>
+    /// on the public GitHub repo. The reasoning is that we're doing TLS pinning
+    /// by <b>thumbprint</b>, not CA chain validation, so the <c>NotAfter</c>
+    /// field isn't a security boundary — key quality is. A 100-year validity
+    /// eliminates the operational burden of renewal (which would require
+    /// re-registering every Tentacle with the Server). If a cert's private key
+    /// ever leaks, the right response is to delete it and register a new one,
+    /// not to wait for expiry.
+    /// </summary>
+    internal const int CertificateValidityYears = 100;
+
+    /// <summary>
+    /// How far back to set <c>NotBefore</c> from "now". Also aligned with
+    /// Octopus — absorbs clock skew between this machine and whoever receives
+    /// the cert (Squid Server validating TLS, another Tentacle peer, etc.).
+    /// Without this buffer, a receiver whose clock is even seconds ahead of
+    /// the generator would see <c>CertNotYetValid</c> for the freshly minted
+    /// cert. One day covers NTP drift, DST boundaries, and timezone mistakes.
+    /// </summary>
+    internal static readonly TimeSpan NotBeforeClockSkewBuffer = TimeSpan.FromDays(1);
+
     private static X509Certificate2 CreateSelfSignedCert()
     {
         using var rsa = RSA.Create(2048);
@@ -79,9 +104,11 @@ public class TentacleCertificateManager : ITentacleCertificateManager
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
 
+        var now = DateTimeOffset.UtcNow;
+
         using var cert = request.CreateSelfSigned(
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow.AddYears(5));
+            now - NotBeforeClockSkewBuffer,
+            now.AddYears(CertificateValidityYears));
 
         return X509CertificateLoader.LoadPkcs12(
             cert.Export(X509ContentType.Pfx, CertPassword),
