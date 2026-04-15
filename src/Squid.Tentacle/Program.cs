@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Commands;
+using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Instance;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -14,7 +16,10 @@ var commands = new ITentacleCommand[]
     new ShowConfigCommand(),
     new NewCertificateCommand(),
     new RegisterCommand(),
-    new ServiceCommand()
+    new ServiceCommand(),
+    new CreateInstanceCommand(),
+    new ListInstancesCommand(),
+    new DeleteInstanceCommand()
 };
 
 try
@@ -34,11 +39,25 @@ try
         return 1;
     }
 
-    var config = new ConfigurationBuilder()
-        .AddJsonFile("appsettings.json", optional: true)
-        .AddEnvironmentVariables()
-        .AddCommandLine(route.RemainingArgs)
-        .Build();
+    // Extract --instance NAME (the instance-aware commands need to know which config to load
+    // and which certs dir to use). Remove it from the arg array before the rest of the pipeline
+    // sees it, so ConfigurationBuilder.AddCommandLine doesn't choke on an unknown key.
+    var (instanceName, argsAfterInstance) = InstanceSelector.ExtractInstanceArg(route.RemainingArgs);
+
+    var configBuilder = new ConfigurationBuilder();
+
+    // Priority (low → high): per-instance config.json → appsettings.json → env vars → CLI args.
+    // This lets `register` persist to the config file and `systemd run` pick it up, while
+    // still allowing env vars / CLI args to override for debugging or Docker-style launches.
+    var instanceConfigPath = TryGetInstanceConfigPath(instanceName);
+    if (instanceConfigPath != null)
+        configBuilder.AddJsonFile(instanceConfigPath, optional: true, reloadOnChange: false);
+
+    configBuilder.AddJsonFile("appsettings.json", optional: true);
+    configBuilder.AddEnvironmentVariables();
+    configBuilder.AddCommandLine(argsAfterInstance);
+
+    var config = configBuilder.Build();
 
     var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -61,11 +80,26 @@ finally
     await Log.CloseAndFlushAsync().ConfigureAwait(false);
 }
 
+static string TryGetInstanceConfigPath(string instanceName)
+{
+    try
+    {
+        var record = InstanceSelector.Resolve(instanceName);
+        return new TentacleConfigFile(record.ConfigPath).Exists() ? record.ConfigPath : null;
+    }
+    catch
+    {
+        // Instance lookup failures are non-fatal at startup — commands that actually need
+        // an instance (register, run) will fail with a clear error later.
+        return null;
+    }
+}
+
 static void PrintHelp(ITentacleCommand[] commands)
 {
     Console.WriteLine("Squid Tentacle — Deployment Agent");
     Console.WriteLine();
-    Console.WriteLine("Usage: squid-tentacle <command> [options]");
+    Console.WriteLine("Usage: squid-tentacle <command> [--instance NAME] [options]");
     Console.WriteLine();
     Console.WriteLine("Commands:");
 
@@ -74,12 +108,14 @@ static void PrintHelp(ITentacleCommand[] commands)
 
     Console.WriteLine($"  {"help",-20} Show this help message");
     Console.WriteLine();
-    Console.WriteLine("Examples:");
-    Console.WriteLine("  squid-tentacle run                           Start the agent (default)");
-    Console.WriteLine("  squid-tentacle show-thumbprint               Display certificate thumbprint");
-    Console.WriteLine("  squid-tentacle new-certificate               Generate certificate if missing");
-    Console.WriteLine("  squid-tentacle register --server URL ...     Register with Squid Server");
-    Console.WriteLine("  squid-tentacle service install               Install as systemd service");
+    Console.WriteLine("Instance management (multiple Tentacles on one host):");
+    Console.WriteLine("  squid-tentacle create-instance --instance production");
+    Console.WriteLine("  squid-tentacle list-instances");
+    Console.WriteLine("  squid-tentacle delete-instance --instance production");
     Console.WriteLine();
-    Console.WriteLine("Configuration: --Tentacle:Key=Value, environment variables (Tentacle__Key), or appsettings.json");
+    Console.WriteLine("Install + register + run (typical flow):");
+    Console.WriteLine("  squid-tentacle register --server URL --api-key KEY --role R --environment E");
+    Console.WriteLine("  sudo squid-tentacle service install");
+    Console.WriteLine();
+    Console.WriteLine("Configuration sources (low → high): instance config → appsettings.json → env (Tentacle__Key) → CLI (--Tentacle:Key=V)");
 }
