@@ -7,6 +7,7 @@ using Squid.Tentacle.Kubernetes;
 
 namespace Squid.Tentacle.Tests.Health;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class MetricsPersistenceTests
 {
     private readonly Mock<IKubernetesPodOperations> _ops = new();

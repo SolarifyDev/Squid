@@ -9,9 +9,11 @@ using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.Tests.Health;
 
 namespace Squid.Tentacle.Tests.Kubernetes;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class KubernetesEventMonitorTests : IDisposable
 {
     private readonly Mock<IKubernetesPodOperations> _podOps = new();

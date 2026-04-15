@@ -2,6 +2,7 @@ using Squid.Tentacle.Health;
 
 namespace Squid.Tentacle.Tests.Health;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class TentacleMetricsTests : IDisposable
 {
     public TentacleMetricsTests()

@@ -10,9 +10,11 @@ using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.Health;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.Tests.Health;
 
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class ScriptPodServiceTests : IDisposable
 {
     private readonly TentacleSettings _tentacleSettings;

@@ -7,9 +7,11 @@ using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.Tests.Health;
 
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class ScriptRecoveryServiceTests : IDisposable
 {
     private readonly string _tempWorkspace;
