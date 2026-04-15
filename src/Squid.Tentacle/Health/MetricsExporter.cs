@@ -20,6 +20,14 @@ public static class MetricsExporter
         AppendCounter(sb, "squid_tentacle_orphaned_pods_cleaned_total", "Total number of orphaned pods cleaned up", TentacleMetrics.OrphanedPodsCleanedTotal);
         AppendCounter(sb, "squid_tentacle_nfs_force_kills_total", "Total number of NFS watchdog force-kill pod deletions", TentacleMetrics.NfsForceKillsTotal);
 
+        // Only emit the cert-expiry gauge once it's been set. Prevents Prometheus
+        // from alerting on the sentinel -1 during the brief window between service
+        // start and the cert loader publishing the real days-to-expiry.
+        if (TentacleMetrics.CertificateExpiresInDays >= 0)
+            AppendGauge(sb, "squid_tentacle_certificate_expires_in_days",
+                "Days remaining until the Tentacle self-signed certificate expires",
+                TentacleMetrics.CertificateExpiresInDays);
+
         return sb.ToString();
     }
 

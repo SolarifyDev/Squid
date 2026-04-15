@@ -19,6 +19,7 @@ public static class TentacleMetrics
     private static long _scriptsQueuedTotal;
     private static long _scriptsRejectedTotal;
     private static long _apiLatencyMs;
+    private static long _certificateExpiresInDays = -1;
 
     public static long ActiveScripts => Interlocked.Read(ref _activeScripts);
     public static long ScriptsStartedTotal => Interlocked.Read(ref _scriptsStartedTotal);
@@ -31,6 +32,16 @@ public static class TentacleMetrics
     public static long ScriptsQueuedTotal => Interlocked.Read(ref _scriptsQueuedTotal);
     public static long ScriptsRejectedTotal => Interlocked.Read(ref _scriptsRejectedTotal);
     public static long ApiLatencyMs => Interlocked.Read(ref _apiLatencyMs);
+
+    /// <summary>
+    /// Days remaining until the Tentacle's own certificate expires, or
+    /// <c>-1</c> when not yet set (service hasn't called
+    /// <see cref="SetCertificateExpiresInDays"/> since start). Exposed as
+    /// <c>squid_tentacle_certificate_expires_in_days</c> so operators can
+    /// alert in Prometheus well before the 100-year cert ever becomes an
+    /// issue (e.g. warn at 180 days, critical at 30 days).
+    /// </summary>
+    public static long CertificateExpiresInDays => Interlocked.Read(ref _certificateExpiresInDays);
 
     public static void ScriptStarted()
     {
@@ -86,6 +97,17 @@ public static class TentacleMetrics
         Interlocked.Exchange(ref _apiLatencyMs, ms);
     }
 
+    /// <summary>
+    /// Publishes the Tentacle certificate's days-to-expiry so Prometheus can
+    /// alert on it. Should be called at startup (when the cert is first
+    /// loaded) and periodically thereafter if the cert is ever rotated
+    /// without a full service restart.
+    /// </summary>
+    public static void SetCertificateExpiresInDays(long days)
+    {
+        Interlocked.Exchange(ref _certificateExpiresInDays, days);
+    }
+
     public static MetricsSnapshot TakeSnapshot()
     {
         return new MetricsSnapshot
@@ -126,5 +148,6 @@ public static class TentacleMetrics
         Interlocked.Exchange(ref _scriptsQueuedTotal, 0);
         Interlocked.Exchange(ref _scriptsRejectedTotal, 0);
         Interlocked.Exchange(ref _apiLatencyMs, 0);
+        Interlocked.Exchange(ref _certificateExpiresInDays, -1);
     }
 }

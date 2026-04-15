@@ -39,7 +39,13 @@ public sealed class TentacleApp
         var tentacleCert = certManager.LoadOrCreateCertificate();
         var subscriptionId = certManager.LoadOrCreateSubscriptionId(tentacleSettings.SubscriptionId);
 
-        Log.Information("Tentacle certificate thumbprint: {Thumbprint}", tentacleCert.Thumbprint);
+        // Publish cert expiry for /metrics so Prometheus can alert on cert rotation
+        // well before the 100-year cert ever approaches expiry (e.g. threshold at 180d).
+        var daysToExpiry = (long)(tentacleCert.NotAfter - DateTime.UtcNow).TotalDays;
+        Health.TentacleMetrics.SetCertificateExpiresInDays(daysToExpiry);
+
+        Log.Information("Tentacle certificate thumbprint: {Thumbprint} (expires in {Days} days)",
+            tentacleCert.Thumbprint, daysToExpiry);
         Log.Information("Tentacle subscription ID: {SubscriptionId}", subscriptionId);
 
         var flavorResolver = _dependencies.FlavorResolverFactory(_dependencies.BuiltInFlavorsProvider());
