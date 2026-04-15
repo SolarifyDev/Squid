@@ -415,6 +415,7 @@ public class TentacleAppTests : TimedTestBase
         public string SubscriptionId { get; private set; } = string.Empty;
         public string SubscriptionUri { get; private set; } = string.Empty;
         public int ListeningPort { get; private set; }
+        public bool IsListening { get; private set; }
         public bool Disposed { get; private set; }
 
         public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
@@ -429,6 +430,7 @@ public class TentacleAppTests : TimedTestBase
         {
             StartCalls++;
             ListeningPort = port;
+            IsListening = true;
         }
 
         public ValueTask DisposeAsync()

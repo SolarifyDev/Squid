@@ -30,6 +30,37 @@ public class MetricsEndpointIntegrationTests : TimedTestBase
         body.ShouldContain("squid_tentacle_active_scripts 1");
         body.ShouldContain("squid_tentacle_scripts_started_total 1");
 
+        // Cert metric must NOT appear before SetCertificateExpiresInDays is called —
+        // protects Prometheus from alerting on the -1 sentinel during the brief
+        // window between service start and TentacleApp loading the cert.
+        body.ShouldNotContain("squid_tentacle_certificate_expires_in_days");
+
+        TentacleMetrics.Reset();
+    }
+
+    [Fact]
+    public async Task Metrics_Endpoint_ExposesCertificateExpiry_AfterPublication()
+    {
+        // Regression: end-to-end check that the cert-expiry gauge actually flows
+        // from TentacleMetrics → MetricsExporter → /metrics HTTP response.
+        // Catches wiring breakages between the publishing site (TentacleApp) and
+        // the exposure site (HealthCheckServer) that unit tests on each side
+        // individually wouldn't notice.
+        TentacleMetrics.Reset();
+        TentacleMetrics.SetCertificateExpiresInDays(36500);   // 100 years
+
+        var port = TcpPortAllocator.GetEphemeralPort();
+        await using var server = new HealthCheckServer(port, () => true);
+        server.Start();
+
+        using var client = new HttpClient();
+        var (statusCode, body, _) = await GetAsync(client, port, "/metrics");
+
+        statusCode.ShouldBe(HttpStatusCode.OK);
+        body.ShouldContain("# HELP squid_tentacle_certificate_expires_in_days");
+        body.ShouldContain("# TYPE squid_tentacle_certificate_expires_in_days gauge");
+        body.ShouldContain("squid_tentacle_certificate_expires_in_days 36500");
+
         TentacleMetrics.Reset();
     }
 

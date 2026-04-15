@@ -84,9 +84,21 @@ public sealed class TentacleApp
         }
 
         var isReady = true;
-        Func<bool> readinessCheck = runtime.ReadinessCheck != null
-            ? () => isReady && runtime.ReadinessCheck()
-            : () => isReady;
+
+        // Compose readiness from three signals:
+        //   1. Service-level isReady flag (flipped to false when drain starts)
+        //   2. Flavor-supplied health hook (e.g. K8s leader election)
+        //   3. Halibut listener bound (Listening mode only) — without this, a
+        //      misconfigured port collision lets systemd report "running" while
+        //      the agent is actually invisible to the Server.
+        var requireListening = runtime.CommunicationMode == TentacleCommunicationMode.Listening;
+        Func<bool> readinessCheck = () =>
+        {
+            if (!isReady) return false;
+            if (runtime.ReadinessCheck != null && !runtime.ReadinessCheck()) return false;
+            if (requireListening && !halibutHost.IsListening) return false;
+            return true;
+        };
 
         await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, readinessCheck);
 

@@ -13,6 +13,9 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     private readonly HalibutRuntime _runtime;
     private readonly TentacleSettings _settings;
 
+    public bool IsListening { get; private set; }
+    public int ListeningPort { get; private set; }
+
     public TentacleHalibutHost(
         X509Certificate2 tentacleCert,
         IScriptService scriptService,
@@ -118,9 +121,15 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", thumbprint);
         }
 
-        _runtime.Listen(port);
+        // HalibutRuntime.Listen returns the actual bound port — important when port=0
+        // (kernel-assigned ephemeral) and useful even when explicit, because it confirms
+        // the bind succeeded. The returned int is what we expose to /health/readyz.
+        var boundPort = _runtime.Listen(port);
 
-        Log.Information("Halibut listening on port {Port} (trusted {Count} server thumbprint(s))", port, trusted.Count);
+        ListeningPort = boundPort;
+        IsListening = true;
+
+        Log.Information("Halibut listening on port {Port} (trusted {Count} server thumbprint(s))", boundPort, trusted.Count);
     }
 
     public static Uri ResolvePollUri(string subscriptionId, string subscriptionUri)
