@@ -52,7 +52,6 @@ public class LinuxTentacleFlavorTests
         var settings = new TentacleSettings
         {
             ServerUrl = "https://server:7078",
-            ServerCertificate = "AABBCCDD",
             Flavor = "LinuxTentacle"
         };
 
@@ -60,6 +59,23 @@ public class LinuxTentacleFlavorTests
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
         runtime.Registrar.ShouldBeOfType<TentacleListeningRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_AlreadyRegistered_SkipsReRegistration()
+    {
+        var settings = new TentacleSettings
+        {
+            ServerCommsUrl = "https://server:10943",
+            ServerUrl = "https://server:7078",
+            ServerCertificate = "AABBCCDD",
+            Flavor = "LinuxTentacle"
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
+        runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
     }
 
     [Fact]
