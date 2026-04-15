@@ -37,7 +37,18 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
     public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
     {
-        _runtime.Trust(serverThumbprint);
+        // ServerCertificate may be a comma-separated list (Octopus-aligned multi-server trust).
+        // Every listed thumbprint is Trust()ed so cert-rotation windows where old+new coexist
+        // don't break running Tentacles.
+        var trusted = Squid.Tentacle.Certificate.ServerCertificateValidator.ParseThumbprints(serverThumbprint);
+
+        foreach (var thumbprint in trusted)
+            _runtime.Trust(thumbprint);
+
+        // Primary thumbprint (first in list) is used for the ServiceEndPoint TLS pinning.
+        // Halibut's ServiceEndPoint only accepts one thumbprint per endpoint, so if callers
+        // want true multi-server trust they must also configure multiple ServerCommsAddresses.
+        var primaryThumbprint = trusted.Count > 0 ? trusted[0] : serverThumbprint;
 
         var pollUri = ResolvePollUri(subscriptionId, subscriptionUri);
         var serverUrls = _settings.GetServerCommsUrls();
@@ -47,6 +58,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
         var connectionCount = Math.Max(1, _settings.PollingConnectionCount);
         var totalConnections = 0;
+        var halibutProxy = ProxyConfigurationBuilder.BuildHalibutProxy(_settings.Proxy);
 
         foreach (var serverUrl in serverUrls)
         {
@@ -54,7 +66,11 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
             WarnIfCommsUrlMatchesApiUrl(pollingEndpointUri);
 
-            var serverEndpoint = new ServiceEndPoint(pollingEndpointUri, serverThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            var serverEndpoint = new ServiceEndPoint(
+                pollingEndpointUri,
+                primaryThumbprint,
+                halibutProxy,                                           // null = direct connection
+                HalibutTimeoutsAndLimits.RecommendedValues());
 
             for (var i = 0; i < connectionCount; i++)
             {
@@ -64,8 +80,9 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         }
 
         Log.Information(
-            "Halibut polling started. SubscriptionId={SubscriptionId}, ServerUrls={ServerUrlCount}, ConnectionsPerServer={ConnectionCount}, TotalConnections={TotalConnections}",
-            subscriptionId, serverUrls.Count, connectionCount, totalConnections);
+            "Halibut polling started. SubscriptionId={SubscriptionId}, ServerUrls={ServerUrlCount}, ConnectionsPerServer={ConnectionCount}, TotalConnections={TotalConnections}, Proxy={Proxy}",
+            subscriptionId, serverUrls.Count, connectionCount, totalConnections,
+            halibutProxy == null ? "direct" : $"{_settings.Proxy.Host}:{_settings.Proxy.Port}");
     }
 
     private void WarnIfCommsUrlMatchesApiUrl(Uri commsUri)
@@ -93,15 +110,17 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
     public void StartListening(int port, string serverThumbprint = null)
     {
-        if (!string.IsNullOrWhiteSpace(serverThumbprint))
+        var trusted = Squid.Tentacle.Certificate.ServerCertificateValidator.ParseThumbprints(serverThumbprint);
+
+        foreach (var thumbprint in trusted)
         {
-            _runtime.Trust(serverThumbprint);
-            Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", serverThumbprint);
+            _runtime.Trust(thumbprint);
+            Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", thumbprint);
         }
 
         _runtime.Listen(port);
 
-        Log.Information("Halibut listening on port {Port}", port);
+        Log.Information("Halibut listening on port {Port} (trusted {Count} server thumbprint(s))", port, trusted.Count);
     }
 
     public static Uri ResolvePollUri(string subscriptionId, string subscriptionUri)
