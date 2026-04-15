@@ -44,6 +44,33 @@ echo "Arch:     ${RID}"
 echo "Install:  ${INSTALL_DIR}"
 echo ""
 
+# Install runtime dependencies (.NET 9 self-contained needs libicu + ca-certificates).
+# Detect the host package manager and install silently if libicu is missing.
+install_runtime_deps() {
+    if ldconfig -p 2>/dev/null | grep -q "libicuuc"; then
+        return 0
+    fi
+
+    echo "Installing runtime dependencies (libicu, ca-certificates)..."
+
+    if command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq libicu-dev ca-certificates >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q libicu ca-certificates >/dev/null
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y -q libicu ca-certificates >/dev/null
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache --quiet icu-libs ca-certificates
+    else
+        echo "Warning: couldn't detect package manager — install libicu manually."
+        return 1
+    fi
+}
+
+install_runtime_deps || true
+
 # Resolve download URL.
 # GitHub Actions publishes two tar.gz per arch under each release tag:
 #   squid-tentacle-${VERSION}-${RID}.tar.gz     (versioned)
@@ -105,6 +132,16 @@ if [ -d /usr/local/bin ]; then
     echo "Installed: /usr/local/bin/${BINARY_NAME}"
 else
     echo "Add to PATH: export PATH=\"${INSTALL_DIR}:\$PATH\""
+fi
+
+# Create the system-scope config directory for multi-instance support.
+# Register + run will read/write here; restricting to root-only protects the API key
+# and server thumbprint that get persisted after a successful `register`.
+CONFIG_DIR="/etc/squid-tentacle"
+if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR/instances"
+    chmod 700 "$CONFIG_DIR"
+    echo "Created config dir: ${CONFIG_DIR}"
 fi
 
 # Verify binary is runnable (use the `help` subcommand — `--help` is routed to RunCommand in Program.cs).

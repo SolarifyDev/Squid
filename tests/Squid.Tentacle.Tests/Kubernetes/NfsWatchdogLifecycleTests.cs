@@ -1,11 +1,13 @@
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
+using Squid.Tentacle.Tests.Health;
 using Squid.Tentacle.Tests.Support;
 using Squid.Tentacle.Tests.Support.Lifecycle;
 
 namespace Squid.Tentacle.Tests.Kubernetes;
 
 [Trait("Category", TentacleTestCategories.Lifecycle)]
+[Collection(TentacleMetricsCollection.Name)]
 public class NfsWatchdogLifecycleTests : TimedTestBase, IDisposable
 {
     private readonly string _tempDir;

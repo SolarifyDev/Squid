@@ -3,9 +3,11 @@ using System.IO;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Health;
 using Squid.Tentacle.Kubernetes;
+using Squid.Tentacle.Tests.Health;
 
 namespace Squid.Tentacle.Tests.Kubernetes;
 
+[Collection(TentacleMetricsCollection.Name)]
 public class NfsWatchdogTests : IDisposable
 {
     private readonly string _tempDir;

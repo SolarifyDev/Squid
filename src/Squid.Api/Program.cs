@@ -1,6 +1,8 @@
+using System.Security.Cryptography.X509Certificates;
 using Autofac.Extensions.DependencyInjection;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Settings.Logging;
+using Squid.Core.Settings.SelfCert;
 using Squid.Core.Settings.System;
 
 namespace Squid.Api;
@@ -56,5 +58,37 @@ public class Program
             {
                 builder.RegisterModule(new SquidModule(Log.Logger, configuration));
             })
-            .ConfigureWebHostDefaults(webBuilder => { webBuilder.UseStartup<Startup>(); });
+            .ConfigureWebHostDefaults(webBuilder =>
+            {
+                webBuilder.UseStartup<Startup>();
+                webBuilder.ConfigureKestrel((ctx, kestrel) =>
+                {
+                    // Use the same SelfCert as Halibut (port 10943) so clients pinning the Squid
+                    // Server thumbprint (returned by MachineScriptService.GetServerThumbprint)
+                    // can connect to the HTTP API as well. Without this, Kestrel falls back to
+                    // ASP.NET's dev-cert on port 7078 and the thumbprint mismatch breaks TLS pinning.
+                    ConfigureSelfCertHttps(kestrel, ctx.Configuration);
+                });
+            });
+
+    private static void ConfigureSelfCertHttps(Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions kestrel, IConfiguration config)
+    {
+        var selfCert = new SelfCertSetting(config);
+
+        if (string.IsNullOrWhiteSpace(selfCert.Base64)) return;
+
+        try
+        {
+            var certBytes = Convert.FromBase64String(selfCert.Base64);
+            var cert = X509CertificateLoader.LoadPkcs12(certBytes, selfCert.Password);
+
+            kestrel.ConfigureHttpsDefaults(https => https.ServerCertificate = cert);
+
+            Log.Information("Kestrel HTTPS configured with SelfCert (thumbprint {Thumbprint})", cert.Thumbprint);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load SelfCert for Kestrel — falling back to ASP.NET default");
+        }
+    }
 }
