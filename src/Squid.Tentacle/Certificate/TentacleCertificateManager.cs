@@ -69,6 +69,20 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         return newId;
     }
 
+    /// <summary>
+    /// How long generated Tentacle certificates are valid for.
+    ///
+    /// Aligned with Octopus Tentacle (100 years) — see
+    /// <c>/Users/mars/Projects/octopus/OctopusShared/source/Octopus.Shared/Security/CertificateGenerator.cs</c>.
+    /// The reasoning is that we're doing TLS pinning by <b>thumbprint</b>, not CA
+    /// chain validation, so the <c>NotAfter</c> field isn't a security boundary
+    /// — key quality is. A 100-year validity eliminates the operational burden
+    /// of renewal (which would require re-registering every Tentacle with the
+    /// Server). If a cert's private key ever leaks, the right response is to
+    /// delete it and register a new one, not to wait for expiry.
+    /// </summary>
+    internal const int CertificateValidityYears = 100;
+
     private static X509Certificate2 CreateSelfSignedCert()
     {
         using var rsa = RSA.Create(2048);
@@ -81,7 +95,7 @@ public class TentacleCertificateManager : ITentacleCertificateManager
 
         using var cert = request.CreateSelfSigned(
             DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow.AddYears(5));
+            DateTimeOffset.UtcNow.AddYears(CertificateValidityYears));
 
         return X509CertificateLoader.LoadPkcs12(
             cert.Export(X509ContentType.Pfx, CertPassword),
