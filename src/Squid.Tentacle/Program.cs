@@ -7,69 +7,58 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
+var commands = new ITentacleCommand[]
+{
+    new RunCommand(),
+    new ShowThumbprintCommand(),
+    new ShowConfigCommand(),
+    new NewCertificateCommand(),
+    new RegisterCommand(),
+    new ServiceCommand()
+};
+
 try
 {
-    var (command, remainingArgs) = ResolveCommand(args);
+    var route = CommandResolver.Resolve(commands, args);
+
+    if (route.HelpRequested)
+    {
+        PrintHelp(commands);
+        return 0;
+    }
+
+    if (route.UnknownCommand != null)
+    {
+        Console.Error.WriteLine($"Unknown command: {route.UnknownCommand}");
+        PrintHelp(commands);
+        return 1;
+    }
 
     var config = new ConfigurationBuilder()
         .AddJsonFile("appsettings.json", optional: true)
         .AddEnvironmentVariables()
-        .AddCommandLine(remainingArgs)
+        .AddCommandLine(route.RemainingArgs)
         .Build();
 
     var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
     AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
 
-    var exitCode = await command.ExecuteAsync(remainingArgs, config, cts.Token).ConfigureAwait(false);
-    Environment.ExitCode = exitCode;
+    return await route.Command.ExecuteAsync(route.RemainingArgs, config, cts.Token).ConfigureAwait(false);
 }
 catch (OperationCanceledException)
 {
     Log.Information("Squid Tentacle shutdown requested");
+    return 0;
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Squid Tentacle terminated unexpectedly");
-    Environment.ExitCode = 1;
+    return 1;
 }
 finally
 {
     await Log.CloseAndFlushAsync().ConfigureAwait(false);
-}
-
-static (ITentacleCommand command, string[] remainingArgs) ResolveCommand(string[] args)
-{
-    var commands = new ITentacleCommand[]
-    {
-        new RunCommand(),
-        new ShowThumbprintCommand(),
-        new ShowConfigCommand(),
-        new NewCertificateCommand(),
-        new RegisterCommand(),
-        new ServiceCommand()
-    };
-
-    if (args.Length == 0 || args[0].StartsWith("--") || args[0].StartsWith("-"))
-        return (new RunCommand(), args);
-
-    var verb = args[0].ToLowerInvariant();
-
-    if (verb == "help" || verb == "--help" || verb == "-h")
-    {
-        PrintHelp(commands);
-        Environment.Exit(0);
-    }
-
-    var matched = commands.FirstOrDefault(c => c.Name.Equals(verb, StringComparison.OrdinalIgnoreCase));
-
-    if (matched != null)
-        return (matched, args[1..]);
-
-    Console.Error.WriteLine($"Unknown command: {verb}");
-    PrintHelp(commands);
-    Environment.Exit(1);
-    return default;
 }
 
 static void PrintHelp(ITentacleCommand[] commands)

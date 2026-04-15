@@ -1,5 +1,6 @@
 using System.Net;
 using Squid.Core.Services.Account;
+using Squid.Core.Services.Machines.Scripts.Tentacle;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Response;
@@ -21,17 +22,20 @@ public partial class MachineScriptService : IMachineScriptService
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IAgentVersionProvider _agentVersionProvider;
     private readonly SelfCertSetting _selfCertSetting;
+    private readonly IEnumerable<ITentacleInstallScriptBuilder> _tentacleScriptBuilders;
 
     public MachineScriptService(
         IAccountService accountService,
         IMachineDataProvider machineDataProvider,
         IAgentVersionProvider agentVersionProvider,
-        SelfCertSetting selfCertSetting)
+        SelfCertSetting selfCertSetting,
+        IEnumerable<ITentacleInstallScriptBuilder> tentacleScriptBuilders)
     {
         _accountService = accountService;
         _machineDataProvider = machineDataProvider;
         _agentVersionProvider = agentVersionProvider;
         _selfCertSetting = selfCertSetting;
+        _tentacleScriptBuilders = tentacleScriptBuilders;
     }
 
     private static TResponse Success<TResponse, TData>(TData data) where TResponse : SquidResponse<TData>, new()
