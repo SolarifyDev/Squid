@@ -77,6 +77,13 @@ public class TentacleRegistrationClient
         handler.ServerCertificateCustomValidationCallback =
             ServerCertificateValidator.Create(_settings.ServerCertificate);
 
+        var proxy = Squid.Tentacle.Halibut.ProxyConfigurationBuilder.BuildHttpClientProxy(_settings.Proxy);
+        if (proxy != null)
+        {
+            handler.Proxy = proxy;
+            handler.UseProxy = true;
+        }
+
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
         if (!string.IsNullOrEmpty(_settings.ApiKey))

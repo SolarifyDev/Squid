@@ -19,6 +19,18 @@ public class TentacleSettings
     public int HealthCheckPort { get; set; } = 8080;
     public int ListeningPort { get; set; } = 10933;
     public string ListeningHostName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Strategy for resolving the Tentacle's externally-reachable hostname
+    /// during Listening-mode registration. One of:
+    /// <c>Custom</c> (use <see cref="ListeningHostName"/>),
+    /// <c>ComputerName</c> (Dns.GetHostName — legacy default),
+    /// <c>FQDN</c> (reverse-DNS of local host),
+    /// <c>PublicIp</c> (AWS/Azure/GCE instance metadata).
+    /// Aligned with Octopus's <c>PublicHostNameConfiguration</c>.
+    /// </summary>
+    public string PublicHostNameConfiguration { get; set; } = string.Empty;
+
     public string SubscriptionId { get; set; } = string.Empty;
     public string AgentVersion { get; set; } = string.Empty;
     public string ReleaseName { get; set; } = string.Empty;
@@ -27,6 +39,15 @@ public class TentacleSettings
     public int PollingConnectionCount { get; set; } = 5;
     public string ServerCommsAddresses { get; set; } = string.Empty;
     public int ShutdownDrainTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Optional outbound HTTP CONNECT proxy for Polling connections to the
+    /// Server. Mirrors Octopus's <c>PollingProxyConfiguration</c>. When
+    /// <see cref="ProxySettings.Host"/> is empty the Tentacle connects
+    /// directly. Supports anonymous and username/password-authenticated
+    /// proxies, which covers Squid/Zscaler/BlueCoat enterprise deployments.
+    /// </summary>
+    public ProxySettings Proxy { get; set; } = new();
 
     public List<string> GetServerCommsUrls()
     {
@@ -38,4 +59,20 @@ public class TentacleSettings
 
         return new List<string>();
     }
+}
+
+/// <summary>
+/// Outbound HTTP proxy configuration used by Polling connections and by the
+/// Listening-mode registration HTTP calls. Flat structure so it maps cleanly
+/// to <c>Tentacle:Proxy:*</c> env vars and CLI args (<c>--proxy-host</c>,
+/// <c>--proxy-port</c>, <c>--proxy-user</c>, <c>--proxy-password</c>).
+/// </summary>
+public sealed class ProxySettings
+{
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; } = 0;
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(Host) && Port > 0;
 }

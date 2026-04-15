@@ -51,6 +51,13 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         handler.ServerCertificateCustomValidationCallback =
             ServerCertificateValidator.Create(_settings.ServerCertificate);
 
+        var proxy = Squid.Tentacle.Halibut.ProxyConfigurationBuilder.BuildHttpClientProxy(_settings.Proxy);
+        if (proxy != null)
+        {
+            handler.Proxy = proxy;
+            handler.UseProxy = true;
+        }
+
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
 
@@ -93,11 +100,17 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 
     private string BuildListeningUri()
     {
-        var host = !string.IsNullOrWhiteSpace(_settings.ListeningHostName)
-            ? _settings.ListeningHostName
-            : Dns.GetHostName();
+        var hasExplicitHostName = !string.IsNullOrWhiteSpace(_settings.ListeningHostName);
+        var mode = PublicHostNameResolver.ParseMode(_settings.PublicHostNameConfiguration, hasExplicitHostName);
+        var host = PublicHostNameResolver.Resolve(mode, _settings.ListeningHostName);
+
+        // IPv6 literals need bracketing in URIs: https://[::1]:10933/
+        if (host.Contains(':') && !host.StartsWith('['))
+            host = $"[{host}]";
 
         var port = _settings.ListeningPort > 0 ? _settings.ListeningPort : 10933;
+
+        Log.Information("Registering with Server as {Mode} → {Host}:{Port}", mode, host, port);
 
         return $"https://{host}:{port}/";
     }
