@@ -187,6 +187,37 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Linux Tentacle ${{ needs.resolve-tag.outputs.image_tag }}
+          name: Squid Tentacle v${{ needs.resolve-tag.outputs.image_tag }}
+          prerelease: ${{ contains(needs.resolve-tag.outputs.image_tag, '-') }}
           files: artifacts/squid-tentacle-*.tar.gz
           generate_release_notes: true
+          body: |
+            ## Squid Tentacle v${{ needs.resolve-tag.outputs.image_tag }}
+
+            Self-contained Linux deployment agent binaries (x64 + arm64).
+
+            ### Installation
+
+            **One-liner (latest):**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | sudo bash
+            ```
+
+            **Specific version:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | sudo bash -s -- --version ${{ needs.resolve-tag.outputs.image_tag }}
+            ```
+
+            **Docker:**
+            ```bash
+            docker pull ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${{ needs.resolve-tag.outputs.image_tag }}
+            ```
+
+            ### Downloads
+
+            | Platform | Architecture | Archive |
+            |----------|-------------|---------|
+            | Linux | x64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-x64.tar.gz` |
+            | Linux | arm64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-arm64.tar.gz` |
+
+            See [CHANGELOG](https://github.com/SolarifyDev/Squid/compare/) for commit history.
