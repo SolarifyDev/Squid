@@ -22,9 +22,7 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
 
         Log.Information("LinuxTentacle starting in {Mode} mode", communicationMode);
 
-        var registrar = communicationMode == TentacleCommunicationMode.Polling
-            ? (ITentacleRegistrar)new TentaclePollingRegistrar(tentacleSettings)
-            : new TentacleListeningRegistrar(tentacleSettings);
+        var registrar = ResolveRegistrar(communicationMode, tentacleSettings);
 
         var backend = new LocalScriptService();
 
@@ -53,5 +51,26 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
             && string.IsNullOrWhiteSpace(settings.ServerCommsAddresses)
             ? TentacleCommunicationMode.Listening
             : TentacleCommunicationMode.Polling;
+    }
+
+    /// <summary>
+    /// If the tentacle has already been registered (ServerCertificate is set),
+    /// skip re-registration on startup — just like Listening mode does.
+    /// This avoids requiring an API key on every restart.
+    /// </summary>
+    private static ITentacleRegistrar ResolveRegistrar(
+        TentacleCommunicationMode mode, TentacleSettings settings)
+    {
+        var alreadyRegistered = !string.IsNullOrWhiteSpace(settings.ServerCertificate);
+
+        if (alreadyRegistered)
+        {
+            Log.Information("Tentacle already registered (ServerCertificate present), skipping re-registration");
+            return new NoOpRegistrar(settings);
+        }
+
+        return mode == TentacleCommunicationMode.Polling
+            ? new TentaclePollingRegistrar(settings)
+            : new TentacleListeningRegistrar(settings);
     }
 }
