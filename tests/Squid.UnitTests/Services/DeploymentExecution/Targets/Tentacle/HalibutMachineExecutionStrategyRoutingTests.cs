@@ -6,12 +6,12 @@ namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 public class HalibutMachineExecutionStrategyRoutingTests
 {
     [Fact]
-    public void ParseMachineEndpoint_LinuxListening_ReturnsHttpsEndpoint()
+    public void ParseMachineEndpoint_TentacleListening_ReturnsHttpsEndpoint()
     {
         var machine = new Machine
         {
-            Name = "linux-web-01",
-            Endpoint = """{"CommunicationStyle":"LinuxListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABBCCDD"}"""
+            Name = "tentacle-web-01",
+            Endpoint = """{"CommunicationStyle":"TentacleListening","Uri":"https://10.0.0.5:10933/","Thumbprint":"AABBCCDD"}"""
         };
 
         var endpoint = HalibutMachineExecutionStrategy.ParseMachineEndpoint(machine);
@@ -23,12 +23,12 @@ public class HalibutMachineExecutionStrategyRoutingTests
     }
 
     [Fact]
-    public void ParseMachineEndpoint_LinuxPolling_ReturnsPollEndpoint()
+    public void ParseMachineEndpoint_TentaclePolling_ReturnsPollEndpoint()
     {
         var machine = new Machine
         {
-            Name = "linux-web-02",
-            Endpoint = """{"CommunicationStyle":"LinuxPolling","SubscriptionId":"tentacle-abc","Thumbprint":"EEFF0011"}"""
+            Name = "tentacle-web-02",
+            Endpoint = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"tentacle-abc","Thumbprint":"EEFF0011"}"""
         };
 
         var endpoint = HalibutMachineExecutionStrategy.ParseMachineEndpoint(machine);

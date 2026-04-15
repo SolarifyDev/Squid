@@ -31,7 +31,7 @@ public sealed class TentaclePollingTransport : DeploymentTransport
         TentacleEndpointVariableContributor variables,
         HalibutMachineExecutionStrategy strategy,
         TentacleHealthCheckStrategy healthChecker)
-        : base(CommunicationStyle.LinuxPolling, variables, strategy, Capability, healthChecker)
+        : base(CommunicationStyle.TentaclePolling, variables, strategy, Capability, healthChecker)
     {
     }
 }

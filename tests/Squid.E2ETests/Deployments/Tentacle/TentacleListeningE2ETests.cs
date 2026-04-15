@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -13,30 +12,30 @@ using Xunit;
 namespace Squid.E2ETests.Deployments.Tentacle;
 
 [Trait("Category", "E2E")]
-public class LinuxPollingE2ETests
-    : IClassFixture<LinuxPollingE2EFixture<LinuxPollingE2ETests>>
+public class TentacleListeningE2ETests
+    : IClassFixture<TentacleListeningE2EFixture<TentacleListeningE2ETests>>
 {
-    private readonly LinuxPollingE2EFixture<LinuxPollingE2ETests> _fixture;
+    private readonly TentacleListeningE2EFixture<TentacleListeningE2ETests> _fixture;
 
-    public LinuxPollingE2ETests(LinuxPollingE2EFixture<LinuxPollingE2ETests> fixture)
+    public TentacleListeningE2ETests(TentacleListeningE2EFixture<TentacleListeningE2ETests> fixture)
     {
         _fixture = fixture;
     }
 
     [Fact]
-    public async Task Polling_EchoScript_Success()
+    public async Task Listening_EchoScript_Success()
     {
-        var serverTaskId = await SeedRunScriptAsync("echo 'hello-from-linux-polling'");
+        var serverTaskId = await SeedRunScriptAsync("echo 'hello-from-tentacle-listening'");
 
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("hello-from-linux-polling").ShouldBeTrue(
+        _fixture.LogSink.ContainsMessage("hello-from-tentacle-listening").ShouldBeTrue(
             "Expected script output in logs");
     }
 
     [Fact]
-    public async Task Polling_NonZeroExitCode_TaskFails()
+    public async Task Listening_NonZeroExitCode_TaskFails()
     {
         var serverTaskId = await SeedRunScriptAsync("exit 1");
 
@@ -46,12 +45,12 @@ public class LinuxPollingE2ETests
     }
 
     [Fact]
-    public async Task Polling_MultiLineOutput_AllCaptured()
+    public async Task Listening_MultiLineOutput_AllCaptured()
     {
         var script = """
-            echo 'line-one'
-            echo 'line-two'
-            echo 'line-three'
+            echo 'listen-one'
+            echo 'listen-two'
+            echo 'listen-three'
             """;
 
         var serverTaskId = await SeedRunScriptAsync(script);
@@ -59,35 +58,20 @@ public class LinuxPollingE2ETests
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("line-one").ShouldBeTrue();
-        _fixture.LogSink.ContainsMessage("line-two").ShouldBeTrue();
-        _fixture.LogSink.ContainsMessage("line-three").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("listen-one").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("listen-two").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("listen-three").ShouldBeTrue();
     }
 
     [Fact]
-    public async Task Polling_MultipleScripts_Sequential_BothSucceed()
+    public async Task Listening_StderrOutput_CapturedInLogs()
     {
-        var task1 = await SeedRunScriptAsync("echo 'first-deployment'");
-        await ExecutePipelineAsync(task1);
-        await AssertTaskStateAsync(task1, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("first-deployment").ShouldBeTrue();
-
-        var task2 = await SeedRunScriptAsync("echo 'second-deployment'");
-        await ExecutePipelineAsync(task2);
-        await AssertTaskStateAsync(task2, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("second-deployment").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task Polling_StderrOutput_CapturedInLogs()
-    {
-        var serverTaskId = await SeedRunScriptAsync("echo 'stderr-message' >&2");
+        var serverTaskId = await SeedRunScriptAsync("echo 'listening-stderr' >&2");
 
         await ExecutePipelineAsync(serverTaskId);
 
         await AssertTaskStateAsync(serverTaskId, TaskState.Success);
-        _fixture.LogSink.ContainsMessage("stderr-message").ShouldBeTrue(
-            "Expected stderr output in logs");
+        _fixture.LogSink.ContainsMessage("listening-stderr").ShouldBeTrue();
     }
 
     // ========================================================================
@@ -111,7 +95,7 @@ public class LinuxPollingE2ETests
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
 
-            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Linux Script Step").ConfigureAwait(false);
+            var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Tentacle Listening Step").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step.Id, ("Squid.Action.TargetRoles", "linux-server")).ConfigureAwait(false);
 
             var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Run Script", actionType: "Squid.Script").ConfigureAwait(false);
@@ -125,7 +109,7 @@ public class LinuxPollingE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Linux Polling Deployment",
+                Name = "Tentacle Listening Deployment",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -141,8 +125,8 @@ public class LinuxPollingE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Linux Polling Task",
-                Description = "Linux Tentacle Polling E2E",
+                Name = "Tentacle Listening Task",
+                Description = "Tentacle Listening E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
                 ServerTaskType = "Deploy",
@@ -188,7 +172,7 @@ public class LinuxPollingE2ETests
             }
             catch (DeploymentScriptException)
             {
-                // Controlled script failure — task state recorded in DB
+                // Controlled script failure
             }
         }).ConfigureAwait(false);
     }

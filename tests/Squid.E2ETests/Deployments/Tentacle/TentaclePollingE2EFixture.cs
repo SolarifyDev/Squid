@@ -15,11 +15,11 @@ using Squid.Tentacle.Certificate;
 namespace Squid.E2ETests.Deployments.Tentacle;
 
 /// <summary>
-/// E2E fixture for Linux Tentacle in Polling mode.
+/// E2E fixture for Tentacle in Polling mode.
 /// Creates a TentacleStub that polls the Server's Halibut listener, registers via
-/// <c>/api/machines/register/linux-polling</c>, then executes real deployments.
+/// <c>/api/machines/register/tentacle-polling</c>, then executes real deployments.
 /// </summary>
-public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
+public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 {
     public CapturingLogSink LogSink { get; } = new();
     public int TentacleMachineId { get; private set; }
@@ -65,7 +65,7 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         await Run<IRepository, IUnitOfWork>(async (repo, uow) =>
         {
             var builder = new TestDataBuilder(repo, uow);
-            var env = await builder.CreateEnvironmentAsync("Linux Polling E2E Env").ConfigureAwait(false);
+            var env = await builder.CreateEnvironmentAsync("Tentacle Polling E2E Env").ConfigureAwait(false);
 
             EnvironmentId = env.Id;
             EnvironmentName = env.Name;
@@ -74,7 +74,7 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     private async Task RegisterTentacleAsync()
     {
-        var certsPath = Path.Combine(Path.GetTempPath(), $"squid-linux-polling-certs-{Guid.NewGuid():N}");
+        var certsPath = Path.Combine(Path.GetTempPath(), $"squid-tentacle-polling-certs-{Guid.NewGuid():N}");
         Directory.CreateDirectory(certsPath);
 
         var certManager = new TentacleCertificateManager(certsPath);
@@ -84,9 +84,9 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         var registration = await Run<IMachineRegistrationService, RegisterMachineResponseData>(async svc =>
         {
-            return await svc.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+            return await svc.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
             {
-                MachineName = $"linux-polling-{TentacleSubscriptionId[..8]}",
+                MachineName = $"tentacle-polling-{TentacleSubscriptionId[..8]}",
                 Thumbprint = TentacleThumbprint,
                 SubscriptionId = TentacleSubscriptionId,
                 Roles = "linux-server",
@@ -97,7 +97,7 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
         TentacleMachineId = registration.MachineId;
 
-        Log.Information("Linux Polling Tentacle registered. MachineId={MachineId}, SubscriptionId={SubscriptionId}",
+        Log.Information("Tentacle Polling registered. MachineId={MachineId}, SubscriptionId={SubscriptionId}",
             TentacleMachineId, TentacleSubscriptionId);
     }
 
@@ -117,9 +117,9 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         // Re-register with stub's actual thumbprint + subscriptionId
         Run<IMachineRegistrationService>(async svc =>
         {
-            await svc.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+            await svc.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
             {
-                MachineName = $"linux-polling-{_stub.SubscriptionId[..8]}",
+                MachineName = $"tentacle-polling-{_stub.SubscriptionId[..8]}",
                 Thumbprint = _stub.Thumbprint,
                 SubscriptionId = _stub.SubscriptionId,
                 Roles = "linux-server",
@@ -131,7 +131,7 @@ public class LinuxPollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         TentacleSubscriptionId = _stub.SubscriptionId;
         TentacleThumbprint = _stub.Thumbprint;
 
-        Log.Information("Linux Polling TentacleStub started. Port={Port}, SubscriptionId={SubscriptionId}",
+        Log.Information("Tentacle Polling Stub started. Port={Port}, SubscriptionId={SubscriptionId}",
             _pollingPort, TentacleSubscriptionId);
     }
 

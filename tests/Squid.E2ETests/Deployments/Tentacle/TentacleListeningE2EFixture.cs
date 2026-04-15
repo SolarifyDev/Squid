@@ -13,12 +13,12 @@ using Squid.IntegrationTests.Helpers;
 namespace Squid.E2ETests.Deployments.Tentacle;
 
 /// <summary>
-/// E2E fixture for Linux Tentacle in Listening mode.
+/// E2E fixture for Tentacle in Listening mode.
 /// Creates a TentacleStub that listens on a TCP port. The Server's HalibutRuntime
 /// connects outbound to the stub via <c>https://localhost:{port}/</c>.
 /// Machine is inserted manually (no agent-initiated registration — Octopus-aligned).
 /// </summary>
-public class LinuxListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
+public class TentacleListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 {
     public CapturingLogSink LogSink { get; } = new();
     public int TentacleMachineId { get; private set; }
@@ -64,7 +64,7 @@ public class LinuxListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         await Run<IRepository, IUnitOfWork>(async (repo, uow) =>
         {
             var builder = new TestDataBuilder(repo, uow);
-            var env = await builder.CreateEnvironmentAsync("Linux Listening E2E Env").ConfigureAwait(false);
+            var env = await builder.CreateEnvironmentAsync("Tentacle Listening E2E Env").ConfigureAwait(false);
 
             EnvironmentId = env.Id;
             EnvironmentName = env.Name;
@@ -83,7 +83,7 @@ public class LinuxListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         var serverThumbprint = GetServerThumbprint();
         _stub.Trust(serverThumbprint);
 
-        Log.Information("Linux Listening TentacleStub started on port {Port}, Thumbprint={Thumbprint}",
+        Log.Information("Tentacle Listening Stub started on port {Port}, Thumbprint={Thumbprint}",
             ListeningPort, TentacleThumbprint);
     }
 
@@ -96,20 +96,20 @@ public class LinuxListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         {
             var endpointJson = JsonSerializer.Serialize(new
             {
-                CommunicationStyle = "LinuxListening",
+                CommunicationStyle = "TentacleListening",
                 Uri = $"https://localhost:{ListeningPort}/",
                 Thumbprint = TentacleThumbprint
             });
 
             var machine = new Machine
             {
-                Name = $"linux-listening-{Guid.NewGuid().ToString("N")[..8]}",
+                Name = $"tentacle-listening-{Guid.NewGuid().ToString("N")[..8]}",
                 IsDisabled = false,
                 Roles = "[\"linux-server\"]",
                 EnvironmentIds = $"[{EnvironmentId}]",
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = $"linux-listening-{Guid.NewGuid():N}"
+                Slug = $"tentacle-listening-{Guid.NewGuid():N}"
             };
 
             await repo.InsertAsync(machine).ConfigureAwait(false);
@@ -117,7 +117,7 @@ public class LinuxListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
             TentacleMachineId = machine.Id;
 
-            Log.Information("Linux Listening machine inserted. MachineId={MachineId}, Uri=https://localhost:{Port}/",
+            Log.Information("Tentacle Listening machine inserted. MachineId={MachineId}, Uri=https://localhost:{Port}/",
                 TentacleMachineId, ListeningPort);
         }).ConfigureAwait(false);
     }

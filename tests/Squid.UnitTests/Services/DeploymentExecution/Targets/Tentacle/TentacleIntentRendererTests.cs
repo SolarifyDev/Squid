@@ -16,8 +16,8 @@ namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 public class TentacleIntentRendererTests
 {
     [Theory]
-    [InlineData(typeof(TentacleListeningIntentRenderer), CommunicationStyle.LinuxListening)]
-    [InlineData(typeof(TentaclePollingIntentRenderer), CommunicationStyle.LinuxPolling)]
+    [InlineData(typeof(TentacleListeningIntentRenderer), CommunicationStyle.TentacleListening)]
+    [InlineData(typeof(TentaclePollingIntentRenderer), CommunicationStyle.TentaclePolling)]
     public void CommunicationStyle_MatchesExpected(Type rendererType, CommunicationStyle expected)
     {
         var renderer = (IIntentRenderer)Activator.CreateInstance(rendererType);
@@ -111,7 +111,7 @@ public class TentacleIntentRendererTests
         {
             Machine = machine,
             EndpointContext = new EndpointContext(),
-            CommunicationStyle = CommunicationStyle.LinuxListening
+            CommunicationStyle = CommunicationStyle.TentacleListening
         };
 
         var rendered = await renderer.RenderAsync(NewRunScriptIntent(), NewContext(target: target), CancellationToken.None);
@@ -152,7 +152,7 @@ public class TentacleIntentRendererTests
             Target = target ?? new DeploymentTargetContext
             {
                 Machine = new Machine { Id = 1, Name = "test-machine" },
-                CommunicationStyle = CommunicationStyle.LinuxListening,
+                CommunicationStyle = CommunicationStyle.TentacleListening,
                 EndpointContext = new EndpointContext()
             },
             Step = new DeploymentStepDto { Name = "step-1" },

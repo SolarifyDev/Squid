@@ -9,7 +9,7 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle.Rendering;
 
 public sealed class TentacleListeningIntentRenderer : IIntentRenderer
 {
-    public CommunicationStyle CommunicationStyle => CommunicationStyle.LinuxListening;
+    public CommunicationStyle CommunicationStyle => CommunicationStyle.TentacleListening;
 
     public bool CanRender(ExecutionIntent intent) => intent is RunScriptIntent;
 

@@ -23,8 +23,8 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
         Log.Information("LinuxTentacle starting in {Mode} mode", communicationMode);
 
         var registrar = communicationMode == TentacleCommunicationMode.Polling
-            ? (ITentacleRegistrar)new LinuxTentacleRegistrar(tentacleSettings)
-            : new LinuxListeningRegistrar(tentacleSettings);
+            ? (ITentacleRegistrar)new TentaclePollingRegistrar(tentacleSettings)
+            : new TentacleListeningRegistrar(tentacleSettings);
 
         var backend = new LocalScriptService();
 

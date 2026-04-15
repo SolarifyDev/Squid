@@ -711,11 +711,11 @@ public class MachineRegistrationServiceTests
     }
 
     // ========================================================================
-    // Linux Listening Registration
+    // Tentacle Listening Registration
     // ========================================================================
 
     [Fact]
-    public async Task RegisterLinuxListening_NewMachine_CreatesWithCorrectEndpoint()
+    public async Task RegisterTentacleListening_NewMachine_CreatesWithCorrectEndpoint()
     {
         _environmentDataProvider
             .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
@@ -731,7 +731,7 @@ public class MachineRegistrationServiceTests
             .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
             .Returns(Task.CompletedTask);
 
-        await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        await _service.RegisterTentacleListeningAsync(new RegisterTentacleListeningCommand
         {
             MachineName = "linux-web-01",
             SpaceId = 1,
@@ -746,13 +746,13 @@ public class MachineRegistrationServiceTests
         captured.Name.ShouldBe("linux-web-01");
         captured.EnvironmentIds.ShouldBe("[1]");
         captured.Roles.ShouldBe("[\"web-server\"]");
-        captured.Endpoint.ShouldContain("LinuxListening");
+        captured.Endpoint.ShouldContain("TentacleListening");
         captured.Endpoint.ShouldContain("192.168.1.100:10933");
         captured.Endpoint.ShouldContain("AABBCCDD");
     }
 
     [Fact]
-    public async Task RegisterLinuxListening_ExistingUri_UpdatesMachine()
+    public async Task RegisterTentacleListening_ExistingUri_UpdatesMachine()
     {
         var existing = new Machine
         {
@@ -774,7 +774,7 @@ public class MachineRegistrationServiceTests
             .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
             .Returns(Task.CompletedTask);
 
-        var result = await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        var result = await _service.RegisterTentacleListeningAsync(new RegisterTentacleListeningCommand
         {
             MachineName = "linux-web-01",
             SpaceId = 1,
@@ -792,7 +792,7 @@ public class MachineRegistrationServiceTests
     }
 
     [Fact]
-    public async Task RegisterLinuxListening_ExplicitPolicyId_UsesIt()
+    public async Task RegisterTentacleListening_ExplicitPolicyId_UsesIt()
     {
         _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachinePolicy { Id = 1, IsDefault = true, Name = "Default" });
@@ -811,7 +811,7 @@ public class MachineRegistrationServiceTests
             .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
             .Returns(Task.CompletedTask);
 
-        await _service.RegisterLinuxListeningAsync(new RegisterLinuxListeningCommand
+        await _service.RegisterTentacleListeningAsync(new RegisterTentacleListeningCommand
         {
             MachineName = "linux-policy-test",
             SpaceId = 1,
@@ -825,11 +825,11 @@ public class MachineRegistrationServiceTests
     }
 
     // ========================================================================
-    // Linux Polling Registration
+    // Tentacle Polling Registration
     // ========================================================================
 
     [Fact]
-    public async Task RegisterLinuxPolling_NewMachine_CreatesWithCorrectEndpoint()
+    public async Task RegisterTentaclePolling_NewMachine_CreatesWithCorrectEndpoint()
     {
         _environmentDataProvider
             .Setup(x => x.GetEnvironmentsByNamesAsync(It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
@@ -845,7 +845,7 @@ public class MachineRegistrationServiceTests
             .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
             .Returns(Task.CompletedTask);
 
-        await _service.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+        await _service.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
         {
             MachineName = "linux-poll-01",
             SpaceId = 1,
@@ -860,13 +860,13 @@ public class MachineRegistrationServiceTests
         captured.Name.ShouldBe("linux-poll-01");
         captured.EnvironmentIds.ShouldBe("[3]");
         captured.Roles.ShouldBe("[\"web-server\"]");
-        captured.Endpoint.ShouldContain("LinuxPolling");
+        captured.Endpoint.ShouldContain("TentaclePolling");
         captured.Endpoint.ShouldContain("poll-sub-001");
         captured.Endpoint.ShouldContain("EEFF0011");
     }
 
     [Fact]
-    public async Task RegisterLinuxPolling_ExplicitPolicyId_UsesIt()
+    public async Task RegisterTentaclePolling_ExplicitPolicyId_UsesIt()
     {
         _policyDataProvider.Setup(x => x.GetDefaultAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachinePolicy { Id = 1, IsDefault = true, Name = "Default" });
@@ -885,7 +885,7 @@ public class MachineRegistrationServiceTests
             .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
             .Returns(Task.CompletedTask);
 
-        await _service.RegisterLinuxPollingAsync(new RegisterLinuxPollingCommand
+        await _service.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
         {
             MachineName = "linux-poll-policy",
             SpaceId = 1,
