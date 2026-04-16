@@ -177,6 +177,7 @@ public sealed class RegisterCommand : ITentacleCommand
             ["Tentacle:SubscriptionId"] = subscriptionId,
             ["Tentacle:CertsPath"] = settings.CertsPath,
             ["Tentacle:WorkspacePath"] = settings.WorkspacePath,
+            ["Tentacle:Registered"] = "true",
         };
 
         file.Merge(updates);

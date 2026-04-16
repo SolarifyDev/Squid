@@ -54,18 +54,28 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
     }
 
     /// <summary>
-    /// If the tentacle has already been registered (ServerCertificate is set),
-    /// skip re-registration on startup — just like Listening mode does.
-    /// This avoids requiring an API key on every restart.
+    /// Determines whether to register on this startup or skip.
+    ///
+    /// The flag <c>Tentacle:Registered=true</c> is set by the <c>register</c>
+    /// command after a successful registration and persisted to the instance
+    /// config file. This is the **only** reliable indicator that the Server
+    /// already knows about this Tentacle.
+    ///
+    /// We can NOT use <c>ServerCertificate != empty</c> alone because Docker
+    /// users legitimately pass <c>Tentacle__ServerCertificate</c> for TLS
+    /// pinning on first run — before the machine has been registered. Using
+    /// that field as the "already registered" marker would silently skip
+    /// registration, leaving the Server unaware of the Tentacle and all
+    /// poll connections rejected.
     /// </summary>
     private static ITentacleRegistrar ResolveRegistrar(
         TentacleCommunicationMode mode, TentacleSettings settings)
     {
-        var alreadyRegistered = !string.IsNullOrWhiteSpace(settings.ServerCertificate);
+        var alreadyRegistered = settings.Registered.Equals("true", StringComparison.OrdinalIgnoreCase);
 
         if (alreadyRegistered)
         {
-            Log.Information("Tentacle already registered (ServerCertificate present), skipping re-registration");
+            Log.Information("Tentacle already registered (Registered=true), skipping re-registration");
             return new NoOpRegistrar(settings);
         }
 

@@ -41,6 +41,18 @@ public class TentacleSettings
     public int ShutdownDrainTimeoutSeconds { get; set; } = 30;
 
     /// <summary>
+    /// Explicit flag set to <c>"true"</c> by the <c>register</c> command after a
+    /// successful registration. Used by <see cref="LinuxTentacleFlavor.ResolveRegistrar"/>
+    /// to distinguish "already registered → skip" from "user supplied ServerCertificate
+    /// for TLS pinning but hasn't registered yet" (Docker first-run scenario).
+    ///
+    /// Without this, a Docker container started with both <c>Tentacle__ApiKey</c> and
+    /// <c>Tentacle__ServerCertificate</c> would skip registration entirely, leaving the
+    /// Server unaware of the Tentacle and all poll connections rejected.
+    /// </summary>
+    public string Registered { get; set; } = string.Empty;
+
+    /// <summary>
     /// Optional outbound HTTP CONNECT proxy for Polling connections to the
     /// Server. Mirrors Octopus's <c>PollingProxyConfiguration</c>. When
     /// <see cref="ProxySettings.Host"/> is empty the Tentacle connects

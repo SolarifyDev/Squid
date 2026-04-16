@@ -89,6 +89,7 @@ public class LinuxTentacleFlavorTests
             ServerCommsUrl = "https://server:10943",
             ServerUrl = "https://server:7078",
             ServerCertificate = "AABBCCDD",
+            Registered = "true",
             Flavor = "LinuxTentacle"
         };
 
@@ -96,6 +97,28 @@ public class LinuxTentacleFlavorTests
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
         runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_DockerFirstRun_ServerCertificateWithoutRegisteredFlag_StillRegisters()
+    {
+        // Regression: Docker users pass Tentacle__ServerCertificate for TLS pinning on
+        // first run. The old code treated any non-empty ServerCertificate as "already
+        // registered" → skipped registration → Server never learned about the Tentacle.
+        var settings = new TentacleSettings
+        {
+            ServerCommsUrl = "https://server:10943",
+            ServerUrl = "https://server:7078",
+            ServerCertificate = "AABBCCDD",
+            ApiKey = "API-KEY",
+            Flavor = "LinuxTentacle"
+            // Registered NOT set
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
+        runtime.Registrar.ShouldBeOfType<TentaclePollingRegistrar>();
     }
 
     [Fact]
