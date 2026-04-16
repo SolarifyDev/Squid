@@ -41,14 +41,19 @@ public sealed class LinuxBinaryScriptBuilder : TentacleInstallScriptBuilderBase
         {
             registerArgs.Add($"--listening-host \"{command.ListeningHostName}\"");
             registerArgs.Add($"--listening-port \"{command.ListeningPort}\"");
-
-            if (!string.IsNullOrWhiteSpace(ctx.ServerThumbprint))
-                registerArgs.Add($"--server-cert \"{ctx.ServerThumbprint}\"");
         }
         else
         {
             registerArgs.Add($"--comms-url \"{command.ServerCommsUrl}\"");
         }
+
+        // Server TLS thumbprint pinning applies to BOTH modes. Listening: the Tentacle's
+        // initial HTTP register-with call verifies the Server's cert. Polling: every
+        // Halibut poll connection verifies it on every handshake. Without --server-cert
+        // ServerCertificateValidator falls into backward-compat "accept with warning"
+        // — works but unsafe.
+        if (!string.IsNullOrWhiteSpace(ctx.ServerThumbprint))
+            registerArgs.Add($"--server-cert \"{ctx.ServerThumbprint}\"");
 
         lines.Add(JoinLines(registerArgs.ToArray()));
         lines.Add("");

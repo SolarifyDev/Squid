@@ -40,7 +40,12 @@ public sealed class DeleteInstanceCommand : ITentacleCommand
         // up so we clean the enclosing {name}/ folder too, not just certs/.
         var certsDir = InstanceSelector.ResolveCertsPath(record);
         var instanceDir = Path.GetDirectoryName(certsDir);
-        DeleteDirectoryIfExists(instanceDir);
+
+        // Safety: never delete a directory that doesn't look like a per-instance folder.
+        // Without this guard, a corrupted ResolveCertsPath returning e.g. "/certs" would
+        // yield instanceDir = "/" — and Directory.Delete("/", recursive: true) is catastrophic.
+        if (IsSafeInstanceDir(instanceDir, instanceName))
+            DeleteDirectoryIfExists(instanceDir);
 
         registry.Remove(instanceName);
 
@@ -72,5 +77,19 @@ public sealed class DeleteInstanceCommand : ITentacleCommand
         {
             Console.Error.WriteLine($"Warning: couldn't delete {path}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Defensive check: only allow recursive deletion if the directory name ends
+    /// with the instance name. Prevents catastrophic <c>rm -rf /</c> if path
+    /// resolution returns an unexpected path due to a bug or corruption.
+    /// </summary>
+    internal static bool IsSafeInstanceDir(string dirPath, string instanceName)
+    {
+        if (string.IsNullOrWhiteSpace(dirPath) || string.IsNullOrWhiteSpace(instanceName)) return false;
+
+        var dirName = Path.GetFileName(dirPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        return dirName.Equals(instanceName, StringComparison.OrdinalIgnoreCase);
     }
 }

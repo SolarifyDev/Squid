@@ -37,6 +37,13 @@ public sealed class LinuxDockerRunScriptBuilder : TentacleInstallScriptBuilderBa
             lines.Add($"-e Tentacle__ServerCommsUrl=\"{command.ServerCommsUrl}\"");
         }
 
+        // Server TLS thumbprint pinning — required for both modes. Without this
+        // ServerCertificateValidator falls into backward-compat "accept with warning"
+        // which works but is insecure in production. We always emit when the server
+        // has a self-signed cert (i.e. always, in the current Squid design).
+        if (!string.IsNullOrWhiteSpace(ctx.ServerThumbprint))
+            lines.Add($"-e Tentacle__ServerCertificate=\"{ctx.ServerThumbprint}\"");
+
         if (!string.IsNullOrWhiteSpace(command.MachineName))
             lines.Add($"-e Tentacle__MachineName=\"{command.MachineName}\"");
 

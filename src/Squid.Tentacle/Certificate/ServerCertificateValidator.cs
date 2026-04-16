@@ -24,21 +24,39 @@ public static class ServerCertificateValidator
     public static Func<HttpRequestMessage, X509Certificate2?, X509Chain?, SslPolicyErrors, bool>
         Create(string? expectedThumbprint)
     {
+        return Create(ParseThumbprints(expectedThumbprint));
+    }
+
+    /// <summary>
+    /// Multi-thumbprint overload — mirrors Octopus's <c>TrustedOctopusServers</c>
+    /// list. Useful when rotating Server certs (trust both old and new while
+    /// deploying the rotation) or when a Tentacle talks to multiple Servers
+    /// (each with its own self-signed cert).
+    /// </summary>
+    public static Func<HttpRequestMessage, X509Certificate2?, X509Chain?, SslPolicyErrors, bool>
+        Create(IReadOnlyCollection<string> expectedThumbprints)
+    {
+        var trusted = (expectedThumbprints ?? Array.Empty<string>())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         return (_, cert, _, sslPolicyErrors) =>
         {
             if (sslPolicyErrors == SslPolicyErrors.None)
                 return true;
 
-            if (!string.IsNullOrWhiteSpace(expectedThumbprint))
+            if (trusted.Count > 0)
             {
                 var actual = cert?.Thumbprint;
-                if (string.Equals(actual, expectedThumbprint, StringComparison.OrdinalIgnoreCase))
+
+                if (actual != null && trusted.Contains(actual))
                     return true;
 
                 Log.Warning(
-                    "Server certificate thumbprint mismatch: expected {Expected}, got {Actual}. " +
-                    "Verify the ServerCertificate setting matches the Squid Server's certificate",
-                    expectedThumbprint, actual ?? "(null)");
+                    "Server certificate thumbprint mismatch: expected one of [{Expected}], got {Actual}. " +
+                    "Verify the ServerCertificate setting matches one of the Squid Server's certificates",
+                    string.Join(", ", trusted), actual ?? "(null)");
                 return false;
             }
 
@@ -50,5 +68,17 @@ public static class ServerCertificateValidator
                 sslPolicyErrors);
             return true;
         };
+    }
+
+    /// <summary>
+    /// Parses a comma-separated thumbprint string into a clean list. Accepts:
+    /// <c>"FAF04764"</c>, <c>"FAF04764,6EE6575D"</c>, or surrounding whitespace.
+    /// </summary>
+    public static IReadOnlyList<string> ParseThumbprints(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<string>();
+
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
     }
 }

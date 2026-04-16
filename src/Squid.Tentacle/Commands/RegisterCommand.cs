@@ -43,6 +43,11 @@ public sealed class RegisterCommand : ITentacleCommand
         ["--listening-host"] = "Tentacle:ListeningHostName",
         ["--listening-port"] = "Tentacle:ListeningPort",
         ["--server-cert"] = "Tentacle:ServerCertificate",
+        ["--public-hostname"] = "Tentacle:PublicHostNameConfiguration",
+        ["--proxy-host"] = "Tentacle:Proxy:Host",
+        ["--proxy-port"] = "Tentacle:Proxy:Port",
+        ["--proxy-user"] = "Tentacle:Proxy:Username",
+        ["--proxy-password"] = "Tentacle:Proxy:Password",
     };
 
     /// <summary>Settings we deem safe + necessary to persist after a successful register.</summary>
@@ -163,10 +168,16 @@ public sealed class RegisterCommand : ITentacleCommand
             ["Tentacle:Environments"] = settings.Environments,
             ["Tentacle:ListeningHostName"] = settings.ListeningHostName,
             ["Tentacle:ListeningPort"] = settings.ListeningPort.ToString(),
+            ["Tentacle:PublicHostNameConfiguration"] = settings.PublicHostNameConfiguration,
+            ["Tentacle:Proxy:Host"] = settings.Proxy?.Host,
+            ["Tentacle:Proxy:Port"] = settings.Proxy?.Port > 0 ? settings.Proxy.Port.ToString() : null,
+            ["Tentacle:Proxy:Username"] = settings.Proxy?.Username,
+            ["Tentacle:Proxy:Password"] = settings.Proxy?.Password,
             ["Tentacle:SpaceId"] = settings.SpaceId.ToString(),
             ["Tentacle:SubscriptionId"] = subscriptionId,
             ["Tentacle:CertsPath"] = settings.CertsPath,
             ["Tentacle:WorkspacePath"] = settings.WorkspacePath,
+            ["Tentacle:Registered"] = "true",
         };
 
         file.Merge(updates);

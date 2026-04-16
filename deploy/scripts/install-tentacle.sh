@@ -134,14 +134,43 @@ else
     echo "Add to PATH: export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
 
+# Create a dedicated non-login system user that owns cert/config/workspace dirs.
+# The systemd unit can then run with User=${SERVICE_USER} instead of root, so a
+# compromised script payload can't pivot to root on the host. Skipped when
+# --no-user is passed (for dev/test or when an operator wants to manage the
+# identity themselves).
+SERVICE_USER="${SERVICE_USER:-squid-tentacle}"
+if [ "${CREATE_USER:-yes}" = "yes" ]; then
+    if ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+        if command -v useradd >/dev/null 2>&1; then
+            useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
+            echo "Created system user: ${SERVICE_USER}"
+        elif command -v adduser >/dev/null 2>&1; then
+            adduser --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
+            echo "Created system user: ${SERVICE_USER}"
+        fi
+    fi
+fi
+
 # Create the system-scope config directory for multi-instance support.
-# Register + run will read/write here; restricting to root-only protects the API key
-# and server thumbprint that get persisted after a successful `register`.
+# Register + run will read/write here; restricting to owner-only protects the
+# API key and server thumbprint that get persisted after a successful `register`.
 CONFIG_DIR="/etc/squid-tentacle"
 if [ ! -d "$CONFIG_DIR" ]; then
     mkdir -p "$CONFIG_DIR/instances"
     chmod 700 "$CONFIG_DIR"
     echo "Created config dir: ${CONFIG_DIR}"
+fi
+
+# Workspace for script staging. Created upfront so the service user owns it
+# (otherwise the first script run does it under root and permissions drift).
+WORKSPACE_DIR="${WORKSPACE_DIR:-/squid/work}"
+mkdir -p "$WORKSPACE_DIR"
+
+# Transfer ownership to the service user if one exists.
+if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$WORKSPACE_DIR" "$INSTALL_DIR" 2>/dev/null || true
+    echo "Ownership set to ${SERVICE_USER}: ${CONFIG_DIR}, ${WORKSPACE_DIR}, ${INSTALL_DIR}"
 fi
 
 # Verify binary is runnable (use the `help` subcommand — `--help` is routed to RunCommand in Program.cs).

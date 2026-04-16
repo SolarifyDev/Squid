@@ -40,6 +40,11 @@ public sealed class LinuxDockerComposeScriptBuilder : TentacleInstallScriptBuild
             lines.Add($"      Tentacle__ServerCommsUrl: \"{command.ServerCommsUrl}\"");
         }
 
+        // TLS thumbprint pinning for both modes — see LinuxDockerRunScriptBuilder
+        // for the rationale. Required for production correctness.
+        if (!string.IsNullOrWhiteSpace(ctx.ServerThumbprint))
+            lines.Add($"      Tentacle__ServerCertificate: \"{ctx.ServerThumbprint}\"");
+
         if (!string.IsNullOrWhiteSpace(command.MachineName))
             lines.Add($"      Tentacle__MachineName: \"{command.MachineName}\"");
 

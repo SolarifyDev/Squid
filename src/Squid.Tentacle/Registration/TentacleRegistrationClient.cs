@@ -77,6 +77,13 @@ public class TentacleRegistrationClient
         handler.ServerCertificateCustomValidationCallback =
             ServerCertificateValidator.Create(_settings.ServerCertificate);
 
+        var proxy = Squid.Tentacle.Halibut.ProxyConfigurationBuilder.BuildHttpClientProxy(_settings.Proxy);
+        if (proxy != null)
+        {
+            handler.Proxy = proxy;
+            handler.UseProxy = true;
+        }
+
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
         if (!string.IsNullOrEmpty(_settings.ApiKey))
@@ -106,7 +113,7 @@ public class TentacleRegistrationClient
             payload[kv.Key] = kv.Value;
 
         var response = await client.PostAsJsonAsync(_registrationPath, payload, JsonOptions, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowDetailedAsync(response, ct).ConfigureAwait(false);
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var result = JsonSerializer.Deserialize<RegistrationResponse>(json, JsonOptions);
@@ -120,6 +127,29 @@ public class TentacleRegistrationClient
             ServerThumbprint = result?.Data?.ServerThumbprint ?? string.Empty,
             SubscriptionUri = result?.Data?.SubscriptionUri ?? $"poll://{subscriptionId}/"
         };
+    }
+
+    private static async Task EnsureSuccessOrThrowDetailedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = string.Empty;
+
+        try
+        {
+            body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort
+        }
+
+        var message = string.IsNullOrWhiteSpace(body)
+            ? $"Registration failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase})"
+            : $"Registration failed with HTTP {(int)response.StatusCode}: {body}";
+
+        Log.Error(message);
+        throw new HttpRequestException(message, null, response.StatusCode);
     }
 
     private class RegistrationResponse

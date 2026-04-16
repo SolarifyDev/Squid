@@ -47,12 +47,12 @@ public class LinuxTentacleFlavorTests
     }
 
     [Fact]
-    public void CreateRuntime_NoCommsUrl_ReturnsListeningMode()
+    public void CreateRuntime_NoCommsUrl_ReturnsListeningMode_WithCredentials()
     {
         var settings = new TentacleSettings
         {
             ServerUrl = "https://server:7078",
-            ServerCertificate = "AABBCCDD",
+            ApiKey = "API-TEST",
             Flavor = "LinuxTentacle"
         };
 
@@ -60,6 +60,65 @@ public class LinuxTentacleFlavorTests
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
         runtime.Registrar.ShouldBeOfType<TentacleListeningRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_ListeningWithoutCredentials_FallsBackToNoOp()
+    {
+        // Listening mode without ApiKey/BearerToken/ServerCertificate =
+        // the Tentacle can't self-register. ResolveRegistrar should return
+        // NoOpRegistrar with a warning instead of letting the HTTP client
+        // fail with a mysterious 401.
+        var settings = new TentacleSettings
+        {
+            ServerUrl = "https://server:7078",
+            Flavor = "LinuxTentacle"
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
+        runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_AlreadyRegistered_SkipsReRegistration()
+    {
+        var settings = new TentacleSettings
+        {
+            ServerCommsUrl = "https://server:10943",
+            ServerUrl = "https://server:7078",
+            ServerCertificate = "AABBCCDD",
+            Registered = "true",
+            Flavor = "LinuxTentacle"
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
+        runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_DockerFirstRun_ServerCertificateWithoutRegisteredFlag_StillRegisters()
+    {
+        // Regression: Docker users pass Tentacle__ServerCertificate for TLS pinning on
+        // first run. The old code treated any non-empty ServerCertificate as "already
+        // registered" → skipped registration → Server never learned about the Tentacle.
+        var settings = new TentacleSettings
+        {
+            ServerCommsUrl = "https://server:10943",
+            ServerUrl = "https://server:7078",
+            ServerCertificate = "AABBCCDD",
+            ApiKey = "API-KEY",
+            Flavor = "LinuxTentacle"
+            // Registered NOT set
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Polling);
+        runtime.Registrar.ShouldBeOfType<TentaclePollingRegistrar>();
     }
 
     [Fact]

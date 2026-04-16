@@ -51,6 +51,13 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         handler.ServerCertificateCustomValidationCallback =
             ServerCertificateValidator.Create(_settings.ServerCertificate);
 
+        var proxy = Squid.Tentacle.Halibut.ProxyConfigurationBuilder.BuildHttpClientProxy(_settings.Proxy);
+        if (proxy != null)
+        {
+            handler.Proxy = proxy;
+            handler.UseProxy = true;
+        }
+
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
 
@@ -75,7 +82,7 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         };
 
         var response = await client.PostAsJsonAsync("/api/machines/register/tentacle-listening", payload, JsonOptions, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowDetailedAsync(response, ct).ConfigureAwait(false);
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var result = JsonSerializer.Deserialize<RegistrationResponse>(json, JsonOptions);
@@ -93,13 +100,47 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 
     private string BuildListeningUri()
     {
-        var host = !string.IsNullOrWhiteSpace(_settings.ListeningHostName)
-            ? _settings.ListeningHostName
-            : Dns.GetHostName();
+        var hasExplicitHostName = !string.IsNullOrWhiteSpace(_settings.ListeningHostName);
+        var mode = PublicHostNameResolver.ParseMode(_settings.PublicHostNameConfiguration, hasExplicitHostName);
+        var host = PublicHostNameResolver.Resolve(mode, _settings.ListeningHostName);
+
+        // IPv6 literals need bracketing in URIs: https://[::1]:10933/
+        if (host.Contains(':') && !host.StartsWith('['))
+            host = $"[{host}]";
 
         var port = _settings.ListeningPort > 0 ? _settings.ListeningPort : 10933;
 
+        Log.Information("Registering with Server as {Mode} → {Host}:{Port}", mode, host, port);
+
         return $"https://{host}:{port}/";
+    }
+
+    /// <summary>
+    /// Like <c>EnsureSuccessStatusCode</c> but reads the response body first so the
+    /// operator sees the Server's actual error message (e.g. "invalid API key",
+    /// "machine name already exists") instead of a bare <c>HttpRequestException</c>.
+    /// </summary>
+    private static async Task EnsureSuccessOrThrowDetailedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = string.Empty;
+
+        try
+        {
+            body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort: if reading fails, still throw with status code alone.
+        }
+
+        var message = string.IsNullOrWhiteSpace(body)
+            ? $"Registration failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase})"
+            : $"Registration failed with HTTP {(int)response.StatusCode}: {body}";
+
+        Log.Error(message);
+        throw new HttpRequestException(message, null, response.StatusCode);
     }
 
     private class RegistrationResponse
