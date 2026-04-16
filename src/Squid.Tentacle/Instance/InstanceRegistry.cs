@@ -146,8 +146,7 @@ public sealed class InstanceRegistry
 
     private void SaveFile(RegistryFile file)
     {
-        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-        File.WriteAllText(Path, JsonSerializer.Serialize(file, JsonOptions));
+        Platform.AtomicFileWriter.WriteAllText(Path, JsonSerializer.Serialize(file, JsonOptions));
     }
 
     /// <summary>Root JSON shape: <c>{ "version": 1, "instances": [...] }</c>.</summary>

@@ -75,12 +75,15 @@ public sealed class ServiceCommand : ITentacleCommand
 
     private static void PurgeInstanceArtefacts(InstanceRecord instance)
     {
-        // Delete the config.json + per-instance dir (certs + workspace staging).
         DeleteFileQuietly(instance.ConfigPath, "config file");
 
         var certsDir = InstanceSelector.ResolveCertsPath(instance);
         var instanceDir = Path.GetDirectoryName(certsDir);
-        DeleteDirectoryQuietly(instanceDir, "instance directory");
+
+        if (DeleteInstanceCommand.IsSafeInstanceDir(instanceDir, instance.Name))
+            DeleteDirectoryQuietly(instanceDir, "instance directory");
+        else
+            Console.Error.WriteLine($"Warning: skipping deletion of '{instanceDir}' — path does not match instance name '{instance.Name}'");
 
         // Remove the registry entry so list-instances stops showing it.
         try

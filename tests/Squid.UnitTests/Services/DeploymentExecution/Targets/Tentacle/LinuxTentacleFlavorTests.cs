@@ -47,8 +47,28 @@ public class LinuxTentacleFlavorTests
     }
 
     [Fact]
-    public void CreateRuntime_NoCommsUrl_ReturnsListeningMode()
+    public void CreateRuntime_NoCommsUrl_ReturnsListeningMode_WithCredentials()
     {
+        var settings = new TentacleSettings
+        {
+            ServerUrl = "https://server:7078",
+            ApiKey = "API-TEST",
+            Flavor = "LinuxTentacle"
+        };
+
+        var runtime = _flavor.CreateRuntime(BuildContext(settings));
+
+        runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
+        runtime.Registrar.ShouldBeOfType<TentacleListeningRegistrar>();
+    }
+
+    [Fact]
+    public void CreateRuntime_ListeningWithoutCredentials_FallsBackToNoOp()
+    {
+        // Listening mode without ApiKey/BearerToken/ServerCertificate =
+        // the Tentacle can't self-register. ResolveRegistrar should return
+        // NoOpRegistrar with a warning instead of letting the HTTP client
+        // fail with a mysterious 401.
         var settings = new TentacleSettings
         {
             ServerUrl = "https://server:7078",
@@ -58,7 +78,7 @@ public class LinuxTentacleFlavorTests
         var runtime = _flavor.CreateRuntime(BuildContext(settings));
 
         runtime.CommunicationMode.ShouldBe(TentacleCommunicationMode.Listening);
-        runtime.Registrar.ShouldBeOfType<TentacleListeningRegistrar>();
+        runtime.Registrar.ShouldBeOfType<NoOpRegistrar>();
     }
 
     [Fact]

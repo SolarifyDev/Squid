@@ -85,16 +85,12 @@ public sealed class TentacleConfigFile
     {
         ArgumentNullException.ThrowIfNull(values);
 
-        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-
         var root = new JsonObject();
 
         foreach (var (key, value) in values.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
             Nest(root, key.Split(':'), value);
 
-        File.WriteAllText(Path, root.ToJsonString(JsonOptions));
-
-        TryRestrictPermissions(Path);
+        Platform.AtomicFileWriter.WriteAllTextRestricted(Path, root.ToJsonString(JsonOptions));
     }
 
     /// <summary>Removes a single key (colon-delimited) from the file.</summary>
@@ -142,21 +138,4 @@ public sealed class TentacleConfigFile
         cursor[segments[^1]] = value;
     }
 
-    /// <summary>
-    /// Restricts the config file to owner-read/write only on Unix. Best-effort — silently
-    /// skips on Windows (where ACLs handle this) or if the call fails.
-    /// </summary>
-    private static void TryRestrictPermissions(string path)
-    {
-        if (OperatingSystem.IsWindows()) return;
-
-        try
-        {
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
-        catch
-        {
-            // Non-fatal — permissions tightening is a hardening step, not a correctness requirement
-        }
-    }
 }

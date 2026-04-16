@@ -82,7 +82,7 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         };
 
         var response = await client.PostAsJsonAsync("/api/machines/register/tentacle-listening", payload, JsonOptions, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowDetailedAsync(response, ct).ConfigureAwait(false);
 
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var result = JsonSerializer.Deserialize<RegistrationResponse>(json, JsonOptions);
@@ -113,6 +113,34 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         Log.Information("Registering with Server as {Mode} → {Host}:{Port}", mode, host, port);
 
         return $"https://{host}:{port}/";
+    }
+
+    /// <summary>
+    /// Like <c>EnsureSuccessStatusCode</c> but reads the response body first so the
+    /// operator sees the Server's actual error message (e.g. "invalid API key",
+    /// "machine name already exists") instead of a bare <c>HttpRequestException</c>.
+    /// </summary>
+    private static async Task EnsureSuccessOrThrowDetailedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = string.Empty;
+
+        try
+        {
+            body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort: if reading fails, still throw with status code alone.
+        }
+
+        var message = string.IsNullOrWhiteSpace(body)
+            ? $"Registration failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase})"
+            : $"Registration failed with HTTP {(int)response.StatusCode}: {body}";
+
+        Log.Error(message);
+        throw new HttpRequestException(message, null, response.StatusCode);
     }
 
     private class RegistrationResponse

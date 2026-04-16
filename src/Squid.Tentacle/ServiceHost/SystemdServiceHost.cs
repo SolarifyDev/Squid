@@ -18,6 +18,16 @@ public sealed class SystemdServiceHost : IServiceHost
         ArgumentException.ThrowIfNullOrWhiteSpace(request.ServiceName);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.ExecStart);
 
+        // Validate the binary exists before writing a unit that systemd will
+        // repeatedly fail to start (RestartSec=10 → 6 retries per minute of
+        // cryptic "Main process exited, code=exited, status=203/EXEC" in journalctl).
+        if (!File.Exists(request.ExecStart))
+        {
+            Console.Error.WriteLine($"Error: binary not found at {request.ExecStart}");
+            Console.Error.WriteLine("  Was the Tentacle installed? Check /opt/squid-tentacle/ or run install-tentacle.sh");
+            return 1;
+        }
+
         var unit = BuildUnitFile(request);
         var unitPath = $"/etc/systemd/system/{request.ServiceName}.service";
 
