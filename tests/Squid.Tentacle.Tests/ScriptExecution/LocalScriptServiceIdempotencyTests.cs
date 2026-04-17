@@ -127,6 +127,55 @@ public sealed class LocalScriptServiceIdempotencyTests : IDisposable
         status.State.ShouldBe(ProcessState.Running, "with DurationToWaitForScriptToFinish=0 and a slow script, StartScript must return Running immediately");
     }
 
+    [Fact]
+    public void LogCursor_SurvivesAgentRestart_AllLinesDeliveredExactlyOnce()
+    {
+        // Real crash-recovery scenario: agent writes N log lines; server polls once
+        // mid-stream; agent restarts (new LocalScriptService instance); server polls again
+        // with its last cursor. Must receive lines exactly once, no duplicates, no gaps.
+        var ticket = NewTicket();
+        var workDir = FindWorkDir(ticket);
+
+        var firstAgent = CreateService();
+        var command = new StartScriptCommand(
+            ticket,
+            "for i in 1 2 3 4 5 6 7 8 9 10; do echo line-$i; done; sleep 60",
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(5),
+            null,
+            Array.Empty<string>(),
+            null,
+            TimeSpan.Zero);
+
+        firstAgent.StartScript(command);
+        Thread.Sleep(500);                                 // allow echoes to flush
+
+        var firstPoll = firstAgent.GetStatus(new ScriptStatusRequest(ticket, 0));
+        firstPoll.Logs.Count.ShouldBeGreaterThanOrEqualTo(1);
+        var cursor = firstPoll.NextLogSequence;
+
+        // Simulate agent restart — new LocalScriptService instance sees only the disk state.
+        var restartedAgent = CreateService();
+        _servicesToDispose.Add(restartedAgent);
+        Thread.Sleep(300);                                 // the original process may still be running in the background
+
+        var secondPoll = restartedAgent.GetStatus(new ScriptStatusRequest(ticket, cursor));
+
+        // Combined output: first + second batch covers all 10 echo lines, no duplicates.
+        var allLogText = string.Join(" ", firstPoll.Logs.Concat(secondPoll.Logs).Select(l => l.Text));
+        for (var i = 1; i <= 10; i++)
+        {
+            allLogText.ShouldContain($"line-{i}",
+                Case.Sensitive,
+                $"line-{i} must appear in the combined log stream across the restart");
+        }
+
+        var firstTexts = firstPoll.Logs.Select(l => l.Text).ToHashSet();
+        var secondTexts = secondPoll.Logs.Select(l => l.Text).ToList();
+        foreach (var t in secondTexts)
+            firstTexts.ShouldNotContain(t, "a log line must never be delivered twice across a restart");
+    }
+
     // ========================================================================
     // Helpers
     // ========================================================================

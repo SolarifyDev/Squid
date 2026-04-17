@@ -6,6 +6,7 @@ using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.ScriptExecution.Logging;
 using Squid.Tentacle.ScriptExecution.State;
 
 namespace Squid.Tentacle.ScriptExecution;
@@ -69,7 +70,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         WriteAdditionalFiles(workDir, command.Files);
 
         var process = StartProcess(workDir, command);
-        var running = new RunningScript(process, workDir, isolationHandle, stateStore);
+        var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
+        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter);
 
         BeginReadOutput(process, running);
         _scripts[ticketId] = running;
@@ -142,31 +144,51 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         catch { /* Best-effort early return — polling will catch final state */ }
     }
 
-    private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running)
+    private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
     {
-        var logs = DrainLogs(running);
+        var logs = ReadLogs(running, afterSequence);
         var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
 
-        return new ScriptStatusResponse(ticket, state, exitCode, logs, running.LogSequence);
+        return new ScriptStatusResponse(ticket, state, exitCode, logs, running.LogWriter?.NextSequence ?? 0);
     }
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
         if (_scripts.TryGetValue(request.Ticket.TaskId, out var running))
-        {
-            var logs = DrainLogs(running);
-            var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
-            var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
-
-            return new ScriptStatusResponse(request.Ticket, state, exitCode, logs, running.LogSequence);
-        }
+            return BuildStatus(request.Ticket, running, request.LastLogSequence - 1);
 
         var workDir = ResolveWorkDir(request.Ticket.TaskId);
-        if (TryReturnPersistedStatus(request.Ticket, workDir, out var persisted))
+
+        if (TryBuildStatusFromPersistedLogs(request.Ticket, workDir, request.LastLogSequence, out var persisted))
             return persisted!;
 
         return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
+    }
+
+    private bool TryBuildStatusFromPersistedLogs(ScriptTicket ticket, string workDir, long lastSeq, out ScriptStatusResponse? response)
+    {
+        response = null;
+
+        var stateStore = _stateStoreFactory.Create(workDir);
+        if (!stateStore.Exists()) return false;
+
+        ScriptState state;
+        try { state = stateStore.Load(); }
+        catch { return false; }
+
+        var logReader = new SequencedLogReader(Path.Combine(workDir, "output.log"));
+        var entries = logReader.ReadFrom(lastSeq - 1);
+        var logs = entries.Select(e => e.ToProcessOutput()).ToList();
+
+        var processState = state.IsComplete() ? ProcessState.Complete : ProcessState.Running;
+        var exitCode = state.ExitCode ?? 0;
+        var nextSeq = state.NextLogSequence > 0
+            ? state.NextLogSequence
+            : Math.Max(0, logReader.GetHighestSequence() + 1);
+
+        response = new ScriptStatusResponse(ticket, processState, exitCode, logs, nextSeq);
+        return true;
     }
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
@@ -181,11 +203,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (!running.Process.HasExited)
             running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
-        var logs = DrainLogs(running);
+        var logs = ReadLogs(running, command.LastLogSequence - 1);
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
         PersistCompleteState(running, exitCode);
 
+        running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
@@ -212,10 +235,11 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             Log.Warning(ex, "Failed to kill process for ticket {TicketId}", command.Ticket.TaskId);
         }
 
-        var logs = DrainLogs(running);
+        var logs = ReadLogs(running, command.LastLogSequence - 1);
 
         PersistCompleteState(running, ScriptExitCodes.Canceled);
 
+        running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
@@ -476,53 +500,28 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     {
         process.OutputDataReceived += (_, e) =>
         {
-            if (e.Data != null)
-            {
-                var parsed = PodLogLineParser.Parse(e.Data);
-                var output = new ProcessOutput(parsed.Source, parsed.Text);
-                running.OutputQueue.Enqueue(output);
-                AppendToLogFile(running.LogFilePath, output);
-            }
+            if (e.Data == null || running.LogWriter == null) return;
+            var parsed = PodLogLineParser.Parse(e.Data);
+            running.LogWriter.Append(parsed.Source, parsed.Text);
         };
 
         process.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data != null)
-            {
-                var output = new ProcessOutput(ProcessOutputSource.StdErr, e.Data);
-                running.OutputQueue.Enqueue(output);
-                AppendToLogFile(running.LogFilePath, output);
-            }
+            if (e.Data == null || running.LogWriter == null) return;
+            running.LogWriter.Append(ProcessOutputSource.StdErr, e.Data);
         };
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
     }
 
-    private static void AppendToLogFile(string logFilePath, ProcessOutput output)
+    private static List<ProcessOutput> ReadLogs(RunningScript running, long afterSequence)
     {
-        try
-        {
-            var line = $"[{output.Source}] {output.Text}";
-            File.AppendAllText(logFilePath, line + Environment.NewLine);
-        }
-        catch
-        {
-            // Best-effort log persistence
-        }
-    }
+        if (running.LogWriter == null) return new List<ProcessOutput>();
 
-    private static List<ProcessOutput> DrainLogs(RunningScript running)
-    {
-        var logs = new List<ProcessOutput>();
-
-        while (running.OutputQueue.TryDequeue(out var output))
-        {
-            logs.Add(output);
-            running.LogSequence++;
-        }
-
-        return logs;
+        var reader = new SequencedLogReader(running.LogFilePath);
+        var entries = reader.ReadFrom(afterSequence);
+        return entries.Select(e => e.ToProcessOutput()).ToList();
     }
 
     // ========================================================================
@@ -598,16 +597,18 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         public string LogFilePath { get; }
         public IDisposable IsolationHandle { get; }
         public IScriptStateStore? StateStore { get; }
-        public ConcurrentQueue<ProcessOutput> OutputQueue { get; } = new();
-        public long LogSequence { get; set; }
+        public SequencedLogWriter? LogWriter { get; }
 
-        public RunningScript(Process process, string workDir, IDisposable isolationHandle, IScriptStateStore? stateStore = null)
+        public long LogSequence => LogWriter?.NextSequence ?? 0;
+
+        public RunningScript(Process process, string workDir, IDisposable isolationHandle, IScriptStateStore? stateStore = null, SequencedLogWriter? logWriter = null)
         {
             Process = process;
             WorkDir = workDir;
             LogFilePath = Path.Combine(workDir, "output.log");
             IsolationHandle = isolationHandle;
             StateStore = stateStore;
+            LogWriter = logWriter;
         }
     }
 }
