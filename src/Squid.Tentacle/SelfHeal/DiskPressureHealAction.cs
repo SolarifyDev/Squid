@@ -16,6 +16,7 @@ public sealed class DiskPressureHealAction : ISelfHealAction
     private readonly Func<string, IReadOnlyList<WorkspaceCandidate>> _candidateProbe;
     private readonly IWorkspaceCleanupPolicy _policy;
     private readonly Action<string> _removeWorkspace;
+    private readonly Func<string, DiskPressure> _diskProbe;
     private readonly RetentionQuota _quota;
 
     public DiskPressureHealAction(
@@ -24,12 +25,14 @@ public sealed class DiskPressureHealAction : ISelfHealAction
         IWorkspaceCleanupPolicy policy,
         Action<string> removeWorkspace,
         RetentionQuota quota = null,
-        TimeSpan? checkInterval = null)
+        TimeSpan? checkInterval = null,
+        Func<string, DiskPressure> diskProbe = null)
     {
         _workspaceRootProvider = workspaceRootProvider ?? throw new ArgumentNullException(nameof(workspaceRootProvider));
         _candidateProbe = candidateProbe ?? throw new ArgumentNullException(nameof(candidateProbe));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _removeWorkspace = removeWorkspace ?? throw new ArgumentNullException(nameof(removeWorkspace));
+        _diskProbe = diskProbe ?? DefaultDiskProbe;
         _quota = quota ?? RetentionQuota.Default;
         CheckInterval = checkInterval ?? TimeSpan.FromSeconds(30);
     }
@@ -38,17 +41,22 @@ public sealed class DiskPressureHealAction : ISelfHealAction
 
     public TimeSpan CheckInterval { get; }
 
+    private static DiskPressure DefaultDiskProbe(string path)
+    {
+        var (available, total) = DiskSpaceChecker.GetDiskSpace(path);
+        return new DiskPressure(available, total);
+    }
+
     public Task<SelfHealOutcome> RunAsync(CancellationToken ct)
     {
         var workspaceRoot = _workspaceRootProvider();
         if (string.IsNullOrWhiteSpace(workspaceRoot))
             return Task.FromResult(SelfHealOutcome.Healthy(Name));
 
-        var (available, total) = DiskSpaceChecker.GetDiskSpace(workspaceRoot);
-        if (total <= 0)
+        var pressure = _diskProbe(workspaceRoot);
+        if (pressure.TotalBytes <= 0)
             return Task.FromResult(SelfHealOutcome.Healthy(Name));
 
-        var pressure = new DiskPressure(available, total);
         if (!pressure.IsLow)
             return Task.FromResult(SelfHealOutcome.Healthy(Name));
 

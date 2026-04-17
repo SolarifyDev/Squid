@@ -59,7 +59,8 @@ public sealed class DiskPressureHealActionTests : IDisposable
             workspaceRootProvider: () => _workspace,
             candidateProbe: _ => candidates,
             policy: new AlwaysRemovePolicy(candidates),    // policy returns all
-            removeWorkspace: p => removed.Add(p));
+            removeWorkspace: p => removed.Add(p),
+            diskProbe: HighPressure);
 
         var outcome = await action.RunAsync(CancellationToken.None);
 
@@ -92,7 +93,8 @@ public sealed class DiskPressureHealActionTests : IDisposable
             {
                 if (p == ws1) throw new IOException("simulated disk error");
                 removed.Add(p);
-            });
+            },
+            diskProbe: HighPressure);
 
         var outcome = await action.RunAsync(CancellationToken.None);
 
@@ -116,6 +118,10 @@ public sealed class DiskPressureHealActionTests : IDisposable
         outcome.Healed.ShouldBeFalse();
         removed.ShouldBeEmpty();
     }
+
+    // Injected so CI runners (which have plenty of real free disk) don't cause the
+    // action to exit early before exercising the cleanup code paths.
+    private static DiskPressure HighPressure(string _) => new(FreeBytes: 50, TotalBytes: 1000);
 
     // Test-only policies so we don't depend on real disk-space probing here.
     private sealed class NoPressurePolicy : IWorkspaceCleanupPolicy

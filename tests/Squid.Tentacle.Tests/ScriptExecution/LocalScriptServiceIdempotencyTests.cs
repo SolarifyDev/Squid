@@ -148,18 +148,22 @@ public sealed class LocalScriptServiceIdempotencyTests : IDisposable
             TimeSpan.Zero);
 
         firstAgent.StartScript(command);
-        Thread.Sleep(500);                                 // allow echoes to flush
 
-        var firstPoll = firstAgent.GetStatus(new ScriptStatusRequest(ticket, 0));
-        firstPoll.Logs.Count.ShouldBeGreaterThanOrEqualTo(1);
+        // Poll loop: Process.OutputDataReceived is async and CI runners can be slow
+        // to deliver the first batch. Wait up to 10s for at least one line to show up.
+        var firstPoll = WaitForLogs(() => firstAgent.GetStatus(new ScriptStatusRequest(ticket, 0)), TimeSpan.FromSeconds(10));
+        firstPoll.Logs.Count.ShouldBeGreaterThanOrEqualTo(1, "bash must have emitted at least one line within 10s of start");
         var cursor = firstPoll.NextLogSequence;
 
         // Simulate agent restart — new LocalScriptService instance sees only the disk state.
         var restartedAgent = CreateService();
         _servicesToDispose.Add(restartedAgent);
-        Thread.Sleep(300);                                 // the original process may still be running in the background
 
-        var secondPoll = restartedAgent.GetStatus(new ScriptStatusRequest(ticket, cursor));
+        // Give the original process another second to finish emitting all 10 lines.
+        var secondPoll = WaitForAllTenLines(
+            firstPoll,
+            () => restartedAgent.GetStatus(new ScriptStatusRequest(ticket, cursor)),
+            TimeSpan.FromSeconds(10));
 
         // Combined output: first + second batch covers all 10 echo lines, no duplicates.
         var allLogText = string.Join(" ", firstPoll.Logs.Concat(secondPoll.Logs).Select(l => l.Text));
@@ -174,6 +178,33 @@ public sealed class LocalScriptServiceIdempotencyTests : IDisposable
         var secondTexts = secondPoll.Logs.Select(l => l.Text).ToList();
         foreach (var t in secondTexts)
             firstTexts.ShouldNotContain(t, "a log line must never be delivered twice across a restart");
+    }
+
+    private static ScriptStatusResponse WaitForLogs(Func<ScriptStatusResponse> poll, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        ScriptStatusResponse latest = null!;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            latest = poll();
+            if (latest.Logs.Count > 0) return latest;
+            Thread.Sleep(100);
+        }
+        return latest;
+    }
+
+    private static ScriptStatusResponse WaitForAllTenLines(ScriptStatusResponse firstPoll, Func<ScriptStatusResponse> poll, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        ScriptStatusResponse latest = null!;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            latest = poll();
+            var combined = string.Join(" ", firstPoll.Logs.Concat(latest.Logs).Select(l => l.Text));
+            if (Enumerable.Range(1, 10).All(i => combined.Contains($"line-{i}"))) return latest;
+            Thread.Sleep(100);
+        }
+        return latest;
     }
 
     // ========================================================================
