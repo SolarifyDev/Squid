@@ -42,6 +42,13 @@ public partial class MachineRegistrationService
             Log.Information("Registered new TentacleListening machine {MachineName} (Uri={Uri})", machine.Name, command.Uri);
         }
 
+        // Server reaches out to listening Tentacles, but mutual TLS still requires the
+        // server's Halibut runtime to trust the agent's thumbprint before it will accept
+        // the return traffic. Polling registration already calls this; before this change
+        // the listening path silently omitted it, so a newly-registered listening agent
+        // could not complete a deployment until the next server restart.
+        _trustDistributor.ReconfigureIfMissing(command.Thumbprint);
+
         return new RegisterMachineResponseData
         {
             MachineId = machine.Id,

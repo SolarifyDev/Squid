@@ -35,17 +35,55 @@ public class PollingTrustDistributorTests : IDisposable
     }
 
     [Fact]
-    public void Start_TrustsAllPollingMachines()
+    public async Task Start_TrustsAllPollingMachines()
     {
         _machineDataProvider
             .Setup(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string> { "THUMB-A", "THUMB-B", "THUMB-C" });
 
         _distributor.Start();
+        await WaitForInitialLoadAsync();
 
         _halibutRuntime.IsTrusted("THUMB-A").ShouldBeTrue();
         _halibutRuntime.IsTrusted("THUMB-B").ShouldBeTrue();
         _halibutRuntime.IsTrusted("THUMB-C").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Start_DbSlow_DoesNotBlock_InitialLoadCompletedFlipsLater()
+    {
+        var release = new TaskCompletionSource();
+        _machineDataProvider
+            .Setup(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken _) =>
+            {
+                await release.Task;
+                return new List<string> { "SLOW-DB" };
+            });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        _distributor.Start();
+        sw.Stop();
+
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(250), "Start() must not block on the DB call");
+        _distributor.InitialLoadCompleted.ShouldBeFalse();
+
+        release.SetResult();
+        await WaitForInitialLoadAsync();
+
+        _distributor.InitialLoadCompleted.ShouldBeTrue();
+        _halibutRuntime.IsTrusted("SLOW-DB").ShouldBeTrue();
+    }
+
+    private async Task WaitForInitialLoadAsync()
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (!_distributor.InitialLoadCompleted)
+        {
+            if (DateTimeOffset.UtcNow > deadline)
+                throw new TimeoutException("InitialLoadCompleted did not flip within 5s");
+            await Task.Delay(25);
+        }
     }
 
     [Fact]

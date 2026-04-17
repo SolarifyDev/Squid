@@ -285,7 +285,7 @@ public class HalibutScriptObserverTests
             _machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.LogLines.Count.ShouldBeLessThanOrEqualTo(HalibutScriptObserver.MaxLogEntries);
+        result.LogLines.Count.ShouldBeLessThanOrEqualTo(HalibutScriptObserver.DefaultMaxLogEntries);
     }
 
     [Fact]

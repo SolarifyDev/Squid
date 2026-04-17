@@ -1,13 +1,26 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Settings.Halibut;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 
 public sealed class HalibutScriptObserver : IHalibutScriptObserver
 {
-    internal const int MaxLogEntries = 100_000;
+    internal const int DefaultMaxLogEntries = 100_000;
+
+    private readonly ObserverSettings _observerSettings;
+
+    public HalibutScriptObserver() : this(new ObserverSettings()) { }
+
+    public HalibutScriptObserver(HalibutSetting halibutSetting)
+        : this(halibutSetting?.Observer ?? new ObserverSettings()) { }
+
+    public HalibutScriptObserver(ObserverSettings observerSettings)
+    {
+        _observerSettings = observerSettings ?? new ObserverSettings();
+    }
 
     // NOTE: Halibut RPC proxy calls (GetStatusAsync, CompleteScriptAsync, CancelScriptAsync)
     // do not accept CancellationToken — cancellation is only checked between polling intervals.
@@ -22,8 +35,9 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         ScriptStatusResponse initialStartResponse = null)
     {
         var startTime = DateTime.UtcNow;
-        var pollInterval = TimeSpan.FromSeconds(1);
-        var maxPollInterval = TimeSpan.FromSeconds(10);
+        var pollInterval = TimeSpan.FromMilliseconds(_observerSettings.InitialPollIntervalMs);
+        var maxPollInterval = TimeSpan.FromMilliseconds(_observerSettings.MaxPollIntervalMs);
+        var backoffFactor = _observerSettings.PollBackoffFactor;
         var statusResponse = initialStartResponse
             ?? new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
         var allLogs = new List<ProcessOutput>();
@@ -88,7 +102,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                     throw;
                 }
 
-                pollInterval = TimeSpan.FromSeconds(Math.Min(pollInterval.TotalSeconds * 1.5, maxPollInterval.TotalSeconds));
+                pollInterval = TimeSpan.FromMilliseconds(Math.Min(pollInterval.TotalMilliseconds * backoffFactor, maxPollInterval.TotalMilliseconds));
             }
         }
 
@@ -135,13 +149,14 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
     }
 
-    private static void TruncateIfExceeded(List<ProcessOutput> logs)
+    private void TruncateIfExceeded(List<ProcessOutput> logs)
     {
-        if (logs.Count <= MaxLogEntries) return;
+        var max = _observerSettings.MaxLogEntries > 0 ? _observerSettings.MaxLogEntries : DefaultMaxLogEntries;
+        if (logs.Count <= max) return;
 
-        var overflow = logs.Count - MaxLogEntries;
+        var overflow = logs.Count - max;
         logs.RemoveRange(0, overflow);
-        Log.Warning("[Deploy] Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", MaxLogEntries, overflow);
+        Log.Warning("[Deploy] Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", max, overflow);
     }
 
     private static async Task TryCancelScriptAsync(
