@@ -48,7 +48,9 @@ public class LocalScriptServiceTests : IDisposable
     [Fact]
     public void GetStatus_RunningProcess_ReturnsRunning()
     {
-        var ticket = _service.StartScript(MakeCommand("sleep 10"));
+        var command = MakeCommand("sleep 10");
+        _service.StartScript(command);
+        var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         var status = _service.GetStatus(new ScriptStatusRequest(ticket, 0));
@@ -92,7 +94,9 @@ public class LocalScriptServiceTests : IDisposable
     [Fact]
     public void CancelScript_KillsProcessAndReturnsCanceled()
     {
-        var ticket = _service.StartScript(MakeCommand("sleep 60"));
+        var command = MakeCommand("sleep 60");
+        _service.StartScript(command);
+        var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         var status = _service.CancelScript(new CancelScriptCommand(ticket, 0));
@@ -109,14 +113,17 @@ public class LocalScriptServiceTests : IDisposable
     public void StartScript_WithArguments_PassedToBash()
     {
         var command = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             "echo \"$1 $2\"",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             new[] { "hello", "world" },
-            null);
+            null,
+            TimeSpan.Zero);
 
-        var ticket = _service.StartScript(command);
+        _service.StartScript(command);
+        var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         Thread.Sleep(1000);
@@ -131,14 +138,17 @@ public class LocalScriptServiceTests : IDisposable
     public void StartScript_WithArguments_SpacesHandled()
     {
         var command = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             "echo \"$1\"",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             new[] { "hello world" },
-            null);
+            null,
+            TimeSpan.Zero);
 
-        var ticket = _service.StartScript(command);
+        _service.StartScript(command);
+        var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         Thread.Sleep(1000);
@@ -178,12 +188,14 @@ public class LocalScriptServiceTests : IDisposable
     public void StartScript_PowerShellSyntax_WritesPs1File()
     {
         var command = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             "Write-Host 'pwsh-test'",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             Array.Empty<string>(),
-            null)
+            null,
+            TimeSpan.Zero)
         {
             ScriptSyntax = ScriptType.PowerShell
         };
@@ -191,7 +203,8 @@ public class LocalScriptServiceTests : IDisposable
         ScriptTicket ticket;
         try
         {
-            ticket = _service.StartScript(command);
+            _service.StartScript(command);
+            ticket = command.ScriptTicket;
             _createdTickets.Add(ticket.TaskId);
         }
         catch (System.ComponentModel.Win32Exception)
@@ -209,12 +222,14 @@ public class LocalScriptServiceTests : IDisposable
     public void StartScript_DefaultSyntax_IsBash()
     {
         var command = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             "echo 'default-syntax'",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
 
         // ScriptSyntax not set — should default to Bash
         command.ScriptSyntax.ShouldBe(ScriptType.Bash);
@@ -369,21 +384,24 @@ public class LocalScriptServiceTests : IDisposable
 
     private ScriptTicket StartEchoScript(string message)
     {
-        var ticket = _service.StartScript(MakeCommand($"echo '{message}'"));
-        _createdTickets.Add(ticket.TaskId);
+        var command = MakeCommand($"echo '{message}'");
+        _service.StartScript(command);
+        _createdTickets.Add(command.ScriptTicket.TaskId);
 
-        return ticket;
+        return command.ScriptTicket;
     }
 
     private static StartScriptCommand MakeCommand(string scriptBody)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             scriptBody,
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
     }
 
     private static string FindWorkDir(ScriptTicket ticket)

@@ -4,7 +4,7 @@ namespace Squid.Tentacle.Abstractions;
 
 public interface ITentacleScriptBackend
 {
-    ScriptTicket StartScript(StartScriptCommand command);
+    ScriptStatusResponse StartScript(StartScriptCommand command);
 
     ScriptStatusResponse GetStatus(ScriptStatusRequest request);
 

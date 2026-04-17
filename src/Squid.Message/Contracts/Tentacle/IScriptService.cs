@@ -2,7 +2,7 @@ namespace Squid.Message.Contracts.Tentacle;
 
 public interface IScriptService
 {
-    ScriptTicket StartScript(StartScriptCommand command);
+    ScriptStatusResponse StartScript(StartScriptCommand command);
 
     ScriptStatusResponse GetStatus(ScriptStatusRequest request);
 

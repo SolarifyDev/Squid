@@ -7,7 +7,7 @@ namespace Squid.Message.Contracts.Tentacle;
 /// </summary>
 public interface IScriptServiceAsync
 {
-    Task<ScriptTicket> StartScriptAsync(StartScriptCommand command, CancellationToken ct);
+    Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command, CancellationToken ct);
 
     Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request, CancellationToken ct);
 

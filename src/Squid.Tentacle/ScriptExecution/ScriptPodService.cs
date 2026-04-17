@@ -40,20 +40,30 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         _mutexTimeout = TimeSpan.FromMinutes(kubernetesSettings.IsolationMutexTimeoutMinutes);
     }
 
-    public ScriptTicket StartScript(StartScriptCommand command)
+    public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
-        var ticketId = command.TaskId ?? Guid.NewGuid().ToString("N");
+        if (command.ScriptTicket == null)
+            throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
+
+        var scriptTicket = command.ScriptTicket;
+        var ticketId = scriptTicket.TaskId;
+
+        if (_terminalResults.TryGetValue(ticketId, out var terminal))
+            return terminal.Response;
 
         if (_scripts.TryGetValue(ticketId, out var existing))
         {
             Log.Information("Reusing in-memory script context for ticket {TicketId}", ticketId);
-            return new ScriptTicket(ticketId);
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), existing.LogSequence);
         }
+
+        if (_pendingScripts.ContainsKey(ticketId))
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
 
         if (_draining)
         {
             InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, "Script rejected: Tentacle is shutting down") });
-            return new ScriptTicket(ticketId);
+            return _terminalResults[ticketId].Response;
         }
 
         if (_isolationMutex.TryAcquire(command, out var mutexLock))
@@ -71,28 +81,30 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
                 if (_mutexLocks.TryRemove(ticketId, out var failedLock))
                     failedLock.Dispose();
+
+                return _terminalResults[ticketId].Response;
             }
+
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         }
-        else
+
+        var count = Interlocked.Increment(ref _pendingCount);
+
+        if (count > _kubernetesSettings.MaxPendingScripts)
         {
-            var count = Interlocked.Increment(ref _pendingCount);
-
-            if (count > _kubernetesSettings.MaxPendingScripts)
-            {
-                Interlocked.Decrement(ref _pendingCount);
-                Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, ticketId);
-                InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)") });
-                TentacleMetrics.ScriptRejected();
-                return new ScriptTicket(ticketId);
-            }
-
-            _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
-            PersistPendingSecret(ticketId, command);
-            TentacleMetrics.ScriptQueued();
-            Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+            Interlocked.Decrement(ref _pendingCount);
+            Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, ticketId);
+            InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)") });
+            TentacleMetrics.ScriptRejected();
+            return _terminalResults[ticketId].Response;
         }
 
-        return new ScriptTicket(ticketId);
+        _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
+        PersistPendingSecret(ticketId, command);
+        TentacleMetrics.ScriptQueued();
+        Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+
+        return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
     }
 
     private void LaunchScript(string ticketId, StartScriptCommand command)
@@ -154,12 +166,14 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         var wrappedBody = EosMarker.WrapScript(command.ScriptBody, eosMarkerToken);
 
         return new StartScriptCommand(
+            command.ScriptTicket,
             wrappedBody,
             command.Isolation,
             command.ScriptIsolationMutexTimeout,
             command.IsolationMutexName,
             command.Arguments,
             command.TaskId,
+            command.DurationToWaitForScriptToFinish,
             command.Files.ToArray())
         {
             TargetNamespace = command.TargetNamespace,

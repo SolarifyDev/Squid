@@ -53,7 +53,7 @@ public class HalibutScriptObserverTests
         var callCount = 0;
 
         _scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
-            .ReturnsAsync(_ticket);
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Running, 0, new List<ProcessOutput>(), 0));
 
         _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
             .ReturnsAsync(() =>

@@ -18,10 +18,18 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan OrphanMaxAge = TimeSpan.FromHours(24);
 
-    public ScriptTicket StartScript(StartScriptCommand command)
+    public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
         if (_draining)
             throw new InvalidOperationException("Tentacle is shutting down and cannot accept new scripts");
+
+        if (command.ScriptTicket == null)
+            throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
+
+        var ticketId = command.ScriptTicket.TaskId;
+
+        if (_scripts.TryGetValue(ticketId, out var existing))
+            return BuildStatus(command.ScriptTicket, existing);
 
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(Path.GetTempPath());
         CleanupOrphanedWorkspacesIfDue();
@@ -31,7 +39,6 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
 
-        var ticketId = Guid.NewGuid().ToString("N");
         var workDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
         Directory.CreateDirectory(workDir);
         SetDirectoryPermissions(workDir);
@@ -48,7 +55,25 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
 
-        return new ScriptTicket(ticketId);
+        WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
+
+        return BuildStatus(command.ScriptTicket, running);
+    }
+
+    private static void WaitForEarlyCompletion(RunningScript running, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return;
+        try { running.Process.WaitForExit(duration); }
+        catch { /* Best-effort early return — polling will catch final state */ }
+    }
+
+    private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running)
+    {
+        var logs = DrainLogs(running);
+        var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
+        var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
+
+        return new ScriptStatusResponse(ticket, state, exitCode, logs, running.LogSequence);
     }
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)

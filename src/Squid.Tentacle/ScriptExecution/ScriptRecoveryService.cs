@@ -79,9 +79,11 @@ public class ScriptRecoveryService
                     data.TryGetValue("targetNamespace", out var targetNamespace);
 
                     var command = new StartScriptCommand(
+                        new ScriptTicket(ticketId),
                         scriptBody, isolation, TimeSpan.FromMinutes(30),
                         string.IsNullOrEmpty(mutexName) ? null : mutexName,
-                        Array.Empty<string>(), null)
+                        Array.Empty<string>(), null,
+                        TimeSpan.Zero)
                     {
                         TargetNamespace = string.IsNullOrEmpty(targetNamespace) ? null : targetNamespace
                     };

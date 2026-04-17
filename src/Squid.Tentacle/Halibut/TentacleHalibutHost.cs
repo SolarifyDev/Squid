@@ -151,7 +151,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
         public AsyncScriptServiceAdapter(IScriptService inner) => _inner = inner;
 
-        public Task<ScriptTicket> StartScriptAsync(StartScriptCommand command, CancellationToken ct)
+        public Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.StartScript(command));
 
         public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request, CancellationToken ct)

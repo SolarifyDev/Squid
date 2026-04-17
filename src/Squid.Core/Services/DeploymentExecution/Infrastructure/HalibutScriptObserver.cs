@@ -18,13 +18,22 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         ScriptTicket ticket,
         TimeSpan scriptTimeout,
         CancellationToken ct,
-        SensitiveValueMasker masker = null)
+        SensitiveValueMasker masker = null,
+        ScriptStatusResponse initialStartResponse = null)
     {
         var startTime = DateTime.UtcNow;
         var pollInterval = TimeSpan.FromSeconds(1);
         var maxPollInterval = TimeSpan.FromSeconds(10);
-        var statusResponse = new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+        var statusResponse = initialStartResponse
+            ?? new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
         var allLogs = new List<ProcessOutput>();
+
+        if (initialStartResponse != null)
+        {
+            allLogs.AddRange(initialStartResponse.Logs);
+            TruncateIfExceeded(allLogs);
+            LogOutput(initialStartResponse.Logs, machine.Name, masker);
+        }
 
         while (statusResponse.State != ProcessState.Complete)
         {

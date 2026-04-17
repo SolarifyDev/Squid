@@ -12,5 +12,6 @@ public interface IHalibutScriptObserver : IScopedDependency
         ScriptTicket ticket,
         TimeSpan scriptTimeout,
         CancellationToken ct,
-        SensitiveValueMasker masker);
+        SensitiveValueMasker masker,
+        ScriptStatusResponse initialStartResponse = null);
 }

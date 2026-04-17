@@ -168,11 +168,13 @@ public class ScriptIsolationMutexTests
     private static StartScriptCommand MakeCommand(ScriptIsolationLevel isolation, string? mutexName = null, TimeSpan? timeout = null)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             "echo test",
             isolation,
             timeout ?? TimeSpan.FromMinutes(5),
             mutexName,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
     }
 }

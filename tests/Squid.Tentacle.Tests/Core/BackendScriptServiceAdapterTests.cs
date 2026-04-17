@@ -16,12 +16,14 @@ public class BackendScriptServiceAdapterTests
 
         var ticket = new ScriptTicket("ticket-123");
         var command = new StartScriptCommand(
+            ticket,
             "echo hello",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromSeconds(10),
             isolationMutexName: null,
             arguments: Array.Empty<string>(),
-            taskId: null);
+            taskId: null,
+            durationToWaitForScriptToFinish: TimeSpan.Zero);
         var statusRequest = new ScriptStatusRequest(ticket, 5);
         var completeCommand = new CompleteScriptCommand(ticket, 9);
         var cancelCommand = new CancelScriptCommand(ticket, 11);

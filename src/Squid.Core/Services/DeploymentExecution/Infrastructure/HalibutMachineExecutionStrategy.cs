@@ -59,26 +59,29 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
+            scriptTicket,
             scriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
             null,
             Array.Empty<string>(),
             ticketId,
+            TimeSpan.Zero,
             scriptFiles)
         {
             ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("[Deploy] Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, ticket);
+            request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -91,26 +94,29 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
+            scriptTicket,
             request.ScriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
             null,
             Array.Empty<string>(),
             ticketId,
+            TimeSpan.Zero,
             scriptFiles)
         {
             ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("[Deploy] Starting direct script on agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, ticket);
+            request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(

@@ -81,7 +81,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void CleanupOrphanedPods_TerminatedPodWithActiveTicket_NotDeleted()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         SetupManagedPods(MakeTerminatedPod("active-pod", ticketId, DateTime.UtcNow.AddMinutes(-15)));
@@ -106,7 +106,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void CleanupStaleRunningPods_WithActiveTicket_NotDeleted()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         SetupManagedPods(MakeRunningPod("active-running", ticketId, DateTime.UtcNow.AddMinutes(-15)));
@@ -138,7 +138,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_PodStillPending_Deleted()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         var pod = MakePendingPod("squid-script-stuck", ticketId, DateTime.UtcNow.AddMinutes(-10));
@@ -156,7 +156,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_PodTransitionedToRunning_NotDeleted()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         var pod = MakePendingPod("squid-script-stuck", ticketId, DateTime.UtcNow.AddMinutes(-10));
@@ -175,7 +175,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_PodTransitionedToSucceeded_NotDeleted()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         var pod = MakePendingPod("squid-script-stuck", ticketId, DateTime.UtcNow.AddMinutes(-10));
@@ -224,7 +224,7 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_WithinTimeout_Skipped()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
 
         var pod = MakePendingPod("squid-script-new", ticketId, DateTime.UtcNow.AddMinutes(-1));
@@ -239,8 +239,11 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_ReleasesMutex_AfterDeletion()
     {
-        var command = new StartScriptCommand("echo test", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "test-mutex", Array.Empty<string>(), null);
-        var ticket = _scriptPodService.StartScript(command);
+        var command = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            "echo test", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "test-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        _scriptPodService.StartScript(command);
+        var ticket = command.ScriptTicket;
         var ticketId = ticket.TaskId;
 
         _scriptPodService.MutexLocks.ContainsKey(ticketId).ShouldBeTrue();
@@ -259,13 +262,18 @@ public class KubernetesPodMonitorTests : IDisposable
     [Fact]
     public void FailPendingPods_MutexReleased_PendingScriptCanStart()
     {
-        var command = new StartScriptCommand("echo test", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "shared-mutex", Array.Empty<string>(), null);
-        var ticket1 = _scriptPodService.StartScript(command);
-        var ticket2 = _scriptPodService.StartScript(command);
-        var ticketId1 = ticket1.TaskId;
+        var command1 = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            "echo test", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "shared-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var command2 = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            "echo test", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "shared-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        _scriptPodService.StartScript(command1);
+        _scriptPodService.StartScript(command2);
+        var ticketId1 = command1.ScriptTicket.TaskId;
 
         _scriptPodService.ActiveScripts.ContainsKey(ticketId1).ShouldBeTrue();
-        _scriptPodService.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        _scriptPodService.PendingScripts.ContainsKey(command2.ScriptTicket.TaskId).ShouldBeTrue();
 
         var pod = MakePendingPod("squid-script-stuck", ticketId1, DateTime.UtcNow.AddMinutes(-10));
         SetupManagedPods(pod);
@@ -277,7 +285,7 @@ public class KubernetesPodMonitorTests : IDisposable
 
         // Pending script should have been launched after mutex was released
         _scriptPodService.PendingScripts.ShouldBeEmpty();
-        _scriptPodService.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+        _scriptPodService.ActiveScripts.ContainsKey(command2.ScriptTicket.TaskId).ShouldBeTrue();
     }
 
     // ========== Leader Election Gating ==========
@@ -492,12 +500,14 @@ public class KubernetesPodMonitorTests : IDisposable
     private static StartScriptCommand MakeCommand(string scriptBody)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             scriptBody,
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
     }
 
     public void Dispose()

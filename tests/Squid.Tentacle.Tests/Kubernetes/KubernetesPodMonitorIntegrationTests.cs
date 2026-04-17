@@ -54,13 +54,20 @@ public class KubernetesPodMonitorIntegrationTests : IDisposable
         var monitor = new KubernetesPodMonitor(podManager, service, tentacleSettings, kubernetesSettings);
 
         // Step 1: Start an isolated script — acquires mutex
-        var command = new StartScriptCommand("echo first", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "integration-mutex", Array.Empty<string>(), null);
-        var ticket1 = service.StartScript(command);
+        var command1 = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            "echo first", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "integration-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        service.StartScript(command1);
+        var ticket1 = command1.ScriptTicket;
         var ticketId1 = ticket1.TaskId;
         var podName1 = service.ActiveScripts[ticketId1].PodName;
 
         // Step 2: Start a second isolated script — should be pending
-        var ticket2 = service.StartScript(command);
+        var command2 = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            "echo first", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(5), "integration-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        service.StartScript(command2);
+        var ticket2 = command2.ScriptTicket;
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
         service.ActiveScripts.ContainsKey(ticketId1).ShouldBeTrue();
 

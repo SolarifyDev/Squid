@@ -7,55 +7,70 @@ namespace Squid.Message.Contracts.Tentacle;
 public class StartScriptCommand
 {
     [JsonConstructor]
-    public StartScriptCommand(string scriptBody,
+    public StartScriptCommand(
+        ScriptTicket scriptTicket,
+        string scriptBody,
         ScriptIsolationLevel isolation,
         TimeSpan scriptIsolationMutexTimeout,
         string? isolationMutexName,
         string[] arguments,
-        string? taskId)
+        string? taskId,
+        TimeSpan durationToWaitForScriptToFinish)
     {
-        Arguments = arguments;
+        ScriptTicket = scriptTicket ?? throw new ArgumentNullException(nameof(scriptTicket));
+        Arguments = arguments ?? Array.Empty<string>();
         TaskId = taskId;
         ScriptBody = scriptBody;
         Isolation = isolation;
         ScriptIsolationMutexTimeout = scriptIsolationMutexTimeout;
         IsolationMutexName = isolationMutexName;
+        DurationToWaitForScriptToFinish = durationToWaitForScriptToFinish;
     }
 
-    public StartScriptCommand(string scriptBody,
+    public StartScriptCommand(
+        ScriptTicket scriptTicket,
+        string scriptBody,
         ScriptIsolationLevel isolation,
         TimeSpan scriptIsolationMutexTimeout,
-        string isolationMutexName,
+        string? isolationMutexName,
         string[] arguments,
         string? taskId,
+        TimeSpan durationToWaitForScriptToFinish,
         params ScriptFile[] additionalFiles)
         : this(
-            scriptBody,
-            isolation,
-            scriptIsolationMutexTimeout,
-            isolationMutexName,
-            arguments,
-            taskId)
-    {
-        if (additionalFiles != null)
-            Files.AddRange(additionalFiles);
-    }
-
-    public StartScriptCommand(string scriptBody,
-        ScriptIsolationLevel isolation,
-        TimeSpan scriptIsolationMutexTimeout,
-        string isolationMutexName,
-        string[] arguments,
-        string? taskId,
-        Dictionary<ScriptType, string> additionalScripts,
-        params ScriptFile[] additionalFiles)
-        : this(
+            scriptTicket,
             scriptBody,
             isolation,
             scriptIsolationMutexTimeout,
             isolationMutexName,
             arguments,
             taskId,
+            durationToWaitForScriptToFinish)
+    {
+        if (additionalFiles != null)
+            Files.AddRange(additionalFiles);
+    }
+
+    public StartScriptCommand(
+        ScriptTicket scriptTicket,
+        string scriptBody,
+        ScriptIsolationLevel isolation,
+        TimeSpan scriptIsolationMutexTimeout,
+        string? isolationMutexName,
+        string[] arguments,
+        string? taskId,
+        TimeSpan durationToWaitForScriptToFinish,
+        Dictionary<ScriptType, string> additionalScripts,
+        params ScriptFile[] additionalFiles)
+        : this(
+            scriptTicket,
+            scriptBody,
+            isolation,
+            scriptIsolationMutexTimeout,
+            isolationMutexName,
+            arguments,
+            taskId,
+            durationToWaitForScriptToFinish,
             additionalFiles)
     {
         if (additionalScripts == null || !additionalScripts.Any())
@@ -66,6 +81,8 @@ public class StartScriptCommand
             Scripts.Add(additionalScript.Key, additionalScript.Value);
         }
     }
+
+    public ScriptTicket ScriptTicket { get; }
 
     public string ScriptBody { get; }
 
@@ -81,6 +98,9 @@ public class StartScriptCommand
 
     public TimeSpan ScriptIsolationMutexTimeout { get; }
     public string? IsolationMutexName { get; }
+
+    public TimeSpan DurationToWaitForScriptToFinish { get; }
+
     public ScriptType ScriptSyntax { get; init; } = ScriptType.Bash;
     public string? TargetNamespace { get; init; }
     public Dictionary<string, string>? Labels { get; init; }
