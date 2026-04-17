@@ -12,5 +12,8 @@ public class DeploymentExecutionCheckpointConfiguration : IEntityTypeConfigurati
         builder.Property(p => p.Id).ValueGeneratedOnAdd();
 
         builder.HasIndex(p => p.ServerTaskId).IsUnique();
+
+        builder.Property(p => p.BatchStatesJson).HasColumnType("jsonb").HasDefaultValue("{}");
+        builder.Property(p => p.InFlightScriptsJson).HasColumnType("jsonb").HasDefaultValue("{}");
     }
 }

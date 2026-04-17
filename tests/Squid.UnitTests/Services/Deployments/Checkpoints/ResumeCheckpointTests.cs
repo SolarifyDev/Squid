@@ -98,6 +98,159 @@ public class ResumeCheckpointTests
         phase.Order.ShouldBe(50);
     }
 
+    // ========== Per-target resume — Phase 2.3 ==========
+
+    [Fact]
+    public async Task ResumePhase_RestoresBatchStates_FromJson()
+    {
+        var batchStates = new Dictionary<string, BatchCheckpointState>
+        {
+            ["0"] = new()
+            {
+                CompletedMachineIds = new HashSet<int> { 100, 101 },
+                FailedMachineIds = new HashSet<int> { 102 }
+            }
+        };
+
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        checkpointService.Setup(s => s.LoadAsync(1001, It.IsAny<CancellationToken>())).ReturnsAsync(new DeploymentExecutionCheckpoint
+        {
+            ServerTaskId = 1001,
+            LastCompletedBatchIndex = 0,
+            BatchStatesJson = JsonSerializer.Serialize(batchStates),
+            InFlightScriptsJson = "{}"
+        });
+
+        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var ctx = CreateBaseContext();
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        ctx.ResumeBatchStates.ShouldContainKey(0);
+        ctx.ResumeBatchStates[0].CompletedMachineIds.ShouldBe(new HashSet<int> { 100, 101 });
+        ctx.ResumeBatchStates[0].FailedMachineIds.ShouldBe(new HashSet<int> { 102 });
+    }
+
+    [Fact]
+    public async Task ResumePhase_MalformedBatchStatesJson_DoesNotCrash_StartsEmpty()
+    {
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        checkpointService.Setup(s => s.LoadAsync(1001, It.IsAny<CancellationToken>())).ReturnsAsync(new DeploymentExecutionCheckpoint
+        {
+            ServerTaskId = 1001,
+            LastCompletedBatchIndex = 0,
+            BatchStatesJson = "{ not valid json"
+        });
+
+        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var ctx = CreateBaseContext();
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        ctx.ResumeBatchStates.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ExecuteSteps_BatchWithPartialCompletion_SkipsCompletedTarget()
+    {
+        var strategy = new RecordingStrategy();
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var transport = new TestTransport(strategy);
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+
+        var completedMachine = new Machine { Id = 100, Name = "target-already-done", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+        var pendingMachine = new Machine { Id = 200, Name = "target-still-pending", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+
+        var ctx = CreateBaseContext();
+        ctx.IsResume = true;
+        ctx.ResumeFromBatchIndex = -1;           // current batch 0 is the in-flight one
+        ctx.ResumeBatchStates = new Dictionary<int, BatchCheckpointState>
+        {
+            [0] = new BatchCheckpointState { CompletedMachineIds = new HashSet<int> { 100 } }
+        };
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTargetForMachine(completedMachine, transport),
+            MakeTargetForMachine(pendingMachine, transport)
+        };
+        ctx.Steps = new List<DeploymentStepDto>
+        {
+            MakeStep("StepA", 1, "web", MakeAction("ActionA"))
+        };
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var executedMachineNames = strategy.Requests.Select(r => r.Machine?.Name).ToList();
+        executedMachineNames.ShouldNotContain("target-already-done",
+            "machine marked completed in the checkpoint must be skipped on resume");
+        executedMachineNames.ShouldContain("target-still-pending",
+            "machine not yet completed must still run on resume");
+    }
+
+    [Fact]
+    public async Task ExecuteSteps_PersistsPerTargetState_WhenTargetsComplete()
+    {
+        var strategy = new RecordingStrategy();
+        var (lifecycle, _) = CreateLifecycle();
+        var registry = CreateRegistry();
+        var transport = new TestTransport(strategy);
+        var savedCheckpoints = new List<DeploymentExecutionCheckpoint>();
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        checkpointService.Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
+            .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(Clone(cp)))
+            .Returns(Task.CompletedTask);
+
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+
+        var m1 = new Machine { Id = 300, Name = "m-one", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+        var m2 = new Machine { Id = 301, Name = "m-two", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+
+        var ctx = CreateBaseContext();
+        ctx.AllTargetsContext = new List<DeploymentTargetContext>
+        {
+            MakeTargetForMachine(m1, transport),
+            MakeTargetForMachine(m2, transport)
+        };
+        ctx.Steps = new List<DeploymentStepDto> { MakeStep("Step1", 1, "web", MakeAction("Action1")) };
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        savedCheckpoints.ShouldNotBeEmpty();
+        var last = savedCheckpoints[^1];
+        last.BatchStatesJson.ShouldNotBeNullOrEmpty();
+
+        var parsed = JsonSerializer.Deserialize<Dictionary<string, BatchCheckpointState>>(last.BatchStatesJson);
+        parsed.ShouldContainKey("0");
+        parsed["0"].CompletedMachineIds.ShouldBe(new HashSet<int> { 300, 301 }, ignoreOrder: true);
+    }
+
+    private static DeploymentTargetContext MakeTargetForMachine(Machine machine, IDeploymentTransport transport)
+    {
+        return new DeploymentTargetContext
+        {
+            Machine = machine,
+            EndpointContext = new EndpointContext { EndpointJson = "{}" },
+            Transport = transport,
+            CommunicationStyle = transport.CommunicationStyle
+        };
+    }
+
+    private static DeploymentExecutionCheckpoint Clone(DeploymentExecutionCheckpoint cp) => new()
+    {
+        Id = cp.Id,
+        ServerTaskId = cp.ServerTaskId,
+        DeploymentId = cp.DeploymentId,
+        LastCompletedBatchIndex = cp.LastCompletedBatchIndex,
+        FailureEncountered = cp.FailureEncountered,
+        OutputVariablesJson = cp.OutputVariablesJson,
+        BatchStatesJson = cp.BatchStatesJson,
+        InFlightScriptsJson = cp.InFlightScriptsJson
+    };
+
     // ========== ExecuteStepsPhase — Batch Skip ==========
 
     [Fact]

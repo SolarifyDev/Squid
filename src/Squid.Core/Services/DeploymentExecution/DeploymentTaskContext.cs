@@ -51,6 +51,12 @@ public class DeploymentTaskContext
     public int? ResumeFromBatchIndex { get; set; }
     public List<VariableDto> RestoredOutputVariables { get; set; } = new();
 
+    /// <summary>
+    /// Per-batch per-target completion state restored from checkpoint. The executor
+    /// skips any (batch, machineId) pair that is already marked terminal here.
+    /// </summary>
+    public Dictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> ResumeBatchStates { get; set; } = new();
+
     // Logging
     private long _logSequence;
     public long NextLogSequence() => Interlocked.Increment(ref _logSequence);

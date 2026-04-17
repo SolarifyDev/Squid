@@ -57,6 +57,7 @@ public sealed partial class ExecuteStepsPhase
             else
             {
                 var matchingTargets = ResolveMatchingTargets(step, planned);
+                matchingTargets = FilterAlreadyCompletedTargets(matchingTargets);
 
                 if (matchingTargets.Count == 0)
                 {
@@ -73,14 +74,22 @@ public sealed partial class ExecuteStepsPhase
                     matchingTargets, maxParallelism,
                     async (tc, targetCt) =>
                     {
+                        StepExecutionResult targetResult = null;
                         try
                         {
-                            return await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
+                            targetResult = await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
+                            return targetResult;
                         }
                         catch when (step.IsRequired)
                         {
+                            MarkTargetCompleted(_currentBatchIndex, tc.Machine.Id, failed: true);
                             failFastCts?.Cancel();
                             throw;
+                        }
+                        finally
+                        {
+                            if (targetResult != null)
+                                MarkTargetCompleted(_currentBatchIndex, tc.Machine.Id, failed: targetResult.Failed);
                         }
                     }, effectiveCt).ConfigureAwait(false);
 
@@ -149,6 +158,24 @@ public sealed partial class ExecuteStepsPhase
         return _ctx.AllTargetsContext
             .Where(tc => plannedMachineIds.Contains(tc.Machine.Id) && !tc.IsExcluded)
             .ToList();
+    }
+
+    private List<DeploymentTargetContext> FilterAlreadyCompletedTargets(List<DeploymentTargetContext> targets)
+    {
+        if (!_batchStates.TryGetValue(_currentBatchIndex, out var state)) return targets;
+
+        var filtered = targets.Where(tc => !state.IsTerminalFor(tc.Machine.Id)).ToList();
+
+        if (filtered.Count < targets.Count)
+        {
+            var skippedNames = targets
+                .Where(tc => state.IsTerminalFor(tc.Machine.Id))
+                .Select(tc => tc.Machine.Name);
+            Log.Information("[Deploy] Skipping {Count} machine(s) already terminal in prior run of batch {Batch}: {Names}",
+                targets.Count - filtered.Count, _currentBatchIndex, string.Join(", ", skippedNames));
+        }
+
+        return filtered;
     }
 
     private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)

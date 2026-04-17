@@ -21,6 +21,8 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
             s => s.SetProperty(c => c.LastCompletedBatchIndex, checkpoint.LastCompletedBatchIndex)
                   .SetProperty(c => c.FailureEncountered, checkpoint.FailureEncountered)
                   .SetProperty(c => c.OutputVariablesJson, checkpoint.OutputVariablesJson)
+                  .SetProperty(c => c.BatchStatesJson, checkpoint.BatchStatesJson ?? "{}")
+                  .SetProperty(c => c.InFlightScriptsJson, checkpoint.InFlightScriptsJson ?? "{}")
                   .SetProperty(c => c.LastModifiedDate, DateTimeOffset.UtcNow),
             ct).ConfigureAwait(false);
 
