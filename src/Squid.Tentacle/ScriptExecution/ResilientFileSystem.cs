@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Serilog;
 
 namespace Squid.Tentacle.ScriptExecution;
@@ -5,6 +6,14 @@ namespace Squid.Tentacle.ScriptExecution;
 public static class ResilientFileSystem
 {
     private const int MaxRetries = 10;
+
+    // Per-target path locks. .NET File.Replace on Linux is implemented as a
+    // two-step rename sequence (dest→backup, source→dest); two concurrent
+    // File.Replace calls on the same dest can see dest disappear briefly
+    // between those steps and throw FileNotFoundException. Serializing per
+    // target path (not globally) keeps writes to different paths parallel
+    // while making concurrent writes to the same state file safe.
+    private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.Ordinal);
 
     public static void WriteAllText(string path, string contents)
         => ExecuteWithRetry(() => File.WriteAllText(path, contents), path);
@@ -26,32 +35,37 @@ public static class ResilientFileSystem
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
 
-        // Unique tmp per invocation so concurrent writers to the same target don't collide
-        // on the staging file. File.Replace itself is atomic at the OS level, so the
-        // last-writer-wins semantic is preserved without IOException races.
-        var tempPath = $"{path}.{Environment.CurrentManagedThreadId}.{Guid.NewGuid():N}.tmp";
-        var backupPath = path + ".bak";
+        var pathLock = PathLocks.GetOrAdd(path, _ => new object());
 
-        try
+        lock (pathLock)
         {
-            using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (var writer = new StreamWriter(stream))
+            // Unique tmp per invocation belts-and-braces the lock: even if another
+            // process on the same host races us on the same path, the staging file
+            // names will never collide.
+            var tempPath = $"{path}.{Environment.CurrentManagedThreadId}.{Guid.NewGuid():N}.tmp";
+            var backupPath = path + ".bak";
+
+            try
             {
-                writer.Write(contents);
-                writer.Flush();
-                stream.Flush(flushToDisk: true);
+                using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(contents);
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                }
+
+                if (File.Exists(path))
+                    File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: true);
+                else
+                    File.Move(tempPath, path);
             }
-
-            if (File.Exists(path))
-                File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: true);
-            else
-                File.Move(tempPath, path);
-        }
-        finally
-        {
-            if (File.Exists(tempPath))
+            finally
             {
-                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+                }
             }
         }
     }

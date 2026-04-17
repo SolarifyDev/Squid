@@ -95,7 +95,10 @@ public sealed class ScriptStateFileAtomicityTests : IDisposable
     {
         ScriptStateFile.Write(_workspace, new ScriptStateFile { TicketId = "t1", PodName = "initial" });
 
-        Parallel.For(0, 50, i =>
+        // 200 parallel writers to the same target path — heavy enough to reliably
+        // surface the Linux File.Replace race that earlier iterations of this test
+        // caught on CI.
+        Parallel.For(0, 200, i =>
         {
             ScriptStateFile.Write(_workspace, new ScriptStateFile
             {
