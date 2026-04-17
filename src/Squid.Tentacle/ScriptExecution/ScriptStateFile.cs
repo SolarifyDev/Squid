@@ -29,7 +29,7 @@ public class ScriptStateFile
     {
         var path = GetPath(workDir);
         var json = JsonSerializer.Serialize(state, JsonOptions);
-        RFS.WriteAllText(path, json);
+        RFS.AtomicWriteAllText(path, json);
 
         Log.Debug("Wrote script state file for ticket {TicketId} to {Path}", state.TicketId, path);
     }
@@ -38,16 +38,42 @@ public class ScriptStateFile
     {
         var path = GetPath(workDir);
 
-        if (!RFS.FileExists(path)) return null;
+        if (!RFS.FileExists(path))
+        {
+            return TryReadFromBackup(path);
+        }
 
         try
         {
             var json = RFS.ReadAllText(path);
             return JsonSerializer.Deserialize<ScriptStateFile>(json, JsonOptions);
         }
+        catch (JsonException ex)
+        {
+            Log.Warning(ex, "Primary script state file at {Path} is corrupted — falling back to backup", path);
+            return TryReadFromBackup(path);
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to read script state file at {Path}", path);
+            return null;
+        }
+    }
+
+    private static ScriptStateFile? TryReadFromBackup(string primaryPath)
+    {
+        var backupPath = primaryPath + ".bak";
+        if (!RFS.FileExists(backupPath)) return null;
+
+        try
+        {
+            var json = RFS.ReadAllText(backupPath);
+            Log.Warning("Recovered script state from backup file {BackupPath}", backupPath);
+            return JsonSerializer.Deserialize<ScriptStateFile>(json, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Backup script state file at {BackupPath} is also unreadable", backupPath);
             return null;
         }
     }

@@ -9,6 +9,53 @@ public static class ResilientFileSystem
     public static void WriteAllText(string path, string contents)
         => ExecuteWithRetry(() => File.WriteAllText(path, contents), path);
 
+    /// <summary>
+    /// Atomically writes <paramref name="contents"/> to <paramref name="path"/>.
+    /// A mid-write crash cannot produce a partial/corrupt target file — either
+    /// the old content survives or the new content is fully present.
+    ///
+    /// On success the previous version (if any) is retained as <c>{path}.bak</c>
+    /// which callers can fall back to if the primary file ever becomes unreadable.
+    /// </summary>
+    public static void AtomicWriteAllText(string path, string contents)
+        => ExecuteWithRetry(() => AtomicWriteCore(path, contents), path);
+
+    private static void AtomicWriteCore(string path, string contents)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        // Unique tmp per invocation so concurrent writers to the same target don't collide
+        // on the staging file. File.Replace itself is atomic at the OS level, so the
+        // last-writer-wins semantic is preserved without IOException races.
+        var tempPath = $"{path}.{Environment.CurrentManagedThreadId}.{Guid.NewGuid():N}.tmp";
+        var backupPath = path + ".bak";
+
+        try
+        {
+            using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(contents);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            if (File.Exists(path))
+                File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: true);
+            else
+                File.Move(tempPath, path);
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+            }
+        }
+    }
+
     public static string ReadAllText(string path)
         => ExecuteWithRetry(() => File.ReadAllText(path), path);
 
