@@ -11,8 +11,12 @@ using Squid.Tentacle.ScriptExecution.State;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware
+public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
+    public bool IsRunningScript(string ticketId)
+        => !string.IsNullOrEmpty(ticketId) && _scripts.ContainsKey(ticketId);
+
+
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
     private readonly IScriptStateStoreFactory _stateStoreFactory;

@@ -10,8 +10,15 @@ using Squid.Tentacle.Health;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware
+public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
+    public bool IsRunningScript(string ticketId)
+    {
+        if (string.IsNullOrEmpty(ticketId)) return false;
+        return _scripts.ContainsKey(ticketId) || _pendingScripts.ContainsKey(ticketId);
+    }
+
+
     private readonly TentacleSettings _tentacleSettings;
     private readonly KubernetesSettings _kubernetesSettings;
     private readonly KubernetesPodManager _podManager;
@@ -59,6 +66,20 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         if (_pendingScripts.ContainsKey(ticketId))
             return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+
+        // Crash-safe redelivery: if a prior agent-pod run got as far as writing
+        // ScriptStateStore (Starting/Running/Complete) but crashed before the
+        // in-memory _scripts entry survived, honour the persisted state rather
+        // than re-launching the pod. ScriptRecoveryService populates _scripts
+        // for pods that still exist; this catches the case where the workspace
+        // PVC retains state but the pod was garbage-collected.
+        var persistedWorkDir = Path.Combine(_tentacleSettings.WorkspacePath, ticketId);
+        var persisted = TryBuildStatusFromPersistedState(scriptTicket, persistedWorkDir);
+        if (persisted != null)
+        {
+            Log.Information("Redelivered StartScript for ticket {TicketId} — returning persisted state", ticketId);
+            return persisted;
+        }
 
         if (_draining)
         {
@@ -116,6 +137,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         var workDir = PrepareWorkspace(ticketId, wrappedCommand);
 
+        // Persist generic "Starting" state before pod creation so a crash
+        // between CreatePod and the in-memory _scripts insert leaves a
+        // durable breadcrumb. ScriptRecoveryService reads it on restart;
+        // GetStatus falls back to it via TryBuildStatusFromPersistedState.
+        PersistStartingState(ticketId, workDir);
+
         try
         {
             // Script pod always created in agent namespace — PVC, ServiceAccount, and
@@ -131,11 +158,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             StartLogStream(ctx);
 
             WriteStateFile(workDir, ticketId, podName, eosMarkerToken, command);
+            PersistRunningState(ticketId, workDir);
 
             Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
         }
         catch
         {
+            DeletePersistedStateIfAny(workDir);
             CleanupWorkspace(workDir);
             throw;
         }
@@ -273,10 +302,16 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         try
         {
             if (_terminalResults.TryRemove(command.Ticket.TaskId, out var terminal))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return terminal.Response;
+            }
 
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
+            }
 
             ctx.LogStreamCts?.Cancel();
             _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
@@ -284,6 +319,10 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             var logs = DrainFinalLogs(ctx);
             var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
             var exitCode = containerTermination?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName);
+
+            // Persist Complete state before workspace cleanup so a crash between
+            // these two lines still lets a server redeliver and learn the exit code.
+            PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, exitCode, ctx.LogSequence);
 
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
@@ -308,6 +347,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         {
             Interlocked.Decrement(ref _pendingCount);
             RemovePendingSecret(command.Ticket.TaskId);
+            DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
             TentacleMetrics.ScriptCanceled();
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
         }
@@ -315,9 +355,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         try
         {
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
+            }
 
             ctx.LogStreamCts?.Cancel();
+            PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, ScriptExitCodes.Canceled, ctx.LogSequence);
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
 
