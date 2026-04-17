@@ -122,14 +122,14 @@ public class LocalScriptServiceTests : IDisposable
             null,
             TimeSpan.Zero);
 
-        _service.StartScript(command);
+        var startResp = _service.StartScript(command);
         var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         Thread.Sleep(1000);
 
-        var status = _service.GetStatus(new ScriptStatusRequest(ticket, 0));
-        var output = string.Join(" ", status.Logs.Select(l => l.Text));
+        var status = _service.GetStatus(new ScriptStatusRequest(ticket, startResp.NextLogSequence));
+        var output = string.Join(" ", startResp.Logs.Concat(status.Logs).Select(l => l.Text));
 
         output.ShouldContain("hello world");
     }
@@ -147,14 +147,14 @@ public class LocalScriptServiceTests : IDisposable
             null,
             TimeSpan.Zero);
 
-        _service.StartScript(command);
+        var startResp = _service.StartScript(command);
         var ticket = command.ScriptTicket;
         _createdTickets.Add(ticket.TaskId);
 
         Thread.Sleep(1000);
 
-        var status = _service.GetStatus(new ScriptStatusRequest(ticket, 0));
-        var output = string.Join(" ", status.Logs.Select(l => l.Text));
+        var status = _service.GetStatus(new ScriptStatusRequest(ticket, startResp.NextLogSequence));
+        var output = string.Join(" ", startResp.Logs.Concat(status.Logs).Select(l => l.Text));
 
         output.ShouldContain("hello world");
     }
