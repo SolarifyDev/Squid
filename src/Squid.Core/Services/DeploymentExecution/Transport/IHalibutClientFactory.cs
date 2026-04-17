@@ -1,4 +1,5 @@
 using Halibut;
+using Squid.Core.Halibut;
 
 namespace Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -20,5 +21,12 @@ public class HalibutClientFactory : IHalibutClientFactory
         => _halibutRuntime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
 
     public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint)
-        => _halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+    {
+        // Wrap the raw Halibut proxy with the back-compat decorator so mixed-
+        // version deployments (new server × old Tentacle that predates the
+        // capabilities service) degrade gracefully to the pre-capabilities
+        // contract rather than failing health checks outright.
+        var raw = _halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+        return new BackwardsCompatibleCapabilitiesClient(raw);
+    }
 }

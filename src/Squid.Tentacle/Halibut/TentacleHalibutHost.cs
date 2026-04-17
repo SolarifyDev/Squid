@@ -59,7 +59,20 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         if (serverUrls.Count == 0)
             throw new InvalidOperationException("No server comms URLs configured. Set ServerCommsUrl or ServerCommsAddresses.");
 
-        var connectionCount = Math.Max(1, _settings.PollingConnectionCount);
+        // Clamp to 1..8 matching the Octopus upper bound — more than 8 concurrent
+        // polling connections per server bring diminishing returns and mostly add
+        // server-side resource pressure. One connection is the minimum to receive
+        // any work; raising the default to 5 is what avoids the single-RPC head-of-
+        // line blocking scenario where one stuck GetStatus starves all other calls.
+        const int MinConnections = 1;
+        const int MaxConnections = 8;
+        var connectionCount = Math.Clamp(_settings.PollingConnectionCount, MinConnections, MaxConnections);
+        if (connectionCount != _settings.PollingConnectionCount)
+        {
+            Log.Warning("Configured PollingConnectionCount={Configured} clamped to {Actual} (allowed range {Min}-{Max})",
+                _settings.PollingConnectionCount, connectionCount, MinConnections, MaxConnections);
+        }
+
         var totalConnections = 0;
         var halibutProxy = ProxyConfigurationBuilder.BuildHalibutProxy(_settings.Proxy);
 
