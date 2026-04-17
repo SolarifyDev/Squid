@@ -45,14 +45,20 @@ public class CapabilitiesServiceTests
     }
 
     [Fact]
-    public void GetCapabilities_WithoutMetadata_ReturnsEmptyMetadata()
+    public void GetCapabilities_WithoutOverrides_IncludesRuntimeCapabilities()
     {
         var service = new CapabilitiesService();
 
         var response = service.GetCapabilities(new CapabilitiesRequest());
 
         response.Metadata.ShouldNotBeNull();
-        response.Metadata.ShouldBeEmpty();
+        // Runtime capabilities (os, defaultShell, etc.) are always advertised so the
+        // server can pick the right script syntax without an extra round-trip.
+        response.Metadata.ShouldContainKey("os");
+        response.Metadata.ShouldContainKey("defaultShell");
+        response.Metadata.ShouldContainKey("installedShells");
+        response.Metadata.ShouldContainKey("architecture");
+        response.Metadata["os"].ShouldBeOneOf("Windows", "macOS", "Linux", "Unknown");
     }
 
     [Fact]
@@ -91,6 +97,26 @@ public class CapabilitiesServiceTests
         response.Metadata.ShouldContainKeyAndValue("scriptPodMode", "ScriptPod");
         response.Metadata.ShouldContainKeyAndValue("namespace", "squid-ns");
         response.Metadata.ShouldContainKeyAndValue("workspaceIsolation", "SharedPVC");
-        response.Metadata.Count.ShouldBe(8);
+        // Runtime capabilities (os/defaultShell/installedShells/architecture/osVersion)
+        // are merged in addition to the caller-supplied metadata, so the count is
+        // flavor-specific keys (8) + runtime keys (5) = 13.
+        response.Metadata.Count.ShouldBe(13);
+        response.Metadata.ShouldContainKey("os");
+        response.Metadata.ShouldContainKey("defaultShell");
+    }
+
+    [Fact]
+    public void GetCapabilities_CallerOverrideTrumpsRuntimeInspector()
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["os"] = "CustomPlatform"
+        };
+
+        var service = new CapabilitiesService(metadata);
+        var response = service.GetCapabilities(new CapabilitiesRequest());
+
+        response.Metadata["os"].ShouldBe("CustomPlatform",
+            "caller-supplied metadata must take precedence over the runtime inspector result");
     }
 }

@@ -9,9 +9,11 @@ public class CapabilitiesService : ICapabilitiesService
 
     private readonly Dictionary<string, string> _metadata;
 
-    public CapabilitiesService(Dictionary<string, string> metadata = null)
+    public CapabilitiesService() : this(metadata: null) { }
+
+    public CapabilitiesService(Dictionary<string, string> metadata)
     {
-        _metadata = metadata ?? new Dictionary<string, string>();
+        _metadata = MergeWithRuntimeCapabilities(metadata);
     }
 
     public CapabilitiesResponse GetCapabilities(CapabilitiesRequest request)
@@ -22,5 +24,17 @@ public class CapabilitiesService : ICapabilitiesService
             AgentVersion = Version,
             Metadata = new Dictionary<string, string>(_metadata)
         };
+    }
+
+    private static Dictionary<string, string> MergeWithRuntimeCapabilities(Dictionary<string, string> overrides)
+    {
+        var merged = RuntimeCapabilitiesInspector.Inspect();
+
+        if (overrides == null) return merged;
+
+        foreach (var (key, value) in overrides)
+            merged[key] = value;
+
+        return merged;
     }
 }

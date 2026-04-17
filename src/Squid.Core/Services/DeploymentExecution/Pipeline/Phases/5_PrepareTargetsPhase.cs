@@ -46,6 +46,8 @@ public sealed class PrepareTargetsPhase(
             tc.EndpointContext = await endpointContextBuilder.BuildAsync(tc.Machine.Endpoint, tc.Transport.Variables, ct).ConfigureAwait(false);
         else
             tc.EndpointContext = new EndpointContext { EndpointJson = tc.Machine.Endpoint };
+
+        tc.EndpointContext.MachineId = tc.Machine.Id;
     }
 
     private async Task ValidateAccountScopeAsync(DeploymentTaskContext ctx, DeploymentTargetContext tc, CancellationToken ct)
