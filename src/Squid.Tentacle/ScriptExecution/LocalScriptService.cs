@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
@@ -420,7 +421,15 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     {
         var extension = syntax == ScriptType.PowerShell ? ".ps1" : ".sh";
         var scriptPath = Path.Combine(workDir, $"script{extension}");
-        File.WriteAllText(scriptPath, scriptBody);
+
+        // .ps1 must be UTF-8 with BOM so Windows PowerShell 5.1 parses non-ASCII
+        // characters correctly. pwsh 7+ handles BOM-less UTF-8 fine too, so using
+        // BOM is safe for both.
+        var encoding = syntax == ScriptType.PowerShell
+            ? new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)
+            : new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+        File.WriteAllText(scriptPath, scriptBody, encoding);
 
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             File.SetUnixFileMode(scriptPath,
@@ -512,6 +521,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true
         };
@@ -547,6 +558,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true
         };
@@ -570,6 +583,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Force UTF-8 so non-ASCII output (Chinese, emoji, etc.) round-trips
+            // correctly instead of going through the Windows OEM codepage.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true
         };
