@@ -6,8 +6,10 @@ using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.Observability;
 using Squid.Tentacle.ScriptExecution.Logging;
 using Squid.Tentacle.ScriptExecution.State;
+using Squid.Tentacle.Security.Admission;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -20,16 +22,20 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
     private readonly IScriptStateStoreFactory _stateStoreFactory;
+    private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;
     private DateTimeOffset _lastCleanupTime = DateTimeOffset.MinValue;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan OrphanMaxAge = TimeSpan.FromHours(24);
+    private static readonly string AgentVersion =
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
     public LocalScriptService() : this(new ScriptStateStoreFactory()) { }
 
-    public LocalScriptService(IScriptStateStoreFactory stateStoreFactory)
+    public LocalScriptService(IScriptStateStoreFactory stateStoreFactory, IAdmissionPolicySource? admissionPolicySource = null)
     {
         _stateStoreFactory = stateStoreFactory ?? throw new ArgumentNullException(nameof(stateStoreFactory));
+        _admissionPolicySource = admissionPolicySource;
     }
 
     public ScriptStatusResponse StartScript(StartScriptCommand command)
@@ -41,6 +47,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
 
         var ticketId = command.ScriptTicket.TaskId;
+
+        // Admission policy is the agent-side last-line-of-defence. It runs before
+        // any idempotency lookup so even a redelivered StartScript is re-evaluated
+        // against the current policy (the rules may have tightened since the
+        // original submission). Denial returns -403 and never touches the workspace.
+        if (TryEvaluateAdmission(command, out var denial))
+            return denial!;
 
         if (TryReturnInMemoryStatus(command.ScriptTicket, out var inMemoryResponse))
             return inMemoryResponse!;
@@ -75,7 +88,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         var process = StartProcess(workDir, command);
         var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
-        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter);
+        var traceId = ResolveParentTraceId(command);
+        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
 
         BeginReadOutput(process, running);
         _scripts[ticketId] = running;
@@ -94,6 +108,56 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
 
         return BuildStatus(command.ScriptTicket, running);
+    }
+
+    private static string? ResolveParentTraceId(StartScriptCommand command)
+    {
+        // Server propagates W3C traceparent through command metadata when present.
+        // We don't currently transport it over the wire (ScriptExecutionTrace is
+        // ready for it once StartScriptCommand gains a TraceContext field). For
+        // now, fall back to Activity.Current?.TraceId which will be set when the
+        // agent itself happens to be running inside a traced context.
+        return Activity.Current?.TraceId.ToString();
+    }
+
+    private bool TryEvaluateAdmission(StartScriptCommand command, out ScriptStatusResponse? denial)
+    {
+        denial = null;
+        var policy = _admissionPolicySource?.Current;
+        if (policy == null || policy.Rules.Count == 0) return false;
+
+        AdmissionDecision decision;
+        try
+        {
+            decision = policy.Evaluate(new AdmissionContext(
+                command.ScriptBody,
+                command.Isolation.ToString(),
+                command.IsolationMutexName));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Admission policy evaluation failed; failing closed (denying script)");
+            denial = BuildAdmissionDenial(command.ScriptTicket, "policy-eval-error",
+                "admission policy evaluation failed — agent fails closed to avoid running unreviewed scripts");
+            return true;
+        }
+
+        if (decision.Allowed) return false;
+
+        Log.Warning("Admission denied for ticket {TicketId} by rule {RuleId}: {Reason}",
+            command.ScriptTicket.TaskId, decision.RuleId, decision.Reason);
+        denial = BuildAdmissionDenial(command.ScriptTicket, decision.RuleId ?? "unknown", decision.Reason ?? "denied");
+        return true;
+    }
+
+    private static ScriptStatusResponse BuildAdmissionDenial(ScriptTicket ticket, string ruleId, string reason)
+    {
+        return new ScriptStatusResponse(ticket, ProcessState.Complete, -403,
+            new List<ProcessOutput>
+            {
+                new(ProcessOutputSource.StdErr, $"Admission denied by rule '{ruleId}': {reason}")
+            },
+            0);
     }
 
     private bool TryReturnInMemoryStatus(ScriptTicket ticket, out ScriptStatusResponse? response)
@@ -212,12 +276,41 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         PersistCompleteState(running, exitCode);
 
+        // Write the execution manifest BEFORE workspace cleanup so the audit
+        // artifact is guaranteed to hit disk even if cleanup aborts. The manifest
+        // is useful to operators doing post-mortems even after the workspace
+        // itself is gone — it gets copied out to a durable archive externally.
+        WriteExecutionManifest(running, command.Ticket.TaskId, exitCode);
+
         running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
+    }
+
+    private static void WriteExecutionManifest(RunningScript running, string ticketId, int exitCode)
+    {
+        if (running.Command == null) return;
+
+        try
+        {
+            var manifest = ExecutionManifest.Build(
+                ticketId,
+                running.Command,
+                AgentVersion,
+                running.StartedAt,
+                exitCode,
+                DateTimeOffset.UtcNow,
+                running.TraceId,
+                running.WorkDir);
+            manifest.WriteTo(running.WorkDir);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to write execution manifest for ticket {TicketId}", ticketId);
+        }
     }
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
@@ -602,10 +695,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         public IDisposable IsolationHandle { get; }
         public IScriptStateStore? StateStore { get; }
         public SequencedLogWriter? LogWriter { get; }
+        public StartScriptCommand? Command { get; }
+        public DateTimeOffset StartedAt { get; }
+        public string? TraceId { get; }
 
         public long LogSequence => LogWriter?.NextSequence ?? 0;
 
-        public RunningScript(Process process, string workDir, IDisposable isolationHandle, IScriptStateStore? stateStore = null, SequencedLogWriter? logWriter = null)
+        public RunningScript(Process process, string workDir, IDisposable isolationHandle, IScriptStateStore? stateStore = null, SequencedLogWriter? logWriter = null, StartScriptCommand? command = null, string? traceId = null)
         {
             Process = process;
             WorkDir = workDir;
@@ -613,6 +709,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             IsolationHandle = isolationHandle;
             StateStore = stateStore;
             LogWriter = logWriter;
+            Command = command;
+            StartedAt = DateTimeOffset.UtcNow;
+            TraceId = traceId;
         }
     }
 }

@@ -1,3 +1,4 @@
+using Squid.Core.Observability;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -21,6 +22,7 @@ public sealed partial class ExecuteStepsPhase
 {
     private async Task<StepExecutionResult> ExecuteStepAcrossTargetsAsync(DeploymentStepDto step, int stepSortOrder, CancellationToken ct)
     {
+        using var stepSpan = DeploymentTracing.StartStep(step.Name, stepSortOrder);
         var stepResult = new StepExecutionResult();
 
         if (IsSyntheticStep(step))
@@ -180,6 +182,16 @@ public sealed partial class ExecuteStepsPhase
 
     private async Task<StepExecutionResult> ExecuteSingleTargetAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, DeploymentTargetContext tc, int stepSortOrder, CancellationToken ct)
     {
+        // Target-level span wraps the entire per-machine execution. If a transport
+        // exception escapes ExecuteActionResultsAsync, RecordException marks the
+        // span as Error; otherwise the span auto-completes at dispose with OK.
+        using var targetSpan = DeploymentTracing.StartTargetExecution(
+            step.Name,
+            eligibleActions.FirstOrDefault()?.Name ?? "-",
+            tc.Machine?.Id ?? 0,
+            tc.Machine?.Name ?? "unknown",
+            tc.CommunicationStyle.ToString());
+
         var targetRoles = DeploymentTargetFinder.ParseRoles(tc.Machine.Roles);
         var baseScopeContext = BuildTargetScopeContext(tc, targetRoles);
         var stepEffectiveVars = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, baseScopeContext);
@@ -202,7 +214,20 @@ public sealed partial class ExecuteStepsPhase
         var stepTimeout = StepTimeoutParser.ParseTimeout(step);
 
         var result = new StepExecutionResult { Executed = true };
-        await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, stepTimeout, ct).ConfigureAwait(false);
+        try
+        {
+            await ExecuteActionResultsAsync(actionResults, step, stepSortOrder, result, tc, stepTimeout, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            targetSpan?.RecordException(ex);
+            throw;
+        }
+
+        // Record final outcome on the target span so OTel backends can slice
+        // success/failure rates by machine and communication style.
+        if (result.Failed)
+            targetSpan?.SetStatus(System.Diagnostics.ActivityStatusCode.Error);
 
         return result;
     }

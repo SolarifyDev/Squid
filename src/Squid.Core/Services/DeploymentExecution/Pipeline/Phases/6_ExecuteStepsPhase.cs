@@ -1,3 +1,4 @@
+using Squid.Core.Observability;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.ExternalFeeds;
@@ -39,7 +40,24 @@ public sealed partial class ExecuteStepsPhase(
         foreach (var (batch, state) in ctx.ResumeBatchStates)
             _batchStates[batch] = state;
 
-        await ExecuteDeploymentStepsAsync(ct).ConfigureAwait(false);
+        // Root span for the entire deployment execution. Child spans (batch,
+        // step, target) attach automatically via System.Diagnostics.Activity's
+        // async-local parenting. If no OTel listener is registered, this is a
+        // cheap null — no allocation, no overhead.
+        using var deploymentSpan = DeploymentTracing.StartDeployment(
+            _ctx.ServerTaskId,
+            _ctx.Deployment?.Id ?? 0,
+            _ctx.Release?.Version ?? "unknown");
+
+        try
+        {
+            await ExecuteDeploymentStepsAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            deploymentSpan?.RecordException(ex);
+            throw;
+        }
     }
 
     private async Task ExecuteDeploymentStepsAsync(CancellationToken ct)
@@ -58,6 +76,8 @@ public sealed partial class ExecuteStepsPhase(
                 _currentBatchIndex++;
                 continue;
             }
+
+            using var batchSpan = DeploymentTracing.StartBatch(_currentBatchIndex);
 
             var batchEntries = batch.Select(step => (Step: step, SortOrder: stepSortOrderByStep[step])).ToList();
             var batchResults = batch.Count == 1
