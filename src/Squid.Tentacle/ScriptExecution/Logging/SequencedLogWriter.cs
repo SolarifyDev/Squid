@@ -1,5 +1,6 @@
 using System.Text;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.ScriptExecution.Masking;
 using Serilog;
 
 namespace Squid.Tentacle.ScriptExecution.Logging;
@@ -22,11 +23,14 @@ public sealed class SequencedLogWriter : IDisposable
 {
     private readonly FileStream _stream;
     private readonly StreamWriter _writer;
+    private readonly SensitiveValueMasker _masker;
     private readonly object _sync = new();
     private long _nextSequence;
     private int _disposed;
 
-    public SequencedLogWriter(string logFilePath)
+    public SequencedLogWriter(string logFilePath) : this(logFilePath, masker: null) { }
+
+    public SequencedLogWriter(string logFilePath, SensitiveValueMasker masker)
     {
         if (string.IsNullOrWhiteSpace(logFilePath))
             throw new ArgumentException("Log file path required", nameof(logFilePath));
@@ -38,6 +42,7 @@ public sealed class SequencedLogWriter : IDisposable
         _nextSequence = DetermineStartSequence(logFilePath);
         _stream = new FileStream(logFilePath, FileMode.Append, FileAccess.Write, FileShare.Read, bufferSize: 4096, FileOptions.WriteThrough);
         _writer = new StreamWriter(_stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        _masker = masker;
     }
 
     public long NextSequence
@@ -49,10 +54,12 @@ public sealed class SequencedLogWriter : IDisposable
     {
         if (text == null) throw new ArgumentNullException(nameof(text));
 
+        var masked = _masker != null ? _masker.Mask(text) : text;
+
         lock (_sync)
         {
             var seq = _nextSequence++;
-            var entry = new SequencedLogEntry(seq, occurred ?? DateTimeOffset.UtcNow, source, text);
+            var entry = new SequencedLogEntry(seq, occurred ?? DateTimeOffset.UtcNow, source, masked);
             _writer.Write(SequencedLogFormat.Encode(entry));
             _writer.Write(SequencedLogFormat.LineSeparator);
             _writer.Flush();

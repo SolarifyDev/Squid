@@ -1,6 +1,7 @@
 using Shouldly;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.ScriptExecution.Logging;
+using Squid.Tentacle.ScriptExecution.Masking;
 using Squid.Tentacle.Tests.Support;
 using Xunit;
 
@@ -167,6 +168,28 @@ public sealed class SequencedLogTests : IDisposable
     // ========================================================================
     // Integration scenario — the exact "agent restart" behaviour we want
     // ========================================================================
+
+    [Fact]
+    public void Writer_WithMasker_WritesMaskedPayload_SensitiveValueNeverOnDisk()
+    {
+        var masker = new SensitiveValueMasker(new[] { "super-secret-pw-123" });
+        using (var writer = new SequencedLogWriter(_logPath, masker))
+        {
+            writer.Append(ProcessOutputSource.StdOut, "connecting with super-secret-pw-123 to db");
+            writer.Append(ProcessOutputSource.StdErr, "failure: super-secret-pw-123 rejected");
+        }
+
+        // The on-disk log must never contain the raw secret — end-to-end proof
+        // that the masker is applied before fsync, not only at read time.
+        var raw = File.ReadAllText(_logPath);
+        raw.ShouldNotContain("super-secret-pw-123");
+
+        // Reader returns masked entries.
+        var reader = new SequencedLogReader(_logPath);
+        var entries = reader.ReadFrom(afterSequence: -1);
+        entries.ShouldAllBe(e => e.Text.Contains("***"));
+        entries.ShouldAllBe(e => !e.Text.Contains("super-secret-pw-123"));
+    }
 
     [Fact]
     public void AgentRestartScenario_LogsBeforeCrashArePreserved_ServerSeesThemOnResume()
