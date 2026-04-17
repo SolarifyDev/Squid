@@ -191,7 +191,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<SensitiveValueMasker>(),
-                It.IsAny<ScriptStatusResponse>()))
+                It.IsAny<ScriptStatusResponse>(),
+                It.IsAny<global::Halibut.ServiceEndPoint>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -213,7 +214,8 @@ public class HalibutMachineExecutionStrategyTests
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
             It.IsAny<SensitiveValueMasker>(),
-            It.IsAny<ScriptStatusResponse>()), Times.Once);
+            It.IsAny<ScriptStatusResponse>(),
+            It.IsAny<global::Halibut.ServiceEndPoint>()), Times.Once);
     }
 
     [Fact]
@@ -236,7 +238,8 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<SensitiveValueMasker>(),
-                It.IsAny<ScriptStatusResponse>()))
+                It.IsAny<ScriptStatusResponse>(),
+                It.IsAny<global::Halibut.ServiceEndPoint>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -257,7 +260,8 @@ public class HalibutMachineExecutionStrategyTests
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
             It.IsAny<SensitiveValueMasker>(),
-            It.IsAny<ScriptStatusResponse>()), Times.Once);
+            It.IsAny<ScriptStatusResponse>(),
+            It.IsAny<global::Halibut.ServiceEndPoint>()), Times.Once);
     }
 
     // === Request Timeout Override ===

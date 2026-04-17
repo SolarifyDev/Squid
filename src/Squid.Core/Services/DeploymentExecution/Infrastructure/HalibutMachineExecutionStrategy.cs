@@ -47,9 +47,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         {
             ScriptExecutionResult result;
             if (plan is PackagedPayloadExecutionPlan packagedPlan)
-                result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, ct).ConfigureAwait(false);
+                result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, endpoint, ct).ConfigureAwait(false);
             else
-                result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, ct).ConfigureAwait(false);
+                result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, endpoint, ct).ConfigureAwait(false);
 
             breaker?.RecordSuccess();
             return result;
@@ -71,7 +71,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     private async Task<ScriptExecutionResult> ExecuteCalamariViaHalibutAsync(
-        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
+        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var payload = _payloadBuilder.Build(request, request.Syntax);
@@ -112,11 +112,11 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
-        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
+        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var (variableBytes, sensitiveBytes, password) =
@@ -147,7 +147,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Starting direct script on agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(
