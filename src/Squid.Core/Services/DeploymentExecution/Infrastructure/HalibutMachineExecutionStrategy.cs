@@ -1,5 +1,6 @@
 using Halibut;
 using Halibut.Diagnostics;
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -13,13 +14,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
+    private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
     private readonly TimeSpan _defaultScriptTimeout;
 
-    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer, HalibutSetting halibutSetting)
+    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer, HalibutSetting halibutSetting, IMachineCircuitBreakerRegistry breakerRegistry = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
+        _breakerRegistry = breakerRegistry;
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -31,16 +34,44 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         if (endpoint == null)
             throw new Exceptions.DeploymentEndpointException(request.Machine.Name);
 
+        // Fail-fast when the machine's breaker is open: the recent history says the
+        // agent is unreachable, so don't burn a full script timeout re-discovering
+        // that. The breaker is recorded/updated inside ExecuteWithBreakerAsync so
+        // the success/failure of *this* call feeds back into the state machine.
+        var breaker = _breakerRegistry?.GetOrCreate(request.Machine.Id);
+        breaker?.ThrowIfOpen();
+
         var scriptClient = _halibutClientFactory.CreateClient(endpoint);
 
-        if (plan is PackagedPayloadExecutionPlan packagedPlan)
-            return await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, ct).ConfigureAwait(false);
+        try
+        {
+            ScriptExecutionResult result;
+            if (plan is PackagedPayloadExecutionPlan packagedPlan)
+                result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, endpoint, ct).ConfigureAwait(false);
+            else
+                result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, endpoint, ct).ConfigureAwait(false);
 
-        return await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, ct).ConfigureAwait(false);
+            breaker?.RecordSuccess();
+            return result;
+        }
+        catch (HalibutClientException)
+        {
+            breaker?.RecordFailure();
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            breaker?.RecordFailure();
+            throw;
+        }
     }
 
     private async Task<ScriptExecutionResult> ExecuteCalamariViaHalibutAsync(
-        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
+        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var payload = _payloadBuilder.Build(request, request.Syntax);
@@ -59,30 +90,33 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
+            scriptTicket,
             scriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
             null,
             Array.Empty<string>(),
             ticketId,
+            TimeSpan.Zero,
             scriptFiles)
         {
             ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("[Deploy] Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, ticket);
+            request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
-        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, CancellationToken ct)
+        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var (variableBytes, sensitiveBytes, password) =
@@ -91,26 +125,29 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
+            scriptTicket,
             request.ScriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
             null,
             Array.Empty<string>(),
             ticketId,
+            TimeSpan.Zero,
             scriptFiles)
         {
             ScriptSyntax = MapSyntax(request.Syntax),
             TargetNamespace = request.TargetNamespace
         };
 
-        var ticket = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("[Deploy] Starting direct script on agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, ticket);
+            request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, ticket, scriptTimeout, ct, request.Masker).ConfigureAwait(false);
+        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
     }
 
     private static ScriptFile[] BuildDirectScriptFiles(

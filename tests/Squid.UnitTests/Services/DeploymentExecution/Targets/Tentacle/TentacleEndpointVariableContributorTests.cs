@@ -69,4 +69,68 @@ public class TentacleEndpointVariableContributorTests
         refs.ShouldNotBeNull();
         refs.References.ShouldBeEmpty();
     }
+
+    // ========== Phase 3: runtime capabilities enrichment ==========
+
+    [Fact]
+    public void ContributeVariables_WithCacheHit_AddsOsAndShellVariables()
+    {
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        cache.Store(123, new Dictionary<string, string>
+        {
+            ["os"] = "Windows",
+            ["defaultShell"] = "pwsh",
+            ["installedShells"] = "pwsh,powershell",
+            ["architecture"] = "X64"
+        }, agentVersion: "3.1.0");
+
+        var contributor = new TentacleEndpointVariableContributor(cache);
+        var context = new EndpointContext
+        {
+            EndpointJson = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"AA"}""",
+            MachineId = 123
+        };
+
+        var vars = contributor.ContributeVariables(context);
+
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.OS" && v.Value == "Windows");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.DefaultShell" && v.Value == "pwsh");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.InstalledShells" && v.Value == "pwsh,powershell");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.Architecture" && v.Value == "X64");
+        vars.ShouldContain(v => v.Name == "Squid.Tentacle.AgentVersion" && v.Value == "3.1.0");
+    }
+
+    [Fact]
+    public void ContributeVariables_CacheMiss_DoesNotContributeRuntimeVars()
+    {
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        var contributor = new TentacleEndpointVariableContributor(cache);
+        var context = new EndpointContext
+        {
+            EndpointJson = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"AA"}""",
+            MachineId = 999   // not in cache
+        };
+
+        var vars = contributor.ContributeVariables(context);
+
+        vars.ShouldNotContain(v => v.Name == "Squid.Tentacle.OS");
+        vars.ShouldNotContain(v => v.Name == "Squid.Tentacle.DefaultShell");
+    }
+
+    [Fact]
+    public void ContributeVariables_NullMachineId_SkipsRuntimeCaps()
+    {
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        cache.Store(1, new Dictionary<string, string> { ["os"] = "Linux" }, "1.0");
+        var contributor = new TentacleEndpointVariableContributor(cache);
+        var context = new EndpointContext
+        {
+            EndpointJson = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"AA"}"""
+            // MachineId intentionally null
+        };
+
+        var vars = contributor.ContributeVariables(context);
+
+        vars.ShouldNotContain(v => v.Name == "Squid.Tentacle.OS");
+    }
 }

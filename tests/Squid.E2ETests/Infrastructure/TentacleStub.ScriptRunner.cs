@@ -17,9 +17,16 @@ public partial class TentacleStub
             _kubeconfigPath = kubeconfigPath;
         }
 
-        public ScriptTicket StartScript(StartScriptCommand command)
+        public ScriptStatusResponse StartScript(StartScriptCommand command)
         {
-            var ticketId = Guid.NewGuid().ToString("N");
+            if (command.ScriptTicket == null)
+                throw new ArgumentException("StartScriptCommand.ScriptTicket is required", nameof(command));
+
+            var ticketId = command.ScriptTicket.TaskId;
+
+            if (_scripts.ContainsKey(ticketId))
+                return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
+
             var workDir = Path.Combine(Path.GetTempPath(), $"tentacle-stub-{ticketId}");
             Directory.CreateDirectory(workDir);
 
@@ -32,7 +39,7 @@ public partial class TentacleStub
             BeginReadOutput(process, running);
             _scripts[ticketId] = running;
 
-            return new ScriptTicket(ticketId);
+            return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         }
 
         public ScriptStatusResponse GetStatus(ScriptStatusRequest request)

@@ -6,22 +6,62 @@ using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
+using Squid.Tentacle.Observability;
+using Squid.Tentacle.ScriptExecution.Logging;
+using Squid.Tentacle.ScriptExecution.State;
+using Squid.Tentacle.Security.Admission;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware
+public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
+    public bool IsRunningScript(string ticketId)
+        => !string.IsNullOrEmpty(ticketId) && _scripts.ContainsKey(ticketId);
+
+
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
+    private readonly IScriptStateStoreFactory _stateStoreFactory;
+    private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;
     private DateTimeOffset _lastCleanupTime = DateTimeOffset.MinValue;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan OrphanMaxAge = TimeSpan.FromHours(24);
+    private static readonly string AgentVersion =
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
-    public ScriptTicket StartScript(StartScriptCommand command)
+    public LocalScriptService() : this(new ScriptStateStoreFactory()) { }
+
+    public LocalScriptService(IScriptStateStoreFactory stateStoreFactory, IAdmissionPolicySource? admissionPolicySource = null)
+    {
+        _stateStoreFactory = stateStoreFactory ?? throw new ArgumentNullException(nameof(stateStoreFactory));
+        _admissionPolicySource = admissionPolicySource;
+    }
+
+    public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
         if (_draining)
             throw new InvalidOperationException("Tentacle is shutting down and cannot accept new scripts");
+
+        if (command.ScriptTicket == null)
+            throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
+
+        var ticketId = command.ScriptTicket.TaskId;
+
+        // Admission policy is the agent-side last-line-of-defence. It runs before
+        // any idempotency lookup so even a redelivered StartScript is re-evaluated
+        // against the current policy (the rules may have tightened since the
+        // original submission). Denial returns -403 and never touches the workspace.
+        if (TryEvaluateAdmission(command, out var denial))
+            return denial!;
+
+        if (TryReturnInMemoryStatus(command.ScriptTicket, out var inMemoryResponse))
+            return inMemoryResponse!;
+
+        var workDir = ResolveWorkDir(ticketId);
+
+        if (TryReturnPersistedStatus(command.ScriptTicket, workDir, out var persistedResponse))
+            return persistedResponse!;
 
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(Path.GetTempPath());
         CleanupOrphanedWorkspacesIfDue();
@@ -31,49 +71,218 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
 
-        var ticketId = Guid.NewGuid().ToString("N");
-        var workDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
         Directory.CreateDirectory(workDir);
         SetDirectoryPermissions(workDir);
+
+        var stateStore = _stateStoreFactory.Create(workDir);
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Starting,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
 
         var syntax = command.ScriptSyntax;
         WriteScriptFile(workDir, command.ScriptBody, syntax);
         WriteAdditionalFiles(workDir, command.Files);
 
         var process = StartProcess(workDir, command);
-        var running = new RunningScript(process, workDir, isolationHandle);
+        var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
+        var traceId = ResolveParentTraceId(command);
+        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
 
         BeginReadOutput(process, running);
         _scripts[ticketId] = running;
 
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Running,
+            ProcessId = process.Id,
+            CreatedAt = DateTimeOffset.UtcNow,
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
         Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
 
-        return new ScriptTicket(ticketId);
+        WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
+
+        return BuildStatus(command.ScriptTicket, running);
+    }
+
+    private static string? ResolveParentTraceId(StartScriptCommand command)
+    {
+        // Server propagates W3C traceparent through command metadata when present.
+        // We don't currently transport it over the wire (ScriptExecutionTrace is
+        // ready for it once StartScriptCommand gains a TraceContext field). For
+        // now, fall back to Activity.Current?.TraceId which will be set when the
+        // agent itself happens to be running inside a traced context.
+        return Activity.Current?.TraceId.ToString();
+    }
+
+    private bool TryEvaluateAdmission(StartScriptCommand command, out ScriptStatusResponse? denial)
+    {
+        denial = null;
+        var policy = _admissionPolicySource?.Current;
+        if (policy == null || policy.Rules.Count == 0) return false;
+
+        AdmissionDecision decision;
+        try
+        {
+            decision = policy.Evaluate(new AdmissionContext(
+                command.ScriptBody,
+                command.Isolation.ToString(),
+                command.IsolationMutexName));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Admission policy evaluation failed; failing closed (denying script)");
+            denial = BuildAdmissionDenial(command.ScriptTicket, "policy-eval-error",
+                "admission policy evaluation failed — agent fails closed to avoid running unreviewed scripts");
+            return true;
+        }
+
+        if (decision.Allowed) return false;
+
+        Log.Warning("Admission denied for ticket {TicketId} by rule {RuleId}: {Reason}",
+            command.ScriptTicket.TaskId, decision.RuleId, decision.Reason);
+        denial = BuildAdmissionDenial(command.ScriptTicket, decision.RuleId ?? "unknown", decision.Reason ?? "denied");
+        return true;
+    }
+
+    private static ScriptStatusResponse BuildAdmissionDenial(ScriptTicket ticket, string ruleId, string reason)
+    {
+        return new ScriptStatusResponse(ticket, ProcessState.Complete, -403,
+            new List<ProcessOutput>
+            {
+                new(ProcessOutputSource.StdErr, $"Admission denied by rule '{ruleId}': {reason}")
+            },
+            0);
+    }
+
+    private bool TryReturnInMemoryStatus(ScriptTicket ticket, out ScriptStatusResponse? response)
+    {
+        response = null;
+        if (!_scripts.TryGetValue(ticket.TaskId, out var existing)) return false;
+        response = BuildStatus(ticket, existing);
+        return true;
+    }
+
+    private bool TryReturnPersistedStatus(ScriptTicket ticket, string workDir, out ScriptStatusResponse? response)
+    {
+        response = null;
+
+        var stateStore = _stateStoreFactory.Create(workDir);
+        if (!stateStore.Exists()) return false;
+
+        ScriptState state;
+        try { state = stateStore.Load(); }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "State file at {WorkDir} exists but is unreadable — treating as missing", workDir);
+            return false;
+        }
+
+        if (!state.HasStarted()) return false;
+
+        Log.Information("Redelivered StartScript for ticket {TicketId} — returning persisted state {Progress}",
+            ticket.TaskId, state.Progress);
+
+        response = BuildStatusFromPersistedState(ticket, state);
+        return true;
+    }
+
+    private static ScriptStatusResponse BuildStatusFromPersistedState(ScriptTicket ticket, ScriptState state)
+    {
+        var processState = state.Progress == ScriptProgress.Complete
+            ? ProcessState.Complete
+            : ProcessState.Running;
+        var exitCode = state.ExitCode ?? 0;
+
+        return new ScriptStatusResponse(ticket, processState, exitCode, new List<ProcessOutput>(), state.NextLogSequence);
+    }
+
+    private static string ResolveWorkDir(string ticketId)
+        => Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
+
+    private static void WaitForEarlyCompletion(RunningScript running, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return;
+        try { running.Process.WaitForExit(duration); }
+        catch { /* Best-effort early return — polling will catch final state */ }
+    }
+
+    private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
+    {
+        var logs = ReadLogs(running, afterSequence);
+        var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
+        var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
+
+        return new ScriptStatusResponse(ticket, state, exitCode, logs, running.LogWriter?.NextSequence ?? 0);
     }
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
-        if (!_scripts.TryGetValue(request.Ticket.TaskId, out var running))
-            return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
+        if (_scripts.TryGetValue(request.Ticket.TaskId, out var running))
+            return BuildStatus(request.Ticket, running, request.LastLogSequence - 1);
 
-        var logs = DrainLogs(running);
-        var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
-        var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
+        var workDir = ResolveWorkDir(request.Ticket.TaskId);
 
-        return new ScriptStatusResponse(request.Ticket, state, exitCode, logs, running.LogSequence);
+        if (TryBuildStatusFromPersistedLogs(request.Ticket, workDir, request.LastLogSequence, out var persisted))
+            return persisted!;
+
+        return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
+    }
+
+    private bool TryBuildStatusFromPersistedLogs(ScriptTicket ticket, string workDir, long lastSeq, out ScriptStatusResponse? response)
+    {
+        response = null;
+
+        var stateStore = _stateStoreFactory.Create(workDir);
+        if (!stateStore.Exists()) return false;
+
+        ScriptState state;
+        try { state = stateStore.Load(); }
+        catch { return false; }
+
+        var logReader = new SequencedLogReader(Path.Combine(workDir, "output.log"));
+        var entries = logReader.ReadFrom(lastSeq - 1);
+        var logs = entries.Select(e => e.ToProcessOutput()).ToList();
+
+        var processState = state.IsComplete() ? ProcessState.Complete : ProcessState.Running;
+        var exitCode = state.ExitCode ?? 0;
+        var nextSeq = state.NextLogSequence > 0
+            ? state.NextLogSequence
+            : Math.Max(0, logReader.GetHighestSequence() + 1);
+
+        response = new ScriptStatusResponse(ticket, processState, exitCode, logs, nextSeq);
+        return true;
     }
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
     {
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
+        {
+            var workDir = ResolveWorkDir(command.Ticket.TaskId);
+            DeletePersistedStateIfAny(workDir);
             return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
+        }
 
         if (!running.Process.HasExited)
             running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
-        var logs = DrainLogs(running);
+        var logs = ReadLogs(running, command.LastLogSequence - 1);
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
+        PersistCompleteState(running, exitCode);
+
+        // Write the execution manifest BEFORE workspace cleanup so the audit
+        // artifact is guaranteed to hit disk even if cleanup aborts. The manifest
+        // is useful to operators doing post-mortems even after the workspace
+        // itself is gone — it gets copied out to a durable archive externally.
+        WriteExecutionManifest(running, command.Ticket.TaskId, exitCode);
+
+        running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
@@ -81,10 +290,37 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
     }
 
+    private static void WriteExecutionManifest(RunningScript running, string ticketId, int exitCode)
+    {
+        if (running.Command == null) return;
+
+        try
+        {
+            var manifest = ExecutionManifest.Build(
+                ticketId,
+                running.Command,
+                AgentVersion,
+                running.StartedAt,
+                exitCode,
+                DateTimeOffset.UtcNow,
+                running.TraceId,
+                running.WorkDir);
+            manifest.WriteTo(running.WorkDir);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to write execution manifest for ticket {TicketId}", ticketId);
+        }
+    }
+
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
+        {
+            var workDir = ResolveWorkDir(command.Ticket.TaskId);
+            DeletePersistedStateIfAny(workDir);
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
+        }
 
         try
         {
@@ -96,13 +332,48 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             Log.Warning(ex, "Failed to kill process for ticket {TicketId}", command.Ticket.TaskId);
         }
 
-        var logs = DrainLogs(running);
+        var logs = ReadLogs(running, command.LastLogSequence - 1);
 
+        PersistCompleteState(running, ScriptExitCodes.Canceled);
+
+        running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
+    }
+
+    private static void PersistCompleteState(RunningScript running, int exitCode)
+    {
+        if (running.StateStore == null) return;
+
+        try
+        {
+            var existing = running.StateStore.Exists() ? running.StateStore.Load() : new ScriptState();
+            existing.Progress = ScriptProgress.Complete;
+            existing.ExitCode = exitCode;
+            existing.CompletedAt = DateTimeOffset.UtcNow;
+            existing.NextLogSequence = running.LogSequence;
+            running.StateStore.Save(existing);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to persist complete state for {WorkDir}", running.WorkDir);
+        }
+    }
+
+    private void DeletePersistedStateIfAny(string workDir)
+    {
+        try
+        {
+            var store = _stateStoreFactory.Create(workDir);
+            if (store.Exists()) store.Delete();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to delete persisted state for {WorkDir}", workDir);
+        }
     }
 
     public async Task WaitForDrainAsync(TimeSpan timeout)
@@ -326,53 +597,28 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     {
         process.OutputDataReceived += (_, e) =>
         {
-            if (e.Data != null)
-            {
-                var parsed = PodLogLineParser.Parse(e.Data);
-                var output = new ProcessOutput(parsed.Source, parsed.Text);
-                running.OutputQueue.Enqueue(output);
-                AppendToLogFile(running.LogFilePath, output);
-            }
+            if (e.Data == null || running.LogWriter == null) return;
+            var parsed = PodLogLineParser.Parse(e.Data);
+            running.LogWriter.Append(parsed.Source, parsed.Text);
         };
 
         process.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data != null)
-            {
-                var output = new ProcessOutput(ProcessOutputSource.StdErr, e.Data);
-                running.OutputQueue.Enqueue(output);
-                AppendToLogFile(running.LogFilePath, output);
-            }
+            if (e.Data == null || running.LogWriter == null) return;
+            running.LogWriter.Append(ProcessOutputSource.StdErr, e.Data);
         };
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
     }
 
-    private static void AppendToLogFile(string logFilePath, ProcessOutput output)
+    private static List<ProcessOutput> ReadLogs(RunningScript running, long afterSequence)
     {
-        try
-        {
-            var line = $"[{output.Source}] {output.Text}";
-            File.AppendAllText(logFilePath, line + Environment.NewLine);
-        }
-        catch
-        {
-            // Best-effort log persistence
-        }
-    }
+        if (running.LogWriter == null) return new List<ProcessOutput>();
 
-    private static List<ProcessOutput> DrainLogs(RunningScript running)
-    {
-        var logs = new List<ProcessOutput>();
-
-        while (running.OutputQueue.TryDequeue(out var output))
-        {
-            logs.Add(output);
-            running.LogSequence++;
-        }
-
-        return logs;
+        var reader = new SequencedLogReader(running.LogFilePath);
+        var entries = reader.ReadFrom(afterSequence);
+        return entries.Select(e => e.ToProcessOutput()).ToList();
     }
 
     // ========================================================================
@@ -447,15 +693,25 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         public string WorkDir { get; }
         public string LogFilePath { get; }
         public IDisposable IsolationHandle { get; }
-        public ConcurrentQueue<ProcessOutput> OutputQueue { get; } = new();
-        public long LogSequence { get; set; }
+        public IScriptStateStore? StateStore { get; }
+        public SequencedLogWriter? LogWriter { get; }
+        public StartScriptCommand? Command { get; }
+        public DateTimeOffset StartedAt { get; }
+        public string? TraceId { get; }
 
-        public RunningScript(Process process, string workDir, IDisposable isolationHandle)
+        public long LogSequence => LogWriter?.NextSequence ?? 0;
+
+        public RunningScript(Process process, string workDir, IDisposable isolationHandle, IScriptStateStore? stateStore = null, SequencedLogWriter? logWriter = null, StartScriptCommand? command = null, string? traceId = null)
         {
             Process = process;
             WorkDir = workDir;
             LogFilePath = Path.Combine(workDir, "output.log");
             IsolationHandle = isolationHandle;
+            StateStore = stateStore;
+            LogWriter = logWriter;
+            Command = command;
+            StartedAt = DateTimeOffset.UtcNow;
+            TraceId = traceId;
         }
     }
 }

@@ -1,0 +1,60 @@
+name: Tentacle Windows E2E
+
+# Windows runners are billed at 2x on GHA; running this on every PR would burn
+# most of the Team-plan 3000-minute budget. Run nightly + on merge to main, and
+# expose workflow_dispatch so a developer can trigger an on-demand Windows run
+# before a risky PR.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"    # 09:00 UTC daily
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "xUnit --filter argument (default runs the full Windows E2E suite)"
+        required: false
+        default: "Category=WindowsTentacleE2E"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-tentacle-e2e:
+    name: Windows Tentacle End-to-End
+    runs-on: windows-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        shell: pwsh
+        run: dotnet nuget disable source SJ.Nuget --configfile "$env:NUGET_CONFIG"
+
+      - name: Confirm PowerShell runtimes present
+        shell: pwsh
+        run: |
+          Write-Host "pwsh: $(pwsh -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
+          Write-Host "powershell: $(powershell -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Windows-specific Tentacle tests
+        shell: pwsh
+        run: |
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsTentacleE2E" }
+          dotnet test tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj `
+            --configuration Release --no-restore `
+            --filter $filter `
+            --logger "console;verbosity=normal"

@@ -63,7 +63,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo hello");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
         Directory.Exists(workDir).ShouldBeTrue();
@@ -75,7 +75,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo hello world");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         var scriptPath = Path.Combine(_tempWorkspace, ticket.TaskId, "script.sh");
         File.Exists(scriptPath).ShouldBeTrue();
@@ -98,8 +98,8 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var ticket1 = service.StartScript(MakeCommand("echo 1"));
-        var ticket2 = service.StartScript(MakeCommand("echo 2"));
+        var ticket1 = service.StartScript(MakeCommand("echo 1")).Ticket;
+        var ticket2 = service.StartScript(MakeCommand("echo 2")).Ticket;
 
         ticket1.TaskId.ShouldNotBe(ticket2.TaskId);
     }
@@ -113,7 +113,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_MapsPodPhaseToProcessState(string phase, ProcessState expectedState)
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase(phase);
         SetupPodLogs("");
@@ -127,7 +127,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_PodNotFound_ReturnsComplete()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
             .Throws(new k8s.Autorest.HttpOperationException
@@ -157,7 +157,7 @@ public class ScriptPodServiceTests : IDisposable
     public void CompleteScript_DeletesPod()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo done"));
+        var ticket = service.StartScript(MakeCommand("echo done")).Ticket;
 
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
@@ -172,7 +172,7 @@ public class ScriptPodServiceTests : IDisposable
     public void CompleteScript_CleansUpWorkspace()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo done"));
+        var ticket = service.StartScript(MakeCommand("echo done")).Ticket;
 
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
@@ -190,7 +190,7 @@ public class ScriptPodServiceTests : IDisposable
     public void CancelScript_DeletesPodAndReturnsCanceledCode()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("sleep 999"));
+        var ticket = service.StartScript(MakeCommand("sleep 999")).Ticket;
 
         var status = service.CancelScript(new CancelScriptCommand(ticket, 0));
 
@@ -215,7 +215,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_EosMarkerInLogs_ReturnsCompleteEarly()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
         var ctx = service.ActiveScripts[ticket.TaskId];
 
         SetupPodPhase("Running");
@@ -234,7 +234,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_NoEosMarker_FallsBackToPodPhase()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase("Running");
         SetupPodLogs("just output\n");
@@ -248,7 +248,7 @@ public class ScriptPodServiceTests : IDisposable
     public void StartScript_WrapsScriptWithEosMarker()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo hello"));
+        var ticket = service.StartScript(MakeCommand("echo hello")).Ticket;
 
         var scriptPath = Path.Combine(_tempWorkspace, ticket.TaskId, "script.sh");
         var content = File.ReadAllText(scriptPath);
@@ -265,7 +265,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_LogTruncation_ResetsReadPosition()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase("Running");
 
@@ -285,7 +285,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_LogTruncation_TerminalPod_InjectsWarning()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase("Running");
 
@@ -307,7 +307,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_NoTruncation_NormalBehavior()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase("Running");
 
@@ -399,7 +399,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeIsolatedCommand("echo isolated", "test-mutex");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         ticket.ShouldNotBeNull();
         service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
@@ -411,8 +411,8 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeIsolatedCommand("echo first", "blocking-mutex");
 
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
@@ -426,7 +426,7 @@ public class ScriptPodServiceTests : IDisposable
         var command = MakeIsolatedCommand("echo first", "status-mutex");
 
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         var status = service.GetStatus(new ScriptStatusRequest(ticket2, 0));
 
@@ -449,8 +449,8 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeIsolatedCommand("echo test", "release-mutex");
 
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -475,7 +475,7 @@ public class ScriptPodServiceTests : IDisposable
         var command = MakeIsolatedCommand("echo test", "cancel-pending-mutex");
 
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -493,8 +493,8 @@ public class ScriptPodServiceTests : IDisposable
         var commandA = MakeIsolatedCommand("echo a", "mutex-a");
         var commandB = MakeIsolatedCommand("echo b", "mutex-b");
 
-        var ticket1 = service.StartScript(commandA);
-        var ticket2 = service.StartScript(commandB);
+        var ticket1 = service.StartScript(commandA).Ticket;
+        var ticket2 = service.StartScript(commandB).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
         service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
@@ -518,8 +518,8 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeIsolatedCommand("echo cancel", "cancel-mutex");
 
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -534,8 +534,8 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var ticket1 = service.StartScript(MakeCommand("echo 1"));
-        var ticket2 = service.StartScript(MakeCommand("echo 2"));
+        var ticket1 = service.StartScript(MakeCommand("echo 1")).Ticket;
+        var ticket2 = service.StartScript(MakeCommand("echo 2")).Ticket;
 
         ticket1.TaskId.ShouldNotBe(ticket2.TaskId);
         service.ActiveScripts.Count.ShouldBe(2);
@@ -550,8 +550,8 @@ public class ScriptPodServiceTests : IDisposable
         var writer = MakeIsolatedCommand("echo writer", "mixed-mutex");
         var reader = MakeCommand("echo reader", "mixed-mutex");
 
-        var ticket1 = service.StartScript(writer);
-        var ticket2 = service.StartScript(reader);
+        var ticket1 = service.StartScript(writer).Ticket;
+        var ticket2 = service.StartScript(reader).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
@@ -564,8 +564,8 @@ public class ScriptPodServiceTests : IDisposable
         var reader = MakeCommand("echo reader", "mixed-mutex-2");
         var writer = MakeIsolatedCommand("echo writer", "mixed-mutex-2");
 
-        var ticket1 = service.StartScript(reader);
-        var ticket2 = service.StartScript(writer);
+        var ticket1 = service.StartScript(reader).Ticket;
+        var ticket2 = service.StartScript(writer).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeTrue();
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
@@ -576,9 +576,9 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var ticket1 = service.StartScript(MakeCommand("echo 1", "parallel-mutex"));
-        var ticket2 = service.StartScript(MakeCommand("echo 2", "parallel-mutex"));
-        var ticket3 = service.StartScript(MakeCommand("echo 3", "parallel-mutex"));
+        var ticket1 = service.StartScript(MakeCommand("echo 1", "parallel-mutex")).Ticket;
+        var ticket2 = service.StartScript(MakeCommand("echo 2", "parallel-mutex")).Ticket;
+        var ticket3 = service.StartScript(MakeCommand("echo 3", "parallel-mutex")).Ticket;
 
         service.ActiveScripts.Count.ShouldBe(3);
         service.PendingScripts.ShouldBeEmpty();
@@ -591,8 +591,8 @@ public class ScriptPodServiceTests : IDisposable
         var writer = MakeIsolatedCommand("echo writer", "unblock-mutex");
         var reader = MakeCommand("echo reader", "unblock-mutex");
 
-        var ticket1 = service.StartScript(writer);
-        var ticket2 = service.StartScript(reader);
+        var ticket1 = service.StartScript(writer).Ticket;
+        var ticket2 = service.StartScript(reader).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -617,10 +617,10 @@ public class ScriptPodServiceTests : IDisposable
         var reader2 = MakeCommand("echo reader2", "batch-mutex");
         var reader3 = MakeCommand("echo reader3", "batch-mutex");
 
-        var writerTicket = service.StartScript(writer);
-        var readerTicket1 = service.StartScript(reader1);
-        var readerTicket2 = service.StartScript(reader2);
-        var readerTicket3 = service.StartScript(reader3);
+        var writerTicket = service.StartScript(writer).Ticket;
+        var readerTicket1 = service.StartScript(reader1).Ticket;
+        var readerTicket2 = service.StartScript(reader2).Ticket;
+        var readerTicket3 = service.StartScript(reader3).Ticket;
 
         service.ActiveScripts.Count.ShouldBe(1);
         service.PendingScripts.Count.ShouldBe(3);
@@ -646,9 +646,9 @@ public class ScriptPodServiceTests : IDisposable
         var writer2 = MakeIsolatedCommand("echo writer2", "serial-mutex");
         var reader = MakeCommand("echo reader", "serial-mutex");
 
-        var ticket1 = service.StartScript(writer1);
-        var ticket2 = service.StartScript(writer2);
-        var ticket3 = service.StartScript(reader);
+        var ticket1 = service.StartScript(writer1).Ticket;
+        var ticket2 = service.StartScript(writer2).Ticket;
+        var ticket3 = service.StartScript(reader).Ticket;
 
         service.ActiveScripts.Count.ShouldBe(1);
         service.PendingScripts.Count.ShouldBe(2);
@@ -669,9 +669,9 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeIsolatedCommand("echo serial", "sequential-mutex");
 
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
-        var ticket3 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
+        var ticket3 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.ActiveScripts.Count.ShouldBe(1);
         service.PendingScripts.Count.ShouldBe(2);
@@ -708,7 +708,7 @@ public class ScriptPodServiceTests : IDisposable
     public void LaunchScript_WritesStateFile()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo hello"));
+        var ticket = service.StartScript(MakeCommand("echo hello")).Ticket;
 
         var statePath = Path.Combine(_tempWorkspace, ticket.TaskId, ".squid-state.json");
         File.Exists(statePath).ShouldBeTrue();
@@ -724,7 +724,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
         var command = MakeIsolatedCommand("echo test", "state-mutex");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         var state = ScriptStateFile.TryRead(Path.Combine(_tempWorkspace, ticket.TaskId));
         state.ShouldNotBeNull();
@@ -736,7 +736,7 @@ public class ScriptPodServiceTests : IDisposable
     public void CompleteScript_DeletesStateFile()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo done"));
+        var ticket = service.StartScript(MakeCommand("echo done")).Ticket;
 
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
@@ -771,8 +771,8 @@ public class ScriptPodServiceTests : IDisposable
         var service = new ScriptPodService(_tentacleSettings, settings, podManager);
 
         var command = MakeIsolatedCommand("echo test", "timeout-mutex");
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -791,7 +791,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "within-timeout-mutex");
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -814,7 +814,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var podManager = new KubernetesPodManager(ops.Object, _kubernetesSettings);
         var service = new ScriptPodService(_tentacleSettings, _kubernetesSettings, podManager);
-        var ticket = service.StartScript(MakeCommand("echo fail"));
+        var ticket = service.StartScript(MakeCommand("echo fail")).Ticket;
 
         // Should not be in active scripts (launch failed)
         service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeFalse();
@@ -848,11 +848,11 @@ public class ScriptPodServiceTests : IDisposable
         var command = MakeIsolatedCommand("echo test", "fail-release-mutex");
 
         // First script fails during launch
-        var ticket1 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
         service.ActiveScripts.ContainsKey(ticket1.TaskId).ShouldBeFalse();
 
         // Second script should acquire mutex and launch successfully (mutex was released)
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
         service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
         service.PendingScripts.ShouldBeEmpty();
     }
@@ -881,7 +881,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo metrics");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
         SetupPodLogs("");
@@ -901,7 +901,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo cancel");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         service.CancelScript(new CancelScriptCommand(ticket, 0));
 
         TentacleMetrics.ScriptsCanceledTotal.ShouldBe(1);
@@ -1090,7 +1090,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "secret-mutex");
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
         ops.Verify(o => o.CreateOrReplaceSecret(It.IsAny<V1Secret>(), "test-ns"), Times.Once);
@@ -1127,7 +1127,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "cancel-secret-mutex");
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
 
@@ -1180,7 +1180,7 @@ public class ScriptPodServiceTests : IDisposable
     public async Task WaitForDrainAsync_WithActiveScripts_WaitsUntilEmpty()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo drain-test"));
+        var ticket = service.StartScript(MakeCommand("echo drain-test")).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
 
@@ -1237,8 +1237,8 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "queue-mutex");
         service.StartScript(command); // active
-        service.StartScript(command); // pending (fills queue to 1)
-        var ticket3 = service.StartScript(command); // should be rejected
+        service.StartScript(WithNewTicket(command)); // pending (fills queue to 1)
+        var ticket3 = service.StartScript(WithNewTicket(command)).Ticket; // should be rejected
 
         var status = service.GetStatus(new ScriptStatusRequest(ticket3, 0));
 
@@ -1269,7 +1269,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "accept-mutex");
         service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
 
         service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
     }
@@ -1296,9 +1296,9 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "limit-mutex");
         service.StartScript(command); // active
-        service.StartScript(command); // pending 1
-        service.StartScript(command); // pending 2 (at limit)
-        var ticket4 = service.StartScript(command); // rejected
+        service.StartScript(WithNewTicket(command)); // pending 1
+        service.StartScript(WithNewTicket(command)); // pending 2 (at limit)
+        var ticket4 = service.StartScript(WithNewTicket(command)).Ticket; // rejected
 
         service.PendingScripts.Count.ShouldBe(2);
 
@@ -1309,25 +1309,25 @@ public class ScriptPodServiceTests : IDisposable
     // === Server-Provided Ticket ID (Idempotency) ===
 
     [Fact]
-    public void StartScript_WithTaskId_UsesProvidedId()
+    public void StartScript_UsesProvidedScriptTicket()
     {
         var service = CreateService();
-        var command = new StartScriptCommand("echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "server-provided-id-abc123");
+        var command = new StartScriptCommand(new ScriptTicket("server-provided-id-abc123"), "echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "server-provided-id-abc123", TimeSpan.Zero);
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         ticket.TaskId.ShouldBe("server-provided-id-abc123");
         service.ActiveScripts.ContainsKey("server-provided-id-abc123").ShouldBeTrue();
     }
 
     [Fact]
-    public void StartScript_WithTaskId_SecondCall_ReturnsExistingTicket()
+    public void StartScript_SameScriptTicket_SecondCall_ReturnsExistingIdempotent()
     {
         var service = CreateService();
-        var command = new StartScriptCommand("echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "idempotent-ticket-id");
+        var command = new StartScriptCommand(new ScriptTicket("idempotent-ticket-id"), "echo hello", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), null, Array.Empty<string>(), "idempotent-ticket-id", TimeSpan.Zero);
 
-        var ticket1 = service.StartScript(command);
-        var ticket2 = service.StartScript(command);
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(command).Ticket;
 
         ticket1.TaskId.ShouldBe("idempotent-ticket-id");
         ticket2.TaskId.ShouldBe("idempotent-ticket-id");
@@ -1340,7 +1340,7 @@ public class ScriptPodServiceTests : IDisposable
         var service = CreateService();
         var command = MakeCommand("echo hello");
 
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         ticket.TaskId.ShouldNotBeNullOrEmpty();
         ticket.TaskId.Length.ShouldBe(32);
@@ -1388,9 +1388,9 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "bound-mutex");
         service.StartScript(command); // active
-        service.StartScript(command); // pending 1
-        service.StartScript(command); // pending 2
-        var ticket4 = service.StartScript(command); // rejected
+        service.StartScript(WithNewTicket(command)); // pending 1
+        service.StartScript(WithNewTicket(command)); // pending 2
+        var ticket4 = service.StartScript(WithNewTicket(command)).Ticket; // rejected
 
         var status = service.GetStatus(new ScriptStatusRequest(ticket4, 0));
         status.ExitCode.ShouldBe(ScriptExitCodes.Fatal);
@@ -1406,11 +1406,11 @@ public class ScriptPodServiceTests : IDisposable
 
         var command = MakeIsolatedCommand("echo test", "cancel-mutex");
         service.StartScript(command); // active
-        var ticket2 = service.StartScript(command); // pending (at limit)
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket; // pending (at limit)
 
         service.CancelScript(new CancelScriptCommand(ticket2, 0));
 
-        var ticket3 = service.StartScript(command); // should be accepted
+        var ticket3 = service.StartScript(WithNewTicket(command)).Ticket; // should be accepted
         service.PendingScripts.ContainsKey(ticket3.TaskId).ShouldBeTrue();
     }
 
@@ -1430,7 +1430,7 @@ public class ScriptPodServiceTests : IDisposable
         Parallel.For(0, 10, _ =>
         {
             var cmd = MakeIsolatedCommand("echo parallel", "parallel-mutex");
-            var ticket = service.StartScript(cmd);
+            var ticket = service.StartScript(cmd).Ticket;
             results.Add(ticket);
         });
 
@@ -1447,7 +1447,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var service = CreateService();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         // Workspace directory should have been cleaned up
         var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
@@ -1462,7 +1462,7 @@ public class ScriptPodServiceTests : IDisposable
 
         var service = CreateService();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
         status.State.ShouldBe(ProcessState.Complete);
@@ -1475,7 +1475,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         var workDir = Path.Combine(_tempWorkspace, ticket.TaskId);
         Directory.Exists(workDir).ShouldBeTrue();
@@ -1496,7 +1496,7 @@ public class ScriptPodServiceTests : IDisposable
         await Task.Delay(50);
 
         var command2 = MakeCommand("echo during-drain");
-        var ticket = service.StartScript(command2);
+        var ticket = service.StartScript(command2).Ticket;
 
         var status = service.GetStatus(new ScriptStatusRequest(ticket, 0));
         status.State.ShouldBe(ProcessState.Complete);
@@ -1511,11 +1511,11 @@ public class ScriptPodServiceTests : IDisposable
 
         // Create an active script with full isolation
         var activeCmd = MakeIsolatedCommand("echo active", "drain-promote-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         // Queue a pending script
         var pendingCmd = MakeIsolatedCommand("echo pending", "drain-promote-mutex");
-        var pendingTicket = service.StartScript(pendingCmd);
+        var pendingTicket = service.StartScript(pendingCmd).Ticket;
         service.PendingScripts.ContainsKey(pendingTicket.TaskId).ShouldBeTrue();
 
         // Set _draining via reflection
@@ -1536,7 +1536,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateService();
         var command = MakeCommand("echo before-drain");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         service.ActiveScripts.ContainsKey(ticket.TaskId).ShouldBeTrue();
     }
@@ -1550,15 +1550,15 @@ public class ScriptPodServiceTests : IDisposable
 
         // Take the mutex with an active writer
         var activeCmd = MakeIsolatedCommand("echo active", "fifo-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         // Queue three pending scripts (NoIsolation so they don't block each other once promoted)
         var cmdA = MakeIsolatedCommand("echo A", "fifo-mutex");
-        var ticketA = service.StartScript(cmdA);
+        var ticketA = service.StartScript(cmdA).Ticket;
         var cmdB = MakeIsolatedCommand("echo B", "fifo-mutex");
-        var ticketB = service.StartScript(cmdB);
+        var ticketB = service.StartScript(cmdB).Ticket;
         var cmdC = MakeIsolatedCommand("echo C", "fifo-mutex");
-        var ticketC = service.StartScript(cmdC);
+        var ticketC = service.StartScript(cmdC).Ticket;
 
         // Force known ordering via reflection
         var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -1591,12 +1591,12 @@ public class ScriptPodServiceTests : IDisposable
         var service = new ScriptPodService(_tentacleSettings, settings, podManager);
 
         var activeCmd = MakeIsolatedCommand("echo active", "timeout-fifo-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         var cmdA = MakeIsolatedCommand("echo A", "timeout-fifo-mutex");
-        var ticketA = service.StartScript(cmdA);
+        var ticketA = service.StartScript(cmdA).Ticket;
         var cmdB = MakeIsolatedCommand("echo B", "timeout-fifo-mutex");
-        var ticketB = service.StartScript(cmdB);
+        var ticketB = service.StartScript(cmdB).Ticket;
 
         // Make A timed out, B still valid
         var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -1620,15 +1620,15 @@ public class ScriptPodServiceTests : IDisposable
 
         // Take the mutex with an active writer
         var activeCmd = MakeIsolatedCommand("echo active", "writer-first-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         // Queue: writer1 (earliest), then two NoIsolation readers
         var writer1Cmd = MakeIsolatedCommand("echo writer1", "writer-first-mutex");
-        var ticketW1 = service.StartScript(writer1Cmd);
-        var reader1Cmd = new StartScriptCommand("echo reader1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null);
-        var ticketR1 = service.StartScript(reader1Cmd);
-        var reader2Cmd = new StartScriptCommand("echo reader2", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null);
-        var ticketR2 = service.StartScript(reader2Cmd);
+        var ticketW1 = service.StartScript(writer1Cmd).Ticket;
+        var reader1Cmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo reader1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var ticketR1 = service.StartScript(reader1Cmd).Ticket;
+        var reader2Cmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo reader2", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "writer-first-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var ticketR2 = service.StartScript(reader2Cmd).Ticket;
 
         // Force ordering: writer first
         var pendingField = typeof(ScriptPodService).GetField("_pendingScripts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -1661,7 +1661,7 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start and complete a script to trigger eviction
         var command = MakeCommand("echo test");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
         service.CompleteScript(new CompleteScriptCommand(ticket, 0));
@@ -1684,7 +1684,7 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start and cancel a script to trigger eviction
         var command = MakeCommand("echo test");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         service.CancelScript(new CancelScriptCommand(ticket, 0));
 
         // Old terminal result should be evicted
@@ -1702,7 +1702,7 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start and complete a script to trigger eviction
         var command = MakeCommand("echo test");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         SetupPodPhase("Succeeded");
         SetupPodExitCode(0);
         service.CompleteScript(new CompleteScriptCommand(ticket, 0));
@@ -1719,7 +1719,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateServiceWithPodOps();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
         var ticketId = ticket.TaskId;
 
         service.ActiveScripts.TryGetValue(ticketId, out var ctx).ShouldBeTrue();
@@ -1742,7 +1742,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateServiceWithPodOps();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         SetupPodLogs("polled line 1\npolled line 2");
 
@@ -1758,7 +1758,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var service = CreateServiceWithPodOps();
         var command = MakeCommand("echo hello");
-        var ticket = service.StartScript(command);
+        var ticket = service.StartScript(command).Ticket;
 
         service.ActiveScripts.TryGetValue(ticket.TaskId, out var ctx).ShouldBeTrue();
 
@@ -1788,12 +1788,14 @@ public class ScriptPodServiceTests : IDisposable
     private static StartScriptCommand MakeCommand(string scriptBody, string? mutexName = null, string? targetNamespace = null)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             scriptBody,
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             mutexName,
             Array.Empty<string>(),
-            null)
+            null,
+            TimeSpan.Zero)
         {
             TargetNamespace = targetNamespace
         };
@@ -1802,12 +1804,34 @@ public class ScriptPodServiceTests : IDisposable
     private static StartScriptCommand MakeIsolatedCommand(string scriptBody, string mutexName, TimeSpan? timeout = null)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             scriptBody,
             ScriptIsolationLevel.FullIsolation,
             timeout ?? TimeSpan.FromMinutes(5),
             mutexName,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
+    }
+
+    private static StartScriptCommand WithNewTicket(StartScriptCommand cmd)
+    {
+        var clone = new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
+            cmd.ScriptBody,
+            cmd.Isolation,
+            cmd.ScriptIsolationMutexTimeout,
+            cmd.IsolationMutexName,
+            cmd.Arguments,
+            cmd.TaskId,
+            cmd.DurationToWaitForScriptToFinish,
+            cmd.Files.ToArray())
+        {
+            TargetNamespace = cmd.TargetNamespace,
+            ScriptSyntax = cmd.ScriptSyntax,
+            Labels = cmd.Labels
+        };
+        return clone;
     }
 
     private KubernetesSettings CreateSettingsWithMaxPending(int maxPending)
@@ -1884,7 +1908,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_ContainerTerminated_ReturnsCompleteWithContainerExitCode()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Failed",
             ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 42 } }),
@@ -1901,7 +1925,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_SidecarCrashedScriptRunning_ReportsRunning()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Running",
             ("script", new V1ContainerState { Running = new V1ContainerStateRunning() }),
@@ -1917,7 +1941,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_EosDetected_TakesPrecedenceOverContainerState()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
         var ctx = service.ActiveScripts[ticket.TaskId];
 
         SetupPodWithContainerStates("Failed",
@@ -1936,7 +1960,7 @@ public class ScriptPodServiceTests : IDisposable
     public void CompleteScript_MultiContainerPod_UsesScriptContainerExitCode()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Failed",
             ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } }),
@@ -1955,7 +1979,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_FailedContainer_IncludesDiagnosticsInLogs()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Failed",
             ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 137, Reason = "OOMKilled", Signal = 9 } }));
@@ -1973,7 +1997,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_SuccessfulContainer_NoDiagnosticsAdded()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Succeeded",
             ("script", new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } }));
@@ -1995,13 +2019,13 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start a writer to hold the mutex
         var activeCmd = MakeIsolatedCommand("echo active", "race-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         // Queue two pending readers
-        var cmdA = new StartScriptCommand("echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null);
-        var ticketA = service.StartScript(cmdA);
-        var cmdB = new StartScriptCommand("echo B", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null);
-        var ticketB = service.StartScript(cmdB);
+        var cmdA = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var ticketA = service.StartScript(cmdA).Ticket;
+        var cmdB = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo B", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "race-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var ticketB = service.StartScript(cmdB).Ticket;
 
         service.PendingScripts.ContainsKey(ticketA.TaskId).ShouldBeTrue();
         service.PendingScripts.ContainsKey(ticketB.TaskId).ShouldBeTrue();
@@ -2039,11 +2063,11 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start a writer
         var activeCmd = MakeIsolatedCommand("echo active", "normal-mutex");
-        var activeTicket = service.StartScript(activeCmd);
+        var activeTicket = service.StartScript(activeCmd).Ticket;
 
         // Queue one pending reader
-        var cmdA = new StartScriptCommand("echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "normal-mutex", Array.Empty<string>(), null);
-        var ticketA = service.StartScript(cmdA);
+        var cmdA = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo A", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "normal-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var ticketA = service.StartScript(cmdA).Ticket;
 
         // Complete active → releases mutex → ProcessPendingScripts (no race)
         SetupPodPhase("Succeeded");
@@ -2064,12 +2088,12 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start a writer (FullIsolation)
         var writerCmd = MakeIsolatedCommand("echo writer", "block-mutex");
-        var writerTicket = service.StartScript(writerCmd);
+        var writerTicket = service.StartScript(writerCmd).Ticket;
         service.ActiveScripts.ContainsKey(writerTicket.TaskId).ShouldBeTrue();
 
         // Start a reader while writer holds the mutex → should queue
-        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "block-mutex", Array.Empty<string>(), null);
-        var readerTicket = service.StartScript(readerCmd);
+        var readerCmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "block-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var readerTicket = service.StartScript(readerCmd).Ticket;
 
         service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
         service.ActiveScripts.ContainsKey(readerTicket.TaskId).ShouldBeFalse();
@@ -2082,10 +2106,10 @@ public class ScriptPodServiceTests : IDisposable
 
         // Start writer, queue reader
         var writerCmd = MakeIsolatedCommand("echo writer", "release-mutex");
-        var writerTicket = service.StartScript(writerCmd);
+        var writerTicket = service.StartScript(writerCmd).Ticket;
 
-        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "release-mutex", Array.Empty<string>(), null);
-        var readerTicket = service.StartScript(readerCmd);
+        var readerCmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "release-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var readerTicket = service.StartScript(readerCmd).Ticket;
 
         service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
 
@@ -2107,8 +2131,8 @@ public class ScriptPodServiceTests : IDisposable
         var writerCmd = MakeIsolatedCommand("echo writer", "cancel-mutex");
         service.StartScript(writerCmd);
 
-        var readerCmd = new StartScriptCommand("echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "cancel-mutex", Array.Empty<string>(), null);
-        var readerTicket = service.StartScript(readerCmd);
+        var readerCmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo reader", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "cancel-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var readerTicket = service.StartScript(readerCmd).Ticket;
 
         service.PendingScripts.ContainsKey(readerTicket.TaskId).ShouldBeTrue();
 
@@ -2130,12 +2154,12 @@ public class ScriptPodServiceTests : IDisposable
         service.StartScript(writerCmd);
 
         // Fill pending queue (max=1)
-        var pendingCmd = new StartScriptCommand("echo pending1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null);
+        var pendingCmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo pending1", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
         service.StartScript(pendingCmd);
 
         // Next script should be rejected
-        var rejectedCmd = new StartScriptCommand("echo rejected", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null);
-        var rejectedTicket = service.StartScript(rejectedCmd);
+        var rejectedCmd = new StartScriptCommand(new ScriptTicket(Guid.NewGuid().ToString("N")), "echo rejected", ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(5), "full-mutex", Array.Empty<string>(), null, TimeSpan.Zero);
+        var rejectedTicket = service.StartScript(rejectedCmd).Ticket;
 
         // Should have terminal result with Fatal exit code
         var status = service.GetStatus(new ScriptStatusRequest(rejectedTicket, 0));
@@ -2149,7 +2173,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_PermanentInitContainerError_ReturnsCompleteWithStartupFailedCode()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(new V1Pod
@@ -2184,7 +2208,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_TransientImagePullError_ReturnsRunningWithWarning()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         _ops.Setup(o => o.ReadPodStatus(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(new V1Pod
@@ -2218,7 +2242,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_PendingNoIssues_ReturnsRunningNormally()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodPhase("Pending");
         SetupPodLogs("");
@@ -2234,7 +2258,7 @@ public class ScriptPodServiceTests : IDisposable
     public void GetStatus_RunningPod_NoDiagnostics()
     {
         var service = CreateService();
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
 
         SetupPodWithContainerStates("Running",
             ("script", new V1ContainerState { Running = new V1ContainerStateRunning() }));

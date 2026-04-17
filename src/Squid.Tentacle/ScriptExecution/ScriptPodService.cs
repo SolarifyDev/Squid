@@ -10,8 +10,15 @@ using Squid.Tentacle.Health;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware
+public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
+    public bool IsRunningScript(string ticketId)
+    {
+        if (string.IsNullOrEmpty(ticketId)) return false;
+        return _scripts.ContainsKey(ticketId) || _pendingScripts.ContainsKey(ticketId);
+    }
+
+
     private readonly TentacleSettings _tentacleSettings;
     private readonly KubernetesSettings _kubernetesSettings;
     private readonly KubernetesPodManager _podManager;
@@ -40,20 +47,44 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         _mutexTimeout = TimeSpan.FromMinutes(kubernetesSettings.IsolationMutexTimeoutMinutes);
     }
 
-    public ScriptTicket StartScript(StartScriptCommand command)
+    public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
-        var ticketId = command.TaskId ?? Guid.NewGuid().ToString("N");
+        if (command.ScriptTicket == null)
+            throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
+
+        var scriptTicket = command.ScriptTicket;
+        var ticketId = scriptTicket.TaskId;
+
+        if (_terminalResults.TryGetValue(ticketId, out var terminal))
+            return terminal.Response;
 
         if (_scripts.TryGetValue(ticketId, out var existing))
         {
             Log.Information("Reusing in-memory script context for ticket {TicketId}", ticketId);
-            return new ScriptTicket(ticketId);
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), existing.LogSequence);
+        }
+
+        if (_pendingScripts.ContainsKey(ticketId))
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+
+        // Crash-safe redelivery: if a prior agent-pod run got as far as writing
+        // ScriptStateStore (Starting/Running/Complete) but crashed before the
+        // in-memory _scripts entry survived, honour the persisted state rather
+        // than re-launching the pod. ScriptRecoveryService populates _scripts
+        // for pods that still exist; this catches the case where the workspace
+        // PVC retains state but the pod was garbage-collected.
+        var persistedWorkDir = Path.Combine(_tentacleSettings.WorkspacePath, ticketId);
+        var persisted = TryBuildStatusFromPersistedState(scriptTicket, persistedWorkDir);
+        if (persisted != null)
+        {
+            Log.Information("Redelivered StartScript for ticket {TicketId} — returning persisted state", ticketId);
+            return persisted;
         }
 
         if (_draining)
         {
             InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, "Script rejected: Tentacle is shutting down") });
-            return new ScriptTicket(ticketId);
+            return _terminalResults[ticketId].Response;
         }
 
         if (_isolationMutex.TryAcquire(command, out var mutexLock))
@@ -71,28 +102,30 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
                 if (_mutexLocks.TryRemove(ticketId, out var failedLock))
                     failedLock.Dispose();
+
+                return _terminalResults[ticketId].Response;
             }
+
+            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         }
-        else
+
+        var count = Interlocked.Increment(ref _pendingCount);
+
+        if (count > _kubernetesSettings.MaxPendingScripts)
         {
-            var count = Interlocked.Increment(ref _pendingCount);
-
-            if (count > _kubernetesSettings.MaxPendingScripts)
-            {
-                Interlocked.Decrement(ref _pendingCount);
-                Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, ticketId);
-                InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)") });
-                TentacleMetrics.ScriptRejected();
-                return new ScriptTicket(ticketId);
-            }
-
-            _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
-            PersistPendingSecret(ticketId, command);
-            TentacleMetrics.ScriptQueued();
-            Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+            Interlocked.Decrement(ref _pendingCount);
+            Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, ticketId);
+            InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)") });
+            TentacleMetrics.ScriptRejected();
+            return _terminalResults[ticketId].Response;
         }
 
-        return new ScriptTicket(ticketId);
+        _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
+        PersistPendingSecret(ticketId, command);
+        TentacleMetrics.ScriptQueued();
+        Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+
+        return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
     }
 
     private void LaunchScript(string ticketId, StartScriptCommand command)
@@ -103,6 +136,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         var wrappedCommand = WrapCommandWithEosMarker(command, eosMarkerToken);
 
         var workDir = PrepareWorkspace(ticketId, wrappedCommand);
+
+        // Persist generic "Starting" state before pod creation so a crash
+        // between CreatePod and the in-memory _scripts insert leaves a
+        // durable breadcrumb. ScriptRecoveryService reads it on restart;
+        // GetStatus falls back to it via TryBuildStatusFromPersistedState.
+        PersistStartingState(ticketId, workDir);
 
         try
         {
@@ -119,11 +158,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             StartLogStream(ctx);
 
             WriteStateFile(workDir, ticketId, podName, eosMarkerToken, command);
+            PersistRunningState(ticketId, workDir);
 
             Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
         }
         catch
         {
+            DeletePersistedStateIfAny(workDir);
             CleanupWorkspace(workDir);
             throw;
         }
@@ -154,12 +195,14 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         var wrappedBody = EosMarker.WrapScript(command.ScriptBody, eosMarkerToken);
 
         return new StartScriptCommand(
+            command.ScriptTicket,
             wrappedBody,
             command.Isolation,
             command.ScriptIsolationMutexTimeout,
             command.IsolationMutexName,
             command.Arguments,
             command.TaskId,
+            command.DurationToWaitForScriptToFinish,
             command.Files.ToArray())
         {
             TargetNamespace = command.TargetNamespace,
@@ -259,10 +302,16 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         try
         {
             if (_terminalResults.TryRemove(command.Ticket.TaskId, out var terminal))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return terminal.Response;
+            }
 
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
+            }
 
             ctx.LogStreamCts?.Cancel();
             _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
@@ -270,6 +319,10 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             var logs = DrainFinalLogs(ctx);
             var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
             var exitCode = containerTermination?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName);
+
+            // Persist Complete state before workspace cleanup so a crash between
+            // these two lines still lets a server redeliver and learn the exit code.
+            PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, exitCode, ctx.LogSequence);
 
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
@@ -294,6 +347,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         {
             Interlocked.Decrement(ref _pendingCount);
             RemovePendingSecret(command.Ticket.TaskId);
+            DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
             TentacleMetrics.ScriptCanceled();
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
         }
@@ -301,9 +355,13 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         try
         {
             if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            {
+                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
+            }
 
             ctx.LogStreamCts?.Cancel();
+            PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, ScriptExitCodes.Canceled, ctx.LogSequence);
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);
 

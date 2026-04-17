@@ -98,6 +98,71 @@ public class TentacleHealthCheckStrategyTests
         result.Healthy.ShouldBeFalse();
     }
 
+    // ========== Phase 3: capabilities metadata → machine runtime cache ==========
+
+    [Fact]
+    public async Task CheckHealth_PopulatesRuntimeCapabilitiesCache_FromMetadata()
+    {
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""", machineId: 77);
+
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "3.2.0",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["os"] = "Linux",
+                    ["defaultShell"] = "bash",
+                    ["installedShells"] = "bash,pwsh"
+                }
+            });
+        _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
+
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+
+        var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeTrue();
+        result.Detail.ShouldContain("OS=Linux");
+        result.Detail.ShouldContain("shell=bash");
+
+        var cached = cache.TryGet(77);
+        cached.Os.ShouldBe("Linux");
+        cached.DefaultShell.ShouldBe("bash");
+        cached.AgentVersion.ShouldBe("3.2.0");
+    }
+
+    [Fact]
+    public async Task CheckHealth_NoMetadata_StillHealthy_AndCacheStoresAgentVersion()
+    {
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""", machineId: 88);
+
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "1.0.0",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = new Dictionary<string, string>()
+            });
+        _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
+
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+
+        var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeTrue();
+        result.Detail.ShouldNotContain("OS=");
+
+        var cached = cache.TryGet(88);
+        cached.AgentVersion.ShouldBe("1.0.0");
+        cached.Os.ShouldBeEmpty();
+    }
+
     private Mock<IAsyncCapabilitiesService> SetupCapabilitiesClient(string agentVersion, params string[] services)
     {
         var capsClient = new Mock<IAsyncCapabilitiesService>();
@@ -114,6 +179,6 @@ public class TentacleHealthCheckStrategyTests
         return capsClient;
     }
 
-    private static Machine MachineWithEndpoint(string endpointJson)
-        => new() { Id = 1, Name = "test-machine", Endpoint = endpointJson };
+    private static Machine MachineWithEndpoint(string endpointJson, int machineId = 1)
+        => new() { Id = machineId, Name = "test-machine", Endpoint = endpointJson };
 }

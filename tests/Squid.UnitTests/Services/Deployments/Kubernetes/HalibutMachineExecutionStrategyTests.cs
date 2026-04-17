@@ -126,7 +126,7 @@ public class HalibutMachineExecutionStrategyTests
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
-            .ReturnsAsync(new ScriptTicket("path-check"));
+            .ReturnsAsync(NewStartResponse("path-check"));
 
         await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: "calamari-run-script"), CancellationToken.None);
@@ -149,7 +149,7 @@ public class HalibutMachineExecutionStrategyTests
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
-            .ReturnsAsync(new ScriptTicket("timeout-check"));
+            .ReturnsAsync(NewStartResponse("timeout-check"));
 
         await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
@@ -180,7 +180,7 @@ public class HalibutMachineExecutionStrategyTests
             .Returns(dummyPayload);
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
-            .ReturnsAsync(new ScriptTicket("ticket-calamari"));
+            .ReturnsAsync(NewStartResponse("ticket-calamari"));
         _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
             .Returns(scriptClient.Object);
 
@@ -190,7 +190,9 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<SensitiveValueMasker>()))
+                It.IsAny<SensitiveValueMasker>(),
+                It.IsAny<ScriptStatusResponse>(),
+                It.IsAny<global::Halibut.ServiceEndPoint>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -211,7 +213,9 @@ public class HalibutMachineExecutionStrategyTests
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
-            It.IsAny<SensitiveValueMasker>()), Times.Once);
+            It.IsAny<SensitiveValueMasker>(),
+            It.IsAny<ScriptStatusResponse>(),
+            It.IsAny<global::Halibut.ServiceEndPoint>()), Times.Once);
     }
 
     [Fact]
@@ -223,7 +227,7 @@ public class HalibutMachineExecutionStrategyTests
         var observer = new Mock<IHalibutScriptObserver>();
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
-            .ReturnsAsync(new ScriptTicket("ticket-direct"));
+            .ReturnsAsync(NewStartResponse("ticket-direct"));
         _halibutClientFactory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>()))
             .Returns(scriptClient.Object);
 
@@ -233,7 +237,9 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<ScriptTicket>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<SensitiveValueMasker>()))
+                It.IsAny<SensitiveValueMasker>(),
+                It.IsAny<ScriptStatusResponse>(),
+                It.IsAny<global::Halibut.ServiceEndPoint>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -253,7 +259,9 @@ public class HalibutMachineExecutionStrategyTests
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
-            It.IsAny<SensitiveValueMasker>()), Times.Once);
+            It.IsAny<SensitiveValueMasker>(),
+            It.IsAny<ScriptStatusResponse>(),
+            It.IsAny<global::Halibut.ServiceEndPoint>()), Times.Once);
     }
 
     // === Request Timeout Override ===
@@ -267,7 +275,7 @@ public class HalibutMachineExecutionStrategyTests
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
-            .ReturnsAsync(new ScriptTicket("timeout-override"));
+            .ReturnsAsync(NewStartResponse("timeout-override"));
 
         var request = CreateRequest(machine);
         request.Timeout = TimeSpan.FromMinutes(10);
@@ -291,7 +299,7 @@ public class HalibutMachineExecutionStrategyTests
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
             .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
-            .ReturnsAsync(new ScriptTicket("ticket-id-check"));
+            .ReturnsAsync(NewStartResponse("ticket-id-check"));
 
         await _strategy.ExecuteScriptAsync(
             CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
@@ -332,6 +340,9 @@ public class HalibutMachineExecutionStrategyTests
 
     // === Helpers ===
 
+    private static ScriptStatusResponse NewStartResponse(string ticketId)
+        => new(new ScriptTicket(ticketId), ProcessState.Running, 0, new List<ProcessOutput>(), 0);
+
     private static Machine CreateValidMachine() => new()
     {
         Name = "test-agent",
@@ -343,7 +354,7 @@ public class HalibutMachineExecutionStrategyTests
         var scriptClient = new Mock<IAsyncScriptService>();
 
         scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
-            .ReturnsAsync(new ScriptTicket("ticket"));
+            .ReturnsAsync(NewStartResponse("ticket"));
         scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>()))
             .ReturnsAsync(new ScriptStatusResponse(
                 new ScriptTicket("ticket"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0));

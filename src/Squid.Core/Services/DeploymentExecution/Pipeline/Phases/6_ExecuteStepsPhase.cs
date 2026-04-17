@@ -1,3 +1,4 @@
+using Squid.Core.Observability;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.Deployments.ExternalFeeds;
@@ -31,11 +32,32 @@ public sealed partial class ExecuteStepsPhase(
 
     private DeploymentTaskContext _ctx;
     private int _currentBatchIndex;
+    private readonly Dictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> _batchStates = new();
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         _ctx = ctx;
-        await ExecuteDeploymentStepsAsync(ct).ConfigureAwait(false);
+        foreach (var (batch, state) in ctx.ResumeBatchStates)
+            _batchStates[batch] = state;
+
+        // Root span for the entire deployment execution. Child spans (batch,
+        // step, target) attach automatically via System.Diagnostics.Activity's
+        // async-local parenting. If no OTel listener is registered, this is a
+        // cheap null — no allocation, no overhead.
+        using var deploymentSpan = DeploymentTracing.StartDeployment(
+            _ctx.ServerTaskId,
+            _ctx.Deployment?.Id ?? 0,
+            _ctx.Release?.Version ?? "unknown");
+
+        try
+        {
+            await ExecuteDeploymentStepsAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            deploymentSpan?.RecordException(ex);
+            throw;
+        }
     }
 
     private async Task ExecuteDeploymentStepsAsync(CancellationToken ct)
@@ -54,6 +76,8 @@ public sealed partial class ExecuteStepsPhase(
                 _currentBatchIndex++;
                 continue;
             }
+
+            using var batchSpan = DeploymentTracing.StartBatch(_currentBatchIndex);
 
             var batchEntries = batch.Select(step => (Step: step, SortOrder: stepSortOrderByStep[step])).ToList();
             var batchResults = batch.Count == 1
@@ -74,6 +98,7 @@ public sealed partial class ExecuteStepsPhase(
         try
         {
             var outputVariablesJson = SerializeOutputVariables(_ctx.Variables);
+            var batchStatesJson = SerializeBatchStates();
 
             await checkpointService.SaveAsync(new DeploymentExecutionCheckpoint
             {
@@ -81,13 +106,40 @@ public sealed partial class ExecuteStepsPhase(
                 DeploymentId = _ctx.Deployment.Id,
                 LastCompletedBatchIndex = batchIndex,
                 FailureEncountered = _ctx.FailureEncountered,
-                OutputVariablesJson = outputVariablesJson
+                OutputVariablesJson = outputVariablesJson,
+                BatchStatesJson = batchStatesJson,
+                InFlightScriptsJson = "{}"
             }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "[Deploy] Failed to persist checkpoint at batch {BatchIndex}, continuing", batchIndex);
         }
+    }
+
+    private string SerializeBatchStates()
+    {
+        if (_batchStates.Count == 0) return "{}";
+
+        var keyed = _batchStates.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value);
+        return System.Text.Json.JsonSerializer.Serialize(keyed);
+    }
+
+    internal Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState GetOrCreateBatchState(int batchIndex)
+    {
+        if (!_batchStates.TryGetValue(batchIndex, out var state))
+        {
+            state = new Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState();
+            _batchStates[batchIndex] = state;
+        }
+        return state;
+    }
+
+    internal void MarkTargetCompleted(int batchIndex, int machineId, bool failed)
+    {
+        var state = GetOrCreateBatchState(batchIndex);
+        if (failed) state.FailedMachineIds.Add(machineId);
+        else state.CompletedMachineIds.Add(machineId);
     }
 
     private static string SerializeOutputVariables(List<VariableDto> variables)

@@ -15,7 +15,12 @@ public sealed class FakeScriptBackend : ITentacleScriptBackend
     public int CompleteCalls { get; private set; }
     public int CancelCalls { get; private set; }
 
-    public ScriptTicket StartResult { get; set; } = new("fake-ticket");
+    public ScriptStatusResponse StartResult { get; set; } = new(
+        new ScriptTicket("fake-ticket"),
+        ProcessState.Running,
+        0,
+        new List<ProcessOutput>(),
+        0);
     public ScriptStatusResponse StatusResult { get; set; } = new(
         new ScriptTicket("fake-ticket"),
         ProcessState.Running,
@@ -35,7 +40,7 @@ public sealed class FakeScriptBackend : ITentacleScriptBackend
         new List<ProcessOutput>(),
         0);
 
-    public ScriptTicket StartScript(StartScriptCommand command)
+    public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
         StartCalls++;
         LastStartCommand = command;

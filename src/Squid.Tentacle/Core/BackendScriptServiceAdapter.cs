@@ -12,7 +12,7 @@ public sealed class BackendScriptServiceAdapter : IScriptService
         _backend = backend;
     }
 
-    public ScriptTicket StartScript(StartScriptCommand command) => _backend.StartScript(command);
+    public ScriptStatusResponse StartScript(StartScriptCommand command) => _backend.StartScript(command);
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request) => _backend.GetStatus(request);
 

@@ -9,7 +9,14 @@ namespace Squid.Core.Services.DeploymentExecution.Transport;
 public class EndpointContext
 {
     public string EndpointJson { get; set; }
-    
+
+    /// <summary>
+    /// Machine this endpoint belongs to. Used by contributors that enrich
+    /// variables from per-machine caches (e.g. runtime capabilities from the
+    /// last health check). Null for contexts built outside a machine scope.
+    /// </summary>
+    public int? MachineId { get; set; }
+
     public Dictionary<EndpointResourceType, string> ResolvedResources { get; set; } = new();
 
     public ResolvedAuthenticationAccountData GetAccountData()

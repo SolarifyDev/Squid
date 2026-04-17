@@ -1,3 +1,4 @@
+using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -12,5 +13,7 @@ public interface IHalibutScriptObserver : IScopedDependency
         ScriptTicket ticket,
         TimeSpan scriptTimeout,
         CancellationToken ct,
-        SensitiveValueMasker masker);
+        SensitiveValueMasker masker,
+        ScriptStatusResponse initialStartResponse = null,
+        ServiceEndPoint endpoint = null);
 }

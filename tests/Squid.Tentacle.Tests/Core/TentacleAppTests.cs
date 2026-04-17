@@ -346,7 +346,7 @@ public class TentacleAppTests : TimedTestBase
         public int DrainCalls { get; private set; }
         public TimeSpan LastDrainTimeout { get; private set; }
 
-        public ScriptTicket StartScript(StartScriptCommand command) => new("fake-ticket");
+        public ScriptStatusResponse StartScript(StartScriptCommand command) => new(new ScriptTicket("fake-ticket"), ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         public ScriptStatusResponse GetStatus(ScriptStatusRequest request) => new(new ScriptTicket("fake-ticket"), ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         public ScriptStatusResponse CompleteScript(CompleteScriptCommand command) => new(new ScriptTicket("fake-ticket"), ProcessState.Complete, 0, new List<ProcessOutput>(), 0);
         public ScriptStatusResponse CancelScript(CancelScriptCommand command) => new(new ScriptTicket("fake-ticket"), ProcessState.Complete, -1, new List<ProcessOutput>(), 0);

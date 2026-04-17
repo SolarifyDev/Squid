@@ -27,11 +27,13 @@ public class CapturingHalibutClientFactory : IHalibutClientFactory
         public CapturingScriptService(CapturingHalibutClientFactory factory)
             => _factory = factory;
 
-        public Task<ScriptTicket> StartScriptAsync(StartScriptCommand command)
+        public Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command)
         {
             _factory.CapturedCommands.Add(command);
             CaptureFiles(command);
-            return Task.FromResult(new ScriptTicket(Guid.NewGuid().ToString("N")));
+            var ticket = command.ScriptTicket ?? new ScriptTicket(Guid.NewGuid().ToString("N"));
+            return Task.FromResult(new ScriptStatusResponse(
+                ticket, ProcessState.Running, 0, new List<ProcessOutput>(), 0));
         }
 
         public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request)

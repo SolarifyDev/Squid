@@ -58,7 +58,7 @@ public class PendingPodWatchdogTests : IDisposable
     [Fact]
     public void FailPendingPods_PodPendingBeyondTimeout_RemovesFromActiveAndInjectsTimeout()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = _scriptPodService.ActiveScripts[ticketId].PodName;
 
@@ -91,7 +91,7 @@ public class PendingPodWatchdogTests : IDisposable
     [Fact]
     public void FailPendingPods_PodPendingWithinTimeout_DoesNotRemove()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = _scriptPodService.ActiveScripts[ticketId].PodName;
 
@@ -114,7 +114,7 @@ public class PendingPodWatchdogTests : IDisposable
     [Fact]
     public void FailPendingPods_RunningPod_NotAffected()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = _scriptPodService.ActiveScripts[ticketId].PodName;
 
@@ -156,7 +156,7 @@ public class PendingPodWatchdogTests : IDisposable
     [Fact]
     public void FailPendingPods_TerminalResult_ConsumedByCompleteScript()
     {
-        var ticket = _scriptPodService.StartScript(MakeCommand("echo test"));
+        var ticket = _scriptPodService.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = _scriptPodService.ActiveScripts[ticketId].PodName;
 
@@ -208,7 +208,7 @@ public class PendingPodWatchdogTests : IDisposable
         var service = new ScriptPodService(tentacleSettings, customSettings, podManager);
         var monitor = new KubernetesPodMonitor(podManager, service, tentacleSettings, customSettings);
 
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = service.ActiveScripts[ticketId].PodName;
 
@@ -253,7 +253,7 @@ public class PendingPodWatchdogTests : IDisposable
         var service = new ScriptPodService(tentacleSettings, customSettings, podManager);
         var monitor = new KubernetesPodMonitor(podManager, service, tentacleSettings, customSettings);
 
-        var ticket = service.StartScript(MakeCommand("echo test"));
+        var ticket = service.StartScript(MakeCommand("echo test")).Ticket;
         var ticketId = ticket.TaskId;
         var podName = service.ActiveScripts[ticketId].PodName;
 
@@ -282,12 +282,14 @@ public class PendingPodWatchdogTests : IDisposable
     private static StartScriptCommand MakeCommand(string scriptBody)
     {
         return new StartScriptCommand(
+            new ScriptTicket(Guid.NewGuid().ToString("N")),
             scriptBody,
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(5),
             null,
             Array.Empty<string>(),
-            null);
+            null,
+            TimeSpan.Zero);
     }
 
     public void Dispose()
