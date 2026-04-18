@@ -19,7 +19,7 @@ public sealed class MachineUpgradeServiceTests
 {
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly InMemoryMachineRuntimeCapabilitiesCache _runtimeCache = new();
-    private readonly Mock<IBundledTentacleVersionProvider> _versionProvider = new();
+    private readonly Mock<ITentacleVersionRegistry> _versionRegistry = new();
     private readonly Mock<IMachineUpgradeStrategy> _linuxStrategy = new();
     private readonly Mock<IMachineUpgradeStrategy> _k8sStrategy = new();
     private readonly Mock<IRedisSafeRunner> _redisLock = new();
@@ -27,7 +27,11 @@ public sealed class MachineUpgradeServiceTests
 
     public MachineUpgradeServiceTests()
     {
-        _versionProvider.Setup(x => x.GetBundledVersion()).Returns("1.4.0");
+        // Default: registry returns 1.4.0 for every recognized style. Tests
+        // that exercise the no-version path override on a per-test basis.
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("1.4.0");
 
         _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling))).Returns(true);
         _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentacleListening))).Returns(true);
@@ -48,7 +52,7 @@ public sealed class MachineUpgradeServiceTests
         _service = new MachineUpgradeService(
             _machineDataProvider.Object,
             _runtimeCache,
-            _versionProvider.Object,
+            _versionRegistry.Object,
             new[] { _linuxStrategy.Object, _k8sStrategy.Object },
             _redisLock.Object);
     }
@@ -67,15 +71,17 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_NoBundleAndNoExplicitTarget_ReturnsFailedWithGuidance()
+    public async Task UpgradeAsync_RegistryReturnsEmptyAndNoExplicitTarget_ReturnsFailedWithGuidance()
     {
-        _versionProvider.Setup(x => x.GetBundledVersion()).Returns(string.Empty);
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
         ArrangeMachine(id: 1, style: nameof(CommunicationStyle.TentaclePolling));
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 1 }, CancellationToken.None);
 
         resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
-        resp.Detail.ShouldContain("No target version");
+        resp.Detail.ShouldContain("Could not resolve target tentacle version");
         _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

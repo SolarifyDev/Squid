@@ -118,11 +118,6 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.resolve-tag.outputs.image_tag }}
-          # Stamp the resolved version into the binary so
-          # BundledTentacleVersionProvider auto-detects the right Tentacle
-          # version for self-upgrade — see docs/tentacle-self-upgrade-design.md.
-          build-args: |
-            VERSION=${{ needs.resolve-tag.outputs.image_tag }}
           no-cache: true
           pull: true
 

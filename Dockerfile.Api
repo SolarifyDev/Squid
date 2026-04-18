@@ -1,10 +1,5 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG TARGETARCH
-# Build-time version stamp. Workflow passes the tag (e.g. 1.4.0) so the
-# resulting Squid.Core.dll has AssemblyInformationalVersion=1.4.0 baked in,
-# which the BundledTentacleVersionProvider reads at runtime to recommend the
-# correct Tentacle version for self-upgrade. Defaults to 1.0.0 for local builds.
-ARG VERSION=1.0.0
 
 WORKDIR /src
 COPY NuGet.Config .
@@ -13,7 +8,7 @@ COPY src/Squid.Core/ Squid.Core/
 COPY src/Squid.Api/ Squid.Api/
 COPY src/Squid.Calamari/ Squid.Calamari/
 
-RUN dotnet publish Squid.Api/Squid.Api.csproj -c Release -p:Version=${VERSION} -o /app
+RUN dotnet publish Squid.Api/Squid.Api.csproj -c Release -o /app
 RUN if [ "$TARGETARCH" = "amd64" ]; then RID="linux-x64"; else RID="linux-$TARGETARCH"; fi && \
     dotnet publish Squid.Calamari/Squid.Calamari.csproj -c Release -r $RID --self-contained -o /calamari && \
     chmod +x /calamari/squid-calamari

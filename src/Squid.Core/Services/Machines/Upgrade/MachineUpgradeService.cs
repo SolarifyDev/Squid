@@ -19,20 +19,20 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
-    private readonly IBundledTentacleVersionProvider _versionProvider;
+    private readonly ITentacleVersionRegistry _versionRegistry;
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
     private readonly IRedisSafeRunner _redisLock;
 
     public MachineUpgradeService(
         IMachineDataProvider machineDataProvider,
         IMachineRuntimeCapabilitiesCache runtimeCache,
-        IBundledTentacleVersionProvider versionProvider,
+        ITentacleVersionRegistry versionRegistry,
         IEnumerable<IMachineUpgradeStrategy> strategies,
         IRedisSafeRunner redisLock)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
-        _versionProvider = versionProvider;
+        _versionRegistry = versionRegistry;
         _strategies = strategies;
         _redisLock = redisLock;
     }
@@ -42,14 +42,19 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         var machine = await _machineDataProvider.GetMachinesByIdAsync(command.MachineId, ct).ConfigureAwait(false)
             ?? throw new MachineNotFoundException(command.MachineId);
 
-        var targetVersion = ResolveTargetVersion(command);
+        // Resolve communication style FIRST — version registry is per-style
+        // (Linux Tentacle and K8s Agent have different release channels).
+        var style = EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
+
+        var targetVersion = await ResolveTargetVersionAsync(command, style, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(targetVersion))
         {
             return BuildResponse(machine, currentVersion: null, targetVersion: null,
                 MachineUpgradeStatus.Failed,
-                "No target version provided and no bundled version is configured on this server " +
-                $"(set {BundledTentacleVersionProvider.OverrideEnvVar} env var or build with -p:Version=<semver>). " +
-                "Specify TargetVersion explicitly in the upgrade request as a workaround.");
+                "Could not resolve target tentacle version: no operator override " +
+                $"({TentacleVersionRegistry.LinuxOverrideEnvVar} / {TentacleVersionRegistry.K8sOverrideEnvVar}), " +
+                "no cached value, and Docker Hub query failed. " +
+                "Specify TargetVersion explicitly in the upgrade request.");
         }
 
         var currentVersion = ResolveCurrentVersion(machine.Id);
@@ -61,7 +66,6 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 $"Machine '{machine.Name}' already on version {currentVersion}; nothing to do.");
         }
 
-        var style = EndpointJsonHelper.GetField(machine.Endpoint, "CommunicationStyle");
         var strategy = _strategies.FirstOrDefault(s => s.CanHandle(style));
 
         if (strategy == null)
@@ -103,11 +107,18 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 "Could not acquire distributed lock for this machine — another upgrade may be in progress on a different server replica. Retry in a moment.");
     }
 
-    /// <summary>Operator-supplied version wins over the server bundle when both present.</summary>
-    private string ResolveTargetVersion(UpgradeMachineCommand command)
-        => !string.IsNullOrWhiteSpace(command.TargetVersion)
-            ? command.TargetVersion.Trim()
-            : _versionProvider.GetBundledVersion();
+    /// <summary>
+    /// Operator-supplied version always wins (canary, pinning, hotfix). When
+    /// absent, defer to the registry's per-style auto-detection — see
+    /// <see cref="ITentacleVersionRegistry"/> for the resolution chain.
+    /// </summary>
+    private async Task<string> ResolveTargetVersionAsync(UpgradeMachineCommand command, string communicationStyle, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(command.TargetVersion))
+            return command.TargetVersion.Trim();
+
+        return await _versionRegistry.GetLatestVersionAsync(communicationStyle, ct).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Reads the agent's last-reported version from the runtime capabilities

@@ -28,7 +28,7 @@ We model on Octopus's `TentacleUpgradeMediator` (see local
 | Linux upgrade silently dies when neither apt nor yum is on the box ([#8842](https://github.com/OctopusDeploy/Issues/issues/8842)) | Tarball delivery is the **primary** path, not a fallback. Works on alpine / distroless / any glibc 2.31+ Linux. |
 | No automatic rollback on failed upgrade — operator left with broken box | Strategy keeps **N-1 binary** at `<install>.bak`; if post-upgrade healthcheck fails, the script atomically swaps back AND verifies the rollback itself worked. |
 | Custom signed `Octopus.Upgrader.exe` watchdog must outlive the agent restart on Windows | Use **systemd's own service-restart + `/healthz`** + the bash script itself orchestrates rollback. No new binary to sign / distribute / version-track. |
-| Hard-coded "bundled package" version that drifts when someone forgets to bump it | **Auto-detect** version from `AssemblyInformationalVersion` baked in by `dotnet publish -p:Version=$IMAGE_TAG` — drift literally impossible. |
+| "Bundled package" version coupled to server release — server release N pins agents to N, even if Tentacle ships a security hotfix to N+0.1 in between | **`ITentacleVersionRegistry` queries Docker Hub directly** for the latest published Tentacle, with a 10-minute in-process cache + per-style env var override. Server's own version is irrelevant — Tentacle and Server release on independent cadences if they need to. |
 
 ---
 
@@ -50,8 +50,8 @@ We model on Octopus's `TentacleUpgradeMediator` (see local
             │            IMachineUpgradeService.UpgradeAsync            │
             │  1. Look up Machine + parse CommunicationStyle            │
             │  2. Resolve target version: TargetVersion override OR    │
-            │     IBundledTentacleVersionProvider auto-detect          │
-            │     (AssemblyInformationalVersion + env var override)    │
+            │     ITentacleVersionRegistry.GetLatestVersionAsync(style)│
+            │     → live Docker Hub query, 10-min cache, env override  │
             │  3. Resolve current version via                          │
             │     IMachineRuntimeCapabilitiesCache (populated by       │
             │     health checks via Halibut Capabilities probe)        │
@@ -110,7 +110,7 @@ We model on Octopus's `TentacleUpgradeMediator` (see local
 | `KubernetesAgentUpgradeStrategy` (placeholder; helm-based in Phase 2) | `Squid.Core/Services/Machines/Upgrade/KubernetesAgentUpgradeStrategy.cs` | 1 stub |
 | `WindowsTentacleUpgradeStrategy` | future | 3 |
 | `IMachineUpgradeService` orchestrator | `Squid.Core/Services/Machines/Upgrade/MachineUpgradeService.cs` | 1 |
-| `IBundledTentacleVersionProvider` (auto-detect via reflection + env override) | `Squid.Core/Services/Machines/Upgrade/BundledTentacleVersionProvider.cs` | 1 |
+| `ITentacleVersionRegistry` — live Docker Hub query per-style with TTL cache + env override | `Squid.Core/Services/Machines/Upgrade/TentacleVersionRegistry.cs` | 1 |
 | `UpgradeMachineCommand` + handler | `Squid.Message/Commands/Machine/`, `Squid.Core/Handlers/CommandHandlers/Machine/` | 1 |
 | `MachineController.UpgradeMachineAsync` endpoint | `Squid.Api/Controllers/MachineController.cs` | 1 |
 | Embedded upgrade script `upgrade-linux-tentacle.sh` | `Squid.Core/Resources/Upgrade/upgrade-linux-tentacle.sh` | 1 |
@@ -139,7 +139,8 @@ a real failure scenario, what we do to detect it, and what the operator sees.
 | Scenario | Detection | Fallback / Behavior | Operator-visible result |
 |---|---|---|---|
 | `MachineId` doesn't exist | `_machineDataProvider.GetMachinesByIdAsync` returns null | `MachineNotFoundException` → HTTP 404 | Clear 404 with machineId in body |
-| Operator forgot `TargetVersion` AND server has no auto-detected version (local dev with empty `AssemblyInformationalVersion`) | `BundledTentacleVersionProvider.GetBundledVersion()` returns empty | Service returns `Failed` with explicit guidance: set `SQUID_BUNDLED_TENTACLE_VERSION` env or build with `-p:Version=<semver>` | UI shows actionable message; nothing dispatched to agent |
+| Operator forgot `TargetVersion` AND Docker Hub query fails AND no cache AND no env override | `ITentacleVersionRegistry.GetLatestVersionAsync` returns empty | Service returns `Failed` with explicit guidance: set `SQUID_TARGET_LINUX_TENTACLE_VERSION` / `SQUID_TARGET_K8S_AGENT_VERSION` env, or pass `TargetVersion` explicitly | UI shows actionable message; nothing dispatched to agent |
+| Docker Hub is down at request time (transient blip) | Live query throws → catch → check stale cache | Service returns last-known-good cached version (better stale answer than refusal) | Upgrade proceeds with most recent successfully-fetched version |
 | Agent's last health check showed it's **already on the target version** | Compare `_runtimeCache.TryGet(machineId).AgentVersion` to target via `Version.TryParse` semver compare | Return `AlreadyUpToDate`; **strategy not dispatched** (no agent contact at all) | Fast 200 response; "already up to date" UI badge |
 | `CommunicationStyle` has no registered strategy (e.g. SSH targets, custom transport) | `_strategies.FirstOrDefault(s => s.CanHandle(style))` returns null | Return `NotSupported` with style name | UI shows "Style X not yet supported for self-upgrade" |
 | Two API replicas receive the same upgrade trigger (UI retry, LB failover) | Distributed lock acquisition via `IRedisSafeRunner.ExecuteWithLockAsync` keyed on `squid:upgrade:machine:{id}` | One replica runs; the other returns `Failed` with retry hint | One replica returns success; the other returns "another upgrade in progress, retry"; never double-execution |
@@ -261,7 +262,7 @@ The operator's biggest fear: "will my machine come back as a NEW machine after u
 | Upgrade RPC contract | 5 dedicated PowerShell scripts (`TentacleUpgradeBegin/CheckExitCode/CollectLogs/Clean`) | **Same `IAsyncScriptService` Halibut channel** the deployment pipeline already uses |
 | Strategy multipolymorphism | `target.Upgrade()` — type-switched per target subclass | **`IMachineUpgradeStrategy` per CommunicationStyle** — symmetric with `IExecutionStrategy` and `IHealthCheckStrategy` |
 | Idempotency | `Test-Path Upgrade\{InstallId}` directory check | `flock`-style sentinel at `/var/lib/squid-tentacle/upgrade-<v>.lock` |
-| Bundled version source | `IBundledPackageStore` reads embedded .nupkg | **`AssemblyInformationalVersion`** baked in at `dotnet publish -p:Version=$IMAGE_TAG` — single source of truth |
+| Bundled version source | `IBundledPackageStore` reads embedded .nupkg, version coupled to server release | **Live Docker Hub query** for `squidcd/squid-tentacle-linux` / `squidcd/squid-tentacle` — Tentacle version is independent of Server version, with 10-min cache + env-var override |
 | Multi-replica server safety | None documented | **RedLock per machineId** prevents double-process |
 | Cache invalidation post-upgrade | None — relies on next scheduled health check | **Explicit `IMachineRuntimeCapabilitiesCache.Invalidate`** on success/initiated |
 | Active deployment guard | None explicit | **`ScriptIsolationLevel.FullIsolation`** — agent's mutex serializes upgrade behind any in-flight deployment |
@@ -321,7 +322,7 @@ curl -X POST https://squid-api/.../api/machines/17/upgrade \
 
 ### Operator escape hatches
 
-- **Different bundled version per server replica** (e.g. canary): set `SQUID_BUNDLED_TENTACLE_VERSION` env on that pod
+- **Different bundled version per server replica** (e.g. canary): set `SQUID_TARGET_LINUX_TENTACLE_VERSION / SQUID_TARGET_K8S_AGENT_VERSION` env on that pod
 - **Air-gapped / forked tarball**: Phase 2 will add `BUNDLED_TENTACLE_DOWNLOAD_BASE_URL`. Phase 1 workaround: set `targetVersion` to your fork tag and pre-mirror the GitHub URL pattern to your registry
 - **Forced re-upgrade** even when AlreadyUpToDate: pass `targetVersion` explicitly to a different value, then back
 
@@ -369,7 +370,7 @@ After deploying Squid Server with this change:
 2. If the version is empty (local builds, missing GitVersion), set:
    ```yaml
    env:
-     - name: SQUID_BUNDLED_TENTACLE_VERSION
+     - name: SQUID_TARGET_LINUX_TENTACLE_VERSION / SQUID_TARGET_K8S_AGENT_VERSION
        value: "1.4.0"
    ```
 3. **Test against one machine first** — pick a non-critical agent, click Upgrade, verify it comes back healthy. Check Seq for any errors.
@@ -399,7 +400,7 @@ When you add the Upgrade button:
 ## 10 — Five-line summary
 
 1. **Per-style strategies** mirror existing `IExecutionStrategy` / `IHealthCheckStrategy` patterns — one new style = one new file.
-2. **Auto-detected version** from server's own `AssemblyInformationalVersion` makes "what version should every agent be on" a single source of truth that can't drift.
+2. **Tentacle version is the source of truth** — `ITentacleVersionRegistry` queries Docker Hub for the actual published Tentacle release, NOT the server's own assembly version (Server and Tentacle release on independent cadences; coupling them is an Octopus hangover we deliberately reject).
 3. **Bash script over Halibut RPC** reuses every dollar of investment in the existing deployment pipeline (resilience, log streaming, isolation, mute).
 4. **Defense in depth**: distributed lock + cache invalidation + Halibut FullIsolation + 8 documented script exit codes + atomic swap with verified rollback + post-restart version sanity check.
 5. **Octopus-aligned where Octopus is right; Octopus-improved where Octopus is documented broken** ([#8842](https://github.com/OctopusDeploy/Issues/issues/8842) Linux fallback dies; no rollback) — none of those failure modes survive into Squid.

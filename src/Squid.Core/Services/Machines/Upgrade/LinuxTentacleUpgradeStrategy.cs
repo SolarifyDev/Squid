@@ -35,16 +35,16 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IHalibutScriptObserver _observer;
-    private readonly IBundledTentacleVersionProvider _versionProvider;
+    private readonly ITentacleVersionRegistry _versionRegistry;
 
     public LinuxTentacleUpgradeStrategy(
         IHalibutClientFactory halibutClientFactory,
         IHalibutScriptObserver observer,
-        IBundledTentacleVersionProvider versionProvider)
+        ITentacleVersionRegistry versionRegistry)
     {
         _halibutClientFactory = halibutClientFactory;
         _observer = observer;
-        _versionProvider = versionProvider;
+        _versionRegistry = versionRegistry;
     }
 
     public bool CanHandle(string communicationStyle)
@@ -66,7 +66,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         // know the agent's architecture server-side.
         // For now we hard-code linux-x64 in the URL and the script switches it
         // inline using uname; see the bash sed lines below.
-        var downloadUrlTemplate = _versionProvider.GetDownloadUrl(targetVersion, "{RID}");
+        var downloadUrlTemplate = _versionRegistry.GetLinuxDownloadUrl(targetVersion, "{RID}");
         // Empty SHA256 = skip verification (script treats empty as opt-out).
         // Phase 2 will plumb a release-time-generated hash through the
         // version provider so we get end-to-end tarball authenticity.
