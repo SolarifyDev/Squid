@@ -4,22 +4,20 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// Returns the Tentacle version this server release recommends.
 ///
 /// <para>
-/// Mirrors Octopus's <c>IBundledPackageStore</c> design without the package-
-/// store overhead: the version is a single string baked into the server
-/// release at build time so a deployment of Squid Server 1.4.0 always pushes
-/// agents to a specific known-good Tentacle version (e.g. 1.4.0). This makes
-/// "what should every agent be on right now" a question with a single
-/// authoritative answer rather than something operators have to track in a
-/// spreadsheet.
+/// Server and Tentacle release together (single git tag triggers both
+/// pipelines), so the server's own assembly metadata is the authoritative
+/// "what should every agent be on right now" answer. The implementation
+/// reads <c>AssemblyInformationalVersion</c> baked in at build time by
+/// <c>dotnet publish -p:Version=$IMAGE_TAG</c> in <c>Dockerfile.Api</c>,
+/// with an env-var override (<c>SQUID_BUNDLED_TENTACLE_VERSION</c>) for
+/// air-gapped / forked deployments and local dev.
 /// </para>
 ///
 /// <para>
-/// Implementation reads from the embedded resource
-/// <c>Squid.Core.Resources.Upgrade.bundled-tentacle-version.txt</c>; the file
-/// is overwritten at CI time by the workflow that bumps server version, so
-/// the bundled-tentacle version always tracks server version unless an
-/// operator explicitly pins via the <c>UpgradeMachineCommand.TargetVersion</c>
-/// override.
+/// No bundled <c>.txt</c> file — the previous design relied on a manually-
+/// edited <c>bundled-tentacle-version.txt</c> resource which silently
+/// drifted whenever someone bumped the server version without updating
+/// that file. Auto-detection makes drift impossible.
 /// </para>
 /// </summary>
 public interface IBundledTentacleVersionProvider : IScopedDependency

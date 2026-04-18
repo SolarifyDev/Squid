@@ -1,3 +1,4 @@
+using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
@@ -6,21 +7,34 @@ namespace Squid.Core.Services.Machines.Upgrade;
 
 public sealed class MachineUpgradeService : IMachineUpgradeService
 {
+    /// <summary>
+    /// Outer cap for the lock window. Generous so the underlying upgrade has
+    /// room to drain in-flight scripts (waited on by the agent's
+    /// FullIsolation mutex), download the tarball, swap, restart, and verify.
+    /// Independent of the strategy's own per-step timeouts.
+    /// </summary>
+    private static readonly TimeSpan LockExpiry = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
+
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
     private readonly IBundledTentacleVersionProvider _versionProvider;
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
+    private readonly IRedisSafeRunner _redisLock;
 
     public MachineUpgradeService(
         IMachineDataProvider machineDataProvider,
         IMachineRuntimeCapabilitiesCache runtimeCache,
         IBundledTentacleVersionProvider versionProvider,
-        IEnumerable<IMachineUpgradeStrategy> strategies)
+        IEnumerable<IMachineUpgradeStrategy> strategies,
+        IRedisSafeRunner redisLock)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
         _versionProvider = versionProvider;
         _strategies = strategies;
+        _redisLock = redisLock;
     }
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
@@ -33,8 +47,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         {
             return BuildResponse(machine, currentVersion: null, targetVersion: null,
                 MachineUpgradeStatus.Failed,
-                "No target version provided and no bundled version is configured on this server. " +
-                "Specify TargetVersion explicitly in the upgrade request.");
+                "No target version provided and no bundled version is configured on this server " +
+                $"(set {BundledTentacleVersionProvider.OverrideEnvVar} env var or build with -p:Version=<semver>). " +
+                "Specify TargetVersion explicitly in the upgrade request as a workaround.");
         }
 
         var currentVersion = ResolveCurrentVersion(machine.Id);
@@ -56,9 +71,36 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 $"No upgrade strategy registered for CommunicationStyle '{style}'.");
         }
 
-        var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
+        // Distributed lock: in HA deployments multiple API replicas might
+        // receive the same upgrade trigger from a UI retry / load-balancer
+        // failover. Without this, two replicas would each download + swap +
+        // restart the agent — racy at best, brick the install at worst.
+        // RedLock gives us a multi-replica-safe critical section keyed by
+        // machineId.
+        var lockKey = $"squid:upgrade:machine:{machine.Id}";
+        return await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+            lockKey,
+            async () =>
+            {
+                var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
 
-        return BuildResponse(machine, currentVersion, targetVersion, outcome.Status, outcome.Detail);
+                // On any successful or initiated upgrade, drop the cached
+                // version so the next health check repopulates from the agent's
+                // Capabilities probe — without this the cached old version
+                // would shadow the upgrade for up to a full health-check
+                // interval, making the UI show "still on N-1" even after the
+                // agent reports N.
+                if (outcome.Status is MachineUpgradeStatus.Upgraded or MachineUpgradeStatus.Initiated)
+                    _runtimeCache.Invalidate(machine.Id);
+
+                return BuildResponse(machine, currentVersion, targetVersion, outcome.Status, outcome.Detail);
+            },
+            expiry: LockExpiry,
+            wait: LockWait,
+            retry: LockRetry).ConfigureAwait(false)
+            ?? BuildResponse(machine, currentVersion, targetVersion,
+                MachineUpgradeStatus.Failed,
+                "Could not acquire distributed lock for this machine — another upgrade may be in progress on a different server replica. Retry in a moment.");
     }
 
     /// <summary>Operator-supplied version wins over the server bundle when both present.</summary>

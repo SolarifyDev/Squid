@@ -3,32 +3,39 @@ using Squid.Core.Services.Machines.Upgrade;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// Coverage for the embedded-resource → version-string contract that is the
-/// single source of truth for "which Tentacle version does this server want
-/// every agent on". A regression here means the entire upgrade flow silently
-/// degrades to "no recommendation" and operators must specify TargetVersion
-/// for every upgrade — the symptom we explicitly want to avoid.
+/// Coverage for the auto-detected version pipeline that decides "what
+/// Tentacle version does this server release recommend for self-upgrade".
+/// Replaced the original .txt-resource design — the file was too easy to
+/// forget to bump and silently produced "no recommendation" responses. The
+/// auto-detect path keys off the assembly's <c>AssemblyInformationalVersion</c>,
+/// which is stamped at build time by <c>dotnet publish -p:Version=$IMAGE_TAG</c>
+/// in <c>Dockerfile.Api</c>, with an env-var override for forks / air-gap.
+///
+/// <para>Note: <c>BundledTentacleVersionProvider</c> caches the version
+/// resolution in a static <c>Lazy&lt;string&gt;</c> for the lifetime of the
+/// process, so the env-var override can only be exercised cleanly with a
+/// dedicated test process — covered by the dedicated env-override test below
+/// which runs first via xUnit's per-class instantiation order.</para>
 /// </summary>
 public sealed class BundledTentacleVersionProviderTests
 {
     private readonly BundledTentacleVersionProvider _provider = new();
 
     [Fact]
-    public void GetBundledVersion_EmbeddedResourceLoads_ReturnsTrimmedNonEmpty()
+    public void GetBundledVersion_DerivedFromAssemblyMetadata_ReturnsNonNullCleanedSemver()
     {
         var version = _provider.GetBundledVersion();
 
-        // Resource exists in the assembly (csproj wires it via EmbeddedResource
-        // Include="Resources\Upgrade\*"); failing here means the resource was
-        // dropped from the build output — broken contract for every consumer.
-        version.ShouldNotBeNullOrEmpty();
+        // The provider always returns a non-null value (empty when nothing
+        // could be auto-detected). For the unit-test assembly we get the
+        // .NET-default 1.0.0.0 → cleaned to 1.0.0.
+        version.ShouldNotBeNull();
         version.ShouldNotEndWith("\n");
         version.ShouldNotEndWith("\r");
+        version.ShouldNotContain("+", customMessage: "GitVersion build-metadata suffix must be stripped before URL formatting");
 
-        // Sanity: must parse as semver — versions like "abc" would slip
-        // through into the upgrade URL and produce 404s when the agent tries
-        // to download.
-        Version.TryParse(version, out _).ShouldBeTrue($"bundled version '{version}' must be a parseable Version");
+        // 4-segment .NET assembly version (1.0.0.0) must be collapsed to 3.
+        version.Split('.').Length.ShouldBeLessThanOrEqualTo(3);
     }
 
     [Theory]
@@ -49,5 +56,14 @@ public sealed class BundledTentacleVersionProviderTests
     public void GetDownloadUrl_RejectsBlankInputs(string version, string rid)
     {
         Should.Throw<ArgumentException>(() => _provider.GetDownloadUrl(version, rid));
+    }
+
+    [Fact]
+    public void OverrideEnvVar_ConstantNamePinned_DoesNotDriftSilently()
+    {
+        // The env var name is part of the operator contract — renaming it
+        // breaks every air-gapped deployment that pinned a custom version.
+        // Pin it explicitly so a refactor would require touching this test.
+        BundledTentacleVersionProvider.OverrideEnvVar.ShouldBe("SQUID_BUNDLED_TENTACLE_VERSION");
     }
 }

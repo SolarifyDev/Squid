@@ -67,7 +67,10 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         // For now we hard-code linux-x64 in the URL and the script switches it
         // inline using uname; see the bash sed lines below.
         var downloadUrlTemplate = _versionProvider.GetDownloadUrl(targetVersion, "{RID}");
-        var scriptBody = BuildScript(targetVersion, downloadUrlTemplate);
+        // Empty SHA256 = skip verification (script treats empty as opt-out).
+        // Phase 2 will plumb a release-time-generated hash through the
+        // version provider so we get end-to-end tarball authenticity.
+        var scriptBody = BuildScript(targetVersion, downloadUrlTemplate, expectedSha256: string.Empty);
 
         var ticketId = $"upgrade-{machine.Id}-{Guid.NewGuid():N}"[..32];
         var ticket = new ScriptTicket(ticketId);
@@ -144,7 +147,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         }
     }
 
-    private static string BuildScript(string targetVersion, string downloadUrlTemplate)
+    private static string BuildScript(string targetVersion, string downloadUrlTemplate, string expectedSha256)
     {
         var template = _scriptTemplate.Value;
 
@@ -153,6 +156,10 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             // {RID} stays inside the URL and is rewritten by the script's
             // `case "$ARCH"` block — keeps server agnostic to agent arch.
             .Replace("{{DOWNLOAD_URL}}", downloadUrlTemplate.Replace("{RID}", "$RID", StringComparison.Ordinal), StringComparison.Ordinal)
+            // Empty when the release pipeline hasn't published a hash yet —
+            // script treats empty as "skip verification" rather than fail.
+            // Phase 2: publish hashes alongside the tarball + plumb through.
+            .Replace("{{EXPECTED_SHA256}}", expectedSha256 ?? string.Empty, StringComparison.Ordinal)
             .Replace("{{INSTALL_DIR}}", DefaultInstallDir, StringComparison.Ordinal)
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
             .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal);
