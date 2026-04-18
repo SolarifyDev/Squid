@@ -110,7 +110,8 @@ We model on Octopus's `TentacleUpgradeMediator` (see local
 | `KubernetesAgentUpgradeStrategy` (placeholder; helm-based in Phase 2) | `Squid.Core/Services/Machines/Upgrade/KubernetesAgentUpgradeStrategy.cs` | 1 stub |
 | `WindowsTentacleUpgradeStrategy` | future | 3 |
 | `IMachineUpgradeService` orchestrator | `Squid.Core/Services/Machines/Upgrade/MachineUpgradeService.cs` | 1 |
-| `ITentacleVersionRegistry` — live Docker Hub query per-style with TTL cache + env override | `Squid.Core/Services/Machines/Upgrade/TentacleVersionRegistry.cs` | 1 |
+| `ITentacleVersionRegistry` — single-responsibility version lookup; live Docker Hub query per-style with TTL cache + env override. **No platform-specific methods** (URL pattern, archive format, etc. live on each strategy per ISP). | `Squid.Core/Services/Machines/Upgrade/TentacleVersionRegistry.cs` | 1 |
+| Linux tarball URL pattern + air-gap mirror env override (`SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL`) | `LinuxTentacleUpgradeStrategy.BuildDownloadUrl` (private — strategy owns its delivery) | 1 |
 | `UpgradeMachineCommand` + handler | `Squid.Message/Commands/Machine/`, `Squid.Core/Handlers/CommandHandlers/Machine/` | 1 |
 | `MachineController.UpgradeMachineAsync` endpoint | `Squid.Api/Controllers/MachineController.cs` | 1 |
 | Embedded upgrade script `upgrade-linux-tentacle.sh` | `Squid.Core/Resources/Upgrade/upgrade-linux-tentacle.sh` | 1 |
@@ -242,7 +243,7 @@ The operator's biggest fear: "will my machine come back as a NEW machine after u
 - **Auto-discover "upgrade available" signal** on every machine list query: `GET /api/machines/list` returns each machine with `{currentVersion, recommendedVersion, upgradeAvailable: bool}` so the UI shows a badge.
 - **SHA256 release-pipeline integration**: workflow generates `*.tar.gz.sha256`; `IBundledTentacleVersionProvider.GetExpectedSha256(version, rid)` returns it; bash script enforces.
 - **Pre-flight from server side**: dry-run mode `?dryRun=true` returns "what would happen" without touching the agent (current version, target, expected URL, expected SHA, would-be-skipped reason).
-- **Air-gapped support**: `BUNDLED_TENTACLE_DOWNLOAD_BASE_URL` env var overrides the default GitHub Releases prefix so private mirrors / S3 buckets work.
+- **Air-gapped support** (already in Phase 1 for Linux): `SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL` env var overrides the default GitHub Releases prefix so private mirrors / S3 buckets work — the file naming convention `{base}/{version}/squid-tentacle-{version}-{rid}.tar.gz` stays canonical so mirrors just rsync the GitHub release tree. K8s + Windows mirror overrides come in their own strategies.
 
 ### Phase 3 — Windows + cross-platform parity
 

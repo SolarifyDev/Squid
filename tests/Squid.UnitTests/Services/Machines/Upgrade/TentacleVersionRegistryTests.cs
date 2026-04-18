@@ -4,11 +4,16 @@ using Squid.Message.Enums;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// Coverage for the live Tentacle-version source-of-truth. Validates the
-/// resolution chain (env override → cache → live query → stale fallback →
-/// empty), the per-style routing, and the URL construction the upgrade
-/// strategy depends on. Live Docker Hub queries are NOT exercised here —
-/// those need the network and would be flaky; integration tests cover that.
+/// Coverage for the live Tentacle-version source-of-truth. Single
+/// responsibility: "given a CommunicationStyle, what is the latest
+/// published version". URL building / artefact delivery deliberately lives
+/// elsewhere (per-strategy) — see the SOLID note on
+/// <see cref="ITentacleVersionRegistry"/>.
+///
+/// <para>Live Docker Hub queries are NOT exercised here — those need the
+/// network and would be flaky in CI; integration tests cover the live
+/// path. The HTTP boundary is short-circuited by env-var overrides for
+/// every test in this file, proving the override path runs before any IO.</para>
 /// </summary>
 public sealed class TentacleVersionRegistryTests : IDisposable
 {
@@ -21,6 +26,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         // sibling tests that may share the env. Restored in Dispose().
         _previousLinuxOverride = Environment.GetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar);
         _previousK8sOverride = Environment.GetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar);
+
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, null);
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar, null);
     }
@@ -52,8 +58,8 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     {
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, expected);
 
-        // We intentionally pass a registry whose HTTP factory would NPE if
-        // touched — proves the override short-circuits before any network IO.
+        // Pass null HTTP factory — proves the override short-circuits BEFORE
+        // any network IO (otherwise the registry would NPE on the HTTP path).
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
         var version = await registry.GetLatestVersionAsync(style, CancellationToken.None);
@@ -86,36 +92,15 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     }
 
     [Fact]
-    public async Task GetLatestVersionAsync_UnknownStyle_ReturnsEmpty()
+    public async Task GetLatestVersionAsync_UnknownStyle_ReturnsEmptyWithoutCrash()
     {
+        // SSH targets (and any future style) shouldn't error the upgrade
+        // pipeline; the orchestrator turns empty into a NotSupported
+        // response with style name in the detail.
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
         var version = await registry.GetLatestVersionAsync("Ssh", CancellationToken.None);
 
         version.ShouldBeEmpty();
-    }
-
-    [Theory]
-    [InlineData("1.4.0", "linux-x64", "https://github.com/SolarifyDev/Squid/releases/download/1.4.0/squid-tentacle-1.4.0-linux-x64.tar.gz")]
-    [InlineData("1.4.0", "linux-arm64", "https://github.com/SolarifyDev/Squid/releases/download/1.4.0/squid-tentacle-1.4.0-linux-arm64.tar.gz")]
-    [InlineData("2.0.0-beta.1", "linux-x64", "https://github.com/SolarifyDev/Squid/releases/download/2.0.0-beta.1/squid-tentacle-2.0.0-beta.1-linux-x64.tar.gz")]
-    public void GetLinuxDownloadUrl_BuildsPublishedReleaseAssetUrl(string version, string rid, string expected)
-    {
-        var registry = new TentacleVersionRegistry(httpClientFactory: null);
-
-        registry.GetLinuxDownloadUrl(version, rid).ShouldBe(expected);
-    }
-
-    [Theory]
-    [InlineData(null, "linux-x64")]
-    [InlineData("", "linux-x64")]
-    [InlineData("  ", "linux-x64")]
-    [InlineData("1.4.0", null)]
-    [InlineData("1.4.0", "")]
-    public void GetLinuxDownloadUrl_RejectsBlankInputs(string version, string rid)
-    {
-        var registry = new TentacleVersionRegistry(httpClientFactory: null);
-
-        Should.Throw<ArgumentException>(() => registry.GetLinuxDownloadUrl(version, rid));
     }
 }
