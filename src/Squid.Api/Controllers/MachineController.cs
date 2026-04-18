@@ -151,4 +151,24 @@ public class MachineController : ControllerBase
 
         return Ok(response);
     }
+
+    /// <summary>
+    /// Triggers an in-place self-upgrade of the agent on the target machine.
+    /// Per-target dispatch is via <c>IMachineUpgradeStrategy</c> (Linux
+    /// Tentacle delivers a bash script over Halibut; Kubernetes Agent will
+    /// helm-upgrade the chart in Phase 2).
+    /// </summary>
+    [HttpPost("{machineId:int}/upgrade")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
+    public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)
+    {
+        // Body is optional — operator may POST {} to use the server's bundled
+        // version. Bind path id over body id so /{id}/upgrade is canonical.
+        var command = body ?? new UpgradeMachineCommand();
+        command.MachineId = machineId;
+
+        var response = await _mediator.SendAsync<UpgradeMachineCommand, UpgradeMachineResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }
