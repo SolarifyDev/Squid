@@ -3,6 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
 
@@ -50,7 +51,7 @@ public partial class MachineRegistrationService : IMachineRegistrationService
         if (string.IsNullOrEmpty(name)) return;
 
         if (await _dataProvider.ExistsByNameAsync(name, spaceId, ct).ConfigureAwait(false))
-            throw new InvalidOperationException($"A machine named \"{name}\" already exists in this space");
+            throw new MachineNameConflictException(name, spaceId);
     }
 
     private static Machine BuildMachineDefaults(string name, string roles, string environmentIds, int spaceId, string endpointJson, int? machinePolicyId = null)

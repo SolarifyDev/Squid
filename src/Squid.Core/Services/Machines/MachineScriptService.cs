@@ -23,19 +23,22 @@ public partial class MachineScriptService : IMachineScriptService
     private readonly IAgentVersionProvider _agentVersionProvider;
     private readonly SelfCertSetting _selfCertSetting;
     private readonly IEnumerable<ITentacleInstallScriptBuilder> _tentacleScriptBuilders;
+    private readonly ITentacleCommsUrlProbe _commsUrlProbe;
 
     public MachineScriptService(
         IAccountService accountService,
         IMachineDataProvider machineDataProvider,
         IAgentVersionProvider agentVersionProvider,
         SelfCertSetting selfCertSetting,
-        IEnumerable<ITentacleInstallScriptBuilder> tentacleScriptBuilders)
+        IEnumerable<ITentacleInstallScriptBuilder> tentacleScriptBuilders,
+        ITentacleCommsUrlProbe commsUrlProbe)
     {
         _accountService = accountService;
         _machineDataProvider = machineDataProvider;
         _agentVersionProvider = agentVersionProvider;
         _selfCertSetting = selfCertSetting;
         _tentacleScriptBuilders = tentacleScriptBuilders;
+        _commsUrlProbe = commsUrlProbe;
     }
 
     private static TResponse Success<TResponse, TData>(TData data) where TResponse : SquidResponse<TData>, new()

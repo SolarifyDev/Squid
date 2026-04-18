@@ -3,6 +3,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Account;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Machines.Scripts.Tentacle;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Models.Deployments.Machine;
 
@@ -13,6 +14,7 @@ public class MachineUpgradeScriptServiceTests
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
     private readonly Mock<IAccountService> _accountService = new();
+    private readonly Mock<ITentacleCommsUrlProbe> _commsUrlProbe = new();
     private readonly MachineScriptService _service;
 
     public MachineUpgradeScriptServiceTests()
@@ -22,7 +24,8 @@ public class MachineUpgradeScriptServiceTests
             _machineDataProvider.Object,
             _agentVersionProvider.Object,
             new Squid.Core.Settings.SelfCert.SelfCertSetting(),
-            []);
+            [],
+            _commsUrlProbe.Object);
     }
 
     [Fact]

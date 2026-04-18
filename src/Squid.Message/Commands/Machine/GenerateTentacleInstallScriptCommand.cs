@@ -38,6 +38,15 @@ public class GenerateTentacleInstallScriptData
 {
     public string ServerThumbprint { get; set; }
     public List<TentacleInstallScript> Scripts { get; set; } = [];
+
+    /// <summary>
+    /// Diagnostic result of probing the configured polling URL at
+    /// script-generation time. Lets the UI display an actionable warning when
+    /// DNS / SLB / firewall is not yet configured correctly, instead of
+    /// silently handing out a script that will fail with cryptic EOF errors
+    /// once a real Tentacle tries to poll.
+    /// </summary>
+    public TentacleCommsProbeInfo CommsUrlProbe { get; set; }
 }
 
 public class TentacleInstallScript
@@ -49,4 +58,19 @@ public class TentacleInstallScript
     public string ScriptType { get; set; }
     public string Content { get; set; }
     public bool IsRecommended { get; set; }
+}
+
+/// <summary>
+/// Transport DTO mirroring the server-side <c>TentacleCommsProbeResult</c>.
+/// Shipped to the UI alongside the install scripts so operators see network /
+/// SLB misconfigurations at script-generation time instead of at
+/// first-Tentacle-handshake time.
+/// </summary>
+public class TentacleCommsProbeInfo
+{
+    public bool Reachable { get; set; }
+    public bool Skipped { get; set; }
+    public string ObservedThumbprint { get; set; } = string.Empty;
+    public bool ThumbprintMatches { get; set; }
+    public string Detail { get; set; } = string.Empty;
 }

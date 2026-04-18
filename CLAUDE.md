@@ -776,6 +776,148 @@ One file per concern. Main file = interface + constructor + flat pipeline:
 - `static` methods for pure logic with no instance side effects.
 - `.Replace("{{Key}}", value, StringComparison.Ordinal)` for template substitution.
 
+---
+
+## Kubernetes Deployment — Exposing Halibut Polling
+
+Deploying the Squid API server on K8s requires **two separate external endpoints** with different networking requirements. Treating them as one (single Ingress, single domain, single port) does not work.
+
+### Why two endpoints
+
+| Endpoint | Protocol | K8s abstraction | TLS owner |
+|---|---|---|---|
+| Web / HTTP API (:443) | HTTP/1.1, HTTP/2 | `Ingress` → nginx-ingress → `Service:8080` (ClusterIP) | cert-manager + Let's Encrypt, terminated at ingress |
+| Halibut polling (:10943) | L4 TCP (Halibut binary protocol, own mTLS) | `Service type=LoadBalancer` → pod:10943 (TCP passthrough) | Halibut self-signed cert inside the pod, never terminated at ingress |
+
+nginx-ingress is L7 HTTP only. Halibut is L4 TCP with its own mTLS handshake. Trying to route Halibut through nginx-ingress (via `tcp-services` ConfigMap) creates a fragile coupling between two unrelated protocols and introduces per-cloud annotations; using a dedicated `Service type=LoadBalancer` is the standard cloud-agnostic pattern.
+
+### Required manifests
+
+**1. Application Deployment + ClusterIP Service (HTTP)** — unchanged from a standard web app:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: deploy-squid-api, namespace: '#{K8SNameSpace}' }
+spec:
+  replicas: 1
+  selector: { matchLabels: { Octopus.Kubernetes.DeploymentName: deploy-squid-api } }
+  template:
+    spec:
+      containers:
+        - name: squid-api
+          image: '#{SquidImageRepo}:#{SquidImageTag}'
+          ports: [{ containerPort: 8080, name: http }]
+          envFrom: [{ configMapRef: { name: squid-configmap-#{Octopus.Deployment.Id} } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: squid-service, namespace: '#{K8SNameSpace}' }
+spec:
+  type: ClusterIP
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+  selector: { Octopus.Kubernetes.DeploymentName: deploy-squid-api }
+```
+
+**2. Ingress for HTTP only** — unchanged:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: squid-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: '#{IngressBaseDomainName}'
+      http:
+        paths: [{ path: /, pathType: ImplementationSpecific,
+                  backend: { service: { name: squid-service, port: { number: 8080 } } } }]
+  tls: [{ hosts: ['#{IngressBaseDomainName}'], secretName: tls-squid-secret }]
+```
+
+**3. Dedicated LoadBalancer Service for Halibut** — the critical piece:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: squid-halibut
+  namespace: '#{K8SNameSpace}'
+  annotations:
+    # Force TCP listener (CCM may default to HTTP otherwise → breaks binary protocol)
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-protocol-port: "tcp:10943"
+    # Force TCP health check (default HTTP GET hits Halibut pod → permanently "unhealthy" → drops traffic)
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-type: "tcp"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-healthy-threshold: "2"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-unhealthy-threshold: "2"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-interval: "5"
+    # Long-lived polling connections
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-persistence-timeout: "3600"
+    # OPTIONAL: reuse a specific pre-allocated SLB so the public IP is stable across
+    # Service delete/recreate. Needed for production where DNS can't be updated per deploy.
+    # service.beta.kubernetes.io/alibaba-cloud-loadbalancer-id: "lb-xxxxxxxxxxxx"
+    # service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-listeners: "true"
+spec:
+  type: LoadBalancer
+  ports:
+    - name: halibut
+      port: 10943
+      targetPort: 10943
+      protocol: TCP
+  selector:
+    # Must match what Octopus auto-rewrites for the Deployment. When the Service is in a
+    # different Octopus step than the Deployment, Octopus does NOT auto-rewrite the
+    # selector, so write the real value literally (do not use `octopusexport: OctopusExport`
+    # placeholder unless the Service is in the same step as the Deployment).
+    Octopus.Kubernetes.DeploymentName: deploy-squid-api
+```
+
+### Non-manifest prerequisites
+
+The manifests alone don't work without these three out-of-band setups:
+
+| # | What | Why | Who |
+|---|---|---|---|
+| 1 | A record `#{PollingBaseDomainName}` → SLB external IP | Tentacle connects to hostname, not IP | Ops / DNS team |
+| 2 | Worker node security group allows `TCP 30000-32767` from `100.64.0.0/10` | Alibaba SLB's health check sources are in the `100.64.0.0/10` CGNAT range (RFC 6598). Without this, SLB probes the NodePort and always fails, marks backend unhealthy, drops all traffic | Ops / cloud team |
+| 3 | ConfigMap env var `ServerUrl__CommsUrl=https://#{PollingBaseDomainName}:10943` | Server's Web UI and install-script generator pull the polling URL from this env var; without it, generated install scripts point new agents at the wrong endpoint | Deployment spec |
+
+### Diagnostic commands
+
+```bash
+# Verify Service has endpoints (selector matches pod)
+kubectl -n <ns> get endpoints squid-halibut
+#   Expected: squid-halibut   <pod-ip>:10943   <age>
+
+# Verify Halibut server cert is reachable from internet
+openssl s_client -connect #{PollingBaseDomainName}:10943 \
+  -servername #{PollingBaseDomainName} </dev/null 2>&1 \
+  | openssl x509 -noout -fingerprint -sha1
+#   Expected: matches the server cert thumbprint from Seq log
+#             "HalibutRuntime created. ServerCertThumbprint=<THUMBPRINT>"
+
+# Server-side logs that confirm trust list is loaded
+# Seq filter: @MessageTemplate like '%Halibut trust reconfigured%'
+#   Expected every startup + after each agent registration:
+#             "Halibut trust reconfigured, <N> polling agent(s) trusted"
+```
+
+### Common failure modes (matched to root cause)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Tentacle registers (200) but polling `Received EOF` | SLB health check hits wrong port or type → backend "unhealthy" → SLB silently drops forwarded traffic | Ensure `health-check-type: tcp` annotation; do NOT set `health-check-connect-port` unless pod is directly exposed (ENI mode). Let CCM default to the NodePort for flannel clusters |
+| `kubectl get endpoints <svc>` returns `<none>` | Service selector does not match pod labels. Octopus "Configure and apply" only auto-rewrites selectors when Service and Deployment are in the SAME step | Hardcode `selector: {Octopus.Kubernetes.DeploymentName: deploy-squid-api}`; or move the Service into the Deployment's step |
+| Backend shows "异常" / unhealthy even though pod and Service are correct | Worker node security group blocks SLB health check source | Add SG rule: `TCP 30000-32767` from `100.64.0.0/10` |
+| Same as above but after `Service delete → recreate` | CCM allocated a NEW SLB with a new public IP; old DNS still points at the defunct old SLB | Either update DNS, or add `alibaba-cloud-loadbalancer-id` annotation to reuse the existing SLB (stable IP forever) |
+| Generated install script shows polling URL as `https://<ingress-domain>:10943` | `ServerUrl__CommsUrl` env var is empty; server falls back to `ExternalUrl host + polling port` | Set `ServerUrl__CommsUrl` env var explicitly to the polling sub-domain |
+
+---
+
 ## Development Rules
 
 See `~/.claude/CLAUDE.md` for global rules (no breaking changes, design principles, refactoring patterns).

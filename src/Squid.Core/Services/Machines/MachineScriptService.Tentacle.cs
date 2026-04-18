@@ -35,11 +35,14 @@ public partial class MachineScriptService
 
             var scripts = BuildScripts(context);
 
+            var probe = await ProbePollingCommsUrlAsync(command, serverThumbprint, ct).ConfigureAwait(false);
+
             return Success<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(
                 new GenerateTentacleInstallScriptData
                 {
                     ServerThumbprint = serverThumbprint,
-                    Scripts = scripts
+                    Scripts = scripts,
+                    CommsUrlProbe = probe
                 });
         }
         catch (Exception ex)
@@ -89,4 +92,36 @@ public partial class MachineScriptService
     private static bool IsListeningMode(string communicationMode)
         => string.IsNullOrWhiteSpace(communicationMode)
         || communicationMode.Equals("Listening", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Polling-mode install scripts embed a <c>ServerCommsUrl</c> that must be
+    /// externally reachable with a valid TLS endpoint presenting the server's
+    /// Halibut cert. Probing here (at script-generation time) surfaces
+    /// networking/SLB misconfigurations to the operator before the script
+    /// reaches a new machine owner — avoids repeating the 2026-04-18 incident
+    /// where mis-configured SLB health checks led to days of silent EOF loops.
+    /// Listening-mode registrations have no polling URL, so we skip.
+    /// </summary>
+    private async Task<TentacleCommsProbeInfo> ProbePollingCommsUrlAsync(
+        GenerateTentacleInstallScriptCommand command, string serverThumbprint, CancellationToken ct)
+    {
+        if (IsListeningMode(command.CommunicationMode))
+            return new TentacleCommsProbeInfo { Skipped = true, Detail = "Listening-mode registration: no polling URL to probe" };
+
+        var probe = await _commsUrlProbe
+            .ProbeAsync(command.ServerCommsUrl, serverThumbprint, ct)
+            .ConfigureAwait(false);
+
+        return ToTransportDto(probe);
+    }
+
+    /// <summary>Map domain probe result → transport DTO consumed by UI/clients.</summary>
+    private static TentacleCommsProbeInfo ToTransportDto(TentacleCommsProbeResult probe) => new()
+    {
+        Reachable = probe.Reachable,
+        Skipped = probe.Skipped,
+        ObservedThumbprint = probe.ObservedThumbprint ?? string.Empty,
+        ThumbprintMatches = probe.ThumbprintMatches,
+        Detail = probe.Detail ?? string.Empty
+    };
 }

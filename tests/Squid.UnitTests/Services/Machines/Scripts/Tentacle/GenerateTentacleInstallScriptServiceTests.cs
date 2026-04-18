@@ -14,12 +14,17 @@ public class GenerateTentacleInstallScriptServiceTests
     private readonly Mock<IAccountService> _accountService = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
+    private readonly Mock<ITentacleCommsUrlProbe> _commsUrlProbe = new();
 
     public GenerateTentacleInstallScriptServiceTests()
     {
         _accountService
             .Setup(x => x.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = "API-TEST" });
+
+        _commsUrlProbe
+            .Setup(x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TentacleCommsProbeResult { Skipped = true, Detail = "Stubbed for unit test" });
     }
 
     [Fact]
@@ -108,7 +113,8 @@ public class GenerateTentacleInstallScriptServiceTests
             _machineDataProvider.Object,
             _agentVersionProvider.Object,
             new Squid.Core.Settings.SelfCert.SelfCertSetting(),
-            builders);
+            builders,
+            _commsUrlProbe.Object);
     }
 
     private sealed class FakeBuilder : ITentacleInstallScriptBuilder
