@@ -168,12 +168,24 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return files.ToArray();
     }
 
+    /// <summary>
+    /// Translates the server-side script syntax to the Tentacle's wire enum.
+    /// All five syntaxes the Tentacle's <c>LocalScriptService</c> can execute
+    /// natively are passed through; an unknown syntax is rejected loudly rather
+    /// than silently downgraded to <c>Bash</c>, which previously caused Python
+    /// scripts to be handed to <c>bash script.sh</c> and crash with
+    /// <c>"import: command not found"</c>.
+    /// </summary>
     internal static ScriptType MapSyntax(Message.Models.Deployments.Execution.ScriptSyntax syntax)
     {
         return syntax switch
         {
             Message.Models.Deployments.Execution.ScriptSyntax.PowerShell => ScriptType.PowerShell,
-            _ => ScriptType.Bash
+            Message.Models.Deployments.Execution.ScriptSyntax.Bash => ScriptType.Bash,
+            Message.Models.Deployments.Execution.ScriptSyntax.Python => ScriptType.Python,
+            Message.Models.Deployments.Execution.ScriptSyntax.CSharp => ScriptType.CSharp,
+            Message.Models.Deployments.Execution.ScriptSyntax.FSharp => ScriptType.FSharp,
+            _ => throw new InvalidOperationException($"Unsupported script syntax for Tentacle execution: {syntax}")
         };
     }
 

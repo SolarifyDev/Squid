@@ -16,4 +16,12 @@ public static class TentacleTestCategories
     /// host so that `dotnet test` locally on macOS/Linux doesn't fail them.
     /// </summary>
     public const string WindowsTentacleE2E = "WindowsTentacleE2E";
+
+    /// <summary>
+    /// End-to-end tests that exercise the multi-syntax script execution path
+    /// (Python / dotnet-script / fsi). They self-skip when the corresponding
+    /// interpreter is not on PATH so the rest of the suite stays green on
+    /// minimal runners; the production Tentacle images install all three.
+    /// </summary>
+    public const string MultiSyntaxE2E = "MultiSyntaxE2E";
 }

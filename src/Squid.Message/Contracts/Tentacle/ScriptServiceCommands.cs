@@ -106,10 +106,22 @@ public class StartScriptCommand
     public Dictionary<string, string>? Labels { get; init; }
 }
 
+/// <summary>
+/// Native script syntaxes the Tentacle agent can execute directly. Mirrors the
+/// server-side <c>Squid.Message.Models.Deployments.Execution.ScriptSyntax</c>
+/// (see <c>HalibutMachineExecutionStrategy.MapSyntax</c>) so a deployment
+/// targeting a Tentacle has the same syntax options as one targeting a
+/// Kubernetes API target — previously the wire enum collapsed Python / CSharp /
+/// FSharp into Bash, silently downgrading the script and producing
+/// <c>"import: command not found"</c>-style errors at runtime.
+/// </summary>
 public enum ScriptType
 {
-    PowerShell,
-    Bash
+    PowerShell = 0,
+    Bash = 1,
+    CSharp = 2,
+    FSharp = 3,
+    Python = 4
 }
 
 public enum ScriptIsolationLevel
