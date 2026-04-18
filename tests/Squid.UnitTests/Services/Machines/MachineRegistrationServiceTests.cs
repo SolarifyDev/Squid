@@ -6,6 +6,7 @@ using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Models.Deployments.Machine;
@@ -628,13 +629,13 @@ public class MachineRegistrationServiceTests
     }
 
     [Fact]
-    public async Task RegisterSsh_DuplicateNameInSpace_ThrowsInvalidOperation()
+    public async Task RegisterSsh_DuplicateNameInSpace_ThrowsMachineNameConflict()
     {
         _machineDataProvider
             .Setup(x => x.ExistsByNameAsync("duplicate-ssh", 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+        var ex = await Should.ThrowAsync<MachineNameConflictException>(() =>
             _service.RegisterSshAsync(new RegisterSshCommand
             {
                 MachineName = "duplicate-ssh",
@@ -642,10 +643,41 @@ public class MachineRegistrationServiceTests
                 Host = "host.example.com"
             }, CancellationToken.None));
 
+        ex.MachineName.ShouldBe("duplicate-ssh");
+        ex.SpaceId.ShouldBe(1);
         ex.Message.ShouldContain("duplicate-ssh");
+        // Must derive from InvalidOperationException so old `catch (InvalidOperationException)`
+        // sites in callers still work — verifies non-breaking refactor.
+        ex.ShouldBeAssignableTo<InvalidOperationException>();
         _machineDataProvider.Verify(
             x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task RegisterTentaclePolling_DuplicateNameInSpace_ThrowsMachineNameConflict()
+    {
+        _machineDataProvider
+            .Setup(x => x.GetMachineBySubscriptionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+        _machineDataProvider
+            .Setup(x => x.ExistsByNameAsync("duplicate-tentacle", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var ex = await Should.ThrowAsync<MachineNameConflictException>(() =>
+            _service.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
+            {
+                MachineName = "duplicate-tentacle",
+                SpaceId = 1,
+                Thumbprint = "AABBCCDD",
+                SubscriptionId = "new-sub"
+            }, CancellationToken.None));
+
+        ex.MachineName.ShouldBe("duplicate-tentacle");
+        _machineDataProvider.Verify(
+            x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _trustDistributor.Verify(x => x.Reconfigure(), Times.Never);
     }
 
     // ========================================================================

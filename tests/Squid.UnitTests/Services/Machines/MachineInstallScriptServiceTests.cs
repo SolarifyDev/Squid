@@ -1,6 +1,7 @@
 using System.Net;
 using Squid.Core.Services.Account;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Machines.Scripts.Tentacle;
 using Squid.Message.Commands.Account;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Constants;
@@ -12,6 +13,7 @@ public class MachineInstallScriptServiceTests
     private readonly Mock<IAccountService> _accountService = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
+    private readonly Mock<ITentacleCommsUrlProbe> _commsUrlProbe = new();
     private readonly MachineScriptService _service;
 
     public MachineInstallScriptServiceTests()
@@ -20,12 +22,18 @@ public class MachineInstallScriptServiceTests
             .Setup(x => x.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = "test-api-key" });
 
+        // Default: probe skipped — individual tests that care can override.
+        _commsUrlProbe
+            .Setup(x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TentacleCommsProbeResult { Skipped = true, Detail = "Stubbed for unit test" });
+
         _service = new MachineScriptService(
             _accountService.Object,
             _machineDataProvider.Object,
             _agentVersionProvider.Object,
             new Squid.Core.Settings.SelfCert.SelfCertSetting(),
-            []);
+            [],
+            _commsUrlProbe.Object);
     }
 
     private static GenerateKubernetesAgentInstallScriptCommand CreateCommand(
@@ -318,5 +326,97 @@ public class MachineInstallScriptServiceTests
         response.Code.ShouldBe(HttpStatusCode.InternalServerError);
         response.Msg.ShouldContain("Failed to create API key");
         response.Data.ShouldBeNull();
+    }
+
+    // ========================================================================
+    // Polling URL probe — attaches SLB/DNS diagnostic to Tentacle install scripts
+    // so operators catch misconfigurations before shipping scripts to users.
+    // ========================================================================
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_PollingMode_InvokesProbeAndSurfacesResult()
+    {
+        _commsUrlProbe
+            .Setup(x => x.ProbeAsync("https://polling.example.com:10943", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TentacleCommsProbeResult
+            {
+                Reachable = true,
+                ThumbprintMatches = true,
+                ObservedThumbprint = "FAF04764",
+                Detail = "Reachable. Server cert thumbprint matches (FAF04764)"
+            });
+
+        var response = await _service.GenerateTentacleInstallScriptAsync(new GenerateTentacleInstallScriptCommand
+        {
+            MachineName = "mars-mac",
+            ServerUrl = "https://squid-api.example.com",
+            ServerCommsUrl = "https://polling.example.com:10943",
+            CommunicationMode = "Polling",
+            SpaceId = 1
+        }, CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.CommsUrlProbe.ShouldNotBeNull();
+        response.Data.CommsUrlProbe.Reachable.ShouldBeTrue();
+        response.Data.CommsUrlProbe.ThumbprintMatches.ShouldBeTrue();
+        response.Data.CommsUrlProbe.ObservedThumbprint.ShouldBe("FAF04764");
+
+        _commsUrlProbe.Verify(
+            x => x.ProbeAsync("https://polling.example.com:10943", It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_ListeningMode_SkipsProbe()
+    {
+        // Listening tentacles have no polling URL — probing is meaningless.
+        var response = await _service.GenerateTentacleInstallScriptAsync(new GenerateTentacleInstallScriptCommand
+        {
+            MachineName = "listening-tentacle",
+            ServerUrl = "https://squid-api.example.com",
+            ServerCommsUrl = "",
+            CommunicationMode = "Listening",
+            ListeningHostName = "tentacle.example.com",
+            ListeningPort = 10933,
+            SpaceId = 1
+        }, CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.CommsUrlProbe.ShouldNotBeNull();
+        response.Data.CommsUrlProbe.Skipped.ShouldBeTrue();
+        response.Data.CommsUrlProbe.Detail.ShouldContain("Listening");
+
+        _commsUrlProbe.Verify(
+            x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_UnreachableComms_SurfacesDiagnosticInResponse()
+    {
+        // This is the failure mode we want to catch at script-generation time
+        // instead of at first-agent-handshake time.
+        _commsUrlProbe
+            .Setup(x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TentacleCommsProbeResult
+            {
+                Reachable = false,
+                Detail = "SLB accepted TCP but dropped the TLS handshake. Verify: ... 100.64.0.0/10 ..."
+            });
+
+        var response = await _service.GenerateTentacleInstallScriptAsync(new GenerateTentacleInstallScriptCommand
+        {
+            MachineName = "mars-mac",
+            ServerUrl = "https://squid-api.example.com",
+            ServerCommsUrl = "https://polling.example.com:10943",
+            CommunicationMode = "Polling",
+            SpaceId = 1
+        }, CancellationToken.None);
+
+        // Script still generated — probe is advisory, not blocking — but the
+        // diagnostic flows through so the UI can render a warning banner.
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.CommsUrlProbe.Reachable.ShouldBeFalse();
+        response.Data.CommsUrlProbe.Detail.ShouldContain("100.64.0.0/10");
     }
 }

@@ -149,21 +149,26 @@ public sealed class LocalScriptServiceIdempotencyTests : IDisposable
 
         firstAgent.StartScript(command);
 
-        // Poll loop: Process.OutputDataReceived is async and CI runners can be slow
-        // to deliver the first batch. Wait up to 10s for at least one line to show up.
-        var firstPoll = WaitForLogs(() => firstAgent.GetStatus(new ScriptStatusRequest(ticket, 0)), TimeSpan.FromSeconds(10));
-        firstPoll.Logs.Count.ShouldBeGreaterThanOrEqualTo(1, "bash must have emitted at least one line within 10s of start");
+        // Poll loop: Process.OutputDataReceived is async and CI runners can be very
+        // slow to deliver the first batch (Process redirection plumbing through the
+        // .NET runtime). Wait up to 30s for at least one line to show up — the
+        // script's `sleep 60` keeps the process alive so timing out is the only risk.
+        var firstPoll = WaitForLogs(() => firstAgent.GetStatus(new ScriptStatusRequest(ticket, 0)), TimeSpan.FromSeconds(30));
+        firstPoll.Logs.Count.ShouldBeGreaterThanOrEqualTo(1, "bash must have emitted at least one line within 30s of start");
         var cursor = firstPoll.NextLogSequence;
 
         // Simulate agent restart — new LocalScriptService instance sees only the disk state.
         var restartedAgent = CreateService();
         _servicesToDispose.Add(restartedAgent);
 
-        // Give the original process another second to finish emitting all 10 lines.
+        // Up to 30s for all 10 echo lines to flow through the OS pipe, .NET's
+        // OutputDataReceived dispatcher, then SequencedLogWriter's per-line flush.
+        // CI runners (especially Linux containers in GHA) routinely take 5-15s to
+        // settle on this path; 10s was previously flaky on this exact assertion.
         var secondPoll = WaitForAllTenLines(
             firstPoll,
             () => restartedAgent.GetStatus(new ScriptStatusRequest(ticket, cursor)),
-            TimeSpan.FromSeconds(10));
+            TimeSpan.FromSeconds(30));
 
         // Combined output: first + second batch covers all 10 echo lines, no duplicates.
         var allLogText = string.Join(" ", firstPoll.Logs.Concat(secondPoll.Logs).Select(l => l.Text));
