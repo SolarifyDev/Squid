@@ -13,8 +13,15 @@ on:
 permissions:
   contents: read
 
+# Serialize parallel "push main" + "push tag" runs on the same commit to
+# prevent races at the Docker Hub push step.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   DOCKER_HUB: ${{ vars.SQUID_DOCKER_HUB }}
+  EXPECTED_SHA: ${{ github.sha }}
 
 jobs:
   # ── Step 1: Resolve version tag via GitVersion ─────────────────────────
@@ -25,7 +32,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
+          echo "Checkout SHA verified: $ACTUAL"
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v3.2.1
@@ -61,6 +78,16 @@ jobs:
         platform: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -87,6 +114,21 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_HUB }}/squid-tentacle:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}
           provenance: false
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.image_tag }}
+          no-cache: true
+          pull: true
+
+      - name: Verify pushed squid-tentacle image provenance
+        run: |
+          IMAGE="${{ env.DOCKER_HUB }}/squid-tentacle:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}"
+          docker pull "$IMAGE"
+          LABEL_SHA=$(docker inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          if [ "$LABEL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Image label SHA $LABEL_SHA != expected $EXPECTED_SHA"
+            exit 1
+          fi
 
   # ── Step 2b: Build squid-watchdog (amd64 + arm64) ─────────────────────
   build-watchdog:
@@ -98,6 +140,16 @@ jobs:
         platform: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -124,6 +176,21 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_HUB }}/squid-watchdog:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}
           provenance: false
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.image_tag }}
+          no-cache: true
+          pull: true
+
+      - name: Verify pushed squid-watchdog image provenance
+        run: |
+          IMAGE="${{ env.DOCKER_HUB }}/squid-watchdog:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}"
+          docker pull "$IMAGE"
+          LABEL_SHA=$(docker inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          if [ "$LABEL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Image label SHA $LABEL_SHA != expected $EXPECTED_SHA"
+            exit 1
+          fi
 
   # ── Step 2c: Build nfs-server (amd64 + arm64) ─────────────────────────
   build-nfs-server:
@@ -135,6 +202,16 @@ jobs:
         platform: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -161,6 +238,11 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_HUB }}/nfs-server:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}
           provenance: false
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.image_tag }}
+          no-cache: true
+          pull: true
 
   # ── Step 3: Create multi-arch manifests ────────────────────────────────
   manifest:
@@ -173,59 +255,31 @@ jobs:
           username: ${{ secrets.SQUID_DOCKER_USERNAME }}
           password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
-      - name: Create and push squid-tentacle manifest
+      - name: Create and push versioned manifests
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
-          # Versioned tag
-          docker manifest create \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG} \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}
+          for repo in squid-tentacle squid-watchdog nfs-server; do
+            docker manifest create \
+              ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG} \
+              ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG}-amd64 \
+              ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG}-arm64
+            docker manifest push ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG}
+          done
 
-          # Latest tag
-          docker manifest create --amend \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:latest \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/squid-tentacle:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle:latest
-
-      - name: Create and push squid-watchdog manifest
+      # :latest only on tag pushes — see comment in build-publish-linux-tentacle.yml.
+      - name: Amend latest tags (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
-          # Versioned tag
-          docker manifest create \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG} \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}
-
-          # Latest tag
-          docker manifest create --amend \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:latest \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/squid-watchdog:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/squid-watchdog:latest
-
-      - name: Create and push nfs-server manifest
-        env:
-          IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
-        run: |
-          # Versioned tag
-          docker manifest create \
-            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG} \
-            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}
-
-          # Latest tag
-          docker manifest create --amend \
-            ${{ env.DOCKER_HUB }}/nfs-server:latest \
-            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-amd64 \
-            ${{ env.DOCKER_HUB }}/nfs-server:${IMAGE_TAG}-arm64
-          docker manifest push ${{ env.DOCKER_HUB }}/nfs-server:latest
+          for repo in squid-tentacle squid-watchdog nfs-server; do
+            docker manifest create --amend \
+              ${{ env.DOCKER_HUB }}/${repo}:latest \
+              ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG}-amd64 \
+              ${{ env.DOCKER_HUB }}/${repo}:${IMAGE_TAG}-arm64
+            docker manifest push ${{ env.DOCKER_HUB }}/${repo}:latest
+          done
 
   # ── Step 4: Helm package & push ────────────────────────────────────────
   helm:
@@ -233,6 +287,16 @@ jobs:
     needs: [resolve-tag, manifest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Install Helm
         uses: azure/setup-helm@v4

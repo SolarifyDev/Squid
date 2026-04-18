@@ -13,8 +13,19 @@ on:
 permissions:
   contents: write
 
+# Serialize runs per-ref so a "push main" run and a "push tag" run on the same
+# commit cannot race at the Docker-Hub push step. Without this the later push
+# wins and can overwrite :latest with a stale build from the earlier run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   DOCKER_HUB: ${{ vars.SQUID_DOCKER_HUB }}
+  # Single source of truth — every checkout + all verification steps read this.
+  # Pinning to github.sha (immutable commit) instead of github.ref avoids the
+  # "tag points to stale commit" race we hit on 1.3.2.
+  EXPECTED_SHA: ${{ github.sha }}
 
 jobs:
   # ── Step 1: Resolve version tag via GitVersion ─────────────────────────
@@ -25,7 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
+          echo "Checkout SHA verified: $ACTUAL"
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v3.2.1
@@ -61,6 +82,16 @@ jobs:
         platform: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -87,6 +118,27 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}
           provenance: false
+          # Bake the commit SHA into the image labels so we can verify provenance.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.image_tag }}
+          no-cache: true
+          pull: true
+
+      # Belt-and-suspenders: pull the image we just pushed and sanity-check that
+      # the binary came from this commit (not a stale cached layer or a ghost
+      # from a previous run). If this fails, something very bad happened in the
+      # build stage and we must NOT proceed to the manifest/latest step.
+      - name: Verify pushed image provenance
+        run: |
+          IMAGE="${{ env.DOCKER_HUB }}/squid-tentacle-linux:${{ needs.resolve-tag.outputs.image_tag }}-${{ matrix.platform }}"
+          docker pull "$IMAGE"
+          LABEL_SHA=$(docker inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          if [ "$LABEL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Image label SHA $LABEL_SHA != expected $EXPECTED_SHA — stale image pushed!"
+            exit 1
+          fi
+          echo "Image SHA label verified: $LABEL_SHA"
 
   # ── Step 3: Create multi-arch manifest ─────────────────────────────────
   manifest:
@@ -99,18 +151,27 @@ jobs:
           username: ${{ secrets.SQUID_DOCKER_USERNAME }}
           password: ${{ secrets.SQUID_DOCKER_PASSWORD }}
 
-      - name: Create and push squid-tentacle-linux manifest
+      - name: Create and push versioned manifest
         env:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
         run: |
-          # Versioned tag
           docker manifest create \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG} \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-amd64 \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-arm64
           docker manifest push ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}
 
-          # Latest tag
+      # :latest is ONLY updated on tag pushes. The "push main" trigger builds
+      # and publishes a versioned image (e.g. 1.3.2-20) for traceability but
+      # must not clobber :latest — otherwise a later "push main" run can race
+      # a "push tag" run on the same commit and overwrite :latest with a stale
+      # build (as happened on 1.3.2 where :latest ended up pointing at a
+      # pre-tag-1.3.2 binary).
+      - name: Amend latest tag (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
+        run: |
           docker manifest create --amend \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:latest \
             ${{ env.DOCKER_HUB }}/squid-tentacle-linux:${IMAGE_TAG}-amd64 \
@@ -133,6 +194,16 @@ jobs:
             arch_label: arm64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
