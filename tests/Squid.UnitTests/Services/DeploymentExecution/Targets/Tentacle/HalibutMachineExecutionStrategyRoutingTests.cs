@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 
@@ -95,5 +96,34 @@ public class HalibutMachineExecutionStrategyRoutingTests
         var endpoint = HalibutMachineExecutionStrategy.ParseMachineEndpoint(machine);
 
         endpoint.ShouldBeNull();
+    }
+
+    // ========================================================================
+    // MapSyntax — wire-protocol mapping must cover every server-side syntax,
+    // not silently downgrade to Bash (root cause of the 2026-04-18 incident
+    // where Python scripts hit Tentacles as `bash script.sh` and crashed
+    // with "import: command not found").
+    // ========================================================================
+
+    [Theory]
+    [InlineData(Squid.Message.Models.Deployments.Execution.ScriptSyntax.Bash, ScriptType.Bash)]
+    [InlineData(Squid.Message.Models.Deployments.Execution.ScriptSyntax.PowerShell, ScriptType.PowerShell)]
+    [InlineData(Squid.Message.Models.Deployments.Execution.ScriptSyntax.Python, ScriptType.Python)]
+    [InlineData(Squid.Message.Models.Deployments.Execution.ScriptSyntax.CSharp, ScriptType.CSharp)]
+    [InlineData(Squid.Message.Models.Deployments.Execution.ScriptSyntax.FSharp, ScriptType.FSharp)]
+    public void MapSyntax_KnownSyntaxes_PreserveSyntaxAcrossWire(
+        Squid.Message.Models.Deployments.Execution.ScriptSyntax serverSyntax, ScriptType expected)
+    {
+        HalibutMachineExecutionStrategy.MapSyntax(serverSyntax).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void MapSyntax_UnknownSyntax_ThrowsRatherThanSilentlyDowngradingToBash()
+    {
+        // Adding a new ScriptSyntax server-side must force an explicit mapping
+        // change here — silent downgrade was the original 2026-04-18 bug.
+        Should.Throw<InvalidOperationException>(() =>
+            HalibutMachineExecutionStrategy.MapSyntax((Squid.Message.Models.Deployments.Execution.ScriptSyntax)999))
+                .Message.ShouldContain("Unsupported script syntax");
     }
 }

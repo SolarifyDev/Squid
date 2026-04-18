@@ -419,23 +419,42 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     internal static void WriteScriptFile(string workDir, string scriptBody, ScriptType syntax)
     {
-        var extension = syntax == ScriptType.PowerShell ? ".ps1" : ".sh";
-        var scriptPath = Path.Combine(workDir, $"script{extension}");
+        var scriptPath = Path.Combine(workDir, ScriptFileNameFor(syntax));
 
-        // .ps1 must be UTF-8 with BOM so Windows PowerShell 5.1 parses non-ASCII
-        // characters correctly. pwsh 7+ handles BOM-less UTF-8 fine too, so using
-        // BOM is safe for both.
-        var encoding = syntax == ScriptType.PowerShell
-            ? new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)
-            : new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-
-        File.WriteAllText(scriptPath, scriptBody, encoding);
+        File.WriteAllText(scriptPath, scriptBody, EncodingFor(syntax));
 
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             File.SetUnixFileMode(scriptPath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                 UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
     }
+
+    /// <summary>
+    /// Canonical on-disk filename for a given script syntax. Each interpreter
+    /// expects its own extension (Python's <c>importlib</c> resolution, dotnet-
+    /// script's <c>.csx</c> recognition, dotnet fsi's <c>.fsx</c>); writing them
+    /// all to <c>script.sh</c> works only by accident for some interpreters and
+    /// breaks others.
+    /// </summary>
+    internal static string ScriptFileNameFor(ScriptType syntax) => syntax switch
+    {
+        ScriptType.PowerShell => "script.ps1",
+        ScriptType.Python => "script.py",
+        ScriptType.CSharp => "script.csx",
+        ScriptType.FSharp => "script.fsx",
+        _ => "script.sh"
+    };
+
+    /// <summary>
+    /// .ps1 needs UTF-8 with BOM for Windows PowerShell 5.1 to parse non-ASCII
+    /// characters; everything else uses BOM-less UTF-8 (Python is BOM-tolerant
+    /// from 3.0+, but bash, dotnet-script and fsi all dislike BOM at the start).
+    /// </summary>
+    private static UTF8Encoding EncodingFor(ScriptType syntax) => syntax switch
+    {
+        ScriptType.PowerShell => new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+        _ => new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+    };
 
     internal static void WriteAdditionalFiles(string workDir, List<ScriptFile> files)
     {
@@ -504,12 +523,24 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var sensitiveVariablesPath = Path.Combine(workDir, "sensitiveVariables.json");
         var sensitiveKeyPath = sensitiveVariablesPath + ".key";
 
-        if (File.Exists(variablesPath))
+        // Calamari only knows how to bootstrap Bash and PowerShell scripts (it
+        // generates `export VAR=...` / `$VAR=...` preambles). For Python /
+        // CSharp / FSharp we bypass Calamari and exec the interpreter directly
+        // — variable injection still happens through process env vars set by
+        // the caller (or the script can read variables.json itself).
+        var canUseCalamari = command.ScriptSyntax == ScriptType.Bash || command.ScriptSyntax == ScriptType.PowerShell;
+
+        if (File.Exists(variablesPath) && canUseCalamari)
             return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitiveKeyPath, command.Arguments);
 
-        return command.ScriptSyntax == ScriptType.PowerShell
-            ? StartPwshProcess(workDir, command.Arguments)
-            : StartBashProcess(workDir, command.Arguments);
+        return command.ScriptSyntax switch
+        {
+            ScriptType.PowerShell => StartPwshProcess(workDir, command.Arguments),
+            ScriptType.Python => StartPythonProcess(workDir, command.Arguments),
+            ScriptType.CSharp => StartCSharpProcess(workDir, command.Arguments),
+            ScriptType.FSharp => StartFSharpProcess(workDir, command.Arguments),
+            _ => StartBashProcess(workDir, command.Arguments)
+        };
     }
 
     private static Process StartCalamariProcess(
@@ -593,6 +624,106 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add("script.ps1");
+
+        if (arguments != null)
+            foreach (var arg in arguments)
+                psi.ArgumentList.Add(arg);
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
+    }
+
+    /// <summary>
+    /// Runs <c>python3 script.py</c>. <c>python3</c> must be on PATH; the
+    /// upstream <c>squid-tentacle-linux</c> base image installs Python 3 by
+    /// default, but third-party / minimal Tentacle deployments may not — in
+    /// that case the process exits 127 with a clear "command not found"
+    /// message routed through the standard exit-code translator.
+    /// </summary>
+    private static Process StartPythonProcess(string workDir, string[] arguments)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "python3",
+            WorkingDirectory = workDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        psi.ArgumentList.Add("script.py");
+
+        if (arguments != null)
+            foreach (var arg in arguments)
+                psi.ArgumentList.Add(arg);
+
+        // PYTHONUNBUFFERED forces stdout/stderr to flush immediately so the
+        // SequencedLogWriter sees output as the script runs, not in a final
+        // burst at process exit. Otherwise <c>print()</c> calls can sit in
+        // the line-buffered pipe for tens of seconds.
+        psi.Environment["PYTHONUNBUFFERED"] = "1";
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
+    }
+
+    /// <summary>
+    /// Runs <c>dotnet-script script.csx</c> via the global <c>dotnet-script</c>
+    /// tool. The Tentacle image bundles it via <c>dotnet tool install -g
+    /// dotnet-script</c>; check the <c>Dockerfile.Tentacle.Linux</c>.
+    /// </summary>
+    private static Process StartCSharpProcess(string workDir, string[] arguments)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet-script",
+            WorkingDirectory = workDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        psi.ArgumentList.Add("script.csx");
+
+        if (arguments != null)
+            foreach (var arg in arguments)
+                psi.ArgumentList.Add(arg);
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
+    }
+
+    /// <summary>
+    /// Runs <c>dotnet fsi script.fsx</c>. <c>dotnet fsi</c> ships with the
+    /// .NET SDK (not the runtime), so this requires the SDK to be installed
+    /// on the agent — verified at agent build time via the SDK image base
+    /// in <c>Dockerfile.Tentacle.Linux</c>.
+    /// </summary>
+    private static Process StartFSharpProcess(string workDir, string[] arguments)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = workDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        psi.ArgumentList.Add("fsi");
+        psi.ArgumentList.Add("script.fsx");
 
         if (arguments != null)
             foreach (var arg in arguments)
