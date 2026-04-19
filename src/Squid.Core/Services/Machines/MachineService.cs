@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Squid.Core.Halibut;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.Exceptions;
+using Squid.Core.Services.Machines.Updating;
 using Squid.Message.Commands.Machine;
-using Squid.Message.Enums;
 using Squid.Message.Events.Machine;
-using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Requests.Machines;
 
@@ -24,12 +24,18 @@ public class MachineService : IMachineService
     private readonly IMapper _mapper;
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IPollingTrustDistributor _trustDistributor;
+    private readonly IEnumerable<IMachineUpdateStrategy> _updateStrategies;
 
-    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor)
+    public MachineService(
+        IMapper mapper,
+        IMachineDataProvider machineDataProvider,
+        IPollingTrustDistributor trustDistributor,
+        IEnumerable<IMachineUpdateStrategy> updateStrategies)
     {
         _mapper = mapper;
         _machineDataProvider = machineDataProvider;
         _trustDistributor = trustDistributor;
+        _updateStrategies = updateStrategies;
     }
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
@@ -52,17 +58,22 @@ public class MachineService : IMachineService
         var machine = await _machineDataProvider.GetMachinesByIdAsync(command.MachineId, cancellationToken).ConfigureAwait(false);
 
         if (machine == null)
-            throw new InvalidOperationException($"Machine {command.MachineId} not found");
+            throw new MachineNotFoundException(command.MachineId);
 
-        if (command.Name != null && !string.Equals(command.Name, machine.Name, StringComparison.Ordinal))
-        {
-            var spaceId = command.SpaceId ?? machine.SpaceId;
+        await EnsureNameAvailableIfChangedAsync(machine, command, cancellationToken).ConfigureAwait(false);
 
-            if (await _machineDataProvider.ExistsByNameAsync(command.Name, spaceId, cancellationToken).ConfigureAwait(false))
-                throw new InvalidOperationException($"A machine named \"{command.Name}\" already exists in this space");
-        }
+        // Per-style endpoint update (Round-6 R6-F):
+        //   1. Validate FIRST (throws before any mutation) — the old
+        //      `ApplyKubernetesEndpointUpdate` corrupted Tentacle/Ssh/K8sAgent
+        //      endpoint JSON by deserialising them as K8sApi.
+        //   2. Apply common fields (Name / IsDisabled / Roles / ...)
+        //   3. Dispatch endpoint update to the matching strategy; non-matching
+        //      styles with no style-specific fields are a pure no-op.
+        ValidateCommandAgainstMachineStyle(machine, command);
 
-        ApplyUpdate(machine, command);
+        ApplyCommonFields(machine, command);
+
+        ApplyEndpointUpdate(machine, command);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -73,7 +84,50 @@ public class MachineService : IMachineService
         return new UpdateMachineResponse { Data = _mapper.Map<MachineDto>(machine) };
     }
 
-    private static void ApplyUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    private async Task EnsureNameAvailableIfChangedAsync(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command, CancellationToken ct)
+    {
+        if (command.Name == null || string.Equals(command.Name, machine.Name, StringComparison.Ordinal)) return;
+
+        var spaceId = command.SpaceId ?? machine.SpaceId;
+
+        if (await _machineDataProvider.ExistsByNameAsync(command.Name, spaceId, ct).ConfigureAwait(false))
+            throw new MachineNameConflictException(command.Name, spaceId);
+    }
+
+    /// <summary>
+    /// Validates the command's style-specific fields against the machine's
+    /// actual CommunicationStyle. MUST happen BEFORE any mutation so a
+    /// reject doesn't leave the entity partially modified. If no strategy
+    /// handles the style, any style-specific field is still rejected by
+    /// the inventory check via a best-guess style name ("Unknown").
+    /// </summary>
+    private void ValidateCommandAgainstMachineStyle(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    {
+        var styleName = CommunicationStyleParser.Parse(machine.Endpoint).ToString();
+        var strategy = _updateStrategies.FirstOrDefault(s => s.CanHandle(styleName));
+
+        if (strategy != null)
+        {
+            strategy.ValidateForStyle(machine.Id, command);
+            return;
+        }
+
+        // No strategy for this style (Unknown / None / newly-added style
+        // without a strategy yet). Any style-specific field set on the
+        // command is ambiguous at best — fail loudly instead of the old
+        // "treat it as K8s" behaviour that silently corrupted Tentacle
+        // endpoint JSON.
+        var anyStyleSpecificFieldSet = UpdateCommandFieldInventory.EnumerateStyleFields(command).Any(f => f.IsSet);
+
+        if (anyStyleSpecificFieldSet)
+            throw new MachineEndpointUpdateNotApplicableException(
+                machineId: machine.Id,
+                machineStyle: string.IsNullOrEmpty(styleName) ? "Unknown" : styleName,
+                offendingField: "<any style-specific field>",
+                acceptedForStyles: "machine has no registered update strategy — verify CommunicationStyle in endpoint JSON");
+    }
+
+    private static void ApplyCommonFields(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
     {
         if (command.Name != null)
             machine.Name = command.Name;
@@ -89,74 +143,16 @@ public class MachineService : IMachineService
 
         if (command.MachinePolicyId.HasValue)
             machine.MachinePolicyId = command.MachinePolicyId.Value;
-
-        ApplyEndpointUpdate(machine, command);
     }
 
-    private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
+    private void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
     {
-        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+        var styleName = CommunicationStyleParser.Parse(machine.Endpoint).ToString();
+        var strategy = _updateStrategies.FirstOrDefault(s => s.CanHandle(styleName));
 
-        if (style == CommunicationStyle.OpenClaw)
-            ApplyOpenClawEndpointUpdate(machine, command);
-        else
-            ApplyKubernetesEndpointUpdate(machine, command);
-    }
-
-    private static void ApplyKubernetesEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
-    {
-        if (command.ClusterUrl == null && command.Namespace == null && !command.SkipTlsVerification.HasValue
-            && !command.ProviderType.HasValue && command.ProviderConfig == null && command.ResourceReferences == null)
-            return;
-
-        var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
-            ? JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint, SquidJsonDefaults.CaseInsensitive)
-            : new KubernetesApiEndpointDto();
-
-        if (command.ClusterUrl != null)
-            endpoint.ClusterUrl = command.ClusterUrl;
-
-        if (command.Namespace != null)
-            endpoint.Namespace = command.Namespace;
-
-        if (command.SkipTlsVerification.HasValue)
-            endpoint.SkipTlsVerification = command.SkipTlsVerification.Value.ToString();
-
-        if (command.ProviderType.HasValue)
-            endpoint.ProviderType = command.ProviderType.Value;
-
-        if (command.ProviderConfig != null)
-            endpoint.ProviderConfig = command.ProviderConfig;
-
-        if (command.ResourceReferences != null)
-            endpoint.ResourceReferences = command.ResourceReferences;
-
-        machine.Endpoint = JsonSerializer.Serialize(endpoint);
-    }
-
-    private static void ApplyOpenClawEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command)
-    {
-        if (command.BaseUrl == null && command.InlineGatewayToken == null
-            && command.InlineHooksToken == null && command.ResourceReferences == null)
-            return;
-
-        var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
-            ? JsonSerializer.Deserialize<OpenClawEndpointDto>(machine.Endpoint, SquidJsonDefaults.CaseInsensitive)
-            : new OpenClawEndpointDto();
-
-        if (command.BaseUrl != null)
-            endpoint.BaseUrl = command.BaseUrl;
-
-        if (command.InlineGatewayToken != null)
-            endpoint.InlineGatewayToken = command.InlineGatewayToken;
-
-        if (command.InlineHooksToken != null)
-            endpoint.InlineHooksToken = command.InlineHooksToken;
-
-        if (command.ResourceReferences != null)
-            endpoint.ResourceReferences = command.ResourceReferences;
-
-        machine.Endpoint = JsonSerializer.Serialize(endpoint);
+        // Validation above already proved: strategy==null ⇒ no style-specific
+        // fields on command. So it's safe to simply no-op here.
+        strategy?.ApplyEndpointUpdate(machine, command);
     }
 
     public async Task<MachineDeletedEvent> DeleteMachinesAsync(DeleteMachinesCommand command, CancellationToken cancellationToken)

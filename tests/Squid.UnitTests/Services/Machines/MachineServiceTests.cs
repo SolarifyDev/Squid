@@ -2,7 +2,10 @@ using System.Text.Json;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Machines.Exceptions;
+using Squid.Core.Services.Machines.Updating;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.UnitTests.Services.Machines;
@@ -12,6 +15,22 @@ public class MachineServiceTests
     private readonly Mock<IMapper> _mapper = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IPollingTrustDistributor> _trustDistributor = new();
+
+    /// <summary>
+    /// Real strategies — they're pure functions over the command + machine
+    /// entity, no external deps. End-to-end coverage of validation +
+    /// per-style endpoint JSON merging without mock ceremony.
+    /// </summary>
+    private readonly IReadOnlyList<IMachineUpdateStrategy> _updateStrategies = new IMachineUpdateStrategy[]
+    {
+        new KubernetesApiUpdateStrategy(),
+        new KubernetesAgentUpdateStrategy(),
+        new OpenClawUpdateStrategy(),
+        new SshUpdateStrategy(),
+        new TentaclePollingUpdateStrategy(),
+        new TentacleListeningUpdateStrategy(),
+    };
+
     private readonly MachineService _service;
 
     public MachineServiceTests()
@@ -19,7 +38,7 @@ public class MachineServiceTests
         _mapper.Setup(m => m.Map<MachineDto>(It.IsAny<Machine>()))
             .Returns<Machine>(m => new MachineDto { Id = m.Id, Name = m.Name, MachinePolicyId = m.MachinePolicyId });
 
-        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object);
+        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object, _updateStrategies);
     }
 
     // ========================================================================
@@ -215,6 +234,7 @@ public class MachineServiceTests
     {
         var existingEndpoint = JsonSerializer.Serialize(new KubernetesApiEndpointDto
         {
+            CommunicationStyle = "KubernetesApi",
             ClusterUrl = "https://old.cluster.com",
             Namespace = "production",
             SkipTlsVerification = "True",
@@ -234,8 +254,8 @@ public class MachineServiceTests
     }
 
     [Theory]
-    [InlineData("""{"ClusterUrl":"https://old.k8s","Namespace":"prod","SkipTlsVerification":"True"}""")]
-    [InlineData("""{"clusterUrl":"https://old.k8s","namespace":"prod","skipTlsVerification":"True"}""")]
+    [InlineData("""{"CommunicationStyle":"KubernetesApi","ClusterUrl":"https://old.k8s","Namespace":"prod","SkipTlsVerification":"True"}""")]
+    [InlineData("""{"communicationStyle":"KubernetesApi","clusterUrl":"https://old.k8s","namespace":"prod","skipTlsVerification":"True"}""")]
     public async Task UpdateMachine_ExistingEndpointBothCasings_MergesCorrectly(string existingEndpoint)
     {
         var machine = new Machine { Id = 1, Name = "test", Endpoint = existingEndpoint };
@@ -249,6 +269,267 @@ public class MachineServiceTests
         endpoint.ClusterUrl.ShouldBe("https://new.k8s");
         endpoint.Namespace.ShouldBe("prod");
         endpoint.SkipTlsVerification.ShouldBe("True");
+    }
+
+    // ========================================================================
+    // Round-6 R6-A + R6-F — cross-style field contamination.
+    //
+    // The PRIMARY bug we're closing: previously `ApplyEndpointUpdate` had an
+    // `else → K8s` fallthrough. A client updating a TentaclePolling machine
+    // with a K8s field like `ResourceReferences` would cause the server to
+    // deserialise the Tentacle endpoint JSON as `KubernetesApiEndpointDto`
+    // and re-serialise — silently destroying SubscriptionId / Thumbprint /
+    // Uri. Agent loses trust, operator must re-register.
+    //
+    // Fix: per-style `IMachineUpdateStrategy` with fail-fast contamination
+    // detection BEFORE any mutation. These tests lock the contract in.
+    // ========================================================================
+
+    private static Machine MakeMachine(int id, string endpointJson) => new()
+    {
+        Id = id,
+        Name = $"m-{id}",
+        Endpoint = endpointJson,
+        SpaceId = 1
+    };
+
+    private const string TentaclePollingEndpoint = """
+        {"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-abc","Thumbprint":"DEAD123","AgentVersion":"1.4.0"}
+        """;
+    private const string TentacleListeningEndpoint = """
+        {"CommunicationStyle":"TentacleListening","Uri":"https://10.0.0.5:10933","Thumbprint":"BEEF456","AgentVersion":"1.4.0"}
+        """;
+    private const string SshEndpoint = """
+        {"CommunicationStyle":"Ssh","Host":"10.0.0.7","Port":22,"Fingerprint":"SHA256:xyz"}
+        """;
+    private const string KubernetesAgentEndpoint = """
+        {"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-k8s","Thumbprint":"CAFE789","Namespace":"prod","ReleaseName":"squid","ChartRef":"oci://foo"}
+        """;
+
+    [Theory]
+    // Tentacle machine + K8sApi-only field → must throw (the ORIGINAL bug)
+    [InlineData(TentaclePollingEndpoint, nameof(UpdateMachineCommand.ClusterUrl), "https://k8s")]
+    [InlineData(TentaclePollingEndpoint, nameof(UpdateMachineCommand.ProviderConfig), "{}")]
+    // Tentacle Listening machine + K8s field
+    [InlineData(TentacleListeningEndpoint, nameof(UpdateMachineCommand.ClusterUrl), "https://k8s")]
+    // SSH machine + K8s field
+    [InlineData(SshEndpoint, nameof(UpdateMachineCommand.ClusterUrl), "https://k8s")]
+    // SSH machine + OpenClaw field
+    [InlineData(SshEndpoint, nameof(UpdateMachineCommand.BaseUrl), "https://oc")]
+    // K8sAgent machine + K8sApi-specific field
+    [InlineData(KubernetesAgentEndpoint, nameof(UpdateMachineCommand.ClusterUrl), "https://k8s")]
+    // K8sAgent + SSH field
+    [InlineData(KubernetesAgentEndpoint, nameof(UpdateMachineCommand.Host), "10.0.0.1")]
+    // Tentacle + OpenClaw field
+    [InlineData(TentaclePollingEndpoint, nameof(UpdateMachineCommand.BaseUrl), "https://oc")]
+    public async Task UpdateMachine_CrossStyleFieldSent_ThrowsBeforeMutation(string endpointJson, string fieldName, string fieldValue)
+    {
+        var machine = MakeMachine(1, endpointJson);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = BuildCommandWithField(1, fieldName, fieldValue);
+        var originalEndpoint = machine.Endpoint;
+        var originalName = machine.Name;
+
+        var ex = await Should.ThrowAsync<MachineEndpointUpdateNotApplicableException>(() =>
+            _service.UpdateMachineAsync(command, CancellationToken.None));
+
+        ex.MachineId.ShouldBe(1);
+        ex.OffendingField.ShouldBe(fieldName);
+        machine.Endpoint.ShouldBe(originalEndpoint,
+            "endpoint JSON MUST NOT be mutated when validation fails (the original bug corrupted it)");
+        machine.Name.ShouldBe(originalName,
+            "common fields MUST NOT be mutated either — validation fires before ANY apply step");
+        _machineDataProvider.Verify(
+            p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "no persistence should happen when validation fails — avoids any chance of corrupt state landing in the DB");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_TentaclePolling_OwnFields_ApplyCleanly()
+    {
+        var machine = MakeMachine(1, TentaclePollingEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand
+        {
+            MachineId = 1,
+            Thumbprint = "NEW_CERT",
+            SubscriptionId = "new-sub"
+        };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<TentaclePollingEndpointDto>(machine.Endpoint);
+        updated.Thumbprint.ShouldBe("NEW_CERT");
+        updated.SubscriptionId.ShouldBe("new-sub");
+        updated.AgentVersion.ShouldBe("1.4.0",
+            "AgentVersion in the endpoint JSON must be preserved — we only mutate fields the operator passed");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_TentacleListening_UriAndProxyId_ApplyCleanly()
+    {
+        var machine = MakeMachine(2, TentacleListeningEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand
+        {
+            MachineId = 2,
+            Uri = "https://10.0.0.99:10933",
+            ProxyId = 7,
+        };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<TentacleListeningEndpointDto>(machine.Endpoint);
+        updated.Uri.ShouldBe("https://10.0.0.99:10933");
+        updated.ProxyId.ShouldBe(7);
+        updated.Thumbprint.ShouldBe("BEEF456", "unchanged Thumbprint must survive partial update");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_Ssh_HostAndPort_ApplyCleanly()
+    {
+        var machine = MakeMachine(3, SshEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(3, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand
+        {
+            MachineId = 3,
+            Host = "10.0.0.99",
+            Port = 2222,
+            ProxyUsername = "bob",
+        };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<SshEndpointDto>(machine.Endpoint);
+        updated.Host.ShouldBe("10.0.0.99");
+        updated.Port.ShouldBe(2222);
+        updated.ProxyUsername.ShouldBe("bob");
+        updated.Fingerprint.ShouldBe("SHA256:xyz", "existing Fingerprint must survive partial update");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_KubernetesAgent_ChartRefUpdate_ApplyCleanly()
+    {
+        var machine = MakeMachine(4, KubernetesAgentEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(4, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand
+        {
+            MachineId = 4,
+            ChartRef = "oci://new-chart:1.5",
+            HelmNamespace = "staging",
+        };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<KubernetesAgentEndpointDto>(machine.Endpoint);
+        updated.ChartRef.ShouldBe("oci://new-chart:1.5");
+        updated.HelmNamespace.ShouldBe("staging");
+        updated.SubscriptionId.ShouldBe("sub-k8s", "identity fields preserved through partial update");
+        updated.Thumbprint.ShouldBe("CAFE789", "trust cert preserved through partial update");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_TentaclePolling_OnlyCommonFields_NoEndpointMutation()
+    {
+        // Renaming a Tentacle machine should work — it's a common field.
+        // Nothing style-specific is sent, so endpoint JSON is untouched.
+        var machine = MakeMachine(5, TentaclePollingEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 5, Name = "renamed-agent", IsDisabled = true };
+
+        await _service.UpdateMachineAsync(command, CancellationToken.None);
+
+        machine.Name.ShouldBe("renamed-agent");
+        machine.IsDisabled.ShouldBeTrue();
+        machine.Endpoint.ShouldBe(TentaclePollingEndpoint,
+            "no style-specific fields in command → endpoint JSON is byte-for-byte identical; no deserialise/reserialise cycle");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_UnknownStyle_AnyStyleField_FailsLoudly_NotCorrupts()
+    {
+        // Previously an unknown-style endpoint would still fall into the
+        // K8s apply path via the `else`. Now: fail-loud with clear error.
+        var machine = MakeMachine(6, """{"CommunicationStyle":"FancyNewStyle2026","foo":"bar"}""");
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(6, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 6, ClusterUrl = "https://evil" };
+        var original = machine.Endpoint;
+
+        await Should.ThrowAsync<MachineEndpointUpdateNotApplicableException>(() =>
+            _service.UpdateMachineAsync(command, CancellationToken.None));
+
+        machine.Endpoint.ShouldBe(original, "endpoint JSON must be byte-identical on rejection");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_ExceptionMessage_NamesFieldAndExpectedStyle_SoOperatorKnowsWhereItBelongs()
+    {
+        // Error ergonomics — message must tell the user "ClusterUrl belongs
+        // to KubernetesApi machines, not TentaclePolling" so they fix their
+        // request rather than guess.
+        var machine = MakeMachine(7, TentaclePollingEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var command = new UpdateMachineCommand { MachineId = 7, ClusterUrl = "https://cluster" };
+
+        var ex = await Should.ThrowAsync<MachineEndpointUpdateNotApplicableException>(() =>
+            _service.UpdateMachineAsync(command, CancellationToken.None));
+
+        ex.Message.ShouldContain("ClusterUrl");
+        ex.Message.ShouldContain("TentaclePolling");
+        ex.Message.ShouldContain("KubernetesApi",
+            customMessage: "message must tell operator which style ClusterUrl belongs to");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_MachineNotFound_ThrowsTypedExceptionForHttp404()
+    {
+        // Round-6 — tightened from generic InvalidOperationException to the
+        // typed MachineNotFoundException so GlobalExceptionFilter can map
+        // it to HTTP 404 instead of 500.
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(9999, It.IsAny<CancellationToken>())).ReturnsAsync((Machine)null);
+
+        var ex = await Should.ThrowAsync<MachineNotFoundException>(() =>
+            _service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 9999 }, CancellationToken.None));
+
+        ex.MachineId.ShouldBe(9999);
+    }
+
+    [Fact]
+    public async Task UpdateMachine_NameConflict_ThrowsTypedExceptionForHttp409()
+    {
+        // Round-6 — same tightening for rename conflict.
+        var machine = MakeMachine(10, TentaclePollingEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(10, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+        _machineDataProvider.Setup(p => p.ExistsByNameAsync("taken-name", 1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var ex = await Should.ThrowAsync<MachineNameConflictException>(() =>
+            _service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 10, Name = "taken-name" }, CancellationToken.None));
+
+        ex.MachineName.ShouldBe("taken-name");
+    }
+
+    private static UpdateMachineCommand BuildCommandWithField(int machineId, string fieldName, string fieldValue)
+    {
+        var cmd = new UpdateMachineCommand { MachineId = machineId };
+
+        // Minimal reflection — set one field by name so Theory cases are compact.
+        var prop = typeof(UpdateMachineCommand).GetProperty(fieldName)
+            ?? throw new InvalidOperationException($"UpdateMachineCommand has no property '{fieldName}' — test case typo?");
+
+        if (prop.PropertyType == typeof(string)) prop.SetValue(cmd, fieldValue);
+        else if (prop.PropertyType == typeof(int?)) prop.SetValue(cmd, int.Parse(fieldValue));
+        else throw new InvalidOperationException($"test helper doesn't handle {prop.PropertyType} — extend as needed");
+
+        return cmd;
     }
 
     // ========================================================================
