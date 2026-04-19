@@ -3,7 +3,6 @@ using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Exceptions;
-using Squid.Core.Services.Machines.Updating;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
@@ -15,22 +14,6 @@ public class MachineServiceTests
     private readonly Mock<IMapper> _mapper = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IPollingTrustDistributor> _trustDistributor = new();
-
-    /// <summary>
-    /// Real strategies — they're pure functions over the command + machine
-    /// entity, no external deps. End-to-end coverage of validation +
-    /// per-style endpoint JSON merging without mock ceremony.
-    /// </summary>
-    private readonly IReadOnlyList<IMachineUpdateStrategy> _updateStrategies = new IMachineUpdateStrategy[]
-    {
-        new KubernetesApiUpdateStrategy(),
-        new KubernetesAgentUpdateStrategy(),
-        new OpenClawUpdateStrategy(),
-        new SshUpdateStrategy(),
-        new TentaclePollingUpdateStrategy(),
-        new TentacleListeningUpdateStrategy(),
-    };
-
     private readonly MachineService _service;
 
     public MachineServiceTests()
@@ -38,7 +21,7 @@ public class MachineServiceTests
         _mapper.Setup(m => m.Map<MachineDto>(It.IsAny<Machine>()))
             .Returns<Machine>(m => new MachineDto { Id = m.Id, Name = m.Name, MachinePolicyId = m.MachinePolicyId });
 
-        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object, _updateStrategies);
+        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object);
     }
 
     // ========================================================================
