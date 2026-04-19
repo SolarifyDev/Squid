@@ -271,7 +271,23 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     {
         var raw = System.Environment.GetEnvironmentVariable(DownloadBaseUrlEnvVar);
 
-        return string.IsNullOrWhiteSpace(raw) ? DefaultDownloadBaseUrl : raw.Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultDownloadBaseUrl;
+
+        var normalized = raw.Trim().TrimEnd('/');
+
+        // Round-4 audit B5: operator-supplied override may accidentally use
+        // HTTP, exposing tarball downloads to MITM tampering. Warn, but DON'T
+        // reject — air-gapped internal mirrors on trusted networks are a
+        // legitimate use case for HTTP. The warning gives ops / security
+        // review a trail; the operator retains the final call.
+        if (!normalized.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            Log.Warning(
+                "[Upgrade] {EnvVar} is set to a non-HTTPS URL ({Url}). Tarball downloads are " +
+                "vulnerable to MITM tampering on untrusted networks. Use HTTPS unless this is " +
+                "an air-gapped internal mirror you fully trust.",
+                DownloadBaseUrlEnvVar, normalized);
+
+        return normalized;
     }
 
     /// <summary>

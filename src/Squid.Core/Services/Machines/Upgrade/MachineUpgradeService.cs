@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines.Exceptions;
@@ -42,6 +43,60 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
     {
+        // Audit trail wrapper (audit A7). Every upgrade attempt — success,
+        // rejected, or exception — leaves two Seq log lines with the
+        // `[UpgradeAudit]` prefix for ops filtering. Outcome log uses
+        // structured props (status, elapsedMs) so it's aggregate-queryable.
+        // ICurrentUser integration + log-sink-based contract tests are
+        // Phase 2 work; today the logs capture what we know without
+        // expanding the service's dependencies.
+        var sw = Stopwatch.StartNew();
+        UpgradeMachineResponseData result = null;
+
+        Log.Information(
+            "[UpgradeAudit] Upgrade request machineId={MachineId} targetVersion={TargetVersion} allowDowngrade={AllowDowngrade}",
+            command.MachineId,
+            string.IsNullOrWhiteSpace(command.TargetVersion) ? "<auto>" : command.TargetVersion.Trim(),
+            command.AllowDowngrade);
+
+        try
+        {
+            result = await RunUpgradeAsync(command, ct).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            // Legitimate user / shutdown cancel — not an error, just propagate.
+            // The outcome log in the finally block records status=Exception,
+            // which is accurate: no response was built.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Round-4 audit B2: ensure the exception type + message appears
+            // in the audit trail filtered by `[UpgradeAudit]` — otherwise
+            // ops must correlate with a generic GlobalExceptionFilter log
+            // or stderr, which is painful at scale.
+            Log.Error(ex, "[UpgradeAudit] Upgrade threw for machineId={MachineId}: {ExceptionType}: {ExceptionMessage}",
+                command.MachineId, ex.GetType().Name, ex.Message);
+            throw;
+        }
+        finally
+        {
+            Log.Information(
+                "[UpgradeAudit] Upgrade outcome machineId={MachineId} machineName={MachineName} status={Status} elapsedMs={ElapsedMs} currentVersion={CurrentVersion} targetVersion={TargetVersion} detail={Detail}",
+                command.MachineId,
+                result?.MachineName ?? "<unknown>",
+                result?.Status.ToString() ?? "Exception",
+                sw.ElapsedMilliseconds,
+                result?.CurrentVersion ?? "<unknown>",
+                result?.TargetVersion ?? "<unknown>",
+                result?.Detail ?? "<exception propagated; see prior error log>");
+        }
+    }
+
+    private async Task<UpgradeMachineResponseData> RunUpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
+    {
         var machine = await LoadMachineAsync(command.MachineId, ct).ConfigureAwait(false);
         var style = ReadCommunicationStyle(machine);
 
@@ -78,9 +133,16 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 $"Target version '{targetVersion}' is not valid semver (MAJOR.MINOR.PATCH[-pre][+build]). Refusing to dispatch — would generate an invalid download URL or shell-unsafe payload.");
 
         var currentVersion = ReadCachedAgentVersion(machine.Id);
+        var relation = CompareVersions(currentVersion, parsedTarget);
 
-        if (IsAlreadyUpToDate(currentVersion, parsedTarget))
-            return BuildResponse(machine, currentVersion, parsedTarget.Raw, MachineUpgradeStatus.AlreadyUpToDate, $"Machine '{machine.Name}' already on version {currentVersion}; nothing to do.");
+        if (relation == VersionRelation.UpToDate)
+            return BuildResponse(machine, currentVersion, parsedTarget.Raw, MachineUpgradeStatus.AlreadyUpToDate,
+                $"Machine '{machine.Name}' already on version {currentVersion}; nothing to do.");
+
+        if (relation == VersionRelation.WouldBeDowngrade && !command.AllowDowngrade)
+            return BuildResponse(machine, currentVersion, parsedTarget.Raw, MachineUpgradeStatus.AlreadyUpToDate,
+                $"Machine '{machine.Name}' current version {currentVersion} is higher than requested {parsedTarget.Raw}. " +
+                "Downgrades are refused by default. Pass AllowDowngrade=true in the request body to force (intended for emergency revert scenarios).");
 
         return await DispatchUnderLockAsync(machine, strategy, parsedTarget.Raw, currentVersion, ct).ConfigureAwait(false);
     }
@@ -130,24 +192,33 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     }
 
     /// <summary>
-    /// Spec-correct semver compare via <see cref="SemVer.CompareTo"/> — handles
-    /// pre-release precedence properly (audit H-17: <c>2.0.0-beta.1 &gt; 1.4.0</c>
-    /// because major wins, but <c>1.4.0-beta.1 &lt; 1.4.0</c> because the
-    /// pre-release sorts lower). Cold cache (<c>current</c> blank) → false so
-    /// we still dispatch and let the agent be the source of truth on the
-    /// next health check.
+    /// Three-way version relationship so the orchestrator can distinguish
+    /// "genuinely up-to-date" from "would be a downgrade" — the latter is
+    /// only allowed via operator-explicit <see cref="UpgradeMachineCommand.AllowDowngrade"/>.
+    /// Audit A5.
     /// </summary>
-    private static bool IsAlreadyUpToDate(string current, SemVer target)
+    private enum VersionRelation { NeedsUpgrade, UpToDate, WouldBeDowngrade }
+
+    /// <summary>
+    /// Spec-correct semver compare via <see cref="SemVer.CompareTo"/>.
+    /// Cold cache (<c>current</c> blank) → <see cref="VersionRelation.NeedsUpgrade"/>
+    /// so we still dispatch and let the agent be the source of truth on
+    /// the next health check.
+    /// </summary>
+    private static VersionRelation CompareVersions(string current, SemVer target)
     {
-        if (string.IsNullOrWhiteSpace(current)) return false;
+        if (string.IsNullOrWhiteSpace(current)) return VersionRelation.NeedsUpgrade;
 
-        // Agent reports its version as a string; if that's not parseable
-        // (legacy agent / non-semver dev build) we conservatively dispatch
-        // — the worst case is one extra script run with idempotent agent
-        // behaviour, far better than silently skipping a wanted upgrade.
-        if (!SemVer.TryParse(current, out var parsedCurrent)) return false;
+        // Legacy agent / non-semver dev build → conservatively dispatch.
+        // Worst case is one idempotent script run, far better than silently
+        // skipping a wanted upgrade because the version string confused us.
+        if (!SemVer.TryParse(current, out var parsedCurrent)) return VersionRelation.NeedsUpgrade;
 
-        return parsedCurrent.CompareTo(target) >= 0;
+        var c = parsedCurrent.CompareTo(target);
+
+        if (c == 0) return VersionRelation.UpToDate;
+
+        return c > 0 ? VersionRelation.WouldBeDowngrade : VersionRelation.NeedsUpgrade;
     }
 
     // ── Lock + dispatch + cache invalidation ─────────────────────────────────
@@ -158,7 +229,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
         var result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(lockKey, () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct), expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
 
-        return result ?? BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed, "Could not acquire distributed lock for this machine — another upgrade may be in progress on a different server replica. Retry in a moment.");
+        return result ?? BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
+            $"Machine '{machine.Name}' is currently being upgraded by another request. " +
+            "Wait for it to complete (typically under 2 minutes) and retry.");
     }
 
     private async Task<UpgradeMachineResponseData> RunStrategyAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)

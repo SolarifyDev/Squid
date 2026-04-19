@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
@@ -100,7 +101,7 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_CurrentVersionNewerThanTarget_ShortCircuitsAlreadyUpToDate()
+    public async Task UpgradeAsync_CurrentVersionNewerThanTarget_DefaultBehavior_RejectsAsDowngradeWithHint()
     {
         ArrangeMachine(id: 8, style: nameof(CommunicationStyle.TentaclePolling));
         _runtimeCache.Store(8, new Dictionary<string, string>(), agentVersion: "2.0.0");
@@ -108,6 +109,72 @@ public sealed class MachineUpgradeServiceTests
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 8 }, CancellationToken.None);
 
         resp.Status.ShouldBe(MachineUpgradeStatus.AlreadyUpToDate);
+        resp.Detail.ShouldContain("higher than requested",
+            customMessage: "must distinguish downgrade attempt from genuine up-to-date in the detail message");
+        resp.Detail.ShouldContain("AllowDowngrade",
+            customMessage: "must surface the escape hatch flag so operator knows how to force a downgrade if really needed");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_CurrentVersionNewerThanTarget_AllowDowngradeTrue_Dispatches()
+    {
+        // Emergency downgrade scenario (1.4.2 has a nasty regression, want to
+        // revert to 1.4.0). Default-safe: blocked. With explicit opt-in: goes.
+        ArrangeMachine(id: 81, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(81, new Dictionary<string, string>(), agentVersion: "2.0.0");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "forced downgrade applied", AgentVersionMayHaveChanged = true });
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 81, TargetVersion = "1.4.0", AllowDowngrade = true },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        resp.TargetVersion.ShouldBe("1.4.0");
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()),
+            Times.Once,
+            "AllowDowngrade=true must cause downgrade dispatch");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_AllowDowngradeTrue_SameVersion_StillNoopAsAlreadyUpToDate()
+    {
+        // AllowDowngrade doesn't mean "always dispatch". Same version IS
+        // already up-to-date and shouldn't incur a no-op dispatch even with
+        // the flag on (would be wasteful filesystem churn).
+        ArrangeMachine(id: 82, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(82, new Dictionary<string, string>(), agentVersion: "1.4.0");
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 82, TargetVersion = "1.4.0", AllowDowngrade = true },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.AlreadyUpToDate);
+        resp.Detail.ShouldContain("already on version 1.4.0");
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "same-version dispatch would be a pointless filesystem/network roundtrip");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_AllowDowngradeTrue_ActualUpgrade_WorksAsBefore()
+    {
+        // Safety: setting AllowDowngrade=true on a genuine upgrade must not
+        // change the happy path.
+        ArrangeMachine(id: 83, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(83, new Dictionary<string, string>(), agentVersion: "1.3.0");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "up", AgentVersionMayHaveChanged = true });
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 83, AllowDowngrade = true },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
     }
 
     [Fact]
@@ -118,7 +185,7 @@ public sealed class MachineUpgradeServiceTests
 
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "9.9.9", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
 
         var resp = await _service.UpgradeAsync(
             new UpgradeMachineCommand { MachineId = 11, TargetVersion = "9.9.9" },
@@ -135,7 +202,7 @@ public sealed class MachineUpgradeServiceTests
         ArrangeMachine(id: 17, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "done" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "done", AgentVersionMayHaveChanged = true });
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 17 }, CancellationToken.None);
 
@@ -150,7 +217,7 @@ public sealed class MachineUpgradeServiceTests
         ArrangeMachine(id: 22, style: nameof(CommunicationStyle.KubernetesAgent));
         _k8sStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.NotSupported, Detail = "phase 2" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.NotSupported, Detail = "phase 2", AgentVersionMayHaveChanged = false });
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 22 }, CancellationToken.None);
 
@@ -290,7 +357,7 @@ public sealed class MachineUpgradeServiceTests
         ArrangeMachine(id: 92, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "2.0.0-beta.1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
 
         var resp = await _service.UpgradeAsync(
             new UpgradeMachineCommand { MachineId = 92, TargetVersion = "2.0.0-beta.1" },
@@ -311,7 +378,7 @@ public sealed class MachineUpgradeServiceTests
         _runtimeCache.Store(93, new Dictionary<string, string>(), agentVersion: "1.4.0-beta.1");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "promoted from beta" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "promoted from beta", AgentVersionMayHaveChanged = true });
 
         var resp = await _service.UpgradeAsync(
             new UpgradeMachineCommand { MachineId = 93, TargetVersion = "1.4.0" },
@@ -367,7 +434,7 @@ public sealed class MachineUpgradeServiceTests
         ArrangeMachine(id: 44, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Initiated, Detail = "dispatched" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Initiated, Detail = "dispatched", AgentVersionMayHaveChanged = true });
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 44 }, CancellationToken.None);
 
@@ -474,7 +541,12 @@ public sealed class MachineUpgradeServiceTests
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 61 }, CancellationToken.None);
 
         resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
-        resp.Detail.ShouldContain("distributed lock");
+        resp.Detail.ShouldContain("currently being upgraded",
+            customMessage: "lock-contention detail must be human-readable, not expose infra term 'distributed lock'");
+        resp.Detail.ShouldContain("retry",
+            customMessage: "detail must tell the operator what to do next");
+        resp.Detail.ShouldNotContain("distributed lock",
+            customMessage: "Round-3 UX improvement: operator shouldn't see infra jargon");
         _linuxStrategy.Verify(
             s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never,
@@ -509,7 +581,7 @@ public sealed class MachineUpgradeServiceTests
         ArrangeMachine(id: 71, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
 
         var capturedKeys = new List<string>();
         _redisLock
@@ -526,6 +598,88 @@ public sealed class MachineUpgradeServiceTests
         capturedKeys.ShouldContain(k => k.Contains("71"), customMessage: "lock key must embed machineId");
         capturedKeys.ShouldAllBe(k => k.StartsWith("squid:upgrade:machine:"),
             customMessage: "lock key must use a stable namespace prefix");
+    }
+
+    // ========================================================================
+    // Audit log — exception-path content pinning (Round-4 B2).
+    // ========================================================================
+
+    [Fact]
+    public async Task UpgradeAsync_Exception_AuditLogCapturesTypeAndMessage()
+    {
+        // Round-3 A7 added try/finally audit logging but the exception path
+        // just said "<exception propagated>" with no type/message —
+        // forcing ops to correlate against other logs. B2 ensures a
+        // Log.Error(ex, ...) fires with the `[UpgradeAudit]` prefix AND
+        // the exception object itself (so Seq captures the stack).
+        var originalLogger = Serilog.Log.Logger;
+        var sink = new CapturingLogSink();
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            _machineDataProvider
+                .Setup(x => x.GetMachinesByIdAsync(999, It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("simulated DB failure on machine load"));
+
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 999 }, CancellationToken.None));
+
+            var errorEvent = sink.Events.FirstOrDefault(e => e.Level == Serilog.Events.LogEventLevel.Error);
+            errorEvent.ShouldNotBeNull("exception path must emit a Serilog.Error event with [UpgradeAudit] prefix");
+            errorEvent.MessageTemplate.Text.ShouldContain("[UpgradeAudit]",
+                customMessage: "must carry the audit prefix so ops can filter upgrade exceptions alongside successful audit logs");
+            errorEvent.Exception.ShouldBeOfType<InvalidOperationException>(
+                "exception object must be attached so Seq captures the full stack trace");
+            errorEvent.Exception.Message.ShouldContain("simulated DB failure");
+        }
+        finally
+        {
+            Serilog.Log.Logger = originalLogger;
+        }
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_Cancelled_AuditLogDoesNotEmitErrorLevel()
+    {
+        // OperationCanceledException is legitimate (user aborted / server
+        // shutdown) — NOT an error. Only the outcome log should fire
+        // (at Information level) with status=Exception; no Log.Error
+        // should pollute ops dashboards.
+        var originalLogger = Serilog.Log.Logger;
+        var sink = new CapturingLogSink();
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            _machineDataProvider
+                .Setup(x => x.GetMachinesByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new OperationCanceledException());
+
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 1 }, CancellationToken.None));
+
+            sink.Events.ShouldNotContain(e => e.Level == Serilog.Events.LogEventLevel.Error,
+                "cancellation is not an error — must not emit Log.Error");
+        }
+        finally
+        {
+            Serilog.Log.Logger = originalLogger;
+        }
+    }
+
+    /// <summary>Minimal in-memory Serilog sink for pinning log contract in unit tests.</summary>
+    private sealed class CapturingLogSink : Serilog.Core.ILogEventSink
+    {
+        public List<Serilog.Events.LogEvent> Events { get; } = new();
+
+        public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
     }
 
     private void ArrangeMachine(int id, string style)

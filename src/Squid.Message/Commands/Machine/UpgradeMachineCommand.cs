@@ -34,6 +34,22 @@ public class UpgradeMachineCommand : ICommand, ISpaceScoped
     public string TargetVersion { get; set; }
 
     /// <summary>
+    /// Opt-in escape hatch for emergency downgrades (Round-3 audit A5).
+    /// By default (false), a request whose <c>TargetVersion</c> is LOWER
+    /// than the agent's current version is refused with
+    /// <see cref="MachineUpgradeStatus.AlreadyUpToDate"/> and a detail
+    /// that spells out the block. Setting this to true bypasses that
+    /// guard — intended for "1.4.2 has a bad regression, revert to
+    /// 1.4.0" scenarios where the operator explicitly knows they want
+    /// to go back.
+    ///
+    /// <para>Does NOT bypass the same-version guard: requesting the SAME
+    /// version the agent is already on is still a no-op even with this
+    /// flag (saves a pointless filesystem + network round-trip).</para>
+    /// </summary>
+    public bool AllowDowngrade { get; set; }
+
+    /// <summary>
     /// Space scope for the <see cref="Attributes.RequiresPermissionAttribute"/>
     /// check. <b>Security note (audit H-19):</b> the upgrade controller nulls
     /// this out before handing the command to the mediator — the body is not

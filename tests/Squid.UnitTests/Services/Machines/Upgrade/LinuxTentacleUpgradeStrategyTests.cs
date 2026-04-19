@@ -86,6 +86,74 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         LinuxTentacleUpgradeStrategy.ResolveDownloadBaseUrl().ShouldBe("https://mirror.acme.internal/path");
     }
 
+    [Theory]
+    [InlineData("http://mirror.internal/squid")]
+    [InlineData("HTTP://MIRROR.INTERNAL/squid")]   // case-insensitive scheme
+    [InlineData("ftp://mirror.internal/squid")]   // even more wrong scheme
+    public void ResolveDownloadBaseUrl_NonHttpsOverride_EmitsWarning_ButStillHonoursOperatorChoice(string override_)
+    {
+        // Round-4 audit B5: operators who set a non-HTTPS mirror have
+        // likely made a mistake (copy-paste, forgot s) and we want the
+        // security trail in logs. BUT — air-gapped internal HTTP mirrors
+        // ARE a legitimate pattern, so we warn, not reject.
+        var originalLogger = Serilog.Log.Logger;
+        var sink = new CapturingLogSink();
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, override_);
+
+            var resolved = LinuxTentacleUpgradeStrategy.ResolveDownloadBaseUrl();
+
+            resolved.ShouldBe(override_.TrimEnd('/'),
+                "operator's choice must still be honoured (air-gap HTTP mirrors are legitimate)");
+            sink.Events.ShouldContain(
+                e => e.Level == Serilog.Events.LogEventLevel.Warning
+                    && e.MessageTemplate.Text.Contains("non-HTTPS")
+                    && e.MessageTemplate.Text.Contains("MITM"),
+                customMessage: "must warn with MITM context so security review has a trail");
+        }
+        finally
+        {
+            Serilog.Log.Logger = originalLogger;
+        }
+    }
+
+    [Fact]
+    public void ResolveDownloadBaseUrl_HttpsOverride_NoWarningFired()
+    {
+        var originalLogger = Serilog.Log.Logger;
+        var sink = new CapturingLogSink();
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, "https://mirror.internal/squid");
+
+            LinuxTentacleUpgradeStrategy.ResolveDownloadBaseUrl();
+
+            sink.Events.ShouldNotContain(e => e.Level == Serilog.Events.LogEventLevel.Warning,
+                "HTTPS override is the happy path — must not pollute ops dashboards with false-positive warnings");
+        }
+        finally
+        {
+            Serilog.Log.Logger = originalLogger;
+        }
+    }
+
+    /// <summary>Minimal in-memory Serilog sink. Round-4 helper for pinning log contracts — mirror of the sink in MachineUpgradeServiceTests; kept local to avoid a test-project-wide helper that touches Serilog.Log.Logger across concurrent tests.</summary>
+    private sealed class CapturingLogSink : Serilog.Core.ILogEventSink
+    {
+        public List<Serilog.Events.LogEvent> Events { get; } = new();
+
+        public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
+    }
+
     [Fact]
     public void ResolveDownloadBaseUrl_BlankOverride_FallsBackToDefault()
     {

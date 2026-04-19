@@ -47,6 +47,13 @@ public sealed class MachineUpgradeOutcome
     /// (audit N-6) so adding a new status value is a deliberate per-strategy
     /// decision — not a silent miss caused by an
     /// <c>is Upgraded or Initiated</c> check that didn't get updated.</para>
+    ///
+    /// <para><b>required</b> (Round-3 audit A4): a new <see cref="MachineUpgradeOutcome"/>
+    /// construction site MUST specify this explicitly. Without required, a
+    /// strategy author can forget to set it and silently inherit the default
+    /// (<see langword="false"/>), which for a genuine successful upgrade
+    /// would leave the UI showing the old version until the next health
+    /// check — a subtle "upgrade didn't take" impression.</para>
     /// </summary>
-    public bool AgentVersionMayHaveChanged { get; init; }
+    public required bool AgentVersionMayHaveChanged { get; init; }
 }

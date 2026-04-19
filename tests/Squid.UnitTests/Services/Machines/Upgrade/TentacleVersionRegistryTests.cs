@@ -318,6 +318,29 @@ public sealed class TentacleVersionRegistryTests : IDisposable
             .ShouldBe("1.4.0");
     }
 
+    [Theory]
+    [InlineData("{\"count\":0,\"next\":null,\"previous\":null,\"results\":null}")]      // results: null
+    [InlineData("{\"count\":0,\"next\":null,\"previous\":null,\"results\":42}")]        // results: int (garbage)
+    [InlineData("{\"count\":0,\"next\":null,\"previous\":null,\"results\":\"oops\"}")]  // results: string
+    public async Task LiveQuery_ResultsFieldNotArray_DegradesToEmptyWithoutThrowing(string body)
+    {
+        // Docker Hub edge responses / proxy weirdness could return a non-array
+        // `results`. The old code's EnumerateArray would throw. The outer
+        // try/catch would still swallow + degrade, but the explicit guard
+        // keeps behaviour deterministic and the log clean (no exception
+        // stack in ops tools).
+        TentacleVersionRegistry.ResetCacheForTests();
+        var (factory, _) = BuildScriptedFactory(new Dictionary<string, string>
+        {
+            [LinuxFirstPageUrl] = body
+        });
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        // Must not throw; empty return is fine.
+        var result = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        result.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task LiveQuery_DockerHubReturns404_FallsBackToEmptyGracefully()
     {

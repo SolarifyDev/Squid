@@ -92,6 +92,8 @@ public sealed class UpgradeLinuxTentacleScriptTests
     [InlineData("exit 7", "SHA256 mismatch")]
     [InlineData("exit 8", "libc/glibc compat check failed")]
     [InlineData("exit 9", "CRITICAL — rollback ALSO failed")]
+    [InlineData("exit 10", "pre-swap backup creation failed (state unchanged)")]
+    [InlineData("exit 11", "install-to-target failed, emergency rolled back")]
     public void Script_HasExitCodeForEveryDocumentedFailureMode(string exitStatement, string semanticMeaning)
     {
         // Each exit code is operator-visible — it drives the Failed detail
@@ -150,6 +152,45 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_EmergencyRestoreFailure_EscalatesToExit9_NotExit11()
+    {
+        // Round-4 audit B1: Round-3 A1 introduced emergency-restore for the
+        // mv-window bug. But if the emergency restore ITSELF fails, the
+        // script previously still returned exit 11 ("rolled back, healthy"),
+        // which is a LIE — state is actually "agent binaryless, manual
+        // intervention required" (semantically identical to exit 9).
+        //
+        // Fix: if we tried to restore AND failed, escalate to exit 9. Only
+        // exit 11 when restore succeeded OR when there was nothing to
+        // restore (fresh first-time install had no backup).
+        //
+        // Two anchor strings on adjacent lines pin the branch shape:
+        RenderedScript.ShouldContain("emergency restore ALSO failed");
+        RenderedScript.ShouldContain("RESTORE_OK",
+            customMessage: "must track whether emergency restore succeeded to decide exit 9 vs exit 11");
+    }
+
+    [Fact]
+    public void Script_HasExplicitFailureBranchesForEachMvInAtomicSwap()
+    {
+        // Audit Round-3 discovery: between `mv INSTALL_DIR → .bak` and
+        // `mv new → INSTALL_DIR` there's a window where INSTALL_DIR doesn't
+        // exist. If the second mv fails (disk full, SELinux, inode exhaust,
+        // cross-filesystem), `set -e` aborts BEFORE the rollback block
+        // runs — agent is left binaryless and the operator has to SSH in.
+        //
+        // This test pins the presence of explicit failure handling at each
+        // mv: a regression that reverts to naive "just let set -e abort"
+        // re-opens the binary-less window.
+        RenderedScript.ShouldContain("Failed to back up current install",
+            customMessage: "first mv failure must have an explicit error message + exit 10, not just set -e abort");
+        RenderedScript.ShouldContain("Failed to move new install into place",
+            customMessage: "second mv failure must have an explicit error message + emergency rollback + exit 11");
+        RenderedScript.ShouldContain("emergency restore",
+            customMessage: "the second-mv-failed branch MUST contain emergency restoration — otherwise agent is left binaryless");
+    }
+
+    [Fact]
     public void Script_HasRollbackPath_AndVerifiesRollbackHealth()
     {
         // Rollback is THE most important safety net. Regression scenario:
@@ -161,6 +202,32 @@ public sealed class UpgradeLinuxTentacleScriptTests
             customMessage: "rollback MUST be verified before claiming success");
         RenderedScript.ShouldContain("CRITICAL",
             customMessage: "rollback-failed must surface as CRITICAL so operator knows manual intervention needed");
+    }
+
+    [Fact]
+    public void Script_OpportunisticSha256Fetch_ActivatesWhenPlaceholderIsEmpty()
+    {
+        // Audit A6: Phase 1 ships with EXPECTED_SHA256 = empty (release pipeline
+        // hasn't started publishing .sha256 files yet). Once it does, this
+        // bash-side opportunistic fetch picks them up automatically without
+        // needing a server-side change. The `.sha256` URL convention follows
+        // the tarball URL exactly, + the extension.
+        RenderedScript.ShouldContain("${DOWNLOAD_URL}.sha256",
+            customMessage: "script must attempt to fetch the SHA companion file when no pre-set hash is supplied");
+        RenderedScript.ShouldContain("Fetched expected SHA256",
+            customMessage: "must log when the SHA was auto-discovered so ops can correlate with release pipeline uptime");
+    }
+
+    [Fact]
+    public void Script_FetchedShaIs64HexValidated_GarbageResponsesIgnored()
+    {
+        // If Docker Hub / GitHub returns an HTML 404 page, or the .sha256 file
+        // is truncated/corrupted, we must NOT use it — otherwise a random
+        // string gets compared to the computed SHA and the upgrade fails
+        // with exit 7 (SHA mismatch) when it shouldn't have tried SHA at all.
+        // 64-hex validation is the gate.
+        RenderedScript.ShouldContain("^[0-9a-fA-F]{64}$",
+            customMessage: "must regex-validate the fetched SHA as 64-hex before using — garbage HTML pages or partial responses must be rejected");
     }
 
     [Fact]

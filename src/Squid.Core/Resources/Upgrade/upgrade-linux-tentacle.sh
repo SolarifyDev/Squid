@@ -126,7 +126,28 @@ curl -fsSL --retry 3 --retry-delay 2 --max-time 120 "$DOWNLOAD_URL" -o "$ARCHIVE
   exit 2
 }
 
-# ── SHA256 verification (when the server supplies one) ────────────────────────
+# ── Opportunistic SHA256 fetch (audit A6) ────────────────────────────────────
+# If the server-side template didn't pre-populate a SHA (Phase 1 default),
+# try to fetch the companion `.sha256` file alongside the tarball. This turns
+# integrity checking ON automatically the day the release pipeline starts
+# publishing hashes — no server-side changes needed.
+#
+# Strict validation: only accept the fetched value if it's exactly 64 hex
+# chars (SHA256 length). This guards against HTML 404 pages, truncated
+# responses, mis-published SHA512, etc. — those would otherwise trigger
+# a spurious SHA-mismatch error.
+if [ -z "$EXPECTED_SHA256" ] && command -v curl >/dev/null 2>&1; then
+  SHA_URL="${DOWNLOAD_URL}.sha256"
+  FETCHED_SHA=$(curl -fsSL --max-time 10 "$SHA_URL" 2>/dev/null | awk '{print $1}' | tr -d '[:space:]' || true)
+  if [ -n "$FETCHED_SHA" ] && echo "$FETCHED_SHA" | grep -qE '^[0-9a-fA-F]{64}$'; then
+    EXPECTED_SHA256="$FETCHED_SHA"
+    echo "Fetched expected SHA256 from $SHA_URL"
+  else
+    echo "::info:: No valid .sha256 companion file at $SHA_URL — skipping integrity check (Phase 1: release pipeline hasn't started publishing hashes yet)."
+  fi
+fi
+
+# ── SHA256 verification (when the server supplies one OR we fetched one) ──────
 if [ -n "$EXPECTED_SHA256" ]; then
   ACTUAL_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
   if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
@@ -175,10 +196,49 @@ timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
 if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
 
+# Atomic swap: each mv gets explicit failure handling — we CANNOT rely on
+# `set -e` to kick us into the rollback block below, because the window
+# between "INSTALL_DIR moved to .bak" and "new install moved into place"
+# has INSTALL_DIR missing. If the second mv fails and set -e aborts, the
+# rollback block never runs and the agent is left binaryless → operator
+# must SSH to repair. Round-3 audit.
+INSTALL_DIR_BACKED_UP=0
+
 if [ -d "$INSTALL_DIR" ]; then
-  sudo mv "$INSTALL_DIR" "$BAK_DIR"
+  if ! sudo mv "$INSTALL_DIR" "$BAK_DIR"; then
+    echo "::error:: Failed to back up current install ($INSTALL_DIR → $BAK_DIR). State unchanged; no damage."
+    exit 10
+  fi
+  INSTALL_DIR_BACKED_UP=1
 fi
-sudo mv "$EXTRACT" "$INSTALL_DIR"
+
+if ! sudo mv "$EXTRACT" "$INSTALL_DIR"; then
+  # DANGEROUS STATE: INSTALL_DIR is absent. We MUST emergency restore
+  # before `set -e` takes us out — otherwise no rollback block will run
+  # and the agent has no binary.
+  echo "::error:: Failed to move new install into place ($EXTRACT → $INSTALL_DIR) — attempting emergency restore"
+  RESTORE_OK=0
+  if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ -d "$BAK_DIR" ]; then
+    if sudo mv "$BAK_DIR" "$INSTALL_DIR"; then
+      RESTORE_OK=1
+      # Try to bring the old service back up so the agent is at least reachable
+      # for the NEXT upgrade attempt. Ignore failure: rollback-verification
+      # block already owns health-detection semantics.
+      timeout 30 sudo systemctl start "$SERVICE_NAME" 2>/dev/null || true
+    else
+      echo "::error:: CRITICAL: emergency restore ALSO failed — agent binaryless; manual intervention required"
+    fi
+  fi
+  # Escalate to exit 9 when we HAD a backup and couldn't restore it —
+  # state is identical to the post-healthcheck rollback-failed path
+  # (agent binaryless). If there was nothing to restore (fresh first-time
+  # install), exit 11 is accurate: "install failed, nothing lost".
+  # Audit B1.
+  if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ "$RESTORE_OK" = "0" ]; then
+    exit 9
+  fi
+  exit 11
+fi
 
 # Restore well-known symlinks the install script set up.
 sudo chmod +x "$INSTALL_DIR/Squid.Tentacle"

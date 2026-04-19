@@ -223,6 +223,12 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
     {
         if (!root.TryGetProperty("results", out var results)) return currentWinner;
 
+        // Docker Hub responses with `"results": null` (rare: empty repo, odd
+        // rate-limit quirk) would make EnumerateArray throw. The outer catch
+        // would swallow it and degrade gracefully, but a precise guard gives
+        // a better log (no exception stack) and keeps behaviour deterministic.
+        if (results.ValueKind != JsonValueKind.Array) return currentWinner;
+
         var winner = currentWinner;
 
         foreach (var tag in results.EnumerateArray())
