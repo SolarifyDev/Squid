@@ -1,15 +1,14 @@
-using System.Text.Json;
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
-using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.Machines.Updating;
 
-public sealed class SshUpdateStrategy : IMachineUpdateStrategy
+public sealed class SshUpdateStrategy : MachineUpdateStrategyBase<SshEndpointDto>
 {
-    private static readonly IReadOnlySet<string> OwnedFields = new HashSet<string>
+    protected override string StyleName => nameof(CommunicationStyle.Ssh);
+
+    protected override IReadOnlySet<string> OwnedFieldNames { get; } = new HashSet<string>
     {
         nameof(UpdateMachineCommand.Host),
         nameof(UpdateMachineCommand.Port),
@@ -23,36 +22,17 @@ public sealed class SshUpdateStrategy : IMachineUpdateStrategy
         nameof(UpdateMachineCommand.ResourceReferences),
     };
 
-    public bool CanHandle(string communicationStyle)
-        => communicationStyle == nameof(CommunicationStyle.Ssh);
-
-    public void ValidateForStyle(int machineId, UpdateMachineCommand command)
-        => CrossStyleContaminationGuard.ThrowIfCommandTouchesNonOwnedFields(
-            machineId, nameof(CommunicationStyle.Ssh), OwnedFields, command);
-
-    public bool ApplyEndpointUpdate(Machine machine, UpdateMachineCommand c)
+    protected override void ApplyOwnedFields(SshEndpointDto e, UpdateMachineCommand c)
     {
-        if (c.Host == null && !c.Port.HasValue && c.Fingerprint == null && c.RemoteWorkingDirectory == null
-            && !c.ProxyType.HasValue && c.ProxyHost == null && !c.ProxyPort.HasValue
-            && c.ProxyUsername == null && c.ProxyPassword == null && c.ResourceReferences == null)
-            return false;
-
-        var endpoint = !string.IsNullOrEmpty(machine.Endpoint)
-            ? JsonSerializer.Deserialize<SshEndpointDto>(machine.Endpoint, SquidJsonDefaults.CaseInsensitive)
-            : new SshEndpointDto();
-
-        if (c.Host != null) endpoint.Host = c.Host;
-        if (c.Port.HasValue) endpoint.Port = c.Port.Value;
-        if (c.Fingerprint != null) endpoint.Fingerprint = c.Fingerprint;
-        if (c.RemoteWorkingDirectory != null) endpoint.RemoteWorkingDirectory = c.RemoteWorkingDirectory;
-        if (c.ProxyType.HasValue) endpoint.ProxyType = c.ProxyType.Value;
-        if (c.ProxyHost != null) endpoint.ProxyHost = c.ProxyHost;
-        if (c.ProxyPort.HasValue) endpoint.ProxyPort = c.ProxyPort.Value;
-        if (c.ProxyUsername != null) endpoint.ProxyUsername = c.ProxyUsername;
-        if (c.ProxyPassword != null) endpoint.ProxyPassword = c.ProxyPassword;
-        if (c.ResourceReferences != null) endpoint.ResourceReferences = c.ResourceReferences;
-
-        machine.Endpoint = JsonSerializer.Serialize(endpoint);
-        return true;
+        e.Host = c.Host ?? e.Host;
+        e.Port = c.Port ?? e.Port;
+        e.Fingerprint = c.Fingerprint ?? e.Fingerprint;
+        e.RemoteWorkingDirectory = c.RemoteWorkingDirectory ?? e.RemoteWorkingDirectory;
+        e.ProxyType = c.ProxyType ?? e.ProxyType;
+        e.ProxyHost = c.ProxyHost ?? e.ProxyHost;
+        e.ProxyPort = c.ProxyPort ?? e.ProxyPort;
+        e.ProxyUsername = c.ProxyUsername ?? e.ProxyUsername;
+        e.ProxyPassword = c.ProxyPassword ?? e.ProxyPassword;
+        e.ResourceReferences = c.ResourceReferences ?? e.ResourceReferences;
     }
 }
