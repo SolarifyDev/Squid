@@ -1,11 +1,14 @@
+using System.Linq;
 using System.Text.Json;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Requests.Machines;
 
 namespace Squid.UnitTests.Services.Machines;
 
@@ -14,6 +17,7 @@ public class MachineServiceTests
     private readonly Mock<IMapper> _mapper = new();
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IPollingTrustDistributor> _trustDistributor = new();
+    private readonly InMemoryMachineRuntimeCapabilitiesCache _runtimeCache = new();
     private readonly MachineService _service;
 
     public MachineServiceTests()
@@ -21,7 +25,96 @@ public class MachineServiceTests
         _mapper.Setup(m => m.Map<MachineDto>(It.IsAny<Machine>()))
             .Returns<Machine>(m => new MachineDto { Id = m.Id, Name = m.Name, MachinePolicyId = m.MachinePolicyId });
 
-        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object);
+        _mapper.Setup(m => m.Map<List<MachineDto>>(It.IsAny<List<Machine>>()))
+            .Returns<List<Machine>>(list => list.Select(m => new MachineDto { Id = m.Id, Name = m.Name }).ToList());
+
+        _service = new MachineService(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object, _runtimeCache);
+    }
+
+    // ========================================================================
+    // GetMachinesAsync — AgentVersion enrichment from runtime capabilities cache
+    // (FE Phase-2 §9.1: let the UI render "upgrade available" badges without
+    // a follow-up round-trip per row).
+    // ========================================================================
+
+    [Fact]
+    public async Task GetMachines_PopulatesAgentVersionFromCache()
+    {
+        var machines = new List<Machine>
+        {
+            new() { Id = 1, Name = "cached-1" },
+            new() { Id = 2, Name = "cached-2" }
+        };
+        _machineDataProvider
+            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((2, machines));
+
+        _runtimeCache.Store(1, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(2, new Dictionary<string, string>(), agentVersion: "1.3.9");
+
+        var resp = await _service.GetMachinesAsync(new GetMachinesRequest(), CancellationToken.None);
+
+        resp.Data.Machines.Single(m => m.Id == 1).AgentVersion.ShouldBe("1.4.0");
+        resp.Data.Machines.Single(m => m.Id == 2).AgentVersion.ShouldBe("1.3.9");
+    }
+
+    [Fact]
+    public async Task GetMachines_CacheMiss_AgentVersionIsEmptyString()
+    {
+        // Machine has never been health-checked → cache miss → empty string.
+        // The FE treats empty as "version unknown" and hides the upgrade
+        // badge rather than guessing.
+        var machines = new List<Machine> { new() { Id = 1, Name = "never-checked" } };
+        _machineDataProvider
+            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((1, machines));
+        // Note: no runtimeCache.Store → cache miss
+
+        var resp = await _service.GetMachinesAsync(new GetMachinesRequest(), CancellationToken.None);
+
+        resp.Data.Machines.Single().AgentVersion.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task GetMachines_MixedCacheState_EachRowIndependentlyEnriched()
+    {
+        // Realistic prod scenario: some machines cached (recently health-
+        // checked), others cold. Must enrich per-row, not all-or-nothing.
+        var machines = new List<Machine>
+        {
+            new() { Id = 10, Name = "warm" },
+            new() { Id = 11, Name = "cold" },
+            new() { Id = 12, Name = "also-warm" }
+        };
+        _machineDataProvider
+            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((3, machines));
+
+        _runtimeCache.Store(10, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(12, new Dictionary<string, string>(), agentVersion: "1.4.0-rc.2");
+        // id=11 intentionally not stored
+
+        var resp = await _service.GetMachinesAsync(new GetMachinesRequest(), CancellationToken.None);
+
+        resp.Data.Machines.Single(m => m.Id == 10).AgentVersion.ShouldBe("1.4.0");
+        resp.Data.Machines.Single(m => m.Id == 11).AgentVersion.ShouldBe(string.Empty);
+        resp.Data.Machines.Single(m => m.Id == 12).AgentVersion.ShouldBe("1.4.0-rc.2");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_ResponseDto_AlsoEnrichedWithAgentVersion()
+    {
+        // UpdateMachine response feeds the FE the updated row directly — must
+        // be consistent with GetMachines enrichment so the UI doesn't lose
+        // the version indicator post-update.
+        var machine = new Machine { Id = 5, Name = "agent-5" };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+        _runtimeCache.Store(5, new Dictionary<string, string>(), agentVersion: "1.4.0");
+
+        var response = await _service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 5, Name = "agent-5" }, CancellationToken.None);
+
+        response.Data.AgentVersion.ShouldBe("1.4.0",
+            "UpdateMachine response must carry the same AgentVersion the list would, so FE state stays coherent");
     }
 
     // ========================================================================

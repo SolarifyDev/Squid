@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Halibut;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
@@ -25,12 +26,14 @@ public class MachineService : IMachineService
     private readonly IMapper _mapper;
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IPollingTrustDistributor _trustDistributor;
+    private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
 
-    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor)
+    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor, IMachineRuntimeCapabilitiesCache runtimeCache)
     {
         _mapper = mapper;
         _machineDataProvider = machineDataProvider;
         _trustDistributor = trustDistributor;
+        _runtimeCache = runtimeCache;
     }
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
@@ -38,14 +41,40 @@ public class MachineService : IMachineService
         var (count, data) = await _machineDataProvider.GetMachinePagingAsync(
             request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
+        var machines = _mapper.Map<List<MachineDto>>(data);
+
+        EnrichWithRuntimeCache(machines);
+
         return new GetMachinesResponse
         {
             Data = new GetMachinesResponseData
             {
                 Count = count,
-                Machines = _mapper.Map<List<MachineDto>>(data)
+                Machines = machines
             }
         };
+    }
+
+    /// <summary>
+    /// Post-map enrichment: AutoMapper profiles are stateless, but the
+    /// agent version lives in <see cref="IMachineRuntimeCapabilitiesCache"/>
+    /// (populated by health-check Capabilities probes). Populating here
+    /// keeps the mapping profile pure while still giving the UI a
+    /// per-row agent version for "upgrade available" badges.
+    ///
+    /// <para>Empty string on cache miss (machine never health-checked) —
+    /// the frontend treats empty as "version unknown" and hides the
+    /// upgrade-available badge rather than guessing.</para>
+    /// </summary>
+    private void EnrichWithRuntimeCache(List<MachineDto> machines)
+    {
+        foreach (var dto in machines)
+            dto.AgentVersion = _runtimeCache.TryGet(dto.Id).AgentVersion ?? string.Empty;
+    }
+
+    private void EnrichWithRuntimeCache(MachineDto machine)
+    {
+        machine.AgentVersion = _runtimeCache.TryGet(machine.Id).AgentVersion ?? string.Empty;
     }
 
     public async Task<UpdateMachineResponse> UpdateMachineAsync(UpdateMachineCommand command, CancellationToken cancellationToken)
@@ -76,7 +105,10 @@ public class MachineService : IMachineService
 
         Log.Information("Updated machine {MachineName} (Id={MachineId})", machine.Name, machine.Id);
 
-        return new UpdateMachineResponse { Data = _mapper.Map<MachineDto>(machine) };
+        var dto = _mapper.Map<MachineDto>(machine);
+        EnrichWithRuntimeCache(dto);
+
+        return new UpdateMachineResponse { Data = dto };
     }
 
     private async Task EnsureNameAvailableIfChangedAsync(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand command, CancellationToken ct)
