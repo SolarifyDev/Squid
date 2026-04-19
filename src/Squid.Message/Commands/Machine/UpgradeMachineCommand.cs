@@ -24,12 +24,28 @@ public class UpgradeMachineCommand : ICommand, ISpaceScoped
     public int MachineId { get; set; }
 
     /// <summary>
-    /// Optional explicit version. When null, the server uses its bundled /
-    /// recommended version (see <c>IBundledTentacleVersionProvider</c>) so
-    /// every agent ends up at the latest the server release ships with.
+    /// Optional explicit version. When null/blank the server resolves the
+    /// latest published Tentacle for this machine's CommunicationStyle via
+    /// <c>ITentacleVersionRegistry</c> (env override → fresh cache → live
+    /// Docker Hub → stale cache fallback). Decoupled from the server's own
+    /// release version so a tentacle hotfix can ship without a server
+    /// release.
     /// </summary>
     public string TargetVersion { get; set; }
 
+    /// <summary>
+    /// Space scope for the <see cref="Attributes.RequiresPermissionAttribute"/>
+    /// check. <b>Security note (audit H-19):</b> the upgrade controller nulls
+    /// this out before handing the command to the mediator — the body is not
+    /// a trusted source for the space to authorize against. The pipeline
+    /// then populates from the <c>X-Space-Id</c> HTTP header.
+    ///
+    /// <para>Full fix (permission check AFTER resource lookup) is a
+    /// framework-level change tracked outside this feature; today the
+    /// operator can still set <c>X-Space-Id</c> to a space they're a member
+    /// of and target a machine in a DIFFERENT space, so treat the space
+    /// boundary as advisory until that framework change lands.</para>
+    /// </summary>
     public int? SpaceId { get; set; }
 }
 

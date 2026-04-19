@@ -51,9 +51,28 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// </summary>
     public const string DownloadBaseUrlEnvVar = "SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL";
 
-    private const string DefaultDownloadBaseUrl = "https://github.com/SolarifyDev/Squid/releases/download";
+    /// <summary>
+    /// Operator override for the post-restart healthcheck URL the bash
+    /// script polls to confirm the new binary came up. Needed when a
+    /// custom Tentacle build exposes healthcheck on a non-standard
+    /// port/path. Default: <c>http://127.0.0.1:8080/healthz</c>.
+    /// Audit H-14.
+    /// </summary>
+    public const string HealthcheckUrlEnvVar = "SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_URL";
 
-    private static readonly TimeSpan UpgradeScriptTimeout = TimeSpan.FromMinutes(5);
+    private const string DefaultDownloadBaseUrl = "https://github.com/SolarifyDev/Squid/releases/download";
+    private const string DefaultHealthcheckUrl = "http://127.0.0.1:8080/healthz";
+
+    /// <summary>
+    /// Wall-clock cap for a single upgrade script dispatch. Must stay
+    /// strictly less than <c>MachineUpgradeService.LockExpiry</c> — a
+    /// hung strategy would otherwise let the distributed lock expire and
+    /// a second replica could re-dispatch while this one is still going.
+    /// Pinned by <c>MachineUpgradeServiceTests.LockExpiry_StrictlyGreaterThanStrategyTimeout</c>.
+    /// Audit H-15.
+    /// </summary>
+    internal static readonly TimeSpan UpgradeScriptTimeout = TimeSpan.FromMinutes(5);
+
     private static readonly Lazy<string> _scriptTemplate = new(LoadEmbeddedScript);
 
     private readonly IHalibutClientFactory _halibutClientFactory;
@@ -102,17 +121,30 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     private async Task<MachineUpgradeOutcome> DispatchAsync(Machine machine, StartScriptCommand command, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, string targetVersion, CancellationToken ct)
     {
+        // Track whether StartScriptAsync acknowledged. A HalibutClientException
+        // BEFORE this flag flips means the script was never queued on the
+        // agent (network/cert/agent-down) — must report Failed so the
+        // operator looks at the right layer. AFTER means the script ran and
+        // the agent's `systemctl restart` killed the connection — that's
+        // expected and maps to Initiated. Audit N-1.
+        var dispatchAcked = false;
+
         try
         {
             var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+            dispatchAcked = true;
 
             var result = await _observer.ObserveAndCompleteAsync(machine, scriptClient, command.ScriptTicket, UpgradeScriptTimeout, ct, masker: null, initialStartResponse: startResponse, endpoint: endpoint).ConfigureAwait(false);
 
             return InterpretScriptResult(result, targetVersion);
         }
+        catch (HalibutClientException ex) when (dispatchAcked)
+        {
+            return InterpretMidScriptDisconnect(machine, ex);
+        }
         catch (HalibutClientException ex)
         {
-            return InterpretHalibutDisconnect(machine, ex);
+            return InterpretPreDispatchFailure(machine, ex);
         }
         catch (OperationCanceledException)
         {
@@ -132,7 +164,8 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             return new MachineUpgradeOutcome
             {
                 Status = MachineUpgradeStatus.Upgraded,
-                Detail = $"Upgrade to {targetVersion} reported success in {result.LogLines?.Count ?? 0} log lines"
+                Detail = $"Upgrade to {targetVersion} reported success in {result.LogLines?.Count ?? 0} log lines",
+                AgentVersionMayHaveChanged = true   // binary swap committed → cache must refresh
             };
 
         var lastLog = result.LogLines is { Count: > 0 } ll ? ll[^1] : "(no log lines)";
@@ -140,29 +173,57 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         return new MachineUpgradeOutcome
         {
             Status = MachineUpgradeStatus.Failed,
-            Detail = $"Upgrade script failed (exit {result.ExitCode}). Last log: {lastLog}"
+            Detail = $"Upgrade script failed (exit {result.ExitCode}). Last log: {lastLog}",
+            // The bash script rolls back on any post-swap failure (exit 4 or 9),
+            // restoring the previous binary. So even on Failed the agent is
+            // still on the OLD version — cache stays valid. Skip invalidation
+            // to avoid a needless capabilities round-trip on next health check.
+            AgentVersionMayHaveChanged = false
         };
     }
 
-    private static MachineUpgradeOutcome InterpretHalibutDisconnect(Machine machine, HalibutClientException ex)
+    private static MachineUpgradeOutcome InterpretMidScriptDisconnect(Machine machine, HalibutClientException ex)
     {
-        // Halibut disconnect mid-script is EXPECTED — the agent restarts the
-        // squid-tentacle service as part of the upgrade. Treat as Initiated;
-        // the next health check confirms whether the new version came up.
-        Log.Information("[Upgrade] Halibut disconnect during upgrade of {Machine} (expected on service restart): {Reason}", machine.Name, ex.Message);
+        // Halibut disconnect AFTER StartScriptAsync acked is EXPECTED — the
+        // agent restarts the squid-tentacle service as part of the upgrade.
+        // Treat as Initiated; the next health check confirms whether the new
+        // version came up.
+        Log.Information("[Upgrade] Halibut disconnect mid-script for {Machine} (expected on service restart): {Reason}", machine.Name, ex.Message);
 
         return new MachineUpgradeOutcome
         {
             Status = MachineUpgradeStatus.Initiated,
-            Detail = "Upgrade dispatched; agent disconnected mid-script as expected during restart. Verify outcome via next health check."
+            Detail = "Upgrade dispatched; agent disconnected mid-script as expected during restart. Verify outcome via next health check.",
+            AgentVersionMayHaveChanged = true   // script reached restart phase → version most likely changed
         };
+    }
+
+    private static MachineUpgradeOutcome InterpretPreDispatchFailure(Machine machine, HalibutClientException ex)
+    {
+        // Halibut disconnect BEFORE StartScriptAsync acked = the script was
+        // NEVER queued on the agent. Common causes: agent process down,
+        // polling subscription not yet registered, server doesn't trust the
+        // agent's thumbprint, network firewall. Telling the operator to
+        // "verify via next health check" would be misleading — the next
+        // health check will show no state change because nothing ran. Audit N-1.
+        Log.Warning("[Upgrade] Halibut dispatch failed for {Machine} BEFORE script was queued: {Reason}", machine.Name, ex.Message);
+
+        return Failed(
+            $"Upgrade dispatch failed before the agent acknowledged the script — the upgrade did NOT run. " +
+            $"Likely causes: agent process down, polling subscription not registered, server-agent thumbprint trust missing, " +
+            $"or network/firewall blocking the polling channel. Halibut detail: {ex.Message}");
     }
 
     // ── Script + command construction ────────────────────────────────────────
 
     private static StartScriptCommand BuildStartScriptCommand(Machine machine, string targetVersion)
     {
-        var ticketId = $"upgrade-{machine.Id}-{Guid.NewGuid():N}"[..32];
+        // Full GUID (32 hex) + machine id + prefix. The previous `[..32]`
+        // truncation was cargo-culted and reduced GUID entropy for
+        // large-id machines (machineId=10-digits left only 13 hex of the
+        // GUID → 2^52 collision space). Halibut's ScriptTicket has no
+        // length cap. Audit H-6.
+        var ticketId = $"upgrade-{machine.Id}-{Guid.NewGuid():N}";
         var scriptBody = BuildScript(targetVersion);
 
         return new StartScriptCommand(new ScriptTicket(ticketId), scriptBody, ScriptIsolationLevel.FullIsolation, UpgradeScriptTimeout, null, Array.Empty<string>(), ticketId, TimeSpan.Zero)
@@ -171,7 +232,11 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         };
     }
 
-    private static string BuildScript(string targetVersion)
+    /// <summary>Test-only seam for inspecting the command this strategy would emit without running Halibut dispatch.</summary>
+    internal static StartScriptCommand PreviewStartScriptCommand(Machine machine, string targetVersion)
+        => BuildStartScriptCommand(machine, targetVersion);
+
+    internal static string BuildScript(string targetVersion)
     {
         // {RID} stays inside the URL and is rewritten by the script's
         // `case "$ARCH"` block — keeps the server agnostic to agent arch.
@@ -185,7 +250,8 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{EXPECTED_SHA256}}", string.Empty, StringComparison.Ordinal)
             .Replace("{{INSTALL_DIR}}", DefaultInstallDir, StringComparison.Ordinal)
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
-            .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal);
+            .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -208,6 +274,20 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         return string.IsNullOrWhiteSpace(raw) ? DefaultDownloadBaseUrl : raw.Trim().TrimEnd('/');
     }
 
+    /// <summary>
+    /// Resolves the local-agent healthcheck URL the bash script polls after
+    /// the service restart. Env override lets operators point at a custom
+    /// port/path when their Tentacle fork diverges from the default
+    /// <c>http://127.0.0.1:8080/healthz</c>. Trailing slash stripped to
+    /// avoid `/path/` vs `/path` false-negatives on 301-redirecting servers.
+    /// </summary>
+    internal static string ResolveHealthcheckUrl()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(HealthcheckUrlEnvVar);
+
+        return string.IsNullOrWhiteSpace(raw) ? DefaultHealthcheckUrl : raw.Trim().TrimEnd('/');
+    }
+
     // ── Embedded script loading ──────────────────────────────────────────────
 
     private static string LoadEmbeddedScript()
@@ -224,5 +304,14 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         return reader.ReadToEnd();
     }
 
-    private static MachineUpgradeOutcome Failed(string detail) => new() { Status = MachineUpgradeStatus.Failed, Detail = detail };
+    private static MachineUpgradeOutcome Failed(string detail) => new()
+    {
+        Status = MachineUpgradeStatus.Failed,
+        Detail = detail,
+        // All `Failed` paths in this strategy are either pre-dispatch (script
+        // never queued, agent on old version) or rolled-back (bash script
+        // restores .bak). In both cases the agent's binary did not change,
+        // so the cached version is still accurate.
+        AgentVersionMayHaveChanged = false
+    };
 }

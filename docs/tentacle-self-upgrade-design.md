@@ -241,7 +241,7 @@ The operator's biggest fear: "will my machine come back as a NEW machine after u
 - **Bulk upgrade endpoint** `POST /api/machines/upgrade-batch { machineIds: [...], targetVersion?: string, maxConcurrent?: 5 }` — schedules a parent task, fans out per-machine in parallel up to `maxConcurrent`.
 - **Rolling upgrade policy**: `POST /api/environments/{id}/upgrade-roll { batchSize: 3, abortAfterFailures: 1 }` — upgrade N at a time, verify each, halt on threshold.
 - **Auto-discover "upgrade available" signal** on every machine list query: `GET /api/machines/list` returns each machine with `{currentVersion, recommendedVersion, upgradeAvailable: bool}` so the UI shows a badge.
-- **SHA256 release-pipeline integration**: workflow generates `*.tar.gz.sha256`; `IBundledTentacleVersionProvider.GetExpectedSha256(version, rid)` returns it; bash script enforces.
+- **SHA256 release-pipeline integration**: GitHub release workflow generates `*.tar.gz.sha256` per RID; `LinuxTentacleUpgradeStrategy` fetches it alongside the version (via `ITentacleVersionRegistry` augmented with `GetExpectedSha256(version, rid)` — kept on the strategy so the registry interface stays single-responsibility); bash script enforces — `EXPECTED_SHA256` placeholder is non-empty in Phase 2.
 - **Pre-flight from server side**: dry-run mode `?dryRun=true` returns "what would happen" without touching the agent (current version, target, expected URL, expected SHA, would-be-skipped reason).
 - **Air-gapped support** (already in Phase 1 for Linux): `SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL` env var overrides the default GitHub Releases prefix so private mirrors / S3 buckets work — the file naming convention `{base}/{version}/squid-tentacle-{version}-{rid}.tar.gz` stays canonical so mirrors just rsync the GitHub release tree. K8s + Windows mirror overrides come in their own strategies.
 
@@ -269,6 +269,144 @@ The operator's biggest fear: "will my machine come back as a NEW machine after u
 | Active deployment guard | None explicit | **`ScriptIsolationLevel.FullIsolation`** — agent's mutex serializes upgrade behind any in-flight deployment |
 | Pre-flight checks | Calamari version check only | Disk space + URL HEAD + SHA256 + ldd compat + post-restart version verify |
 | Failure observability | Halibut request log | **Same** + per-script-exit-code remediation hint baked into stderr |
+
+---
+
+## 6.5 — Operator setup prerequisites
+
+Three out-of-band things must be in place before clicking Upgrade in the UI
+returns anything but `Failed`. None of them are enforced by the server (they
+live on the agent host or the network), so the design doc is the authoritative
+checklist. Run through this once per environment.
+
+### A. Linux Tentacle: passwordless sudo for upgrade-required commands
+
+The bash upgrade script runs through Halibut RPC under the agent's process
+identity. It needs `sudo` for the binary swap (`mv` between root-owned dirs),
+service control (`systemctl stop/start`), file ownership (`chown`), and a few
+file-system primitives. If sudo prompts for a password the script hangs at the
+first sudo call until the Halibut script timeout (5 min), then comes back as
+`Failed` with `(no log lines)`.
+
+**Configuration**: drop `/etc/sudoers.d/squid-tentacle-upgrade` on every
+Linux Tentacle host:
+
+```sudoers
+# /etc/sudoers.d/squid-tentacle-upgrade  (owner: root:root, mode: 0440)
+# squid-tentacle (the agent's service user) needs passwordless sudo for the
+# binary-swap commands the upgrade script issues. Scoped to the specific
+# binaries the script actually invokes — not blanket ALL — so an exploit of
+# the agent process can't pivot to an arbitrary root command.
+squid-tentacle ALL=(root) NOPASSWD: \
+    /bin/systemctl stop squid-tentacle, \
+    /bin/systemctl start squid-tentacle, \
+    /bin/systemctl is-active squid-tentacle, \
+    /bin/mkdir -p /var/lib/squid-tentacle, \
+    /usr/bin/touch /var/lib/squid-tentacle/upgrade-*.lock, \
+    /bin/rm -f /var/lib/squid-tentacle/upgrade-*.lock, \
+    /bin/mv /opt/squid-tentacle*, \
+    /bin/rm -rf /opt/squid-tentacle*, \
+    /bin/chmod +x /opt/squid-tentacle/*, \
+    /bin/chown -R squid-tentacle\:squid-tentacle /opt/squid-tentacle, \
+    /bin/ln -sf /opt/squid-tentacle/* /opt/squid-tentacle/squid-tentacle, \
+    /bin/ln -sf /opt/squid-tentacle/squid-tentacle /usr/local/bin/squid-tentacle
+```
+
+After dropping the file:
+```bash
+sudo chmod 0440 /etc/sudoers.d/squid-tentacle-upgrade
+sudo visudo -c   # validates syntax — MUST report "parsed OK" before continuing
+```
+
+**Permissive alternative** (development / single-tenant boxes only):
+```sudoers
+squid-tentacle ALL=(ALL) NOPASSWD: ALL
+```
+
+The Tentacle install script will land sudoers configuration automatically in
+Phase 2; until then it's a manual step.
+
+### B. Server → Docker Hub reachability + rate limits
+
+The version registry queries `https://hub.docker.com/v2/repositories/...` with
+no auth. Docker Hub anonymous rate limit: **100 requests / 6h / source IP**.
+
+A fleet of N server replicas with M machines doing concurrent upgrades is
+bounded to a few queries per 10-minute window thanks to the in-process TTL
+cache + in-flight dedupe. But a misconfigured cache (per-pod local) plus high
+churn could trip the limit.
+
+**Symptoms of rate-limit hit**: registry's stale-cache fallback kicks in
+(check Seq for `[Upgrade] Docker Hub query for ... failed; falling back to
+stale cached version`). Operator-visible result: stale version pinned for a
+while, then `Failed` if cache is also empty.
+
+**Mitigations**:
+1. **Pin a version per replica** via env override — bypasses Docker Hub
+   entirely for the override path:
+   ```yaml
+   env:
+     - name: SQUID_TARGET_LINUX_TENTACLE_VERSION
+       value: "1.4.0"
+     - name: SQUID_TARGET_K8S_AGENT_VERSION
+       value: "1.4.0"
+   ```
+2. **Mirror to private registry** + override delivery URL (covers air-gap too):
+   ```yaml
+   env:
+     - name: SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL
+       value: "https://mirror.acme.internal/squid"
+   ```
+3. (Future) Authenticated Docker Hub access — needs a `squidcd` machine
+   account; not implemented in Phase 1.
+
+### C. Agent → release tarball reachability
+
+The bash script downloads `{base}/{version}/squid-tentacle-{version}-{rid}.tar.gz`.
+Default base is `https://github.com/SolarifyDev/Squid/releases/download`.
+Air-gapped sites set `SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL` (server
+side — gets baked into the script template before dispatch) to a mirror
+prefix that hosts the same `{version}/{rid}.tar.gz` layout.
+
+The script does a `curl -fsSI --max-time 10` HEAD probe BEFORE touching the
+live install — so a 404 (e.g. release tag unpublished) or network error
+manifests as exit code 6 with a clear message, not a half-broken install.
+
+### D. Agent local healthcheck endpoint
+
+The bash script polls `http://127.0.0.1:8080/healthz` after `systemctl start`
+to confirm the new binary came up. If your Tentacle build exposes the
+healthcheck on a different port/path, override via env on the server:
+
+```yaml
+env:
+  - name: SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_URL
+    value: "http://127.0.0.1:9090/api/health"
+```
+
+(See `LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar` — defaults to the
+above when unset.)
+
+### E. Quick verification ladder
+
+Before declaring the environment ready, run this from the server pod:
+
+```bash
+# 1. Server can reach Docker Hub (or your override is set)
+echo $SQUID_TARGET_LINUX_TENTACLE_VERSION  # if non-empty, skip step 2
+curl -sI https://hub.docker.com/v2/repositories/squidcd/squid-tentacle-linux/tags/?page_size=1 | head -1
+#   Expected: HTTP/2 200
+
+# 2. Pick one Linux Tentacle target and verify reachability from server
+kubectl exec -it deploy/squid-api -- curl -fsI https://github.com/SolarifyDev/Squid/releases/download/1.4.0/squid-tentacle-1.4.0-linux-x64.tar.gz | head -1
+#   Expected: HTTP/2 200
+
+# 3. Trigger a dry-style upgrade for one machine and inspect the log
+curl -X POST https://your-squid/api/machines/<id>/upgrade -d '{}' -H 'Content-Type: application/json'
+#   Successful response: { ..., "status": "Upgraded", ... } within ~60s
+#   Failed dispatch: status="Failed", detail starts with "Upgrade dispatch failed before…" → fix sudoers / agent up
+#   Failed mid-script: status="Failed", detail like "exit 6: Target tarball not reachable" → fix C
+```
 
 ---
 
@@ -323,8 +461,8 @@ curl -X POST https://squid-api/.../api/machines/17/upgrade \
 
 ### Operator escape hatches
 
-- **Different bundled version per server replica** (e.g. canary): set `SQUID_TARGET_LINUX_TENTACLE_VERSION / SQUID_TARGET_K8S_AGENT_VERSION` env on that pod
-- **Air-gapped / forked tarball**: Phase 2 will add `BUNDLED_TENTACLE_DOWNLOAD_BASE_URL`. Phase 1 workaround: set `targetVersion` to your fork tag and pre-mirror the GitHub URL pattern to your registry
+- **Different target version per server replica** (e.g. canary): set `SQUID_TARGET_LINUX_TENTACLE_VERSION` / `SQUID_TARGET_K8S_AGENT_VERSION` env on that pod
+- **Air-gapped / forked tarball** (Phase 1): set `SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL` to your mirror prefix; mirror just rsyncs the GitHub release tree
 - **Forced re-upgrade** even when AlreadyUpToDate: pass `targetVersion` explicitly to a different value, then back
 
 ---
@@ -333,27 +471,73 @@ curl -X POST https://squid-api/.../api/machines/17/upgrade \
 
 | Test | Layer | What it locks down |
 |---|---|---|
-| `BundledTentacleVersionProviderTests.GetBundledVersion_*` | Unit | Auto-detection returns valid semver; BOM-less; no `+sha` suffix; ≤3 segments |
-| `BundledTentacleVersionProviderTests.GetDownloadUrl_*` | Unit | URL construction for x64/arm64/pre-release versions; rejects blank inputs |
-| `BundledTentacleVersionProviderTests.OverrideEnvVar_ConstantNamePinned` | Unit | Renaming env var would break operator contract; pinned in test |
-| `MachineUpgradeServiceTests.MachineNotFound_*` | Unit | 404 path |
-| `MachineUpgradeServiceTests.NoBundleAndNoExplicitTarget_*` | Unit | Failed with explicit env-var guidance |
-| `MachineUpgradeServiceTests.AlreadyOnTargetVersion_*` | Unit | Pre-skip, strategy never dispatched |
-| `MachineUpgradeServiceTests.CurrentVersionNewerThanTarget_*` | Unit | Pre-skip on downgrade attempt |
-| `MachineUpgradeServiceTests.OperatorOverridesTargetVersion_*` | Unit | Override beats bundled |
-| `MachineUpgradeServiceTests.DispatchesByCommunicationStyle_*` × 2 | Unit | Linux vs K8s strategy resolution |
-| `MachineUpgradeServiceTests.NoStrategyForStyle_*` | Unit | NotSupported with style name |
-| `MachineUpgradeServiceTests.CacheMiss_ProceedsWithEmptyCurrentVersion` | Unit | Cold cache doesn't block dispatch |
-| `MachineUpgradeServiceTests.OnSuccessOrInitiated_InvalidatesRuntimeCache` × 2 | Unit | **Cache invalidation hook** verified for Upgraded + Initiated |
-| `MachineUpgradeServiceTests.OnFailureOrNotSupported_LeavesRuntimeCacheIntact` × 2 | Unit | No needless invalidation when nothing changed |
-| `MachineUpgradeServiceTests.LockAcquisitionFails_*` | Unit | **Multi-replica safety**: strategy not invoked when lock unavailable |
-| `MachineUpgradeServiceTests.LockKeyIsPerMachineId_AllowsParallelDifferentMachines` | Unit | Lock key embeds machineId; namespace prefix stable |
-| `KubernetesAgentUpgradeStrategyTests.*` | Unit | Phase 2 placeholder returns NotSupported with helm hint |
+| `TentacleVersionRegistryTests.OverrideEnvVar_LinuxConstantNamePinned` | Unit | Renaming `SQUID_TARGET_LINUX_TENTACLE_VERSION` would break canary/air-gap contract |
+| `TentacleVersionRegistryTests.OverrideEnvVar_K8sConstantNamePinned` | Unit | Same for `SQUID_TARGET_K8S_AGENT_VERSION` |
+| `TentacleVersionRegistryTests.GetLatestVersionAsync_LinuxStyleWithEnvOverride_*` × 2 | Unit | Override short-circuits BEFORE any HTTP IO (proves no captive-dep regression) |
+| `TentacleVersionRegistryTests.GetLatestVersionAsync_K8sStyleWithEnvOverride_*` | Unit | K8s routing distinct from Linux |
+| `TentacleVersionRegistryTests.GetLatestVersionAsync_OverrideTrimmed_*` | Unit | Whitespace stripped from operator-supplied env value |
+| `TentacleVersionRegistryTests.GetLatestVersionAsync_UnknownStyle_*` | Unit | SSH/future styles → empty (graceful) |
+| `TentacleVersionRegistryTests.Lifetime_RegistryIsScoped_NotSingleton` | Unit | Pins lifetime to prevent the captive-dep regression on `ISquidHttpClientFactory` (scoped) |
+| `LinuxTentacleUpgradeStrategyTests.DownloadBaseUrlEnvVar_ConstantNamePinned` | Unit | Renaming `SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL` would break every mirror operator |
+| `LinuxTentacleUpgradeStrategyTests.BuildDownloadUrl_DefaultsToGitHubReleasesPath` × 3 | Unit | x64/arm64/pre-release URL pattern stable |
+| `LinuxTentacleUpgradeStrategyTests.BuildDownloadUrl_EnvOverride_*` × 2 | Unit | Mirror retarget for x64 + arm64 |
+| `LinuxTentacleUpgradeStrategyTests.ResolveDownloadBaseUrl_StripsTrailingSlash_*` | Unit | Mirror url with `/` doesn't double-slash |
+| `LinuxTentacleUpgradeStrategyTests.ResolveDownloadBaseUrl_BlankOverride_*` | Unit | `"   "` falls back to GitHub default |
+| `LinuxTentacleUpgradeStrategyTests.CanHandle_OnlyMatchesLinuxTentacleStyles` × 7 | Unit | Polling+Listening only; KubernetesAgent/Api/Ssh/empty/null all rejected |
+| `MachineUpgradeServiceTests.UpgradeAsync_MachineNotFound_*` | Unit | 404 path via MachineNotFoundException |
+| `MachineUpgradeServiceTests.UpgradeAsync_RegistryReturnsEmpty_*` | Unit | Failed + actionable env-var guidance |
+| `MachineUpgradeServiceTests.UpgradeAsync_AlreadyOnTargetVersion_*` | Unit | Pre-skip, strategy never dispatched |
+| `MachineUpgradeServiceTests.UpgradeAsync_CurrentVersionNewerThanTarget_*` | Unit | Pre-skip on downgrade attempt |
+| `MachineUpgradeServiceTests.UpgradeAsync_OperatorOverridesTargetVersion_*` | Unit | Body override beats auto-resolved version |
+| `MachineUpgradeServiceTests.UpgradeAsync_DispatchesByCommunicationStyle_*` × 2 | Unit | Linux vs K8s strategy resolution |
+| `MachineUpgradeServiceTests.UpgradeAsync_NoStrategyForStyle_*` × 3 | Unit | NotSupported with style name; doesn't hit registry; **doesn't blame missing version (audit H-1 regression guard)** |
+| `MachineUpgradeServiceTests.UpgradeAsync_CacheMiss_*` | Unit | Cold cache doesn't block dispatch |
+| `MachineUpgradeServiceTests.UpgradeAsync_OnSuccessOrInitiated_InvalidatesRuntimeCache` × 2 | Unit | **Cache invalidation hook** verified for Upgraded + Initiated |
+| `MachineUpgradeServiceTests.UpgradeAsync_OnFailureOrNotSupported_LeavesRuntimeCacheIntact` × 2 | Unit | No needless invalidation when nothing changed |
+| `MachineUpgradeServiceTests.UpgradeAsync_LockAcquisitionFails_*` | Unit | **Multi-replica safety**: strategy not invoked when lock unavailable |
+| `MachineUpgradeServiceTests.UpgradeAsync_LockKeyIsPerMachineId_*` | Unit | Lock key embeds machineId; namespace prefix stable |
+| `KubernetesAgentUpgradeStrategyTests.CanHandle_*` × 7 | Unit | Only KubernetesAgent style accepted |
+| `KubernetesAgentUpgradeStrategyTests.UpgradeAsync_*` | Unit | Phase 2 placeholder returns NotSupported with helm hint |
 
-**Total: 28 unit tests** in `tests/Squid.UnitTests/Services/Machines/Upgrade/`. All green.
+**Phase 1 totals**: 182 unit tests in `tests/Squid.UnitTests/Services/Machines/Upgrade/` across 6 test classes. All green against 4240-test full suite.
 
-Phase 2 will add: integration tests against a real fake-systemd Linux container,
-end-to-end test that runs the actual bash script in a sandbox.
+### Hardenings landed across TWO audit cycles
+
+**First cycle (commit `X`): 10 holes fixed**
+- H-1 strategy-first ordering; H-2 captive-dep lifetime; H-3/H-4/H-5/H-17 strict semver gate; H-8 stale-ref cleanup; H-10/H-11 dispatch + BuildScript tests; H-13 POSIX df.
+
+**Second cycle (this doc update): 14 more holes fixed**
+
+| Hole | What landed |
+|---|---|
+| **N-1** | Distinguish pre-dispatch (`Failed`) vs mid-script (`Initiated`) `HalibutClientException` — `when (dispatchAcked)` pattern |
+| **N-2** | Spec §11 pre-release precedence — `beta.11 > beta.2` via identifier-by-identifier numeric/alphanumeric compare; `IEquatable<SemVer>` + `==/!=` operators |
+| **N-3** | Docker Hub pagination — follow `next` link, cap at 10 pages |
+| **N-4** | Concurrent fan-out dedupe — `Lazy<Task<>>` + `ConcurrentDictionary.GetOrAdd`; `Task.WaitAsync(ct)` isolates caller cancellation from inner task |
+| **N-6** | Outcome-driven cache invalidation — `AgentVersionMayHaveChanged` flag on `MachineUpgradeOutcome`; orchestrator no longer inspects `Status` enum |
+| **N-7** | Operator setup docs section §6.5 — sudoers scaffold, Docker Hub rate-limit guidance, agent reachability, healthcheck URL override |
+| **N-8** | Bash flock — kernel-level advisory lock, SIGKILL-safe, lock file in `/tmp` (no sudo gymnastics) |
+| **H-6** | Drop ticket ID `[..32]` truncation — full GUID entropy; `PreviewStartScriptCommand` test seam |
+| **H-7** | `timeout 30` / `timeout 60` around `systemctl stop` / `start` |
+| **H-12** | Consolidated single `cleanup()` function + single `trap cleanup EXIT` |
+| **H-14** | `{{HEALTHCHECK_URL}}` placeholder + `SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_URL` env override |
+| **H-15** | `LockExpiry` raised to 20min + **invariant test** pinning `LockExpiry > 2× strategy timeout + 5min buffer` — future strategies with longer timeouts trip this assertion |
+| **H-16** | URL routing test via fake `HttpMessageHandler` + poisoned tags on wrong repo |
+| **H-19** | Partial mitigation (controller nulls body `SpaceId`); documented framework-level fix is out of scope |
+
+### Additional defensive improvements
+
+- **Malformed endpoint JSON** → `Failed` with actionable detail (was `NotSupported ''`)
+- **Strategy uniqueness check** — two strategies claiming same style now throw at first dispatch, not silently mis-route
+- **Bash integration tests** (21 cases) — `bash -n` syntax guardrail + invariant grep for every exit code, every flow anchor. Phase 2 docker-based fake-systemd suite covers end-to-end execution.
+
+Phase 2 will add:
+- Integration test against a fake-systemd Linux container running the actual bash script end-to-end (covers atomic swap + rollback + healthcheck loop)
+- E2E test booting `TentacleStub`, dispatching upgrade, asserting script payload received over real Halibut polling and replied with mock success
+- SHA256 release-pipeline integration
+- K8s Agent helm-based upgrade (strategy stub replaced)
+- Bulk upgrade UI + endpoint
+- Framework-level authorization fix for H-19 (permission check AFTER resource lookup)
 
 ---
 
@@ -363,18 +547,26 @@ end-to-end test that runs the actual bash script in a sandbox.
 
 After deploying Squid Server with this change:
 
-1. **Verify the auto-detected version** matches the desired Tentacle version:
+1. **Verify auto-resolution works** by triggering a single upgrade with no body and checking the response's `targetVersion`:
    ```bash
-   kubectl logs deploy/squid-api | grep -i "bundled tentacle"   # warning prints if empty
-   curl -s https://your-squid/api/server-configuration  # if endpoint exposes it
+   curl -X POST https://your-squid/api/machines/<id>/upgrade -d '{}' -H 'Content-Type: application/json'
+   #   { ..., "targetVersion": "1.4.2", ... }       ← live Docker Hub query worked
+   #   { ..., "status": "Failed", "detail": "...set SQUID_TARGET_LINUX_TENTACLE_VERSION..." }   ← Docker Hub unreachable, set env override
    ```
-2. If the version is empty (local builds, missing GitVersion), set:
+2. If Docker Hub is unreachable from your server (firewall, air-gap), pin a version explicitly:
    ```yaml
    env:
-     - name: SQUID_TARGET_LINUX_TENTACLE_VERSION / SQUID_TARGET_K8S_AGENT_VERSION
+     - name: SQUID_TARGET_LINUX_TENTACLE_VERSION   # for Linux Tentacles (Polling + Listening)
+       value: "1.4.0"
+     - name: SQUID_TARGET_K8S_AGENT_VERSION         # for Kubernetes Agent (Phase 2)
        value: "1.4.0"
    ```
-3. **Test against one machine first** — pick a non-critical agent, click Upgrade, verify it comes back healthy. Check Seq for any errors.
+   And/or point delivery at your private mirror:
+   ```yaml
+     - name: SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL
+       value: "https://mirror.acme.internal/squid"  # mirror copies the GitHub release tree
+   ```
+3. **Test against one machine first** — pick a non-critical agent, click Upgrade, verify it comes back healthy. Check Seq for `[Upgrade]` log lines.
 
 ### For tentacle operators (no action needed)
 

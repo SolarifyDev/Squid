@@ -162,10 +162,22 @@ public class MachineController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
     public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)
     {
-        // Body is optional — operator may POST {} to use the server's bundled
-        // version. Bind path id over body id so /{id}/upgrade is canonical.
+        // Body is optional — operator may POST {} to let the server
+        // auto-resolve the latest published Tentacle via
+        // ITentacleVersionRegistry. Bind path id over body id so
+        // /{id}/upgrade is canonical and a stale body MachineId can't
+        // cross-target a different machine.
         var command = body ?? new UpgradeMachineCommand();
         command.MachineId = machineId;
+
+        // Partial mitigation for audit H-19: drop any body-supplied SpaceId
+        // so the mediator's SpaceIdInjectionSpecification falls through to
+        // the X-Space-Id HTTP header. This removes the JSON-body vector
+        // for cross-space privilege escalation, though the underlying
+        // framework issue (permission check runs BEFORE resource lookup,
+        // so a spoofed header can still target a machine outside the
+        // user's space) requires a framework-level fix tracked separately.
+        command.SpaceId = null;
 
         var response = await _mediator.SendAsync<UpgradeMachineCommand, UpgradeMachineResponse>(command, ct).ConfigureAwait(false);
 

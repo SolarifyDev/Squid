@@ -25,7 +25,8 @@ public sealed class KubernetesAgentUpgradeStrategy : IMachineUpgradeStrategy
             Detail =
                 "Kubernetes Agent upgrade via the UI is planned for Phase 2 of the self-upgrade roadmap. " +
                 "For now, run helm upgrade against the cluster directly: " +
-                $"helm upgrade --reuse-values --set tentacle.image.tag={targetVersion} <release-name> <chart>"
+                $"helm upgrade --reuse-values --set tentacle.image.tag={targetVersion} <release-name> <chart>",
+            AgentVersionMayHaveChanged = false   // placeholder did nothing → cache still valid
         });
     }
 }

@@ -43,5 +43,7 @@ public sealed class KubernetesAgentUpgradeStrategyTests
         result.Status.ShouldBe(MachineUpgradeStatus.NotSupported);
         result.Detail.ShouldContain("helm upgrade");
         result.Detail.ShouldContain("1.4.0");
+        result.AgentVersionMayHaveChanged.ShouldBeFalse(
+            "stub returns NotSupported without doing anything → cache stays valid (audit N-6)");
     }
 }

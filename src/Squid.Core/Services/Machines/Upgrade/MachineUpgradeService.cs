@@ -11,9 +11,16 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// Outer cap for the lock window. Generous so the underlying upgrade has
     /// room to drain in-flight scripts (waited on by the agent's
     /// FullIsolation mutex), download the tarball, swap, restart, and verify.
-    /// Independent of the strategy's own per-step timeouts.
+    ///
+    /// <para><b>Invariant (audit H-15):</b> MUST be strictly greater than the
+    /// slowest strategy's wall-clock timeout (currently
+    /// <c>LinuxTentacleUpgradeStrategy.UpgradeScriptTimeout = 5min</c>), with
+    /// a safety buffer for the lock-acquisition + strategy-teardown window.
+    /// Otherwise a hung strategy could outlast the lock and a second replica
+    /// would re-dispatch on top. Pinned by
+    /// <c>LockExpiry_StrictlyGreaterThanStrategyTimeout</c>.</para>
     /// </summary>
-    private static readonly TimeSpan LockExpiry = TimeSpan.FromMinutes(15);
+    internal static readonly TimeSpan LockExpiry = TimeSpan.FromMinutes(20);
 
     private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
@@ -38,21 +45,44 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         var machine = await LoadMachineAsync(command.MachineId, ct).ConfigureAwait(false);
         var style = ReadCommunicationStyle(machine);
 
+        // Empty style = malformed / incomplete endpoint JSON. NotSupported
+        // with empty-quoted detail ("...style '' not registered") would be
+        // confusing; tell the operator their registration is the actual
+        // problem. Distinct from "style present but no strategy" below.
+        if (string.IsNullOrWhiteSpace(style))
+            return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.Failed,
+                $"Machine '{machine.Name}' endpoint JSON is missing or malformed — no CommunicationStyle field found. " +
+                $"Verify the machine registration is complete (re-run the registration flow, or fix the Endpoint JSON in the DB).");
+
+        // Strategy first — if no transport can upgrade this style there is
+        // no point burning a Docker Hub round-trip on a version we will
+        // never use, and "NotSupported with style name" is a far more
+        // actionable error than "couldn't resolve version, set env var X"
+        // (which would be nonsense advice for an Ssh target).
+        var strategy = ResolveStrategy(style);
+
+        if (strategy == null)
+            return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.NotSupported, $"No upgrade strategy registered for CommunicationStyle '{style}'.");
+
         var targetVersion = await ResolveTargetVersionAsync(command, style, ct).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(targetVersion)) return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.Failed, NoTargetVersionDetail());
 
+        // Strict semver gate — both operator-supplied AND auto-resolved versions
+        // pass through this single boundary BEFORE reaching the bash template
+        // or the Halibut payload. Closes the bash-injection surface (audit H-5)
+        // and rejects malformed tags like "1.4" / "1.4.0.0" / "latest" that
+        // would produce broken download URLs (audit H-4).
+        if (!SemVer.TryParse(targetVersion, out var parsedTarget))
+            return BuildResponse(machine, currentVersion: null, targetVersion: targetVersion, MachineUpgradeStatus.Failed,
+                $"Target version '{targetVersion}' is not valid semver (MAJOR.MINOR.PATCH[-pre][+build]). Refusing to dispatch — would generate an invalid download URL or shell-unsafe payload.");
+
         var currentVersion = ReadCachedAgentVersion(machine.Id);
 
-        if (IsAlreadyUpToDate(currentVersion, targetVersion))
-            return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.AlreadyUpToDate, $"Machine '{machine.Name}' already on version {currentVersion}; nothing to do.");
+        if (IsAlreadyUpToDate(currentVersion, parsedTarget))
+            return BuildResponse(machine, currentVersion, parsedTarget.Raw, MachineUpgradeStatus.AlreadyUpToDate, $"Machine '{machine.Name}' already on version {currentVersion}; nothing to do.");
 
-        var strategy = ResolveStrategy(style);
-
-        if (strategy == null)
-            return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.NotSupported, $"No upgrade strategy registered for CommunicationStyle '{style}'.");
-
-        return await DispatchUnderLockAsync(machine, strategy, targetVersion, currentVersion, ct).ConfigureAwait(false);
+        return await DispatchUnderLockAsync(machine, strategy, parsedTarget.Raw, currentVersion, ct).ConfigureAwait(false);
     }
 
     // ── Loading + reading ────────────────────────────────────────────────────
@@ -80,21 +110,44 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     }
 
     private IMachineUpgradeStrategy ResolveStrategy(string style)
-        => _strategies.FirstOrDefault(s => s.CanHandle(style));
+    {
+        // Single-owner invariant. Without this, a future refactor widening
+        // two strategies' CanHandle() to overlap would silently dispatch
+        // to whichever Autofac registered first — the operator sees no
+        // warning, gets the wrong transport (or wrong URL pattern, or
+        // wrong script), and debugging is brutal. Throw loudly at the
+        // first trigger before any side effect. Surfaces both class names
+        // so the fix is obvious: narrow CanHandle in one of them.
+        var matches = _strategies.Where(s => s.CanHandle(style)).ToList();
+
+        if (matches.Count > 1)
+            throw new InvalidOperationException(
+                $"Multiple upgrade strategies claim CommunicationStyle '{style}': " +
+                $"{string.Join(", ", matches.Select(m => m.GetType().Name))}. " +
+                "Each style must have exactly one owner. Narrow CanHandle() in one of them.");
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
 
     /// <summary>
-    /// Strict semver compare. Falls back to case-insensitive string equality
-    /// when either side isn't a clean <see cref="Version"/> (e.g. pre-release
-    /// suffixes); when ambiguous we treat as "needs upgrade" so the
-    /// operator's request still gets dispatched.
+    /// Spec-correct semver compare via <see cref="SemVer.CompareTo"/> — handles
+    /// pre-release precedence properly (audit H-17: <c>2.0.0-beta.1 &gt; 1.4.0</c>
+    /// because major wins, but <c>1.4.0-beta.1 &lt; 1.4.0</c> because the
+    /// pre-release sorts lower). Cold cache (<c>current</c> blank) → false so
+    /// we still dispatch and let the agent be the source of truth on the
+    /// next health check.
     /// </summary>
-    private static bool IsAlreadyUpToDate(string current, string target)
+    private static bool IsAlreadyUpToDate(string current, SemVer target)
     {
         if (string.IsNullOrWhiteSpace(current)) return false;
 
-        if (Version.TryParse(current, out var c) && Version.TryParse(target, out var t)) return c >= t;
+        // Agent reports its version as a string; if that's not parseable
+        // (legacy agent / non-semver dev build) we conservatively dispatch
+        // — the worst case is one extra script run with idempotent agent
+        // behaviour, far better than silently skipping a wanted upgrade.
+        if (!SemVer.TryParse(current, out var parsedCurrent)) return false;
 
-        return string.Equals(current.Trim(), target.Trim(), StringComparison.OrdinalIgnoreCase);
+        return parsedCurrent.CompareTo(target) >= 0;
     }
 
     // ── Lock + dispatch + cache invalidation ─────────────────────────────────
@@ -112,22 +165,27 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     {
         var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
 
-        InvalidateCacheIfChanged(machine.Id, outcome.Status);
+        InvalidateCacheIfChanged(machine.Id, outcome);
 
         return BuildResponse(machine, currentVersion, targetVersion, outcome.Status, outcome.Detail);
     }
 
     /// <summary>
-    /// Drop the cached agent version on success/initiated so the next health
-    /// check repopulates from the agent's Capabilities probe — without this,
-    /// the cached old version would shadow the upgrade for up to a full
-    /// health-check interval, making the UI show "still on N-1" even after
-    /// the agent reports N.
+    /// Drop the cached agent version when the strategy says the binary may
+    /// have changed — the next health check then repopulates from a fresh
+    /// Capabilities probe. Without this, the cached old version would
+    /// shadow the upgrade for up to a full health-check interval, making
+    /// the UI show "still on N-1" even after the agent reports N.
+    ///
+    /// <para>Outcome-driven (audit N-6): each strategy explicitly sets
+    /// <see cref="MachineUpgradeOutcome.AgentVersionMayHaveChanged"/> based on
+    /// what its dispatch path actually does. A new
+    /// <see cref="MachineUpgradeStatus"/> value can't accidentally miss
+    /// invalidation because the orchestrator never inspects the enum here.</para>
     /// </summary>
-    private void InvalidateCacheIfChanged(int machineId, MachineUpgradeStatus status)
+    private void InvalidateCacheIfChanged(int machineId, MachineUpgradeOutcome outcome)
     {
-        if (status is MachineUpgradeStatus.Upgraded or MachineUpgradeStatus.Initiated)
-            _runtimeCache.Invalidate(machineId);
+        if (outcome.AgentVersionMayHaveChanged) _runtimeCache.Invalidate(machineId);
     }
 
     // ── Response shaping ─────────────────────────────────────────────────────

@@ -23,7 +23,18 @@ namespace Squid.Core.Services.Machines.Upgrade;
 ///   <item>Empty + warning. Caller must surface the gap to the operator.</item>
 /// </list>
 /// </summary>
-public interface ITentacleVersionRegistry : ISingletonDependency
+public interface ITentacleVersionRegistry : IScopedDependency
 {
     Task<string> GetLatestVersionAsync(string communicationStyle, CancellationToken ct);
 }
+
+// Lifetime: SCOPED, not singleton. The implementation injects
+// ISquidHttpClientFactory which is itself IScopedDependency (it captures
+// the request's ILifetimeScope to resolve IHttpClientFactory). Holding a
+// captured scoped service inside a singleton would keep the first
+// request's scope alive forever and silently fall back to `new HttpClient()`
+// once that scope is disposed (the classic socket-exhaustion bug).
+//
+// The Docker-Hub TTL cache stays process-wide via a `static` field on
+// the implementation, so we keep the perf benefit (one query per 10 min,
+// not one per request) without paying the captive-dependency cost.

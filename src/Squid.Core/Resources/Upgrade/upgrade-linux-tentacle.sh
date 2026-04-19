@@ -27,21 +27,32 @@ EXPECTED_SHA256="{{EXPECTED_SHA256}}"   # may be empty until release pipeline em
 INSTALL_DIR="{{INSTALL_DIR}}"
 SERVICE_NAME="{{SERVICE_NAME}}"
 SERVICE_USER="{{SERVICE_USER}}"
+HEALTHCHECK_URL="{{HEALTHCHECK_URL}}"   # operator override via SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_URL on the server pod
 
-LOCK_DIR="/var/lib/squid-tentacle"
-LOCK_FILE="$LOCK_DIR/upgrade-$TARGET_VERSION.lock"
+LOCK_FILE="/tmp/squid-tentacle-upgrade-$TARGET_VERSION.lock"
 
-# ── Idempotency guard ─────────────────────────────────────────────────────────
-# Same upgrade re-delivered (e.g. polling reconnect after a server-side retry)
-# is a no-op. The lock file is per-target-version so re-issuing v1.4.0 → v1.4.1
-# upgrades after this one are still allowed.
-sudo mkdir -p "$LOCK_DIR"
-if [ -f "$LOCK_FILE" ]; then
-  echo "Upgrade to $TARGET_VERSION already in progress / completed (lock: $LOCK_FILE)"
+# ── Idempotency guard (audit H-12 + N-8) ──────────────────────────────────────
+# Use kernel-level advisory flock, NOT a file-existence check. Three wins
+# over the previous "touch + trap rm" pattern:
+#
+#  1. Atomic — `[ -f ... ] && touch` has a TOCTOU race; flock(2) is a single
+#     fcntl syscall enforced by the kernel.
+#  2. SIGKILL-safe — the kernel auto-releases the lock when our fd closes,
+#     including on SIGKILL / OOM-kill / power loss. No orphan lock file
+#     can jam a future upgrade.
+#  3. /tmp avoids the sudo-permission gymnastics a /var/lib path would need
+#     to be shell-writable (sudoers rules, chown cascades, etc.). /tmp is
+#     always 1777; works whether the agent runs as root or service user.
+#
+# Per-version lock filename so re-issuing 1.4.0 → 1.4.1 upgrades back-to-back
+# are not blocked by each other.
+touch "$LOCK_FILE"
+exec {LOCK_FD}>"$LOCK_FILE"
+
+if ! flock -n "$LOCK_FD"; then
+  echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
   exit 0
 fi
-sudo touch "$LOCK_FILE"
-trap 'sudo rm -f "$LOCK_FILE"' EXIT
 
 # ── Detect arch (server URL is parameterised by $RID) ─────────────────────────
 ARCH=$(uname -m)
@@ -57,17 +68,37 @@ echo "Architecture   : $RID"
 echo "Install dir    : $INSTALL_DIR"
 echo "Service        : $SERVICE_NAME"
 
-# ── Stage download ────────────────────────────────────────────────────────────
+# ── Stage download + single consolidated cleanup trap (audit H-12) ────────────
+# Why a function instead of an inline trap string: every future cleanup
+# resource (a temp credential, a named pipe, a custom logger) goes in ONE
+# place — no more "overwrite the old trap and hope you remembered every
+# prior cleanup item". Exit-code preserved so callers see the real failure.
 STAGE=$(mktemp -d -t squid-tentacle-upgrade-XXXXXX)
-trap 'rm -rf "$STAGE"; sudo rm -f "$LOCK_FILE"' EXIT
+
+cleanup() {
+    local ec=$?
+    [ -n "${STAGE:-}" ] && [ -d "$STAGE" ] && rm -rf "$STAGE"
+    # flock auto-releases when $LOCK_FD closes on shell exit — no rm/unlock
+    # needed. File stays around as a cheap anchor for future flock; that's fine.
+    exit $ec
+}
+trap cleanup EXIT
 
 # ── Pre-flight: disk space ────────────────────────────────────────────────────
 # Tentacle tarball is ~80MB compressed → ~250MB extracted; require 500MB free
 # in both /tmp (download + extract) and on the install partition (swap).
 require_free_mb() {
   local path="$1" min_mb="$2" label="$3"
+  # POSIX `df -P -k <path>` (portable, no GNU-only flags): always 6 columns,
+  # data row 2, "Available 1024-blocks" is column 4. Works on Alpine,
+  # BusyBox, macOS, full glibc Linuxes — i.e. every base image we might
+  # see a tentacle running on. Audit H-13.
   local avail_kb
-  avail_kb=$(df -k --output=avail "$path" | tail -1 | tr -d ' ')
+  avail_kb=$(df -P -k "$path" 2>/dev/null | awk 'NR==2 {print $4}')
+  if [ -z "$avail_kb" ]; then
+    echo "::warning:: Could not determine free space on $label ($path) — skipping disk pre-check"
+    return 0
+  fi
   local avail_mb=$((avail_kb / 1024))
   if [ "$avail_mb" -lt "$min_mb" ]; then
     echo "::error:: Insufficient disk on $label ($path): $avail_mb MB free, need $min_mb MB"
@@ -135,7 +166,12 @@ fi
 BAK_DIR="${INSTALL_DIR}.bak"
 
 echo "Stopping service $SERVICE_NAME ..."
-sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+# Cap stop at 30s. A unit with active connections (TCP linger) or a misbehaving
+# ExecStop hook can hang systemctl indefinitely; without this cap a single
+# stuck service eats the entire 5-min Halibut script budget. The trailing
+# `|| true` keeps "service was already stopped" (exit 5) from tripping
+# `set -euo pipefail`. Audit H-7.
+timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
 if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
 
@@ -157,19 +193,33 @@ fi
 
 # ── Restart and verify ───────────────────────────────────────────────────────
 echo "Starting service $SERVICE_NAME ..."
-sudo systemctl start "$SERVICE_NAME"
+# Cap start at 60s. ExecStartPre hook stuck on dependency, sd_notify never
+# sent, or systemd unit dependency loop will otherwise block until the
+# Halibut timeout — by which time we've lost the chance to roll back
+# cleanly. timeout(1) returns 124 on timeout (non-zero) → we explicitly
+# branch to skip the healthcheck loop (it would just churn 30s for nothing
+# and inflate operator-visible time-to-failure). Audit H-7.
+HEALTH_OK=0
+START_OK=1
+timeout 60 sudo systemctl start "$SERVICE_NAME" || {
+  echo "::error:: systemctl start exceeded 60s or returned non-zero — taking rollback path immediately."
+  START_OK=0
+}
 
 # Health-check loop. Use the agent's local healthz endpoint (port 8080).
-HEALTH_OK=0
-for i in $(seq 1 30); do
-  if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-    if command -v curl >/dev/null 2>&1 && curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
-      HEALTH_OK=1
-      break
+# Skipped entirely if the start command itself failed/timed out — no point
+# polling for health on a service we couldn't start.
+if [ "$START_OK" = "1" ]; then
+  for i in $(seq 1 30); do
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+      if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
+        HEALTH_OK=1
+        break
+      fi
     fi
-  fi
-  sleep 1
-done
+    sleep 1
+  done
+fi
 
 # Post-restart sanity: ensure the running agent reports the version we
 # intended. Catches the rare case where the swap "succeeded" but the agent

@@ -36,4 +36,17 @@ public sealed class MachineUpgradeOutcome
     public required Squid.Message.Commands.Machine.MachineUpgradeStatus Status { get; init; }
 
     public required string Detail { get; init; }
+
+    /// <summary>
+    /// Whether the agent's running binary may now differ from what the
+    /// runtime-capabilities cache reports. <see langword="true"/> ⇒ the
+    /// orchestrator drops the cache so the next health check fetches a
+    /// fresh version reading.
+    ///
+    /// <para>Outcome-driven instead of <c>switch</c>-on-<see cref="Squid.Message.Commands.Machine.MachineUpgradeStatus"/>
+    /// (audit N-6) so adding a new status value is a deliberate per-strategy
+    /// decision — not a silent miss caused by an
+    /// <c>is Upgraded or Initiated</c> check that didn't get updated.</para>
+    /// </summary>
+    public bool AgentVersionMayHaveChanged { get; init; }
 }
