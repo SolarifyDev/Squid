@@ -18,6 +18,16 @@ public interface IMachineRuntimeCapabilitiesCache
     void Store(int machineId, IReadOnlyDictionary<string, string> metadata, string agentVersion);
 
     MachineRuntimeCapabilities TryGet(int machineId);
+
+    /// <summary>
+    /// Drop the cached entry for a machine so the next health check re-reads
+    /// it from the agent's Capabilities probe. Called after a successful
+    /// upgrade so the server doesn't keep reporting the agent's old version
+    /// for up to a full health-check interval — without this, the upgrade
+    /// would appear to "fail to take" in the UI even though the agent is
+    /// happily running the new binary.
+    /// </summary>
+    void Invalidate(int machineId);
 }
 
 public sealed class MachineRuntimeCapabilities
@@ -54,6 +64,8 @@ public sealed class InMemoryMachineRuntimeCapabilitiesCache : IMachineRuntimeCap
 
     public MachineRuntimeCapabilities TryGet(int machineId)
         => _cache.TryGetValue(machineId, out var caps) ? caps : MachineRuntimeCapabilities.Empty;
+
+    public void Invalidate(int machineId) => _cache.TryRemove(machineId, out _);
 
     private static string Read(IReadOnlyDictionary<string, string> meta, string key)
         => meta.TryGetValue(key, out var v) ? v ?? string.Empty : string.Empty;

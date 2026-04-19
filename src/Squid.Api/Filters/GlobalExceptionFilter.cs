@@ -17,6 +17,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             ValidationException => HttpStatusCode.BadRequest,
             UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             PermissionDeniedException => HttpStatusCode.Forbidden,
+            MachineNotFoundException => HttpStatusCode.NotFound,
             MachineNameConflictException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError
         };
