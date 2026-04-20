@@ -60,16 +60,15 @@ public class MachineService : IMachineService
         // endpoint JSON); reused by both the validator and the dispatcher.
         var style = CommunicationStyleParser.Parse(machine.Endpoint);
 
-        // Validate BEFORE mutating. Round-6: reject cross-style field
-        // contamination (e.g. ClusterUrl sent to a TentaclePolling machine)
-        // before any JSON deserialise/re-serialise that could corrupt the
-        // endpoint. The old `else → K8s` fallthrough silently destroyed
-        // Tentacle / Ssh / K8sAgent endpoints.
-        EnsureCommandFieldsBelongToMachineStyle(machine.Id, style, command);
+        // Validate BEFORE mutating (throws MachineEndpointUpdateNotApplicableException
+        // on cross-style contamination) AND report whether any style-specific
+        // field was actually set — lets us skip the endpoint-JSON round-trip
+        // entirely on rename-only / role-only updates.
+        var hasStyleFieldToApply = EnsureCommandFieldsBelongToMachineStyle(machine.Id, style, command);
 
         ApplyCommonFields(machine, command);
 
-        ApplyEndpointUpdate(machine, style, command);
+        if (hasStyleFieldToApply) ApplyEndpointUpdate(machine, style, command);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -111,23 +110,35 @@ public class MachineService : IMachineService
 
     /// <summary>
     /// Rejects any request where the command carries a field that doesn't
-    /// belong to the target machine's CommunicationStyle. The old code
-    /// fell through to "treat everything non-OpenClaw as KubernetesApi",
-    /// silently corrupting Tentacle / Ssh / K8sAgent endpoint JSON on
-    /// ambient fields like <c>ResourceReferences</c>. This guard throws
-    /// BEFORE any mutation, so no cleanup / transaction is needed.
+    /// belong to the target machine's CommunicationStyle, AND reports
+    /// whether any legal style-specific field was set. The bool return
+    /// is the by-product that lets us skip the endpoint-JSON round-trip
+    /// on rename-only / role-only updates — one walk of the field list
+    /// instead of two.
+    ///
+    /// <para>Throws <see cref="MachineEndpointUpdateNotApplicableException"/>
+    /// on the first cross-style field it finds. No mutation happens
+    /// before throwing, so no cleanup / transaction is needed.</para>
     /// </summary>
-    private static void EnsureCommandFieldsBelongToMachineStyle(int machineId, CommunicationStyle style, UpdateMachineCommand c)
+    /// <returns><see langword="true"/> iff the command set at least one
+    /// field that legitimately applies to this machine's style — caller
+    /// uses this to gate the endpoint-JSON deserialise/merge/serialise cycle.</returns>
+    private static bool EnsureCommandFieldsBelongToMachineStyle(int machineId, CommunicationStyle style, UpdateMachineCommand c)
     {
+        var anyStyleFieldSet = false;
+
         void Check(bool isSet, string fieldName, params CommunicationStyle[] allowed)
         {
-            if (!isSet || allowed.Contains(style)) return;
+            if (!isSet) return;
 
-            throw new MachineEndpointUpdateNotApplicableException(
-                machineId: machineId,
-                machineStyle: style.ToString(),
-                offendingField: fieldName,
-                acceptedForStyles: string.Join(", ", allowed.Select(s => s.ToString())));
+            if (!allowed.Contains(style))
+                throw new MachineEndpointUpdateNotApplicableException(
+                    machineId: machineId,
+                    machineStyle: style.ToString(),
+                    offendingField: fieldName,
+                    acceptedForStyles: string.Join(", ", allowed.Select(s => s.ToString())));
+
+            anyStyleFieldSet = true;
         }
 
         // One declarative table — each row names a field, its is-set
@@ -165,6 +176,8 @@ public class MachineService : IMachineService
 
         Check(c.ResourceReferences != null, nameof(c.ResourceReferences),
             CommunicationStyle.KubernetesApi, CommunicationStyle.OpenClaw, CommunicationStyle.Ssh);
+
+        return anyStyleFieldSet;
     }
 
     /// <summary>
@@ -172,17 +185,9 @@ public class MachineService : IMachineService
     /// type parameter varies; the body is a homogeneous
     /// <c>endpoint.X = command.X ?? endpoint.X</c> ladder — any field the
     /// command doesn't set is preserved from the existing endpoint JSON.
-    ///
-    /// <para><b>Round-7 short-circuit:</b> a rename-only / role-only update
-    /// carries no style-specific field, so the deserialise → merge →
-    /// re-serialise cycle is pointless AND may silently normalise JSON
-    /// property order (real DB data from hand-edits / migrations doesn't
-    /// always match DTO property order). Bail before touching the JSON.</para>
     /// </summary>
     private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, CommunicationStyle style, UpdateMachineCommand c)
     {
-        if (!HasAnyStyleSpecificFieldSet(c)) return;
-
         machine.Endpoint = style switch
         {
             CommunicationStyle.KubernetesApi => MergeKubernetesApi(machine.Endpoint, c),
@@ -194,25 +199,6 @@ public class MachineService : IMachineService
             _ => machine.Endpoint   // validator already blocked style-field contamination; nothing to merge
         };
     }
-
-    /// <summary>
-    /// True iff the command carries at least one field that can mutate the
-    /// endpoint JSON. Used to skip the deserialise / re-serialise cycle
-    /// entirely for rename-only and role-only updates — preserves endpoint
-    /// JSON byte-identically instead of normalising its property order.
-    /// </summary>
-    private static bool HasAnyStyleSpecificFieldSet(UpdateMachineCommand c)
-        => c.ClusterUrl != null || c.Namespace != null || c.SkipTlsVerification.HasValue
-        || c.ProviderType.HasValue || c.ProviderConfig != null
-        || c.ReleaseName != null || c.HelmNamespace != null || c.ChartRef != null
-        || c.SubscriptionId != null || c.Thumbprint != null
-        || c.Uri != null || c.ProxyId.HasValue
-        || c.BaseUrl != null || c.InlineGatewayToken != null || c.InlineHooksToken != null
-        || c.Host != null || c.Port.HasValue || c.Fingerprint != null
-        || c.RemoteWorkingDirectory != null || c.ProxyType.HasValue
-        || c.ProxyHost != null || c.ProxyPort.HasValue
-        || c.ProxyUsername != null || c.ProxyPassword != null
-        || c.ResourceReferences != null;
 
     private static string MergeKubernetesApi(string json, UpdateMachineCommand c)
     {
