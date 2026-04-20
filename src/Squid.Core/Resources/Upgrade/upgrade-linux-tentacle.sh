@@ -21,6 +21,20 @@
 # ==============================================================================
 set -euo pipefail
 
+# ── Arch detection MUST run before DOWNLOAD_URL is assigned ───────────────────
+# The rendered DOWNLOAD_URL contains the shell variable RID (server leaves it
+# un-expanded so one rendered script covers both x64 and arm64 agents). Under
+# `set -u`, bash expands variables in double-quoted RHS at assignment time —
+# if RID isn't set when we hit the DOWNLOAD_URL line, the shell aborts with
+# "RID: unbound variable" before anything useful happens.
+# Regression pinned by Script_RidAssignedBeforeFirstExpansion_StrictModeSafe.
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)         RID="linux-x64"   ;;
+  aarch64|arm64)  RID="linux-arm64" ;;
+  *) echo "::error:: Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
 TARGET_VERSION="{{TARGET_VERSION}}"
 DOWNLOAD_URL="{{DOWNLOAD_URL}}"
 EXPECTED_SHA256="{{EXPECTED_SHA256}}"   # may be empty until release pipeline emits it
@@ -53,14 +67,6 @@ if ! flock -n "$LOCK_FD"; then
   echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
   exit 0
 fi
-
-# ── Detect arch (server URL is parameterised by $RID) ─────────────────────────
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64)         RID="linux-x64"   ;;
-  aarch64|arm64)  RID="linux-arm64" ;;
-  *) echo "::error:: Unsupported architecture: $ARCH"; exit 1 ;;
-esac
 
 echo "=== Squid Tentacle upgrade ==="
 echo "Target version : $TARGET_VERSION"
