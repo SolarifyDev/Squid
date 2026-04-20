@@ -436,6 +436,51 @@ public class MachineServiceTests
     }
 
     [Fact]
+    public async Task UpdateMachine_ShuffledEndpointJson_CommonFieldsOnly_NoSilentNormalisation()
+    {
+        // Round-7 regression guard: before the short-circuit, every update
+        // ran deserialise → merge → re-serialise which silently rewrote the
+        // JSON in DTO property order. Real DB data (hand-edited, migrated,
+        // or produced by an older serialiser) can use different property
+        // order. A rename-only update must NOT touch such JSON — operators
+        // would see unexplained diffs in audit logs.
+        const string shuffledJson = """
+            {"AgentVersion":"1.4.0","Thumbprint":"DEAD123","CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-abc"}
+            """;
+        var machine = MakeMachine(50, shuffledJson);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await _service.UpdateMachineAsync(
+            new UpdateMachineCommand { MachineId = 50, Name = "rename-only" },
+            CancellationToken.None);
+
+        machine.Endpoint.ShouldBe(shuffledJson,
+            "shuffled-order endpoint JSON MUST survive a common-fields-only update byte-identically — no silent JSON normalisation");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_KubernetesApi_StyleFieldSet_EndpointGetsRoundTripped()
+    {
+        // Counterpart to the short-circuit test: when a style-specific
+        // field IS set, the round-trip DOES happen (that's how the merge
+        // works). This pins the invariant from the other direction — no
+        // accidental over-eager short-circuiting that skips real updates.
+        const string k8sJson = """
+            {"CommunicationStyle":"KubernetesApi","ClusterUrl":"https://old","Namespace":"default"}
+            """;
+        var machine = MakeMachine(51, k8sJson);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(51, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await _service.UpdateMachineAsync(
+            new UpdateMachineCommand { MachineId = 51, ClusterUrl = "https://new" },
+            CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<KubernetesApiEndpointDto>(machine.Endpoint);
+        updated.ClusterUrl.ShouldBe("https://new");
+        updated.Namespace.ShouldBe("default", "unchanged Namespace must be preserved through the merge");
+    }
+
+    [Fact]
     public async Task UpdateMachine_UnknownStyle_AnyStyleField_FailsLoudly_NotCorrupts()
     {
         // Previously an unknown-style endpoint would still fall into the

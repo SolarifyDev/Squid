@@ -56,16 +56,20 @@ public class MachineService : IMachineService
 
         await EnsureNameAvailableIfChangedAsync(machine, command, cancellationToken).ConfigureAwait(false);
 
+        // Parse style once — cheap but not free (JsonDocument.Parse on the
+        // endpoint JSON); reused by both the validator and the dispatcher.
+        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+
         // Validate BEFORE mutating. Round-6: reject cross-style field
         // contamination (e.g. ClusterUrl sent to a TentaclePolling machine)
         // before any JSON deserialise/re-serialise that could corrupt the
         // endpoint. The old `else → K8s` fallthrough silently destroyed
         // Tentacle / Ssh / K8sAgent endpoints.
-        EnsureCommandFieldsBelongToMachineStyle(machine, command);
+        EnsureCommandFieldsBelongToMachineStyle(machine.Id, style, command);
 
         ApplyCommonFields(machine, command);
 
-        ApplyEndpointUpdate(machine, command);
+        ApplyEndpointUpdate(machine, style, command);
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -113,16 +117,14 @@ public class MachineService : IMachineService
     /// ambient fields like <c>ResourceReferences</c>. This guard throws
     /// BEFORE any mutation, so no cleanup / transaction is needed.
     /// </summary>
-    private static void EnsureCommandFieldsBelongToMachineStyle(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand c)
+    private static void EnsureCommandFieldsBelongToMachineStyle(int machineId, CommunicationStyle style, UpdateMachineCommand c)
     {
-        var style = CommunicationStyleParser.Parse(machine.Endpoint);
-
         void Check(bool isSet, string fieldName, params CommunicationStyle[] allowed)
         {
             if (!isSet || allowed.Contains(style)) return;
 
             throw new MachineEndpointUpdateNotApplicableException(
-                machineId: machine.Id,
+                machineId: machineId,
                 machineStyle: style.ToString(),
                 offendingField: fieldName,
                 acceptedForStyles: string.Join(", ", allowed.Select(s => s.ToString())));
@@ -170,10 +172,16 @@ public class MachineService : IMachineService
     /// type parameter varies; the body is a homogeneous
     /// <c>endpoint.X = command.X ?? endpoint.X</c> ladder — any field the
     /// command doesn't set is preserved from the existing endpoint JSON.
+    ///
+    /// <para><b>Round-7 short-circuit:</b> a rename-only / role-only update
+    /// carries no style-specific field, so the deserialise → merge →
+    /// re-serialise cycle is pointless AND may silently normalise JSON
+    /// property order (real DB data from hand-edits / migrations doesn't
+    /// always match DTO property order). Bail before touching the JSON.</para>
     /// </summary>
-    private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, UpdateMachineCommand c)
+    private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, CommunicationStyle style, UpdateMachineCommand c)
     {
-        var style = CommunicationStyleParser.Parse(machine.Endpoint);
+        if (!HasAnyStyleSpecificFieldSet(c)) return;
 
         machine.Endpoint = style switch
         {
@@ -186,6 +194,25 @@ public class MachineService : IMachineService
             _ => machine.Endpoint   // validator already blocked style-field contamination; nothing to merge
         };
     }
+
+    /// <summary>
+    /// True iff the command carries at least one field that can mutate the
+    /// endpoint JSON. Used to skip the deserialise / re-serialise cycle
+    /// entirely for rename-only and role-only updates — preserves endpoint
+    /// JSON byte-identically instead of normalising its property order.
+    /// </summary>
+    private static bool HasAnyStyleSpecificFieldSet(UpdateMachineCommand c)
+        => c.ClusterUrl != null || c.Namespace != null || c.SkipTlsVerification.HasValue
+        || c.ProviderType.HasValue || c.ProviderConfig != null
+        || c.ReleaseName != null || c.HelmNamespace != null || c.ChartRef != null
+        || c.SubscriptionId != null || c.Thumbprint != null
+        || c.Uri != null || c.ProxyId.HasValue
+        || c.BaseUrl != null || c.InlineGatewayToken != null || c.InlineHooksToken != null
+        || c.Host != null || c.Port.HasValue || c.Fingerprint != null
+        || c.RemoteWorkingDirectory != null || c.ProxyType.HasValue
+        || c.ProxyHost != null || c.ProxyPort.HasValue
+        || c.ProxyUsername != null || c.ProxyPassword != null
+        || c.ResourceReferences != null;
 
     private static string MergeKubernetesApi(string json, UpdateMachineCommand c)
     {
