@@ -8,6 +8,7 @@ using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
+using Squid.Message.Requests.Machines;
 
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
@@ -680,6 +681,169 @@ public sealed class MachineUpgradeServiceTests
         public List<Serilog.Events.LogEvent> Events { get; } = new();
 
         public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
+    }
+
+    // ========================================================================
+    // GetUpgradeInfoAsync — read-only endpoint powering FE's "upgrade available"
+    // badge (FE Phase-2 §9.2). Pure read: no Redis lock, no dispatch, no
+    // side effect — just a richer version comparison than the UI can do
+    // client-side with just list data.
+    // ========================================================================
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_MachineNotFound_ThrowsMachineNotFoundException()
+    {
+        _machineDataProvider
+            .Setup(x => x.GetMachinesByIdAsync(404, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Machine)null);
+
+        var ex = await Should.ThrowAsync<MachineNotFoundException>(() =>
+            _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 404 }, CancellationToken.None));
+
+        ex.MachineId.ShouldBe(404);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_CurrentOlderThanLatest_CanUpgradeTrue()
+    {
+        // The primary UI signal: "new version N available". FE renders badge.
+        ArrangeMachine(id: 1, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(1, new Dictionary<string, string>(), agentVersion: "1.3.9");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 1 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeTrue();
+        info.CurrentVersion.ShouldBe("1.3.9");
+        info.LatestAvailableVersion.ShouldBe("1.4.0");
+        info.Reason.ShouldContain("1.4.0");
+        info.Reason.ShouldContain("newer than current");
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_SameVersion_CanUpgradeFalse_WithClearReason()
+    {
+        ArrangeMachine(id: 2, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(2, new Dictionary<string, string>(), agentVersion: "1.4.0");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 2 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.Reason.ShouldContain("Already on");
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_CurrentNewerThanLatest_CanUpgradeFalse_NoSilentDowngrade()
+    {
+        // E.g. agent on 2.0.0-rc.1, registry's "latest stable" is 1.4.0.
+        // FE should NOT show upgrade badge even though versions differ —
+        // surfacing the badge would tempt a downgrade via one-click UX.
+        ArrangeMachine(id: 3, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(3, new Dictionary<string, string>(), agentVersion: "2.0.0-rc.1");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 3 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.Reason.ShouldContain("newer than", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_CurrentVersionUnknown_CanUpgradeTrue_DispatchDecidesActualOutcome()
+    {
+        // Cold cache — machine never health-checked. FE shows the upgrade
+        // button (conservative default: let the user dispatch; the
+        // AlreadyUpToDate path on actual upgrade will catch no-ops).
+        ArrangeMachine(id: 4, style: nameof(CommunicationStyle.TentaclePolling));
+        // intentionally not storing in runtimeCache → cold cache
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 4 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeTrue();
+        info.CurrentVersion.ShouldBe(string.Empty);
+        info.Reason.ShouldContain("unknown", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_NoStrategyForStyle_CanUpgradeFalse()
+    {
+        // SSH target or any future style without a strategy.
+        ArrangeMachine(id: 5, style: "Ssh");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 5 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.Reason.ShouldContain("Ssh");
+        info.Reason.ShouldContain("not supported", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_RegistryReturnsEmpty_CanUpgradeFalse_WithOpsHint()
+    {
+        // Docker Hub unreachable + no env override; registry returns empty.
+        // FE should show "version info unavailable" instead of "update button".
+        ArrangeMachine(id: 6, style: nameof(CommunicationStyle.TentaclePolling));
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
+        _runtimeCache.Store(6, new Dictionary<string, string>(), agentVersion: "1.3.9");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 6 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.LatestAvailableVersion.ShouldBe(string.Empty);
+        info.Reason.ShouldContain("Could not resolve", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_MalformedEndpoint_CanUpgradeFalse_WithRegistrationHint()
+    {
+        _machineDataProvider
+            .Setup(x => x.GetMachinesByIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Machine { Id = 7, Name = "broken", Endpoint = "{}", SpaceId = 1 });
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 7 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.Reason.ShouldContain("endpoint", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_NonSemverCurrent_CanUpgradeTrue_ConservativeDispatch()
+    {
+        // Legacy / non-semver dev-build version string in cache. We can't
+        // compare, so the SAFE default is allow (dispatch is idempotent on
+        // the agent side anyway). Reason makes the fuzziness explicit.
+        ArrangeMachine(id: 8, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(8, new Dictionary<string, string>(), agentVersion: "custom-build-20260419");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 8 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeTrue();
+        info.Reason.ShouldContain("cannot compare", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_DoesNotAcquireLock_OrDispatchStrategy()
+    {
+        // Critical: this is a READ endpoint. Must NOT hold a Redis lock
+        // (would serialise readers), must NOT call strategy.UpgradeAsync
+        // (would actually upgrade!). Pin both negative contracts.
+        ArrangeMachine(id: 9, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(9, new Dictionary<string, string>(), agentVersion: "1.3.9");
+
+        await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 9 }, CancellationToken.None);
+
+        _redisLock.Verify(
+            x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()),
+            Times.Never,
+            "GetUpgradeInfo is a read — must not serialise behind the upgrade lock");
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "GetUpgradeInfo is a read — must never actually dispatch the upgrade");
     }
 
     private void ArrangeMachine(int id, string style)

@@ -19,6 +19,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             PermissionDeniedException => HttpStatusCode.Forbidden,
             MachineNotFoundException => HttpStatusCode.NotFound,
             MachineNameConflictException => HttpStatusCode.Conflict,
+            MachineEndpointUpdateNotApplicableException => HttpStatusCode.BadRequest,
             _ => HttpStatusCode.InternalServerError
         };
 

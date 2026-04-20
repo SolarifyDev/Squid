@@ -3,6 +3,7 @@ using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Requests.Machines;
 
 namespace Squid.Core.Services.Machines.Upgrade;
 
@@ -145,6 +146,71 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 "Downgrades are refused by default. Pass AllowDowngrade=true in the request body to force (intended for emergency revert scenarios).");
 
         return await DispatchUnderLockAsync(machine, strategy, parsedTarget.Raw, currentVersion, ct).ConfigureAwait(false);
+    }
+
+    // ── Read-only upgrade-info probe for the FE's per-row badge (§9.2) ──────
+
+    public async Task<GetUpgradeInfoResponseData> GetUpgradeInfoAsync(GetUpgradeInfoRequest request, CancellationToken ct)
+    {
+        var machine = await LoadMachineAsync(request.MachineId, ct).ConfigureAwait(false);
+        var style = ReadCommunicationStyle(machine);
+        var currentVersion = ReadCachedAgentVersion(machine.Id);
+
+        var latestVersion = await ResolveLatestForInfoAsync(style, ct).ConfigureAwait(false);
+
+        var (canUpgrade, reason) = EvaluateUpgradeEligibility(style, currentVersion, latestVersion);
+
+        return new GetUpgradeInfoResponseData
+        {
+            MachineId = machine.Id,
+            CurrentVersion = currentVersion ?? string.Empty,
+            LatestAvailableVersion = latestVersion ?? string.Empty,
+            CanUpgrade = canUpgrade,
+            Reason = reason
+        };
+    }
+
+    /// <summary>
+    /// Skip the version-registry call for styles we can't upgrade anyway —
+    /// no point burning Docker Hub quota on an SSH target just to render
+    /// its info row.
+    /// </summary>
+    private async Task<string> ResolveLatestForInfoAsync(string style, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(style) || ResolveStrategy(style) == null)
+            return string.Empty;
+
+        return await _versionRegistry.GetLatestVersionAsync(style, ct).ConfigureAwait(false) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Pure decision: given what we know, is it worth showing the operator
+    /// an upgrade affordance? Each branch returns a reason the FE can
+    /// render verbatim in a tooltip.
+    /// </summary>
+    private (bool canUpgrade, string reason) EvaluateUpgradeEligibility(string style, string currentVersion, string latestVersion)
+    {
+        if (string.IsNullOrWhiteSpace(style))
+            return (false, "Machine endpoint JSON is malformed or missing CommunicationStyle — re-run machine registration.");
+
+        if (ResolveStrategy(style) == null)
+            return (false, $"CommunicationStyle '{style}' is not supported for in-UI upgrades — use the style's manual upgrade path.");
+
+        if (string.IsNullOrEmpty(latestVersion))
+            return (false, "Could not resolve the latest available version (Docker Hub unreachable and no env override). Set SQUID_TARGET_LINUX_TENTACLE_VERSION on the server pod to pin a version.");
+
+        if (string.IsNullOrWhiteSpace(currentVersion))
+            return (true, "Current agent version is unknown (machine has not been health-checked yet). Upgrade will dispatch; AlreadyUpToDate will catch it if the agent is already on the target.");
+
+        if (!SemVer.TryParse(currentVersion, out var parsedCurrent) || !SemVer.TryParse(latestVersion, out var parsedLatest))
+            return (true, $"Cannot compare versions strictly (non-semver current='{currentVersion}'). Upgrade is allowed; worst case the agent's per-version idempotency lock no-ops the run.");
+
+        var compare = parsedCurrent.CompareTo(parsedLatest);
+
+        if (compare < 0) return (true, $"Latest published version {latestVersion} is newer than current {currentVersion}.");
+        if (compare == 0) return (false, $"Already on version {latestVersion}; nothing to do.");
+
+        return (false, $"Current version {currentVersion} is newer than the latest published ({latestVersion}) — likely a pre-release or dev build. Use AllowDowngrade=true on the upgrade endpoint if a downgrade is deliberate.");
     }
 
     // ── Loading + reading ────────────────────────────────────────────────────

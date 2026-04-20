@@ -158,6 +158,22 @@ public class MachineController : ControllerBase
     /// Tentacle delivers a bash script over Halibut; Kubernetes Agent will
     /// helm-upgrade the chart in Phase 2).
     /// </summary>
+    /// <summary>
+    /// Read-only "can this machine be upgraded right now?" probe powering
+    /// the FE's per-row upgrade-available badge. No side effects — no lock,
+    /// no dispatch. See <c>docs/tentacle-self-upgrade-frontend.md</c> §9.2.
+    /// </summary>
+    [HttpGet("{machineId:int}/upgrade-info")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeInfoResponse))]
+    public async Task<IActionResult> GetUpgradeInfoAsync(int machineId, CancellationToken ct)
+    {
+        var request = new GetUpgradeInfoRequest { MachineId = machineId };
+
+        var response = await _mediator.RequestAsync<GetUpgradeInfoRequest, GetUpgradeInfoResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("{machineId:int}/upgrade")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
     public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)

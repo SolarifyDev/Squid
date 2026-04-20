@@ -250,7 +250,23 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
         // "1.4.0.0", and any tag with shell metacharacters — so a poisoned
         // Docker Hub tag (compromised maintainer pushes `1.4.0";rm -rf /;#`)
         // can't be picked as the winner and reach the bash template.
-        return SemVer.TryParse(nameElement.GetString(), out var parsed) ? parsed : null;
+        if (!SemVer.TryParse(nameElement.GetString(), out var parsed)) return null;
+
+        // Round-8: auto-pick skips pre-release tags. The release workflow
+        // (build-publish-linux-tentacle.yml) pushes main-branch builds to
+        // Docker Hub as pre-release versions (e.g. "1.4.0-20") but only
+        // creates the GitHub Release tarball on TAG pushes — so picking a
+        // pre-release here would give the bash script a download URL that
+        // doesn't exist (exit 6). Build metadata (`1.4.0+sha.abc`) is NOT
+        // pre-release per semver §10 — stays eligible.
+        //
+        // Operators who deliberately want a pre-release install pass
+        // `targetVersion: "1.4.0-beta.1"` in the upgrade request body —
+        // that path bypasses the registry and goes straight through the
+        // SemVer boundary gate.
+        if (parsed.IsPreRelease) return null;
+
+        return parsed;
     }
 
     /// <summary>
