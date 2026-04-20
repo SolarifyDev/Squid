@@ -265,6 +265,32 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_RidAssignedBeforeFirstExpansion_StrictModeSafe()
+    {
+        // Regression: DOWNLOAD_URL used to be assigned above the `case "$ARCH"`
+        // arch-detection block. Under `set -euo pipefail`, bash expands
+        // variables in double-quoted RHS immediately — so the rendered line
+        //
+        //     DOWNLOAD_URL="https://github.com/.../squid-tentacle-1.4.0-$RID.tar.gz"
+        //
+        // dereferenced $RID at assignment time, BEFORE the case block had a
+        // chance to set it. Result: every Linux upgrade exited 1 with
+        // `script.sh: line 25: RID: unbound variable` before touching disk.
+        //
+        // The rendered script must assign RID (in the arch case) before any
+        // use of $RID — otherwise we reintroduce the exact production crash
+        // the user reported.
+        var firstAssignment = RenderedScript.IndexOf("RID=\"linux-", StringComparison.Ordinal);
+        var firstExpansion = RenderedScript.IndexOf("$RID", StringComparison.Ordinal);
+
+        firstAssignment.ShouldBeGreaterThan(-1, "script must assign RID in its arch-detection block");
+        firstExpansion.ShouldBeGreaterThan(-1, "script must reference $RID when building the download URL");
+        firstAssignment.ShouldBeLessThan(firstExpansion,
+            "under `set -u`, $RID in a double-quoted assignment expands at that line — move the " +
+            "case \"$ARCH\" block above DOWNLOAD_URL or every upgrade dies with 'RID: unbound variable'.");
+    }
+
+    [Fact]
     public void Script_SingleCleanupTrap_NotMultipleOverwrites()
     {
         // Audit H-12: previous version had two `trap '...' EXIT` statements,

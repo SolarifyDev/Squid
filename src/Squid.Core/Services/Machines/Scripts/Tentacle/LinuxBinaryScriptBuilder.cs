@@ -20,9 +20,15 @@ public sealed class LinuxBinaryScriptBuilder : TentacleInstallScriptBuilderBase
             "# Step 2: Register with server"
         };
 
+        // `sudo` is required: without it register runs as the invoking user and
+        // persists its config to ~/.config/squid-tentacle/... — unreachable by
+        // the dedicated `squid-tentacle` service user the systemd unit will run
+        // as in Step 3. With sudo the config lands in /etc/squid-tentacle/...
+        // and the post-register chown (InstanceOwnershipHandover) hands those
+        // files to the service user so startup doesn't hit PermissionDenied.
         var registerArgs = new List<string>
         {
-            "squid-tentacle register",
+            "sudo squid-tentacle register",
             $"--server \"{command.ServerUrl}\"",
             $"--api-key \"{ctx.ApiKey}\"",
             "--flavor LinuxTentacle"

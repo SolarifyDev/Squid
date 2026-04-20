@@ -136,6 +136,23 @@ public class TentacleInstallScriptBuildersTests
     }
 
     [Fact]
+    public void Binary_RegisterStep_UsesSudo()
+    {
+        // Regression: without `sudo`, register runs as the invoking user → writes
+        // config to ~/.config/squid-tentacle/... Then `sudo service install` runs
+        // the service as `squid-tentacle` user, which looks for config under
+        // /etc/squid-tentacle/... → missing → falls back to appsettings.json
+        // defaults → UnauthorizedAccessException at startup. `sudo register`
+        // persists to /etc/squid-tentacle/... where the service user can find it.
+        var script = new LinuxBinaryScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("sudo squid-tentacle register");
+        // Defense in depth: ensure we didn't just add sudo while still emitting
+        // the bare form on a separate line.
+        script.Content.ShouldNotContain("\nsquid-tentacle register");
+    }
+
+    [Fact]
     public void Binary_Polling_IncludesCommsUrlAndServerCert()
     {
         // --server-cert is required for BOTH Polling and Listening now: Polling tentacles

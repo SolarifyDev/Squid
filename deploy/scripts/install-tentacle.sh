@@ -188,7 +188,13 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Next steps:"
-echo "  squid-tentacle register \\"
+# `sudo` on register is required — without it the persisted config lands in
+# ~/.config/squid-tentacle/... (invoking user's home), but the systemd unit
+# runs as the dedicated squid-tentacle system user, which reads from
+# /etc/squid-tentacle/... Mismatch → service crash-loops on
+# UnauthorizedAccessException. Register as root → config in /etc → post-register
+# chown hands it to the service user.
+echo "  sudo squid-tentacle register \\"
 echo "    --server https://your-squid-server:7078 \\"
 echo "    --api-key API-XXXX \\"
 echo "    --role web-server \\"
