@@ -355,6 +355,109 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     }
 
     // ========================================================================
+    // Round-8 pre-release filter.
+    //
+    // The release workflow (build-publish-linux-tentacle.yml) pushes
+    // Docker Hub images on EVERY push to main — those builds get
+    // GitVersion pre-release tags like "1.4.0-20". But the GitHub Release
+    // (tarball) is only created on TAG pushes. Result: pre-release
+    // versions exist on Docker Hub without a corresponding tarball on
+    // GitHub Releases.
+    //
+    // Without a pre-release filter the registry would auto-pick
+    // "1.4.0-20" as the latest semver, the bash upgrade script would
+    // request /releases/download/1.4.0-20/… → 404 → exit 6 "URL not
+    // reachable". Operator sees an inexplicable failure.
+    //
+    // Fix: auto-pick skips pre-release tags. Operators who legitimately
+    // want a pre-release install still have the escape hatch —
+    // body.targetVersion goes straight through the SemVer gate and
+    // bypasses the registry entirely.
+    // ========================================================================
+
+    [Fact]
+    public async Task LiveQuery_PreReleaseTagsSkipped_StableWinsEvenIfPreReleaseHasHigherSemver()
+    {
+        // Canonical scenario from the workflow gotcha: Docker Hub has an
+        // in-progress pre-release AND a stable. Registry must pick stable.
+        TentacleVersionRegistry.ResetCacheForTests();
+        var responses = new Dictionary<string, string>
+        {
+            [LinuxFirstPageUrl] = TagsPage(nextUrl: null, "1.3.5", "1.4.0-20", "1.4.0-21", "1.4.0-rc.1")
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+
+        version.ShouldBe("1.3.5",
+            "auto-pick must skip pre-release — even though 1.4.0-21 sorts higher by semver, its tarball doesn't exist on GitHub Releases");
+    }
+
+    [Fact]
+    public async Task LiveQuery_OnlyPreReleaseTagsAvailable_ReturnsEmpty_NotAPreReleasePick()
+    {
+        // Brand-new release series that has only pre-release builds so far:
+        // don't pick any of them. Operator must pin via body.targetVersion
+        // if they want a pre-release on purpose.
+        TentacleVersionRegistry.ResetCacheForTests();
+        var responses = new Dictionary<string, string>
+        {
+            [LinuxFirstPageUrl] = TagsPage(nextUrl: null, "1.4.0-alpha.1", "1.4.0-alpha.2", "1.4.0-beta.1")
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+
+        version.ShouldBeEmpty(
+            "no stable tags available → return empty, not a pre-release pick. Orchestrator surfaces this as Failed with operator guidance to set the version env.");
+    }
+
+    [Fact]
+    public async Task LiveQuery_StableAmongPreReleases_HighestStableWinsAcrossPages()
+    {
+        // End-to-end: multiple pages, mix of stable + pre-release across them,
+        // pick the highest STABLE — ignores higher pre-releases entirely.
+        TentacleVersionRegistry.ResetCacheForTests();
+        const string page2Url = "https://hub.docker.com/v2/repositories/squidcd/squid-tentacle-linux/tags/?page=2&page_size=100";
+        var responses = new Dictionary<string, string>
+        {
+            [LinuxFirstPageUrl] = TagsPage(nextUrl: page2Url, "1.3.5", "1.4.0-rc.1", "1.4.0-rc.2"),
+            [page2Url] = TagsPage(nextUrl: null, "1.4.0", "1.5.0-alpha.1")
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+
+        version.ShouldBe("1.4.0",
+            "1.5.0-alpha.1 sorts higher by semver but is pre-release → skipped. 1.4.0 is the highest stable.");
+    }
+
+    [Fact]
+    public async Task LiveQuery_BuildMetadataTagsAreNotPreRelease_StillPicked()
+    {
+        // Edge case worth locking in: "1.4.0+sha.abc" has build metadata
+        // but is NOT a pre-release (per semver §10 build metadata doesn't
+        // make a version pre-release). Registry MUST still pick it as a
+        // valid stable release. Pre-release filter only blocks real
+        // pre-release (the part after `-`).
+        TentacleVersionRegistry.ResetCacheForTests();
+        var responses = new Dictionary<string, string>
+        {
+            [LinuxFirstPageUrl] = TagsPage(nextUrl: null, "1.3.5", "1.4.0+sha.deadbeef")
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+
+        version.ShouldBe("1.4.0+sha.deadbeef",
+            "build metadata does NOT make a version pre-release per semver §10 — must still be eligible for auto-pick");
+    }
+
+    // ========================================================================
     // Concurrent fan-out dedupe (audit N-4). Without this, 50 simultaneous
     // upgrade triggers on cold cache → 50 parallel Docker Hub queries → likely
     // rate-limit hit (100/6h anonymous). Lazy<Task<>> + GetOrAdd collapses
