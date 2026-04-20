@@ -146,9 +146,74 @@ public sealed class UpgradeLinuxTentacleScriptTests
     public void Script_WrapsSystemctlInTimeout()
     {
         // Audit H-7: without timeout, a hung systemd unit eats the entire
-        // Halibut script budget. Two independent wraps (stop 30s, start 60s).
-        RenderedScript.ShouldContain("timeout 60 sudo systemctl start");
-        RenderedScript.ShouldContain("timeout 30 sudo systemctl stop");
+        // Halibut script budget. Both restart (90s) and fallback stop (30s)
+        // are wrapped. Rollback paths also wrap systemctl calls.
+        RenderedScript.ShouldContain("timeout 90 sudo systemctl restart",
+            customMessage: "main service restart (in scope) must be capped");
+        RenderedScript.ShouldContain("timeout 30 sudo systemctl start",
+            customMessage: "rollback start must be capped");
+    }
+
+    // ── Phase 1 architecture: scope detach + out-of-band status file ────────
+
+    [Fact]
+    public void Script_DetachesToScope_BeforeTouchingService()
+    {
+        // The bug that motivated Phase 1: the script used to do
+        // `sudo systemctl stop squid-tentacle` from INSIDE the tentacle's
+        // cgroup — systemd's KillMode=control-group default would then SIGTERM
+        // the bash script along with the service, leaving the swap half-done
+        // and no continuing logs. `systemd-run --scope` migrates the remaining
+        // steps (swap, restart, health check) into a separate cgroup so
+        // systemctl stop only kills the service, not us. See
+        // systemd-run(1) --scope docs: "Create a transient .scope unit".
+        RenderedScript.ShouldContain("systemd-run --scope",
+            customMessage: "scope detach is the ONLY reliable way to survive systemctl stop of the parent service; without it every upgrade self-kills");
+        RenderedScript.ShouldContain("--collect",
+            customMessage: "--collect makes the transient scope auto-remove on exit; without it leaked scopes accumulate in `systemctl list-units --scope`");
+    }
+
+    [Fact]
+    public void Script_DoesNotStopOrStartSelf_FromPreScopePhase()
+    {
+        // Regression guard for the class of bug that caused the production
+        // incident: ANY `systemctl stop|start|restart squid-tentacle` before
+        // the scope-detach exec is a self-kill. The detach point MUST come
+        // before any service-manipulation command.
+        var scopeExecIdx = RenderedScript.IndexOf("exec sudo systemd-run --scope", StringComparison.Ordinal);
+        scopeExecIdx.ShouldBeGreaterThan(-1, "scope exec boundary must be present");
+
+        var preScope = RenderedScript.Substring(0, scopeExecIdx);
+
+        preScope.ShouldNotContain("systemctl stop \"$SERVICE_NAME\"",
+            customMessage: "pre-scope section must not stop the tentacle — that would self-kill");
+        preScope.ShouldNotContain("systemctl restart \"$SERVICE_NAME\"",
+            customMessage: "pre-scope section must not restart the tentacle — same self-kill class");
+        preScope.ShouldNotContain("systemctl start \"$SERVICE_NAME\"",
+            customMessage: "pre-scope section has no reason to start the service; start only happens in scope after swap");
+    }
+
+    [Fact]
+    public void Script_StatusFileAtKnownPath_ForOutOfBandReporting()
+    {
+        // Halibut connection dies when tentacle restarts mid-upgrade (expected).
+        // Out-of-band status reporting via /var/lib/squid-tentacle/last-upgrade.json
+        // lets the server read the final outcome on next health check, matching
+        // Octopus's "ExitCode-on-disk + server polls" pattern.
+        RenderedScript.ShouldContain("/var/lib/squid-tentacle/last-upgrade.json",
+            customMessage: "status file at canonical path is how the server learns the final outcome after the Halibut disconnect");
+    }
+
+    [Theory]
+    [InlineData("write_status \"IN_PROGRESS\"", "written BEFORE scope detach so a crash mid-dispatch is visible")]
+    [InlineData("write_status \"SWAPPED\"", "written after the binary is swapped in — point of no return")]
+    [InlineData("write_status \"SUCCESS\"", "terminal success — health check passed + version matches")]
+    [InlineData("write_status \"ROLLED_BACK\"", "terminal failure with clean rollback to previous version")]
+    [InlineData("write_status \"ROLLBACK_CRITICAL_FAILED\"", "terminal failure where rollback ALSO failed — agent is in unknown state")]
+    public void Script_WritesStatusPhase(string statusLiteral, string semanticMeaning)
+    {
+        RenderedScript.ShouldContain(statusLiteral,
+            customMessage: $"missing status phase '{statusLiteral}' — {semanticMeaning}. The server consumes these to drive FE upgrade state.");
     }
 
     [Fact]
@@ -236,6 +301,8 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // The "service started AND healthcheck passed but wrong binary is
         // running" case — a rare but real edge (systemd started stale symlink).
         // We MUST compare reported version to target and fail if mismatch.
+        // Post-Phase-1 this check runs in the scope (after restart), not in
+        // the pre-scope section — the anchor string stays but position shifts.
         RenderedScript.ShouldContain("binary reports version",
             customMessage: "post-restart version-sanity probe must remain — catches silent partial upgrades");
         RenderedScript.ShouldContain("Treating as failure to avoid silent partial upgrades");
