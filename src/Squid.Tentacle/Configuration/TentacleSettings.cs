@@ -14,8 +14,15 @@ public class TentacleSettings
     public string Roles { get; set; } = string.Empty;
     public int SpaceId { get; set; } = 1;
     public string Environments { get; set; } = string.Empty;
-    public string WorkspacePath { get; set; } = "/squid/work";
-    public string CertsPath { get; set; } = "/squid/certs";
+    // Empty = "resolve at runtime via InstanceSelector.ResolveCertsPath". The
+    // old "/squid/certs" / "/squid/work" defaults were Docker-image conventions
+    // that only worked for images pre-creating those dirs. A native systemd
+    // install running as the `squid-tentacle` service user could not write to
+    // / (root), so the agent crashed at startup with UnauthorizedAccessException.
+    // RunCommand fills these in from the per-platform instance paths when left
+    // blank — see RunCommandPathResolver.
+    public string WorkspacePath { get; set; } = string.Empty;
+    public string CertsPath { get; set; } = string.Empty;
     public int HealthCheckPort { get; set; } = 8080;
     public int ListeningPort { get; set; } = 10933;
     public string ListeningHostName { get; set; } = string.Empty;

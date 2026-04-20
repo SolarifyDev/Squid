@@ -13,6 +13,26 @@ public class TentacleSettingsTests
     }
 
     [Fact]
+    public void CertsPath_DefaultIsEmpty_SoRunCommandResolvesViaPlatformPaths()
+    {
+        // Regression: the old class default of "/squid/certs" was a root-only
+        // path that caused UnauthorizedAccessException on every non-Docker
+        // systemd install where `register` hadn't persisted a config yet.
+        // Empty = "let RunCommand resolve via InstanceSelector", which gives
+        // us /etc/squid-tentacle/instances/Default/certs (root) or
+        // ~/.config/squid-tentacle/... (user).
+        new TentacleSettings().CertsPath.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public void WorkspacePath_DefaultIsEmpty_SoRunCommandResolvesViaPlatformPaths()
+    {
+        // Same reasoning as CertsPath — /squid/work was a Docker-only convention
+        // that silently traps native systemd installs behind a root-only path.
+        new TentacleSettings().WorkspacePath.ShouldBe(string.Empty);
+    }
+
+    [Fact]
     public void GetServerCommsUrls_SingleUrl_ReturnsSingle()
     {
         var settings = new TentacleSettings { ServerCommsUrl = "https://server:10943" };

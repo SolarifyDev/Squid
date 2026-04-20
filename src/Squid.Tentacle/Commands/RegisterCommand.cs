@@ -121,6 +121,19 @@ public sealed class RegisterCommand : ITentacleCommand
 
         PersistInstanceConfig(instance, settings, subscriptionId, registration.ServerThumbprint);
 
+        // Hand the just-persisted config + certs over to the systemd service
+        // user. Without this step, `sudo register` leaves root:root 0600 files
+        // that the `squid-tentacle` service user can't read, and
+        // `systemctl start squid-tentacle` crashes with PermissionDenied. No-op
+        // outside the root-on-Linux-with-service-user case — see
+        // InstanceOwnershipHandover's doc comment for the full matrix.
+        var handover = new InstanceOwnershipHandover().HandOver(instance, Path.GetDirectoryName(instanceCertsPath));
+
+        if (handover.DidHandOver)
+            Log.Information("Handed ownership of instance artifacts to {User}: {Paths}", handover.ServiceUser, string.Join(", ", handover.Paths));
+        else
+            Log.Information("Skipped ownership handover: {Reason}", handover.Reason);
+
         Console.WriteLine($"MachineId:       {registration.MachineId}");
         Console.WriteLine($"ServerThumbprint: {registration.ServerThumbprint}");
         Console.WriteLine($"SubscriptionUri: {registration.SubscriptionUri}");
