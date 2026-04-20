@@ -71,11 +71,18 @@ public sealed class SelfHealControllerTests
     public async Task EachAction_HasIndependentCadence()
     {
         var fast = new CountingAction(TimeSpan.FromMilliseconds(20));
-        var slow = new CountingAction(TimeSpan.FromMilliseconds(200));
+        var slow = new CountingAction(TimeSpan.FromMilliseconds(500));
         await using var controller = new SelfHealController(new[] { fast, (ISelfHealAction)slow });
 
         controller.Start();
-        await Task.Delay(500);
+
+        // Poll for the signal rather than sleep-then-assert. On a loaded CI runner
+        // a fixed Task.Delay(500) can yield only 2 fast-ticks (observed failure:
+        // fast.Runs=2, slow.Runs=2), which proves nothing about cadence. Instead:
+        // wait until fast has ticked ≥5 times (≈100ms minimum wall clock), by
+        // which point slow (500ms interval) can have run at most 1 time. Ratio
+        // holds cleanly even if the scheduler is 10× slow.
+        await WaitUntil(() => fast.Runs >= 5, TimeSpan.FromSeconds(5));
 
         fast.Runs.ShouldBeGreaterThan(slow.Runs,
             "fast action must run more frequently than the slow one");
