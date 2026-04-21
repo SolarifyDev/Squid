@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Squid Package Repository</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #24292f; line-height: 1.55; }
+    h1 { border-bottom: 1px solid #d0d7de; padding-bottom: 8px; }
+    code { background: #f6f8fa; padding: 2px 5px; border-radius: 4px; font-size: 90%; }
+    pre { background: #f6f8fa; padding: 12px 16px; border-radius: 6px; overflow-x: auto; }
+    a { color: #0969da; }
+    .muted { color: #656d76; }
+  </style>
+</head>
+<body>
+  <h1>Squid Package Repository</h1>
+  <p>This site hosts the signed APT and RPM package repositories for
+  <a href="https://github.com/SolarifyDev/Squid">Squid Tentacle</a>.</p>
+
+  <h2>Installation</h2>
+  <p>Debian / Ubuntu:</p>
+  <pre><code>curl -fsSL https://squid.solarifyai.com/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/squid.gpg
+echo "deb [signed-by=/etc/apt/keyrings/squid.gpg] https://squid.solarifyai.com/apt stable main" | \
+  sudo tee /etc/apt/sources.list.d/squid.list
+sudo apt-get update
+sudo apt-get install -y squid-tentacle</code></pre>
+
+  <p>RHEL / CentOS / Fedora:</p>
+  <pre><code>sudo curl -fsSL https://squid.solarifyai.com/rpm/squid-tentacle.repo \
+  -o /etc/yum.repos.d/squid-tentacle.repo
+sudo yum install -y squid-tentacle</code></pre>
+
+  <p>Or tarball-based one-liner (fallback, works everywhere):</p>
+  <pre><code>curl -fsSL https://squid.solarifyai.com/install.sh | sudo bash</code></pre>
+
+  <h2>Contents</h2>
+  <ul>
+    <li><a href="apt/">apt/</a> &mdash; Debian/Ubuntu APT repository</li>
+    <li><a href="rpm/">rpm/</a> &mdash; RHEL/CentOS/Fedora RPM repository</li>
+    <li><a href="public.key">public.key</a> &mdash; GPG public signing key</li>
+    <li><a href="install.sh">install.sh</a> &mdash; Tarball installer (curl-pipe entry)</li>
+  </ul>
+
+  <p class="muted">Packages and metadata are published automatically by GitHub Actions on each Squid release.
+  Source code: <a href="https://github.com/SolarifyDev/Squid">github.com/SolarifyDev/Squid</a>.</p>
+</body>
+</html>
