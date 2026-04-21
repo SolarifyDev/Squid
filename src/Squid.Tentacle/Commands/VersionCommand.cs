@@ -1,5 +1,5 @@
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
+using Squid.Tentacle.Core;
 
 namespace Squid.Tentacle.Commands;
 
@@ -34,23 +34,12 @@ public sealed class VersionCommand : ITentacleCommand
 
     public Task<int> ExecuteAsync(string[] args, IConfiguration config, CancellationToken ct)
     {
-        var asmVersion = Assembly.GetExecutingAssembly().GetName().Version;
-
-        if (asmVersion == null)
-        {
-            Console.WriteLine("unknown");
-            return Task.FromResult(0);
-        }
-
-        // AssemblyVersion is Major.Minor.Build.Revision. We build with
-        // `-p:Version=1.3.8` which populates Build as the patch number and
-        // leaves Revision=0. Trim .Revision for canonical semver output.
-        var canonical = asmVersion.Revision == 0
-            ? $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}"
-            : asmVersion.ToString();
-
-        Console.WriteLine(canonical);
-
+        // AssemblyVersion.Canonical is the single source of truth for how
+        // this binary reports its version — same string also surfaces in
+        // the Capabilities RPC response (server's /upgrade-info endpoint)
+        // and in deployment audit manifests. Keeping one helper means CLI
+        // output == what the server sees == what the FE renders.
+        Console.WriteLine(AssemblyVersion.Canonical);
         return Task.FromResult(0);
     }
 }
