@@ -192,27 +192,39 @@ jobs:
 
       - name: Sign .rpm
         run: |
-          # rpmsign config: tell it which key to use + override gpg invocation
-          # for headless / passphrase-less use. Without --pinentry-mode loopback
-          # gpg tries to attach a TTY and fails on the Actions runner.
+          set -x
+          # ── Pre-flight: confirm GPG key is actually usable for signing ────
+          gpg --list-secret-keys "${KEY_EMAIL}"
+          KEY_FP=$(gpg --list-secret-keys --with-colons "${KEY_EMAIL}" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "Will sign with fingerprint: ${KEY_FP}"
+
+          # ── Sign — use --define to avoid heredoc / multi-line macro pitfalls
+          # that have been a known source of silent rpmsign failures. Modern rpm
+          # (>= 4.18 on Ubuntu 24.04) supports passphrase-less keys natively as
+          # long as we tell gpg to use loopback pinentry.
           cat > ~/.rpmmacros <<MACROS
-          %_gpg_name ${KEY_EMAIL}
-          %__gpg_sign_cmd %{__gpg} gpg --batch --pinentry-mode loopback --no-armor --no-secmem-warning --local-user ${KEY_EMAIL} --sign --detach-sign --output %{__signature_filename} %{__plaintext_filename}
+          %_gpg_name ${KEY_FP}
+          %__gpg_sign_cmd_extra_args --pinentry-mode loopback
           MACROS
 
-          rpmsign --addsign *.rpm
+          rpmsign --addsign *.rpm 2>&1 | tee /tmp/rpmsign.log
+          if grep -qiE "could not generate|fail|error" /tmp/rpmsign.log; then
+            echo "::error::rpmsign reported a failure above — abort before claiming success."
+            exit 1
+          fi
 
-          # `rpm --checksig` verifies BOTH the digest (always OK for a freshly-
-          # built file) AND the GPG signature. The signature check requires the
-          # signer's public key to be in **rpm's own keyring** (separate from
-          # the GnuPG keyring rpmsign just signed with). Without this import,
-          # rpm reports "digests SIGNATURES NOT OK" even though the package
-          # *is* signed correctly — the failure is purely in our local
-          # verification step, not the published signature.
-          gpg --export --armor "${KEY_EMAIL}" | sudo tee /tmp/squid-pubkey.asc > /dev/null
+          # ── Diagnostic: confirm the signature header is now present ──────
+          echo "=== Package signature header (should show RSA/SHA256 sig) ==="
+          rpm -qpi *.rpm | grep -E "Signature|Size|Build Date" || true
+
+          # ── Import pubkey into rpm's keyring so --checksig can verify ────
+          gpg --export --armor "${KEY_FP}" > /tmp/squid-pubkey.asc
           sudo rpm --import /tmp/squid-pubkey.asc
+          echo "=== rpm keyring after import ==="
+          rpm -qa gpg-pubkey --qf '%{NAME}-%{VERSION}-%{RELEASE} %{SUMMARY}\n'
 
-          rpm --checksig *.rpm
+          # ── Verify ────────────────────────────────────────────────────────
+          rpm --checksig -v *.rpm
 
       - name: Compute SHA256 sidecars
         run: |
