@@ -1,0 +1,108 @@
+name: Bootstrap GPG signing key (one-time setup)
+
+# ==============================================================================
+# Run ONCE during Phase 2 setup to generate the GPG key that signs:
+#   • .deb packages (dpkg-sig --sign)
+#   • .rpm packages (rpmsign)
+#   • APT repo metadata (Release / InRelease)
+#   • RPM repo metadata (repomd.xml)
+#
+# The workflow prints the ASCII-armoured private key to the run log ONCE.
+# The operator copies it to GitHub Secrets as SQUID_GPG_PRIVATE_KEY, then
+# DELETES the run log to prevent key material from lingering.
+#
+# After bootstrap this workflow is never invoked again (unless rotating).
+# To rotate: re-run manually → copy new key to Secrets → old packages remain
+# valid (signed by the now-rotated-out key) until users refresh pubkey.
+# ==============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type YES to confirm. This prints a NEW private key that grants signing authority — only run if you intend to bootstrap or rotate.'
+        required: true
+        default: ''
+      name:
+        description: 'Human-readable name on the key (shown in `gpg --list-keys`).'
+        required: true
+        default: 'Squid Tentacle Package Signing'
+      email:
+        description: 'UID email on the key. Users verify this + fingerprint when importing.'
+        required: true
+        default: 'squid-tentacle@solarifyai.com'
+      expire:
+        description: 'Key expiration. Use `2y` for 2 years, `0` for never.'
+        required: true
+        default: '2y'
+
+jobs:
+  generate:
+    if: ${{ inputs.confirm == 'YES' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate 4096-bit RSA key (no passphrase)
+        env:
+          KEY_NAME: ${{ inputs.name }}
+          KEY_EMAIL: ${{ inputs.email }}
+          KEY_EXPIRE: ${{ inputs.expire }}
+        run: |
+          # No passphrase: signing is automated from CI, there's no human at the
+          # console to unlock the key. Security relies on GitHub Secrets
+          # encryption + restricted workflow access, not on a passphrase.
+          # The alternative (passphrase in a second Secret) adds breakage
+          # surface without meaningfully improving security.
+          cat > /tmp/key.spec <<EOF
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 4096
+          Subkey-Type: RSA
+          Subkey-Length: 4096
+          Name-Real: ${KEY_NAME}
+          Name-Email: ${KEY_EMAIL}
+          Expire-Date: ${KEY_EXPIRE}
+          EOF
+
+          gpg --batch --generate-key /tmp/key.spec
+          rm -f /tmp/key.spec
+
+          # Extract key info for the output.
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons "${KEY_EMAIL}" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "FINGERPRINT=${FINGERPRINT}" >> "$GITHUB_ENV"
+
+      - name: Print key material (copy to Secrets immediately)
+        run: |
+          echo ""
+          echo "==================================================================="
+          echo "  BOOTSTRAP COMPLETE — FOLLOW THESE STEPS IMMEDIATELY"
+          echo "==================================================================="
+          echo ""
+          echo "Fingerprint: ${FINGERPRINT}"
+          echo ""
+          echo "Step 1: Copy the block between the markers below and save it to"
+          echo "        GitHub → Settings → Secrets and variables → Actions →"
+          echo "        'New repository secret' named: SQUID_GPG_PRIVATE_KEY"
+          echo ""
+          echo "----- BEGIN SQUID_GPG_PRIVATE_KEY -----"
+          gpg --export-secret-keys --armor "${FINGERPRINT}"
+          echo "----- END SQUID_GPG_PRIVATE_KEY -----"
+          echo ""
+          echo "Step 2: Copy the PUBLIC key below, save it in the repo at"
+          echo "        deploy/packaging/public.key and commit (via PR)."
+          echo "        Also commit the fingerprint to docs/phase-2-apt-rpm-setup.md"
+          echo "        so users can verify out-of-band."
+          echo ""
+          echo "----- BEGIN public.key -----"
+          gpg --export --armor "${FINGERPRINT}"
+          echo "----- END public.key -----"
+          echo ""
+          echo "Step 3: After copying both blocks, DELETE this workflow run from"
+          echo "        Actions → Bootstrap GPG signing key → the run → '…' → "
+          echo "        'Delete workflow run'. This wipes the private-key print"
+          echo "        from GitHub's log store."
+          echo ""
+          echo "==================================================================="
+
+      - name: Remind to delete this run
+        run: |
+          echo "::warning::This run's log contains the exported private key. DELETE the run from the Actions UI after you have copied the key to Secrets."

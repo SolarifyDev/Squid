@@ -1,0 +1,7 @@
+[squid-tentacle]
+name=Squid Tentacle
+baseurl=https://squid.solarifyai.com/rpm
+enabled=1
+gpgcheck=1
+gpgkey=https://squid.solarifyai.com/public.key
+repo_gpgcheck=1
