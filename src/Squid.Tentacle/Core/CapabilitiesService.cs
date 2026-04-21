@@ -1,12 +1,9 @@
-using System.Reflection;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Tentacle.Core;
 
 public class CapabilitiesService : ICapabilitiesService
 {
-    private static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
-
     private readonly Dictionary<string, string> _metadata;
 
     public CapabilitiesService() : this(metadata: null) { }
@@ -21,7 +18,7 @@ public class CapabilitiesService : ICapabilitiesService
         return new CapabilitiesResponse
         {
             SupportedServices = new List<string> { "IScriptService/v1", "ICapabilitiesService/v1" },
-            AgentVersion = Version,
+            AgentVersion = AssemblyVersion.Canonical,
             Metadata = new Dictionary<string, string>(_metadata)
         };
     }

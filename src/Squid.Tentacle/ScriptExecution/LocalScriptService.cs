@@ -28,8 +28,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private DateTimeOffset _lastCleanupTime = DateTimeOffset.MinValue;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan OrphanMaxAge = TimeSpan.FromHours(24);
-    private static readonly string AgentVersion =
-        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
+    // Canonicalised version (strips trailing .0 Revision) — keeps deployment
+    // audit logs aligned with /upgrade-info.currentVersion and the upgrade
+    // target version format.
+    private static readonly string AgentVersion = Core.AssemblyVersion.Canonical;
 
     public LocalScriptService() : this(new ScriptStateStoreFactory()) { }
 

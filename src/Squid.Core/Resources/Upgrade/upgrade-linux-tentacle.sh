@@ -71,6 +71,13 @@ STATUS_DIR="/var/lib/squid-tentacle"
 STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
+# Deterministic tempfile path so the sudoers `mv` rule can match precisely:
+# always /tmp/squid-upgrade-status.XXXXXX (world-writable, no sudo to write),
+# then `sudo mv` it into STATUS_DIR (root-owned, needs sudo). Previous
+# implementation tried `mktemp $STATUS_DIR/.last-upgrade.XXX` first and fell
+# back to bare `mktemp` (= /tmp/tmp.XXX) on failure — making the eventual
+# path ambiguous and breaking the sudoers pattern match when the fallback
+# fired. See the install-tentacle.sh sudoers rules for the matching pattern.
 write_status() {
   local status="$1"
   local detail="${2:-}"
@@ -78,7 +85,7 @@ write_status() {
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
   local tmp
-  tmp=$(mktemp "$STATUS_DIR/.last-upgrade.XXXXXX.json" 2>/dev/null || mktemp)
+  tmp=$(mktemp /tmp/squid-upgrade-status.XXXXXX)
   cat > "$tmp" <<STATUS_JSON
 {
   "targetVersion": "$TARGET_VERSION",
@@ -88,7 +95,11 @@ write_status() {
   "detail": "$detail"
 }
 STATUS_JSON
-  sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || mv "$tmp" "$STATUS_FILE" 2>/dev/null || true
+  # Both 2>/dev/null || true on each step — status-file write failures must
+  # never abort the upgrade itself. If sudoers is misconfigured the upgrade
+  # still succeeds; only the "last upgrade" JSON won't update. Server falls
+  # back to the next Capabilities health check to infer outcome from version.
+  sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
 }
 
@@ -175,15 +186,36 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   if [ "$INSTALL_METHOD" = "tarball" ] && [ "$INSTALL_OK" != "1" ]; then
     echo "[upgrade-method:tarball] Pre-flight: probing $DOWNLOAD_URL"
 
-    if ! curl -fsSI --max-time 10 "$DOWNLOAD_URL" >/dev/null 2>&1; then
-      echo "::error:: Target tarball not reachable: $DOWNLOAD_URL"
-      write_status "FAILED" "Target tarball not reachable: $DOWNLOAD_URL"
+    # HEAD probe with retries. GitHub Releases from certain regions
+    # (notably CN behind slow cross-border routes) routinely exceeds 10s
+    # for a single handshake. --retry 2 + --retry-all-errors covers TCP
+    # reset, DNS hiccup, and transient 5xx without false-positive exit 6.
+    # --connect-timeout is separate from --max-time: connect caps the TLS
+    # handshake specifically, max-time caps the whole operation.
+    # Operator can override the URL base via
+    # SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL for air-gap / mirror
+    # scenarios — if they're hitting this line from China, pointing the
+    # env var at a CN mirror fixes it permanently.
+    if ! curl -fsSI --connect-timeout 15 --max-time 30 \
+               --retry 2 --retry-delay 5 --retry-all-errors \
+               "$DOWNLOAD_URL" >/dev/null 2>&1; then
+      echo "::error:: Target tarball not reachable after 2 retries: $DOWNLOAD_URL"
+      echo "::error:: Likely causes:"
+      echo "  1. GitHub Releases is slow from this region (China → try again, or configure APT repo to use squid.solarifyai.com)"
+      echo "  2. Tarball isn't published yet (recent tag — wait 1-2 min for build-publish-linux-tentacle.yml to finish)"
+      echo "  3. Firewall blocks github.com (check outbound HTTPS egress)"
+      echo "  4. For an air-gapped mirror, set SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL on the server pod"
+      write_status "FAILED" "Target tarball not reachable after retries: $DOWNLOAD_URL"
       exit 6
     fi
 
     ARCHIVE="$STAGE/tentacle.tar.gz"
     echo "[upgrade-method:tarball] Downloading $DOWNLOAD_URL ..."
-    curl -fsSL --retry 3 --retry-delay 2 --max-time 120 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
+    # --max-time 300 (was 120): cross-border ~65MB download can hit 2-3 min
+    # from CN at peak hours. 5 min is a generous budget that still fails
+    # loudly for true network blackholes.
+    curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 5 --retry-all-errors \
+         --max-time 300 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
       echo "::error:: Download failed from $DOWNLOAD_URL"
       write_status "FAILED" "Download failed"
       exit 2
@@ -229,8 +261,25 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
       fi
     fi
 
-    if ! "$NEW_BIN" --version >/dev/null 2>&1 && ! "$NEW_BIN" version >/dev/null 2>&1; then
-      echo "::warning:: New binary did not respond to --version probe. Continuing anyway."
+    # Version probe — use the `version` subcommand (added in the same
+    # Phase 2 Part 2 follow-up commit that added VersionCommand.cs).
+    # DO NOT use `--version` here: the CLI's CommandResolver treats any
+    # arg starting with `-` as a config flag and falls through to
+    # RunCommand, which starts the agent and never exits — bash would
+    # hang forever waiting for the process. `version` is a proper
+    # subcommand that prints + exits 0.
+    #
+    # --max-time via `timeout` guards against OLD tentacle binaries that
+    # predate VersionCommand: for those, `version` is an unknown verb,
+    # resolver returns exit 1, our fallback warning fires.
+    PROBED_VERSION=$(timeout 5 "$NEW_BIN" version 2>/dev/null | head -1 || true)
+    if [ -n "$PROBED_VERSION" ]; then
+      echo "[upgrade-method:tarball] Probed version: $PROBED_VERSION"
+      if [ "$PROBED_VERSION" != "$TARGET_VERSION" ]; then
+        echo "::warning:: New binary reports $PROBED_VERSION but target was $TARGET_VERSION. Continuing anyway; Phase B version-verify catches mismatch after swap."
+      fi
+    else
+      echo "::warning:: New binary did not respond to 'version' subcommand. Continuing anyway."
     fi
 
     INSTALL_OK=1
@@ -364,10 +413,15 @@ if [ "$START_OK" = "1" ]; then
 fi
 
 # ── Post-restart version sanity ──────────────────────────────────────────────
+# Use `version` subcommand (not --version — that falls through to RunCommand
+# per CommandResolver and would hang bash forever waiting on the agent to
+# exit, which it never does). timeout 5s caps old-binary fallback: if the
+# currently-installed binary predates VersionCommand, `version` is an unknown
+# verb, CLI exits non-zero, and we skip the comparison (treat as healthy).
 if [ "$HEALTH_OK" = "1" ]; then
   RUNNING_VERSION=""
   if [ -x "$INSTALL_DIR/squid-tentacle" ]; then
-    RUNNING_VERSION=$("$INSTALL_DIR/squid-tentacle" --version 2>/dev/null | head -1 | awk '{print $NF}' || true)
+    RUNNING_VERSION=$(timeout 5 "$INSTALL_DIR/squid-tentacle" version 2>/dev/null | head -1 || true)
   fi
   if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "$TARGET_VERSION" ]; then
     echo "::warning:: Service is healthy but binary reports version '$RUNNING_VERSION' (expected '$TARGET_VERSION')."
