@@ -48,8 +48,20 @@ fi
 if getent passwd squid-tentacle >/dev/null 2>&1 \
     && [ -f /etc/squid-tentacle/instances/Default.config.json ]; then
     # Upgrade path — an instance already exists.
+    # Get the staged version. THREE layers of defence:
+    #   1. `version` subcommand (not `--version`): pre-1.4.2 tentacles routed
+    #      `--version` to RunCommand, which STARTS THE AGENT. The postinst's
+    #      subshell then hangs forever (agent never exits, head -1 closes the
+    #      pipe but the agent ignores SIGPIPE in dotnet's I/O stack). Bug
+    #      observed in 1.4.1/1.4.2 prod downgrade testing.
+    #   2. `</dev/null`: don't share the postinst's stdin with the binary —
+    #      if the binary tries to read stdin for any reason, EOF returns
+    #      immediately instead of blocking.
+    #   3. `timeout 5`: hard cap. Even if the binary somehow hangs, dpkg's
+    #      postinst never spends more than 5s on this cosmetic version print.
+    VERSION_STAGED=$(timeout 5 "$BIN" version </dev/null 2>/dev/null | head -1 || echo 'unknown version')
     echo ""
-    echo "Squid Tentacle upgraded to $($BIN --version 2>/dev/null | head -1 || echo 'unknown version')."
+    echo "Squid Tentacle upgraded to ${VERSION_STAGED}."
     echo "Binary is staged on disk. To switch to the new version:"
     echo "    sudo systemctl restart squid-tentacle"
     echo ""
