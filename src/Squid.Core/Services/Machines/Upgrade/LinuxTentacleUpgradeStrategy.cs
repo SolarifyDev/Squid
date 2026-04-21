@@ -3,6 +3,7 @@ using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.Upgrade.Methods;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Enums;
@@ -74,6 +75,24 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     internal static readonly TimeSpan UpgradeScriptTimeout = TimeSpan.FromMinutes(5);
 
     private static readonly Lazy<string> _scriptTemplate = new(LoadEmbeddedScript);
+
+    /// <summary>
+    /// Default method order — apt → yum → tarball — matching Octopus's
+    /// documented preference. The first method whose probe succeeds at
+    /// runtime on the agent host wins. Tarball is the universal fallback
+    /// because it only needs <c>curl</c> + <c>tar</c>.
+    /// </summary>
+    /// <remarks>
+    /// Static + readonly so the snippets are rendered once per process and
+    /// shared across all upgrade dispatches. Method instances are
+    /// stateless so this is safe.
+    /// </remarks>
+    internal static readonly IReadOnlyList<ILinuxUpgradeMethod> DefaultMethodOrder = new ILinuxUpgradeMethod[]
+    {
+        new AptUpgradeMethod(),
+        new YumUpgradeMethod(),
+        new TarballUpgradeMethod()
+    };
 
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IHalibutScriptObserver _observer;
@@ -245,13 +264,21 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         => BuildStartScriptCommand(machine, targetVersion);
 
     internal static string BuildScript(string targetVersion)
+        => BuildScript(targetVersion, DefaultMethodOrder);
+
+    /// <summary>Test-only overload — lets us assert against custom method orders.</summary>
+    internal static string BuildScript(string targetVersion, IReadOnlyList<ILinuxUpgradeMethod> methods)
     {
         // {RID} stays inside the URL and is rewritten by the script's
         // `case "$ARCH"` block — keeps the server agnostic to agent arch.
         var downloadUrlTemplate = BuildDownloadUrl(targetVersion, "{RID}").Replace("{RID}", "$RID", StringComparison.Ordinal);
 
-        // SHA256 stays empty until the release pipeline emits a per-version
-        // hash file (Phase 2). Empty = "skip verification" in the script.
+        // Render each method's bash snippet in priority order. Each snippet
+        // is self-contained (gates on $INSTALL_OK and probes its own host
+        // prerequisites) so the order = priority. See ILinuxUpgradeMethod
+        // for the contract every snippet honours.
+        var installMethodsBlock = string.Join("\n\n", methods.Select(m => m.RenderDetectAndInstall(targetVersion)));
+
         return _scriptTemplate.Value
             .Replace("{{TARGET_VERSION}}", targetVersion, StringComparison.Ordinal)
             .Replace("{{DOWNLOAD_URL}}", downloadUrlTemplate, StringComparison.Ordinal)
@@ -259,7 +286,8 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{INSTALL_DIR}}", DefaultInstallDir, StringComparison.Ordinal)
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
             .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal)
-            .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal);
+            .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
+            .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
     /// <summary>

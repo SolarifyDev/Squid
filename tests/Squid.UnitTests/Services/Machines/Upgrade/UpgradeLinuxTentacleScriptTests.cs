@@ -262,7 +262,11 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // someone simplifies the rollback block and removes the post-rollback
         // health loop → rollback appears successful even when it isn't →
         // agent is in unknown state but server thinks it recovered.
-        RenderedScript.ShouldContain("Rolling back to previous version");
+        // Phase 2 Part 2: rollback strategy now branches by INSTALL_METHOD —
+        // tarball gets the full .bak restore + health verify (asserted here),
+        // apt/yum print a manual downgrade command (covered by separate test).
+        RenderedScript.ShouldContain("Rolling back via .bak directory",
+            customMessage: "tarball-method rollback must remain the default safety net");
         RenderedScript.ShouldContain("Rollback to previous version succeeded",
             customMessage: "rollback MUST be verified before claiming success");
         RenderedScript.ShouldContain("CRITICAL",
@@ -355,6 +359,131 @@ public sealed class UpgradeLinuxTentacleScriptTests
         firstAssignment.ShouldBeLessThan(firstExpansion,
             "under `set -u`, $RID in a double-quoted assignment expands at that line — move the " +
             "case \"$ARCH\" block above DOWNLOAD_URL or every upgrade dies with 'RID: unbound variable'.");
+    }
+
+    // ── Phase 2 Part 2 — apt/yum/tarball method dispatch ──────────────────
+
+    [Fact]
+    public void Script_DispatchesApt_BeforeYum_BeforeTarball()
+    {
+        // Order matters: apt > yum > tarball matches Octopus's documented
+        // preference. Each method's marker tag is unique enough to find.
+        var aptIdx = RenderedScript.IndexOf("[upgrade-method:apt]", StringComparison.Ordinal);
+        var yumIdx = RenderedScript.IndexOf("[upgrade-method:yum]", StringComparison.Ordinal);
+        var tarIdx = RenderedScript.IndexOf("[upgrade-method:tarball]", StringComparison.Ordinal);
+
+        aptIdx.ShouldBeGreaterThan(-1, "apt method snippet must be present");
+        yumIdx.ShouldBeGreaterThan(-1, "yum method snippet must be present");
+        tarIdx.ShouldBeGreaterThan(-1, "tarball method marker must be present");
+
+        aptIdx.ShouldBeLessThan(yumIdx,
+            "apt must be tried before yum — Octopus's documented order");
+        yumIdx.ShouldBeLessThan(tarIdx,
+            "yum must be tried before tarball fallback");
+    }
+
+    [Fact]
+    public void Script_AptMethod_PinsTargetVersion()
+    {
+        // The apt install must be version-pinned so a misconfigured repo
+        // can't silently install a different version than the one the
+        // operator clicked Upgrade for.
+        RenderedScript.ShouldContain("squid-tentacle=1.4.2",
+            customMessage: "apt install must use pkg=version syntax for the operator-supplied target version");
+        RenderedScript.ShouldContain("--allow-downgrades",
+            customMessage: "apt must allow downgrades — the UI may legitimately ask to install an older version (operator-confirmed via AllowDowngrade flag in upgrade request)");
+    }
+
+    [Fact]
+    public void Script_YumMethod_PinsTargetVersionAndPackagingRelease()
+    {
+        // RPM uses NVR (Name-Version-Release). Our RPM packaging release is
+        // hardcoded to "-1" by publish-linux-packages.yml; the script must
+        // match for `dnf install` to find the right package.
+        RenderedScript.ShouldContain("squid-tentacle-1.4.2-1",
+            customMessage: "yum install must use Name-Version-Release format pinning to packaging release '1'");
+    }
+
+    [Fact]
+    public void Script_AptAndYumMethodSnippets_GateOnInstallOk()
+    {
+        // Each method snippet must short-circuit if a higher-priority method
+        // already succeeded (set INSTALL_OK=1). Without this gate, all three
+        // methods would run regardless and clobber each other's installs.
+        var aptCount = CountOccurrences(RenderedScript, "[upgrade-method:apt]");
+        var yumCount = CountOccurrences(RenderedScript, "[upgrade-method:yum]");
+
+        // Each method's snippet starts with `if [ "$INSTALL_OK" != "1" ]`
+        // followed shortly after by its log marker. We can't easily express
+        // "the gate precedes the marker" without coupling to specific text
+        // that might change — instead pin the gate string is present in the
+        // overall script body multiple times (once per method).
+        var gateOccurrences = CountOccurrences(RenderedScript, "$INSTALL_OK\" != \"1\"");
+        gateOccurrences.ShouldBeGreaterThanOrEqualTo(3,
+            "each method (apt/yum/tarball-marker) must guard on $INSTALL_OK to short-circuit if a prior method already succeeded");
+    }
+
+    [Fact]
+    public void Script_AptAndYumMethods_RecordPreUpgradeVersion()
+    {
+        // For manual rollback, the script captures the pre-upgrade version
+        // before installing — operator-visible in the ROLLBACK_NEEDED status.
+        RenderedScript.ShouldContain("OLD_VERSION_APT=$(dpkg-query",
+            customMessage: "apt method must capture pre-upgrade version via dpkg-query for rollback-instruction generation");
+        RenderedScript.ShouldContain("OLD_VERSION_RPM=$(rpm -q squid-tentacle",
+            customMessage: "yum method must capture pre-upgrade version via rpm -q for rollback-instruction generation");
+    }
+
+    [Fact]
+    public void Script_PhaseB_ConditionalSwap_BasedOnInstallMethod()
+    {
+        // tarball method does the mv-swap in Phase B (in scope); apt/yum
+        // methods skip swap because dpkg/rpm already wrote the files.
+        // Regression: if the swap block isn't gated on INSTALL_METHOD,
+        // apt/yum installs would also try to mv from $EXTRACT (which
+        // doesn't exist for those methods) and crash.
+        RenderedScript.ShouldContain("if [ \"$INSTALL_METHOD\" = \"tarball\" ]; then",
+            customMessage: "Phase B's swap block must gate on INSTALL_METHOD=tarball");
+        RenderedScript.ShouldContain("No swap needed for INSTALL_METHOD=",
+            customMessage: "apt/yum branch must explicitly log 'no swap needed' for clarity");
+    }
+
+    [Fact]
+    public void Script_AptAndYumRollback_PrintsManualDowngradeCommand()
+    {
+        // apt/yum auto-rollback isn't implemented (Phase 2 Part 2 v1) —
+        // status detail must contain the exact one-liner an operator can
+        // copy-paste to recover.
+        RenderedScript.ShouldContain("apt-get install -y --allow-downgrades squid-tentacle=",
+            customMessage: "apt rollback path must print the exact `apt-get install --allow-downgrades` command");
+        RenderedScript.ShouldContain("dnf downgrade -y squid-tentacle-",
+            customMessage: "yum rollback path must print the exact `dnf downgrade` command");
+        RenderedScript.ShouldContain("ROLLBACK_NEEDED",
+            customMessage: "apt/yum failure must use the ROLLBACK_NEEDED status (vs tarball's ROLLED_BACK) so FE can render the right CTA");
+    }
+
+    [Fact]
+    public void Script_StatusFile_RecordsInstallMethod()
+    {
+        // The status file's installMethod field tells the server (via
+        // Capabilities RPC + FE) which path the upgrade took. Useful for
+        // operator-side post-mortem and for the UI to show the right
+        // rollback hint when something goes wrong.
+        RenderedScript.ShouldContain("\"installMethod\": \"${INSTALL_METHOD:-unknown}\"",
+            customMessage: "status JSON must include installMethod so server can render method-specific UI hints");
+    }
+
+    [Fact]
+    public void Script_BailsWithExit14_WhenNoMethodSucceeds()
+    {
+        // If apt/yum repos aren't configured AND the tarball download
+        // fails (e.g., GitHub Releases unreachable from this network),
+        // we must fail loudly rather than continue into the scope detach
+        // with INSTALL_OK=0.
+        RenderedScript.ShouldContain("No upgrade method succeeded",
+            customMessage: "must explicitly say no method worked, not just exit silently");
+        RenderedScript.ShouldContain("exit 14",
+            customMessage: "exit 14 reserved for 'all upgrade methods exhausted' (documented in script header)");
     }
 
     [Fact]
