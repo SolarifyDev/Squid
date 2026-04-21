@@ -71,6 +71,13 @@ STATUS_DIR="/var/lib/squid-tentacle"
 STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
+# Deterministic tempfile path so the sudoers `mv` rule can match precisely:
+# always /tmp/squid-upgrade-status.XXXXXX (world-writable, no sudo to write),
+# then `sudo mv` it into STATUS_DIR (root-owned, needs sudo). Previous
+# implementation tried `mktemp $STATUS_DIR/.last-upgrade.XXX` first and fell
+# back to bare `mktemp` (= /tmp/tmp.XXX) on failure — making the eventual
+# path ambiguous and breaking the sudoers pattern match when the fallback
+# fired. See the install-tentacle.sh sudoers rules for the matching pattern.
 write_status() {
   local status="$1"
   local detail="${2:-}"
@@ -78,7 +85,7 @@ write_status() {
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
   local tmp
-  tmp=$(mktemp "$STATUS_DIR/.last-upgrade.XXXXXX.json" 2>/dev/null || mktemp)
+  tmp=$(mktemp /tmp/squid-upgrade-status.XXXXXX)
   cat > "$tmp" <<STATUS_JSON
 {
   "targetVersion": "$TARGET_VERSION",
@@ -88,7 +95,11 @@ write_status() {
   "detail": "$detail"
 }
 STATUS_JSON
-  sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || mv "$tmp" "$STATUS_FILE" 2>/dev/null || true
+  # Both 2>/dev/null || true on each step — status-file write failures must
+  # never abort the upgrade itself. If sudoers is misconfigured the upgrade
+  # still succeeds; only the "last upgrade" JSON won't update. Server falls
+  # back to the next Capabilities health check to infer outcome from version.
+  sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
 }
 
