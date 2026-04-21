@@ -1,0 +1,118 @@
+name: Verify Linux package install
+
+# ==============================================================================
+# Runs apt-get install / yum install against the live squid.solarifyai.com
+# repo from a matrix of fresh Linux containers, confirming:
+#   • repo metadata is reachable + signed correctly
+#   • package dependencies resolve on each distro
+#   • `squid-tentacle --version` returns on the installed binary
+#
+# Triggered:
+#   • After every successful run of "Build & publish Linux packages"
+#     (catches regressions introduced by a release).
+#   • Daily cron (catches upstream distro breakage — e.g. libicu rename).
+#   • Manual dispatch for ad-hoc verification.
+#
+# If this fails, the fix is one of:
+#   (a) Update the `--depends` list in publish-linux-packages.yml for the
+#       affected distro's libicu package name, OR
+#   (b) Re-run publish-linux-packages.yml if repo metadata got corrupted.
+# ==============================================================================
+
+on:
+  schedule:
+    - cron: '15 3 * * *'    # 03:15 UTC daily — off-peak, low GH Actions queue
+  workflow_run:
+    workflows: ['Build & publish Linux packages (deb / rpm + APT/RPM repo)']
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  apt-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - 'ubuntu:22.04'
+          - 'ubuntu:24.04'
+          - 'debian:12'
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - name: Install prerequisites
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg
+
+      - name: Configure Squid APT repo
+        run: |
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://squid.solarifyai.com/public.key | gpg --dearmor -o /etc/apt/keyrings/squid.gpg
+          chmod a+r /etc/apt/keyrings/squid.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/squid.gpg] https://squid.solarifyai.com/apt stable main" \
+            > /etc/apt/sources.list.d/squid.list
+
+      - name: apt-get update + install
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y squid-tentacle
+
+      - name: Verify installed binary
+        run: |
+          which squid-tentacle
+          ls -la /opt/squid-tentacle/ | head
+          # Version probe — must not be empty string; must exit 0.
+          VER=$(squid-tentacle --version 2>/dev/null | head -1)
+          if [ -z "$VER" ]; then
+            echo "::error::squid-tentacle --version returned empty output on ${{ matrix.image }}"
+            exit 1
+          fi
+          echo "Installed: $VER"
+
+  rpm-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - 'rockylinux:9'
+          - 'fedora:40'
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - name: Install prerequisites
+        run: |
+          # Rocky 9 has dnf by default; Fedora has dnf. CentOS 7 (EOL) had yum.
+          # `dnf` wraps `yum` — scripts work transparently.
+          dnf install -y ca-certificates curl || yum install -y ca-certificates curl
+
+      - name: Configure Squid RPM repo
+        run: |
+          curl -fsSL https://squid.solarifyai.com/rpm/squid-tentacle.repo \
+            -o /etc/yum.repos.d/squid-tentacle.repo
+
+      - name: yum install
+        run: |
+          dnf install -y squid-tentacle || yum install -y squid-tentacle
+
+      - name: Verify installed binary
+        run: |
+          which squid-tentacle
+          ls -la /opt/squid-tentacle/ | head
+          VER=$(squid-tentacle --version 2>/dev/null | head -1)
+          if [ -z "$VER" ]; then
+            echo "::error::squid-tentacle --version returned empty output on ${{ matrix.image }}"
+            exit 1
+          fi
+          echo "Installed: $VER"

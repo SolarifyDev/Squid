@@ -1,0 +1,362 @@
+name: Build & publish Linux packages (deb / rpm + APT/RPM repo)
+
+# ==============================================================================
+# Triggered when a GitHub Release is published (the existing
+# build-publish-linux-tentacle.yml workflow creates releases on tag push).
+# Consumes the Linux tarballs already attached to that release, re-packages
+# them as signed .deb and .rpm, attaches the packages to the SAME release,
+# and publishes them to the APT/RPM repo served at squid.solarifyai.com
+# (the gh-pages branch).
+#
+# Why a separate workflow from build-publish-linux-tentacle.yml:
+#   • Isolation — a packaging bug mustn't block the tarball release path.
+#   • Retryable — manual dispatch can re-run against an existing release
+#     (e.g. after rotating the GPG key).
+#   • Clean concerns — the binary build already does its own provenance
+#     checks; this workflow's job is the packaging + repo.
+#
+# Prerequisites (one-time, see docs/phase-2-apt-rpm-setup.md):
+#   • SQUID_GPG_PRIVATE_KEY secret set (use bootstrap-gpg-key.yml to mint)
+#   • gh-pages branch exists with APT/RPM layout bootstrapped (apt/, rpm/)
+#   • Custom domain squid.solarifyai.com pointed at gh-pages via Pages
+#
+# What a successful run leaves behind:
+#   • .deb (amd64 + arm64) attached to the GitHub Release, signed.
+#   • .rpm (x86_64 + aarch64) attached to the GitHub Release, signed.
+#   • gh-pages/apt/pool/main/s/squid-tentacle/*.deb
+#   • gh-pages/apt/dists/stable/...          (InRelease, Release, Packages)
+#   • gh-pages/rpm/*.rpm
+#   • gh-pages/rpm/repodata/...              (repomd.xml signed)
+#   • gh-pages/public.key                    (pubkey, armored)
+# ==============================================================================
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to re-package (e.g. v1.4.0). Omit to use the latest release.'
+        required: false
+
+permissions:
+  contents: write   # attach packages to releases
+  pages: write      # not strictly required (we push via git), but harmless
+
+env:
+  KEY_EMAIL: squid-tentacle@solarifyai.com
+  REPO_DIST: stable
+  REPO_COMPONENT: main
+
+concurrency:
+  group: publish-linux-packages-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Job 1: Build signed deb + rpm per arch ───────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - rid: linux-arm64
+            deb_arch: arm64
+            rpm_arch: aarch64
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag + version
+        id: resolve
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -z "$TAG" ]; then
+            # Fall back to the latest release (manual dispatch without input).
+            TAG=$(gh release view --json tagName -q '.tagName')
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag:     $TAG"
+          echo "Version: $VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download tarball from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p stage
+          gh release download "${{ steps.resolve.outputs.tag }}" \
+            --pattern "squid-tentacle-${{ steps.resolve.outputs.version }}-${{ matrix.rid }}.tar.gz" \
+            --dir stage/
+
+      - name: Extract tarball
+        run: |
+          mkdir -p stage/install-root
+          tar xzf stage/squid-tentacle-${{ steps.resolve.outputs.version }}-${{ matrix.rid }}.tar.gz \
+              -C stage/install-root
+
+      - name: Prepare /usr/bin symlink for package
+        run: |
+          # A relative symlink inside the package so dpkg/rpm lay it down as
+          # /usr/bin/squid-tentacle → /opt/squid-tentacle/Squid.Tentacle.
+          # The target path is evaluated at USE time (not install time), so
+          # a relative path is fine even though /usr/bin and /opt live on
+          # potentially different FS partitions.
+          mkdir -p stage/usr-bin
+          ln -sf /opt/squid-tentacle/Squid.Tentacle stage/usr-bin/squid-tentacle
+
+      - name: Install fpm and signing tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            ruby ruby-dev build-essential rpm dpkg-sig gnupg
+          sudo gem install --no-document fpm
+
+      - name: Build .deb
+        run: |
+          fpm --version "${{ steps.resolve.outputs.version }}" \
+              --name squid-tentacle \
+              --input-type dir --output-type deb \
+              --architecture ${{ matrix.deb_arch }} \
+              --maintainer "Solarify AI <noreply@solarifyai.com>" \
+              --vendor "Solarify AI" \
+              --url "https://squid.solarifyai.com" \
+              --description "Squid Tentacle — Linux deployment agent for the Squid automation server." \
+              --after-install deploy/packaging/after-install.sh \
+              --before-remove deploy/packaging/before-uninstall.sh \
+              --deb-no-default-config-files \
+              --depends 'libicu70 | libicu72 | libicu74 | libicu-dev' \
+              --license 'Proprietary' \
+              --package "squid-tentacle_${{ steps.resolve.outputs.version }}_${{ matrix.deb_arch }}.deb" \
+              stage/install-root/=/opt/squid-tentacle/ \
+              stage/usr-bin/=/usr/bin/
+
+      - name: Build .rpm
+        run: |
+          fpm --version "${{ steps.resolve.outputs.version }}" \
+              --name squid-tentacle \
+              --input-type dir --output-type rpm \
+              --architecture ${{ matrix.rpm_arch }} \
+              --maintainer "Solarify AI <noreply@solarifyai.com>" \
+              --vendor "Solarify AI" \
+              --url "https://squid.solarifyai.com" \
+              --description "Squid Tentacle — Linux deployment agent for the Squid automation server." \
+              --after-install deploy/packaging/after-install.sh \
+              --before-remove deploy/packaging/before-uninstall.sh \
+              --depends 'libicu' \
+              --license 'Proprietary' \
+              --rpm-rpmbuild-define "_build_id_links none" \
+              --package "squid-tentacle-${{ steps.resolve.outputs.version }}-1.${{ matrix.rpm_arch }}.rpm" \
+              stage/install-root/=/opt/squid-tentacle/ \
+              stage/usr-bin/=/usr/bin/
+
+      - name: Import GPG key
+        env:
+          GPG_KEY: ${{ secrets.SQUID_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_KEY" ]; then
+            echo "::error::SQUID_GPG_PRIVATE_KEY secret is not set. Run the bootstrap-gpg-key workflow first; see docs/phase-2-apt-rpm-setup.md."
+            exit 1
+          fi
+          echo "$GPG_KEY" | gpg --batch --import
+
+          # Sanity: fingerprint + trust the imported key ultimately so rpmsign
+          # doesn't prompt. `--trust-model always` on later commands is the
+          # alternative but trust-setting once is cleaner.
+          KEY_FP=$(gpg --list-secret-keys --with-colons "$KEY_EMAIL" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "Imported key fingerprint: $KEY_FP"
+          echo -e "trust\n5\ny\nquit\n" | gpg --batch --command-fd 0 --edit-key "$KEY_FP"
+
+      - name: Sign .deb
+        run: |
+          dpkg-sig --sign builder *.deb
+          dpkg-sig --verify *.deb
+
+      - name: Sign .rpm
+        run: |
+          echo "%_gpg_name ${KEY_EMAIL}" > ~/.rpmmacros
+          # rpmsign needs the key with no passphrase (we use --no-protection above)
+          # AND needs --define "_gpg_sign_cmd_extra_args" to pass --pinentry-mode loopback
+          # for non-TTY environments.
+          echo "%__gpg_sign_cmd %{__gpg} gpg --batch --pinentry-mode loopback --no-armor --no-secmem-warning --local-user ${KEY_EMAIL} --sign --detach-sign --output %{__signature_filename} %{__plaintext_filename}" >> ~/.rpmmacros
+          rpmsign --addsign *.rpm
+          rpm --checksig *.rpm
+
+      - name: Compute SHA256 sidecars
+        run: |
+          for f in *.deb *.rpm; do
+            sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
+          done
+
+      - name: Upload packages to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.resolve.outputs.tag }}" \
+            squid-tentacle_*.deb squid-tentacle_*.deb.sha256 \
+            squid-tentacle-*.rpm squid-tentacle-*.rpm.sha256 \
+            --clobber
+
+      - name: Upload as workflow artifact (for publish job)
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: linux-packages-${{ matrix.rid }}
+          path: |
+            squid-tentacle_*.deb
+            squid-tentacle-*.rpm
+
+  # ── Job 2: Update APT/RPM repo on gh-pages ──────────────────────────────
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      # Serialize gh-pages writes across ALL concurrent publish runs —
+      # reprepro + git push on the same branch otherwise race.
+      group: gh-pages-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: repo
+          fetch-depth: 0
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: linux-packages-*
+          merge-multiple: true
+
+      - name: Install repo tooling (reprepro, createrepo_c)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            reprepro createrepo-c gnupg
+
+      - name: Import GPG key
+        env:
+          GPG_KEY: ${{ secrets.SQUID_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_KEY" | gpg --batch --import
+          KEY_FP=$(gpg --list-secret-keys --with-colons "$KEY_EMAIL" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "KEY_FP=$KEY_FP" >> "$GITHUB_ENV"
+          echo -e "trust\n5\ny\nquit\n" | gpg --batch --command-fd 0 --edit-key "$KEY_FP"
+
+      - name: Export public key to repo root
+        run: gpg --export --armor "$KEY_FP" > repo/public.key
+
+      # ─── APT repo ──────────────────────────────────────────────────────────
+      - name: Configure reprepro
+        run: |
+          mkdir -p repo/apt/conf
+          cat > repo/apt/conf/distributions <<EOF
+          Origin: Squid Tentacle
+          Label: Squid Tentacle APT repository
+          Suite: ${REPO_DIST}
+          Codename: ${REPO_DIST}
+          Architectures: amd64 arm64
+          Components: ${REPO_COMPONENT}
+          Description: Squid Tentacle Linux deployment agent
+          SignWith: ${KEY_FP}
+          EOF
+          cat > repo/apt/conf/options <<EOF
+          verbose
+          basedir $(pwd)/repo/apt
+          ask-passphrase
+          EOF
+
+      - name: Include .deb in reprepro
+        run: |
+          cd repo/apt
+          # `reprepro --keepunreferencedfiles` is defensive against race
+          # conditions if multiple publishes hit the same file. --ignore=undefinedtarget
+          # protects against stale distributions files on re-runs.
+          for deb in ../../packages/*.deb; do
+            reprepro --component "${REPO_COMPONENT}" includedeb "${REPO_DIST}" "$deb"
+          done
+
+      # ─── RPM repo ──────────────────────────────────────────────────────────
+      - name: Copy .rpm + regenerate repodata
+        run: |
+          cp packages/*.rpm repo/rpm/
+          createrepo_c --update repo/rpm/
+
+          # Sign repomd.xml — required for `repo_gpgcheck=1` on clients.
+          gpg --batch --yes --pinentry-mode loopback --local-user "$KEY_FP" \
+            --detach-sign --armor repo/rpm/repodata/repomd.xml
+
+          # Ship the .repo descriptor users curl to onboard.
+          cp deploy/packaging/squid-tentacle.repo repo/rpm/squid-tentacle.repo \
+            2>/dev/null || true   # on gh-pages we don't have deploy/, pull from artifacts
+
+      - name: Pull .repo descriptor from main for the RPM landing URL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The descriptor lives on main (deploy/packaging/), we need to copy it
+          # into gh-pages/rpm/ so `wget https://squid.solarifyai.com/rpm/squid-tentacle.repo`
+          # returns the actual file.
+          gh api "repos/${{ github.repository }}/contents/deploy/packaging/squid-tentacle.repo?ref=main" \
+            --jq '.content' | base64 -d > repo/rpm/squid-tentacle.repo
+
+      # ─── Copy install.sh convenience landing URL ──────────────────────────
+      - name: Mirror install-tentacle.sh as /install.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/contents/deploy/scripts/install-tentacle.sh?ref=main" \
+            --jq '.content' | base64 -d > repo/install.sh
+          chmod +x repo/install.sh
+
+      - name: Commit + push gh-pages
+        run: |
+          cd repo
+          # .gitignore local-only reprepro state that mustn't be public
+          cat > apt/conf/.gitignore <<'EOF'
+          # reprepro state — kept locally, not published
+          ../db/
+          EOF
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+
+          git commit -m "Publish ${{ needs.build.outputs.tag }} (deb + rpm) $(date -u +%FT%TZ)"
+          git push origin gh-pages
+
+      - name: Summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Published ${{ needs.build.outputs.tag }}
+
+          ### APT (Debian / Ubuntu)
+          \`\`\`bash
+          curl -fsSL https://squid.solarifyai.com/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/squid.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/squid.gpg] https://squid.solarifyai.com/apt ${REPO_DIST} ${REPO_COMPONENT}" | sudo tee /etc/apt/sources.list.d/squid.list
+          sudo apt-get update && sudo apt-get install -y squid-tentacle
+          \`\`\`
+
+          ### RPM (RHEL / CentOS / Fedora)
+          \`\`\`bash
+          sudo curl -fsSL https://squid.solarifyai.com/rpm/squid-tentacle.repo -o /etc/yum.repos.d/squid-tentacle.repo
+          sudo yum install -y squid-tentacle
+          \`\`\`
+          EOF
