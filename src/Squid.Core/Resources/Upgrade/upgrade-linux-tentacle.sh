@@ -472,12 +472,22 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
 fi
 
 # ── apt/yum: no auto-rollback (Phase 2 Part 2 v1) ──────────────────────────
-# Auto-downgrade via package manager requires the OLD version to be in the
-# repo cache + --allow-downgrades flag. Possible but not done in v1; the
-# operator-visible status gives them the exact one-liner to recover.
+# Auto-downgrade isn't implemented in v1. The per-method hint below points
+# at whichever rollback path is actually feasible:
+#
+#   apt: reprepro's APT repo only keeps the LATEST version (one-version-per-
+#     package-per-arch model). Old versions aren't in `stable` anymore, so
+#     `apt-get install --allow-downgrades squid-tentacle=OLD` fails.
+#     Workaround: download the retained-forever .deb from GitHub Releases
+#     + `dpkg -i`, then systemctl restart.
+#
+#   yum: createrepo_c's repomd indexes every .rpm we leave in the pool; our
+#     publish workflow keeps the last 5 per arch. `dnf downgrade` resolves
+#     cleanly as long as OLD_VERSION is within that window.
 case "$INSTALL_METHOD" in
   apt)
-    DOWNGRADE_CMD="sudo apt-get install -y --allow-downgrades squid-tentacle=${OLD_VERSION_APT:-<previous-version>} && sudo systemctl restart $SERVICE_NAME"
+    ARCH_DEB=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+    DOWNGRADE_CMD="curl -fsSLo /tmp/squid-tentacle-rollback.deb \"https://github.com/SolarifyDev/Squid/releases/download/${OLD_VERSION_APT:-<previous-version>}/squid-tentacle_${OLD_VERSION_APT:-<previous-version>}_${ARCH_DEB}.deb\" && sudo dpkg -i /tmp/squid-tentacle-rollback.deb && sudo systemctl restart $SERVICE_NAME"
     ;;
   yum)
     DOWNGRADE_CMD="sudo dnf downgrade -y squid-tentacle-${OLD_VERSION_RPM:-<previous-version>} && sudo systemctl restart $SERVICE_NAME"

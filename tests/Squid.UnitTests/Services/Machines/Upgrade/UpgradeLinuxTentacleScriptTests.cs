@@ -454,10 +454,22 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // apt/yum auto-rollback isn't implemented (Phase 2 Part 2 v1) —
         // status detail must contain the exact one-liner an operator can
         // copy-paste to recover.
-        RenderedScript.ShouldContain("apt-get install -y --allow-downgrades squid-tentacle=",
-            customMessage: "apt rollback path must print the exact `apt-get install --allow-downgrades` command");
+        //
+        // APT note: reprepro only indexes the latest version (single-
+        // version-per-package-per-arch model, matches Octopus's
+        // apt.octopus.com). `apt install --allow-downgrades squid-tentacle=OLD`
+        // therefore fails post-upgrade — OLD is no longer in `stable`.
+        // Fallback: pull the .deb from GitHub Releases direct (retained
+        // per tag forever) + dpkg -i.
+        //
+        // YUM note: createrepo_c supports multi-version; we retain last 5
+        // so `dnf downgrade` resolves natively within that window.
+        RenderedScript.ShouldContain("curl -fsSLo /tmp/squid-tentacle-rollback.deb",
+            customMessage: "apt rollback path must fetch the retained-per-tag .deb from GitHub Releases (reprepro's APT repo doesn't keep history)");
+        RenderedScript.ShouldContain("dpkg -i /tmp/squid-tentacle-rollback.deb",
+            customMessage: "apt rollback path must then dpkg -i the downloaded package");
         RenderedScript.ShouldContain("dnf downgrade -y squid-tentacle-",
-            customMessage: "yum rollback path must print the exact `dnf downgrade` command");
+            customMessage: "yum rollback path uses native `dnf downgrade` (createrepo_c keeps last 5 versions indexed)");
         RenderedScript.ShouldContain("ROLLBACK_NEEDED",
             customMessage: "apt/yum failure must use the ROLLBACK_NEEDED status (vs tarball's ROLLED_BACK) so FE can render the right CTA");
     }
