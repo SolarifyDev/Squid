@@ -448,6 +448,21 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_AptMethod_UsesTargetedUpdate_ImmuneToBrokenThirdPartyRepos()
+    {
+        // Post-1.4.1 production lesson: a user machine with an expired
+        // v2raya.org GPG key made `apt-get update` exit non-zero, which in
+        // turn made OUR upgrade fail — for a problem on an unrelated repo.
+        // The targeted flags confine `update` to squid.list ONLY. This test
+        // pins that presence at the rendered-script level so a refactor of
+        // AptUpgradeMethod.cs can't silently revert to bare `apt-get update`.
+        RenderedScript.ShouldContain("-o Dir::Etc::sourcelist=sources.list.d/squid.list",
+            customMessage: "rendered apt method must include the targeted sourcelist scope — broken third-party repos must not break our upgrade");
+        RenderedScript.ShouldContain("-o Acquire::http::Timeout=60",
+            customMessage: "apt update timeout cap must appear in the final rendered script");
+    }
+
+    [Fact]
     public void Script_PhaseB_ConditionalSwap_BasedOnInstallMethod()
     {
         // tarball method does the mv-swap in Phase B (in scope); apt/yum

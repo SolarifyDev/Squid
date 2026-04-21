@@ -89,4 +89,41 @@ public sealed class AptUpgradeMethodTests
         Method.RenderDetectAndInstall("1.4.0")
             .ShouldContain("[upgrade-method:apt] Skipped: apt-get not found OR /etc/apt/sources.list.d/squid.list missing");
     }
+
+    [Fact]
+    public void Render_AptGetUpdate_IsScopedToSquidSourcesListOnly()
+    {
+        // Real production failure: a machine with an expired v2raya.org apt
+        // GPG key broke our upgrade because `apt-get update` refreshes EVERY
+        // source file and some apt versions exit non-zero when ANY source
+        // fails. Fix: the targeted flags make `update` touch only squid.list.
+        // If anyone drops these flags back to a bare `apt-get update`, this
+        // test fails — the rendered form becomes fragile to user environment.
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+
+        snippet.ShouldContain("-o Dir::Etc::sourcelist=sources.list.d/squid.list",
+            customMessage: "apt-get update must be scoped to squid.list — unrelated broken repos must not break our upgrade");
+        snippet.ShouldContain("-o Dir::Etc::sourceparts=-",
+            customMessage: "sourceparts=- disables sources.list.d/* fanout — required alongside sourcelist for the scoping to work");
+        snippet.ShouldContain("-o APT::Get::List-Cleanup=0",
+            customMessage: "List-Cleanup=0 prevents apt from pruning other source list caches when we did a scoped refresh");
+    }
+
+    [Fact]
+    public void Render_AptOperations_CapNetworkTimeoutAndRetries()
+    {
+        // Without explicit timeouts, `apt-get install` on a wedged proxy
+        // (v2raya, clash, enterprise MITM) stalled for 12+ minutes in prod —
+        // enough to blow through Halibut's script observation window and
+        // leave the upgrade stuck in IN_PROGRESS with no operator signal.
+        // The cap makes failures fail fast so the tarball fallback runs.
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+
+        snippet.ShouldContain("-o Acquire::http::Timeout=60",
+            customMessage: "apt-get update must cap per-connection timeout to 60s so a stalled proxy doesn't eat the whole upgrade budget");
+        snippet.ShouldContain("-o Acquire::http::Timeout=120",
+            customMessage: "apt-get install must cap per-connection timeout to 120s (.deb downloads are bigger than index files)");
+        snippet.ShouldContain("-o Acquire::Retries=1",
+            customMessage: "apt's default 3-retry policy + long timeouts = 10min+ hangs; single retry is sufficient for our flow");
+    }
 }
