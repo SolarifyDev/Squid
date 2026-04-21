@@ -232,7 +232,11 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     # --max-time 300 (was 120): cross-border ~65MB download can hit 2-3 min
     # from CN at peak hours. 5 min is a generous budget that still fails
     # loudly for true network blackholes.
-    curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 5 --retry-all-errors \
+    # --progress-bar renders one line of ######## so operators watching
+    # `journalctl -u squid-tentacle -f` can distinguish "download in
+    # progress, just slow" from "hung forever".
+    curl -fL --progress-bar --connect-timeout 15 \
+         --retry 3 --retry-delay 5 --retry-all-errors \
          --max-time 300 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
       echo "::error:: Download failed from $DOWNLOAD_URL"
       write_status "FAILED" "Download failed"

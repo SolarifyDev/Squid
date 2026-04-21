@@ -95,7 +95,12 @@ ARCHIVE_PATH="$TMP_DIR/tentacle.tar.gz"
 # reason for failure (TLS timeout, DNS, cert, ...) behind a generic
 # "Failed to download" message.
 download_ok() {
-    curl -fL --connect-timeout 15 --max-time 300 \
+    # --progress-bar: single clean line of ######### rather than the
+    # default scrolling stats table (which is noisy in CI logs but
+    # useless in interactive shell where we actually want to see
+    # "am I hung, or just slow?").
+    curl -fL --progress-bar \
+         --connect-timeout 15 --max-time 300 \
          --retry 3 --retry-delay 5 --retry-all-errors \
          "$1" -o "$ARCHIVE_PATH"
 }
