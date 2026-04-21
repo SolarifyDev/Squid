@@ -19,7 +19,8 @@ var commands = new ITentacleCommand[]
     new ServiceCommand(),
     new CreateInstanceCommand(),
     new ListInstancesCommand(),
-    new DeleteInstanceCommand()
+    new DeleteInstanceCommand(),
+    new VersionCommand()
 };
 
 try

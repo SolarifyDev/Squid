@@ -261,8 +261,25 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
       fi
     fi
 
-    if ! "$NEW_BIN" --version >/dev/null 2>&1 && ! "$NEW_BIN" version >/dev/null 2>&1; then
-      echo "::warning:: New binary did not respond to --version probe. Continuing anyway."
+    # Version probe — use the `version` subcommand (added in the same
+    # Phase 2 Part 2 follow-up commit that added VersionCommand.cs).
+    # DO NOT use `--version` here: the CLI's CommandResolver treats any
+    # arg starting with `-` as a config flag and falls through to
+    # RunCommand, which starts the agent and never exits — bash would
+    # hang forever waiting for the process. `version` is a proper
+    # subcommand that prints + exits 0.
+    #
+    # --max-time via `timeout` guards against OLD tentacle binaries that
+    # predate VersionCommand: for those, `version` is an unknown verb,
+    # resolver returns exit 1, our fallback warning fires.
+    PROBED_VERSION=$(timeout 5 "$NEW_BIN" version 2>/dev/null | head -1 || true)
+    if [ -n "$PROBED_VERSION" ]; then
+      echo "[upgrade-method:tarball] Probed version: $PROBED_VERSION"
+      if [ "$PROBED_VERSION" != "$TARGET_VERSION" ]; then
+        echo "::warning:: New binary reports $PROBED_VERSION but target was $TARGET_VERSION. Continuing anyway; Phase B version-verify catches mismatch after swap."
+      fi
+    else
+      echo "::warning:: New binary did not respond to 'version' subcommand. Continuing anyway."
     fi
 
     INSTALL_OK=1
@@ -396,10 +413,15 @@ if [ "$START_OK" = "1" ]; then
 fi
 
 # ── Post-restart version sanity ──────────────────────────────────────────────
+# Use `version` subcommand (not --version — that falls through to RunCommand
+# per CommandResolver and would hang bash forever waiting on the agent to
+# exit, which it never does). timeout 5s caps old-binary fallback: if the
+# currently-installed binary predates VersionCommand, `version` is an unknown
+# verb, CLI exits non-zero, and we skip the comparison (treat as healthy).
 if [ "$HEALTH_OK" = "1" ]; then
   RUNNING_VERSION=""
   if [ -x "$INSTALL_DIR/squid-tentacle" ]; then
-    RUNNING_VERSION=$("$INSTALL_DIR/squid-tentacle" --version 2>/dev/null | head -1 | awk '{print $NF}' || true)
+    RUNNING_VERSION=$(timeout 5 "$INSTALL_DIR/squid-tentacle" version 2>/dev/null | head -1 || true)
   fi
   if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "$TARGET_VERSION" ]; then
     echo "::warning:: Service is healthy but binary reports version '$RUNNING_VERSION' (expected '$TARGET_VERSION')."
