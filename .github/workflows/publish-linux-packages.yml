@@ -117,9 +117,17 @@ jobs:
 
       - name: Install fpm and signing tools
         run: |
+          # NOTE: dpkg-sig was removed from Ubuntu 24.04+ repos and we no
+          # longer need it — APT's security model signs the repo-level
+          # `Release` file (reprepro --signwith does this in the publish
+          # job), and clients verify per-package SHA256s via that signed
+          # Release. Per-.deb signatures are redundant and have been the
+          # exception, not the norm, for major distros for ~5 years.
+          # `rpmsign`, by contrast, signs every .rpm and is required —
+          # ships with the `rpm` package below.
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            ruby ruby-dev build-essential rpm dpkg-sig gnupg
+            ruby ruby-dev build-essential rpm gnupg
           sudo gem install --no-document fpm
 
       - name: Build .deb
@@ -177,10 +185,10 @@ jobs:
           echo "Imported key fingerprint: $KEY_FP"
           echo -e "trust\n5\ny\nquit\n" | gpg --batch --command-fd 0 --edit-key "$KEY_FP"
 
-      - name: Sign .deb
-        run: |
-          dpkg-sig --sign builder *.deb
-          dpkg-sig --verify *.deb
+      # No "Sign .deb" step — see "Install fpm and signing tools" above for
+      # why per-package .deb signatures are not used. The repo-level Release
+      # file signed by reprepro in the publish job is what APT clients
+      # actually validate.
 
       - name: Sign .rpm
         run: |
