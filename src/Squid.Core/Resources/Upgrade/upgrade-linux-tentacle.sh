@@ -8,61 +8,49 @@
 #
 # Placeholders ({{...}}) are filled by the server before transmission.
 #
-# ARCHITECTURE (Phase 1 — post self-kill fix):
-#   The bash script initially runs as a child of the tentacle service (in its
-#   systemd cgroup). Halibut streams stdout back to the server in this phase.
+# ARCHITECTURE (Phase 1 + 2):
+#   Phase A (in tentacle cgroup, Halibut sees logs):
+#     • Common pre-flight (arch, systemd version, flock idempotency, status).
+#     • INSTALL_METHODS block (server-injected): ordered apt -> yum ->
+#       tarball-marker dispatch (Phase 2). The first method whose detection
+#       branch matches sets INSTALL_OK=1.
+#     • If INSTALL_METHOD=tarball, the existing tarball download/verify/extract
+#       block runs (separate from the marker so its ~80 lines stay in the
+#       template, not in C#).
+#     • Re-exec into a transient `systemd-run --scope` so the next phase
+#       survives the upcoming `systemctl restart squid-tentacle`.
 #
-#   Before any step that would touch the service itself, the script re-execs
-#   ITSELF into a transient systemd scope via `systemd-run --scope`. This
-#   MIGRATES the remaining steps into a SEPARATE cgroup — so when we later
-#   call `systemctl restart squid-tentacle`, systemd only kills the service's
-#   cgroup, NOT the scope we're running in. Without this detachment the
-#   bash process would die along with the tentacle during `systemctl stop`
-#   (systemd default KillMode=control-group kills the whole cgroup).
-#
-#   Because the Halibut connection is child of the tentacle, it dies when
-#   the service restarts. The server can't observe the outcome via Halibut
-#   after that point. Out-of-band status is written to
-#     /var/lib/squid-tentacle/last-upgrade.json
-#   which the server reads on the next health check (matching Octopus's
-#   "exit-code-to-disk + server polls" pattern).
+#   Phase B (in scope cgroup, separate from tentacle):
+#     • Conditional swap: tarball method requires `mv .bak / mv staging`;
+#       apt/yum methods are no-ops here (the package manager already wrote
+#       /opt/squid-tentacle/).
+#     • `systemctl restart squid-tentacle`.
+#     • Health poll + version verify.
+#     • Status file at /var/lib/squid-tentacle/last-upgrade.json (Octopus
+#       parity: server reads on next health check via Capabilities RPC).
 #
 # Status progression:
-#   IN_PROGRESS            — logged BEFORE scope detach so a crash before the
-#                            handoff is still visible
-#   SWAPPED                — new binary is on disk, past the point of no return
-#   SUCCESS                — service restarted, healthz OK, --version matches
-#   ROLLED_BACK            — new binary broke; previous version restored and
-#                            running; no operator action needed
-#   ROLLBACK_CRITICAL_FAILED
-#                          — new binary broke AND restoring old also failed;
-#                            agent is in unknown state → operator must SSH
+#   IN_PROGRESS → SWAPPED → SUCCESS
+#                          → ROLLED_BACK (tarball: .bak restored; apt/yum: see ROLLBACK_NEEDED)
+#                          → ROLLBACK_NEEDED (apt/yum: operator must downgrade manually)
+#                          → ROLLBACK_CRITICAL_FAILED (rollback itself failed)
 #
-# Exit codes (Halibut-visible, from the PRE-scope phase only):
-#   0  — dispatched to scope successfully (terminal outcome written to status
-#        file; server reads via next health check)
-#   1  — unsupported architecture
-#   2  — download failure
-#   3  — missing binary in extracted archive
-#   5  — insufficient disk space
-#   6  — target tarball URL not reachable (pre-flight HEAD failed)
-#   7  — SHA256 mismatch
-#   8  — libc/glibc compat probe found unresolved deps in new binary
-#   12 — systemd too old for `systemd-run --scope` (needs v239+)
-#   13 — failed to spawn the scope (sudo/systemd-run not available)
-#
-# Exit codes inside the scope are NOT Halibut-visible (connection has died);
-# they're encoded as status-file "status" field values above.
+# Exit codes (Halibut-visible, from PRE-scope phase):
+#   0   — dispatched to scope OR no-op (already on target version)
+#   1   — unsupported architecture
+#   2   — download failure (tarball method only)
+#   3   — missing binary in extracted archive
+#   5   — insufficient disk space
+#   6   — target tarball URL not reachable (tarball method only)
+#   7   — SHA256 mismatch
+#   8   — libc/glibc compat probe found unresolved deps in new binary
+#   12  — systemd too old for `systemd-run --scope` (needs v239+)
+#   13  — failed to spawn the scope
+#   14  — no install method succeeded (apt+yum+tarball all skipped or failed)
 # ==============================================================================
 set -euo pipefail
 
 # ── Arch detection MUST run before DOWNLOAD_URL is assigned ───────────────────
-# The rendered DOWNLOAD_URL contains the shell variable RID (server leaves it
-# un-expanded so one rendered script covers both x64 and arm64 agents). Under
-# `set -u`, bash expands variables in double-quoted RHS at assignment time —
-# if RID isn't set when we hit the DOWNLOAD_URL line, the shell aborts with
-# "RID: unbound variable" before anything useful happens.
-# Regression pinned by Script_RidAssignedBeforeFirstExpansion_StrictModeSafe.
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)         RID="linux-x64"   ;;
@@ -83,11 +71,6 @@ STATUS_DIR="/var/lib/squid-tentacle"
 STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
-# Server reads this file via the tentacle's Capabilities RPC on next health
-# check. Must be atomic so a partial write during a service restart doesn't
-# produce invalid JSON. Parent dir pre-created by install-tentacle.sh with
-# owner=squid-tentacle; we `sudo mkdir -p` here too as a safety net for
-# pre-Phase-1 installs that don't have it.
 write_status() {
   local status="$1"
   local detail="${2:-}"
@@ -99,6 +82,7 @@ write_status() {
   cat > "$tmp" <<STATUS_JSON
 {
   "targetVersion": "$TARGET_VERSION",
+  "installMethod": "${INSTALL_METHOD:-unknown}",
   "status": "$status",
   "updatedAt": "$now",
   "detail": "$detail"
@@ -108,18 +92,14 @@ STATUS_JSON
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
 }
 
-# ── systemd version probe (v239+ for --kill-who / --scope --collect) ──────────
+# ── systemd version probe (v239+ for --scope --collect) ──────────────────────
 SYSTEMD_VERSION=$(systemctl --version 2>/dev/null | head -1 | awk '{print $2}' | grep -oE '^[0-9]+' || echo 0)
 if [ "${SYSTEMD_VERSION:-0}" -lt 239 ]; then
   echo "::error:: systemd v239+ required for transient scope support (this host has v$SYSTEMD_VERSION)."
-  echo "Upgrade your distribution to Ubuntu 18.04+/Debian 10+/RHEL 8+, or pin SQUID_TARGET_LINUX_TENTACLE_VERSION to hold this host on the current version."
   exit 12
 fi
 
-# ── Idempotency guard (audit H-12 + N-8) ──────────────────────────────────────
-# Per-version flock, /tmp so both the tentacle service-user and the post-exec
-# root scope can access. Lock released automatically when our fd closes
-# (SIGKILL-safe, no orphan lock on crash).
+# ── Idempotency guard ────────────────────────────────────────────────────────
 touch "$LOCK_FILE"
 exec {LOCK_FD}>"$LOCK_FILE"
 
@@ -135,7 +115,7 @@ echo "Install dir    : $INSTALL_DIR"
 echo "Service        : $SERVICE_NAME"
 echo "systemd version: $SYSTEMD_VERSION"
 
-# ── Stage directory + consolidated cleanup trap ──────────────────────────────
+# ── Stage directory + cleanup trap ──────────────────────────────────────────
 STAGE=$(mktemp -d -t squid-tentacle-upgrade-XXXXXX)
 
 cleanup() {
@@ -149,13 +129,20 @@ trap cleanup EXIT
 # PHASE A: Pre-scope work — runs in tentacle cgroup, Halibut sees all logs.
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Only do the heavy pre-flight + download once, in the PRE-scope phase.
-# The post-scope continuation skips this entire phase via the sentinel env var.
 if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
 
-  write_status "IN_PROGRESS" "Pre-flight checks and download starting"
+  # State the dispatch fills in. INSTALL_OK is the truth source for "did
+  # SOME method succeed". INSTALL_METHOD records which one for the scope
+  # phase to branch on. OLD_VERSION_* are recorded by apt/yum methods so
+  # the operator-visible status detail can mention what to downgrade to.
+  INSTALL_OK=0
+  INSTALL_METHOD=""
+  OLD_VERSION_APT=""
+  OLD_VERSION_RPM=""
 
-  # ── Pre-flight: disk space ──────────────────────────────────────────────────
+  write_status "IN_PROGRESS" "Selecting upgrade method"
+
+  # ── Pre-flight: disk space (applies to ALL methods) ──────────────────────
   require_free_mb() {
     local path="$1" min_mb="$2" label="$3"
     local avail_kb
@@ -174,76 +161,96 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   require_free_mb "$STAGE" 500 "/tmp staging"
   require_free_mb "$(dirname "$INSTALL_DIR")" 500 "install directory"
 
-  # ── Pre-flight: URL reachable ───────────────────────────────────────────────
-  if ! curl -fsSI --max-time 10 "$DOWNLOAD_URL" >/dev/null 2>&1; then
-    echo "::error:: Target tarball not reachable: $DOWNLOAD_URL"
-    echo "Verify: (1) the release tag '$TARGET_VERSION' is published on GitHub Releases; (2) outbound network is open from this agent."
-    write_status "FAILED" "Target tarball not reachable: $DOWNLOAD_URL"
-    exit 6
-  fi
+  # ── Method dispatch (apt → yum → tarball-marker, server-injected) ────────
+  # Each snippet's contract: short-circuit when INSTALL_OK=1 (a higher-
+  # priority method already succeeded), otherwise probe the host and either
+  # install + set INSTALL_OK=1 or fall through silently.
+  {{INSTALL_METHODS}}
 
-  # ── Download ────────────────────────────────────────────────────────────────
-  ARCHIVE="$STAGE/tentacle.tar.gz"
-  echo "Downloading $DOWNLOAD_URL ..."
-  curl -fsSL --retry 3 --retry-delay 2 --max-time 120 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
-    echo "::error:: Download failed from $DOWNLOAD_URL"
-    write_status "FAILED" "Download failed"
-    exit 2
-  }
+  # ── Tarball install (only when no package-manager method matched) ────────
+  # Kept inline (not in the INSTALL_METHODS placeholder block) because the
+  # curl / SHA / extract logic is ~80 lines we don't want in C# string-builders.
+  # The TarballUpgradeMethod marker above flipped INSTALL_METHOD=tarball
+  # without setting INSTALL_OK — this block is what actually does the work.
+  if [ "$INSTALL_METHOD" = "tarball" ] && [ "$INSTALL_OK" != "1" ]; then
+    echo "[upgrade-method:tarball] Pre-flight: probing $DOWNLOAD_URL"
 
-  # ── Opportunistic SHA256 fetch ──────────────────────────────────────────────
-  if [ -z "$EXPECTED_SHA256" ] && command -v curl >/dev/null 2>&1; then
-    SHA_URL="${DOWNLOAD_URL}.sha256"
-    FETCHED_SHA=$(curl -fsSL --max-time 10 "$SHA_URL" 2>/dev/null | awk '{print $1}' | tr -d '[:space:]' || true)
-    if [ -n "$FETCHED_SHA" ] && echo "$FETCHED_SHA" | grep -qE '^[0-9a-fA-F]{64}$'; then
-      EXPECTED_SHA256="$FETCHED_SHA"
-      echo "Fetched expected SHA256 from $SHA_URL"
-    else
-      echo "::info:: No valid .sha256 companion file at $SHA_URL — skipping integrity check"
+    if ! curl -fsSI --max-time 10 "$DOWNLOAD_URL" >/dev/null 2>&1; then
+      echo "::error:: Target tarball not reachable: $DOWNLOAD_URL"
+      write_status "FAILED" "Target tarball not reachable: $DOWNLOAD_URL"
+      exit 6
     fi
-  fi
 
-  # ── SHA256 verification ─────────────────────────────────────────────────────
-  if [ -n "$EXPECTED_SHA256" ]; then
-    ACTUAL_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
-    if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-      echo "::error:: SHA256 mismatch. Expected $EXPECTED_SHA256, got $ACTUAL_SHA256"
-      write_status "FAILED" "SHA256 mismatch"
-      exit 7
+    ARCHIVE="$STAGE/tentacle.tar.gz"
+    echo "[upgrade-method:tarball] Downloading $DOWNLOAD_URL ..."
+    curl -fsSL --retry 3 --retry-delay 2 --max-time 120 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
+      echo "::error:: Download failed from $DOWNLOAD_URL"
+      write_status "FAILED" "Download failed"
+      exit 2
+    }
+
+    # Opportunistic SHA256 fetch — turns integrity-checking on automatically
+    # the day the release pipeline starts publishing per-version .sha256.
+    if [ -z "$EXPECTED_SHA256" ] && command -v curl >/dev/null 2>&1; then
+      SHA_URL="${DOWNLOAD_URL}.sha256"
+      FETCHED_SHA=$(curl -fsSL --max-time 10 "$SHA_URL" 2>/dev/null | awk '{print $1}' | tr -d '[:space:]' || true)
+      if [ -n "$FETCHED_SHA" ] && echo "$FETCHED_SHA" | grep -qE '^[0-9a-fA-F]{64}$'; then
+        EXPECTED_SHA256="$FETCHED_SHA"
+        echo "[upgrade-method:tarball] Fetched expected SHA256 from $SHA_URL"
+      else
+        echo "::info:: No valid .sha256 companion at $SHA_URL — skipping integrity check"
+      fi
     fi
-    echo "SHA256 verified: $ACTUAL_SHA256"
-  fi
 
-  # ── Extract + verify new binary (still in pre-scope phase) ──────────────────
-  EXTRACT="$STAGE/extract"
-  mkdir -p "$EXTRACT"
-  tar xzf "$ARCHIVE" -C "$EXTRACT"
-
-  NEW_BIN="$EXTRACT/Squid.Tentacle"
-  [ -f "$NEW_BIN" ] || { echo "::error:: Extracted archive missing Squid.Tentacle binary"; write_status "FAILED" "Missing binary after extraction"; exit 3; }
-  chmod +x "$NEW_BIN"
-
-  if command -v ldd >/dev/null 2>&1; then
-    if ldd "$NEW_BIN" 2>&1 | grep -i "not found\|version.*not found" | head -3 | grep -q . ; then
-      echo "::error:: New binary has unresolved library dependencies (likely glibc mismatch):"
-      ldd "$NEW_BIN" 2>&1 | grep -i "not found\|version.*not found"
-      write_status "FAILED" "Binary failed libc/glibc compat check"
-      exit 8
+    if [ -n "$EXPECTED_SHA256" ]; then
+      ACTUAL_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+      if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+        echo "::error:: SHA256 mismatch. Expected $EXPECTED_SHA256, got $ACTUAL_SHA256"
+        write_status "FAILED" "SHA256 mismatch"
+        exit 7
+      fi
+      echo "[upgrade-method:tarball] SHA256 verified: $ACTUAL_SHA256"
     fi
+
+    EXTRACT="$STAGE/extract"
+    mkdir -p "$EXTRACT"
+    tar xzf "$ARCHIVE" -C "$EXTRACT"
+
+    NEW_BIN="$EXTRACT/Squid.Tentacle"
+    [ -f "$NEW_BIN" ] || { echo "::error:: Extracted archive missing Squid.Tentacle binary"; write_status "FAILED" "Missing binary after extraction"; exit 3; }
+    chmod +x "$NEW_BIN"
+
+    if command -v ldd >/dev/null 2>&1; then
+      if ldd "$NEW_BIN" 2>&1 | grep -i "not found\|version.*not found" | head -3 | grep -q . ; then
+        echo "::error:: New binary has unresolved library dependencies (likely glibc mismatch):"
+        ldd "$NEW_BIN" 2>&1 | grep -i "not found\|version.*not found"
+        write_status "FAILED" "Binary failed libc/glibc compat check"
+        exit 8
+      fi
+    fi
+
+    if ! "$NEW_BIN" --version >/dev/null 2>&1 && ! "$NEW_BIN" version >/dev/null 2>&1; then
+      echo "::warning:: New binary did not respond to --version probe. Continuing anyway."
+    fi
+
+    INSTALL_OK=1
+    echo "[upgrade-method:tarball] Tarball downloaded + verified at $EXTRACT"
   fi
 
-  if ! "$NEW_BIN" --version >/dev/null 2>&1 && ! "$NEW_BIN" version >/dev/null 2>&1; then
-    echo "::warning:: New binary did not respond to --version probe. Continuing anyway."
+  # ── Bail if no method worked ────────────────────────────────────────────────
+  if [ "$INSTALL_OK" != "1" ]; then
+    echo "::error:: No upgrade method succeeded. Tried: apt, yum, tarball."
+    write_status "FAILED" "No upgrade method succeeded — apt/yum repos not configured AND tarball download failed"
+    exit 14
   fi
 
-  # ── SCOPE DETACH — re-exec self outside the tentacle cgroup ────────────────
-  # From this point on we're safe to touch the service because we live in a
-  # separate systemd scope. The Halibut connection WILL die when we restart
-  # the tentacle; that's expected. Status file is how the server learns the
-  # final outcome (see Octopus's ExitCode-on-disk pattern).
-  #
-  # Preserve the script body on disk because Halibut deletes its temp copy
-  # of this script as soon as the parent bash exits.
+  echo "[upgrade] Method selected: $INSTALL_METHOD"
+
+  # ── SCOPE DETACH ─────────────────────────────────────────────────────────
+  # Re-exec self in a transient systemd scope so the upcoming `systemctl
+  # restart squid-tentacle` doesn't kill us along with the tentacle service.
+  # Halibut connection dies here (expected); the next health check reads
+  # /var/lib/squid-tentacle/last-upgrade.json for the final outcome.
   SCOPED_SCRIPT="/tmp/squid-upgrade-scoped-$$-$(date +%s).sh"
   cp "$0" "$SCOPED_SCRIPT"
   chmod +x "$SCOPED_SCRIPT"
@@ -258,79 +265,81 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     --setenv=SERVICE_USER="$SERVICE_USER" \
     --setenv=HEALTHCHECK_URL="$HEALTHCHECK_URL" \
     --setenv=STAGE="$STAGE" \
-    --setenv=EXTRACT="$EXTRACT" \
+    --setenv=EXTRACT="${EXTRACT:-}" \
     --setenv=STATUS_FILE="$STATUS_FILE" \
     --setenv=STATUS_DIR="$STATUS_DIR" \
     --setenv=LOCK_FILE="$LOCK_FILE" \
+    --setenv=INSTALL_METHOD="$INSTALL_METHOD" \
+    --setenv=OLD_VERSION_APT="$OLD_VERSION_APT" \
+    --setenv=OLD_VERSION_RPM="$OLD_VERSION_RPM" \
     bash "$SCOPED_SCRIPT" || {
       echo "::error:: Failed to spawn scope for upgrade handoff."
       write_status "FAILED" "systemd-run --scope failed to launch"
       exit 13
     }
-
-  # Unreachable after exec — keeps grep-guided refactor honest.
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHASE B: Post-scope — runs in transient scope, OUTSIDE tentacle cgroup.
-#          Safe to restart the service now. Halibut is no longer connected;
-#          status file is the sole outcome channel.
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Redirect all scope output to a log file for post-mortem debugging (operator
-# can `cat /var/log/squid-tentacle-upgrade.log` if status says FAILED).
 LOG_FILE="/var/log/squid-tentacle-upgrade.log"
 sudo touch "$LOG_FILE" 2>/dev/null || true
 sudo chmod 644 "$LOG_FILE" 2>/dev/null || true
 exec > >(sudo tee -a "$LOG_FILE") 2>&1
 
-echo "=== In scope: continuing upgrade to $TARGET_VERSION at $(date -u +%FT%TZ) ==="
+echo "=== In scope: continuing upgrade to $TARGET_VERSION (method=$INSTALL_METHOD) at $(date -u +%FT%TZ) ==="
 
 BAK_DIR="${INSTALL_DIR}.bak"
 
-# ── Atomic swap (agent still running old binary throughout) ────────────────────
-# Both mv calls get explicit failure handling — `set -e` aborting between
-# the first and second mv would leave INSTALL_DIR missing (agent binaryless).
-if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
+# ── Conditional swap (tarball only — apt/yum already wrote files via dpkg/rpm)
+if [ "$INSTALL_METHOD" = "tarball" ]; then
+  if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
 
-INSTALL_DIR_BACKED_UP=0
-if [ -d "$INSTALL_DIR" ]; then
-  if ! sudo mv "$INSTALL_DIR" "$BAK_DIR"; then
-    echo "::error:: Failed to back up current install ($INSTALL_DIR → $BAK_DIR). State unchanged; no damage."
-    write_status "FAILED" "Failed to back up current install (pre-swap) — state unchanged"
-    exit 10
-  fi
-  INSTALL_DIR_BACKED_UP=1
-fi
-
-if ! sudo mv "$EXTRACT" "$INSTALL_DIR"; then
-  echo "::error:: Failed to move new install into place — attempting emergency restore"
-  RESTORE_OK=0
-  if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ -d "$BAK_DIR" ]; then
-    if sudo mv "$BAK_DIR" "$INSTALL_DIR"; then
-      RESTORE_OK=1
-    else
-      echo "::error:: CRITICAL: emergency restore ALSO failed — agent binaryless; manual intervention required"
+  INSTALL_DIR_BACKED_UP=0
+  if [ -d "$INSTALL_DIR" ]; then
+    if ! sudo mv "$INSTALL_DIR" "$BAK_DIR"; then
+      echo "::error:: Failed to back up current install ($INSTALL_DIR → $BAK_DIR). State unchanged; no damage."
+      write_status "FAILED" "Failed to back up current install (pre-swap)"
+      exit 10
     fi
+    INSTALL_DIR_BACKED_UP=1
   fi
-  if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ "$RESTORE_OK" = "0" ]; then
-    write_status "ROLLBACK_CRITICAL_FAILED" "Install move failed AND emergency restore failed — agent is binaryless"
-    exit 9
+
+  if ! sudo mv "$EXTRACT" "$INSTALL_DIR"; then
+    echo "::error:: Failed to move new install into place — attempting emergency restore"
+    RESTORE_OK=0
+    if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ -d "$BAK_DIR" ]; then
+      if sudo mv "$BAK_DIR" "$INSTALL_DIR"; then
+        RESTORE_OK=1
+      else
+        echo "::error:: CRITICAL: emergency restore ALSO failed — agent binaryless"
+      fi
+    fi
+    if [ "$INSTALL_DIR_BACKED_UP" = "1" ] && [ "$RESTORE_OK" = "0" ]; then
+      write_status "ROLLBACK_CRITICAL_FAILED" "Install move failed AND emergency restore failed — agent is binaryless"
+      exit 9
+    fi
+    write_status "FAILED" "Install move failed (emergency restore ok or nothing to restore)"
+    exit 11
   fi
-  write_status "FAILED" "Install move failed (emergency restore ok or nothing to restore)"
-  exit 11
+
+  sudo chmod +x "$INSTALL_DIR/Squid.Tentacle"
+  [ -f "$INSTALL_DIR/Squid.Calamari" ] && sudo chmod +x "$INSTALL_DIR/Squid.Calamari"
+  sudo ln -sf "$INSTALL_DIR/Squid.Tentacle" "$INSTALL_DIR/squid-tentacle"
+  sudo ln -sf "$INSTALL_DIR/squid-tentacle" /usr/local/bin/squid-tentacle 2>/dev/null || true
+
+  if id "$SERVICE_USER" >/dev/null 2>&1; then
+    sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR" 2>/dev/null || true
+  fi
+else
+  # apt/yum: dpkg/rpm transactionally replaced /opt/squid-tentacle/* during
+  # the install step. No swap needed; the binary is on disk waiting for the
+  # service restart below to load it.
+  echo "[upgrade] No swap needed for INSTALL_METHOD=$INSTALL_METHOD (package manager owns file placement)"
 fi
 
-sudo chmod +x "$INSTALL_DIR/Squid.Tentacle"
-[ -f "$INSTALL_DIR/Squid.Calamari" ] && sudo chmod +x "$INSTALL_DIR/Squid.Calamari"
-sudo ln -sf "$INSTALL_DIR/Squid.Tentacle" "$INSTALL_DIR/squid-tentacle"
-sudo ln -sf "$INSTALL_DIR/squid-tentacle" /usr/local/bin/squid-tentacle 2>/dev/null || true
-
-if id "$SERVICE_USER" >/dev/null 2>&1; then
-  sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR" 2>/dev/null || true
-fi
-
-write_status "SWAPPED" "New binary in place; about to restart service"
+write_status "SWAPPED" "New binary in place via $INSTALL_METHOD; about to restart service"
 
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
@@ -368,37 +377,63 @@ if [ "$HEALTH_OK" = "1" ]; then
 fi
 
 if [ "$HEALTH_OK" = "1" ]; then
-  echo "✓ Upgrade to $TARGET_VERSION successful"
-  write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target"
-  sudo rm -rf "$BAK_DIR"
+  echo "✓ Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
+  write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target (method=$INSTALL_METHOD)"
+  if [ "$INSTALL_METHOD" = "tarball" ]; then
+    sudo rm -rf "$BAK_DIR"
+  fi
   exit 0
 fi
 
 # ── Rollback ─────────────────────────────────────────────────────────────────
 echo "::error:: Upgrade failed: $SERVICE_NAME did not become healthy after restart"
-echo "Rolling back to previous version ..."
-write_status "ROLLING_BACK" "Health check failed after restart"
 
-timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-sudo rm -rf "$INSTALL_DIR"
-sudo mv "$BAK_DIR" "$INSTALL_DIR"
-timeout 30 sudo systemctl start "$SERVICE_NAME"
+if [ "$INSTALL_METHOD" = "tarball" ]; then
+  echo "Rolling back via .bak directory (tarball method) ..."
+  write_status "ROLLING_BACK" "Health check failed after restart — restoring previous version from $BAK_DIR"
 
-ROLLBACK_OK=0
-for i in $(seq 1 30); do
-  if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-    ROLLBACK_OK=1
-    break
+  timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  sudo rm -rf "$INSTALL_DIR"
+  sudo mv "$BAK_DIR" "$INSTALL_DIR"
+  timeout 30 sudo systemctl start "$SERVICE_NAME"
+
+  ROLLBACK_OK=0
+  for i in $(seq 1 30); do
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+      ROLLBACK_OK=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$ROLLBACK_OK" = "1" ]; then
+    echo "Rollback to previous version succeeded; agent is healthy on the old binary."
+    write_status "ROLLED_BACK" "New binary failed health check; previous version restored and healthy"
+    exit 4
   fi
-  sleep 1
-done
 
-if [ "$ROLLBACK_OK" = "1" ]; then
-  echo "Rollback to previous version succeeded; agent is healthy on the old binary."
-  write_status "ROLLED_BACK" "New binary failed health check; previous version restored and healthy"
-  exit 4
+  echo "::error:: CRITICAL: rollback also failed. Agent is in an unknown state."
+  write_status "ROLLBACK_CRITICAL_FAILED" "Agent in unknown state; manual intervention required"
+  exit 9
 fi
 
-echo "::error:: CRITICAL: rollback also failed. Agent is in an unknown state."
-write_status "ROLLBACK_CRITICAL_FAILED" "Agent in unknown state; manual intervention required"
-exit 9
+# ── apt/yum: no auto-rollback (Phase 2 Part 2 v1) ──────────────────────────
+# Auto-downgrade via package manager requires the OLD version to be in the
+# repo cache + --allow-downgrades flag. Possible but not done in v1; the
+# operator-visible status gives them the exact one-liner to recover.
+case "$INSTALL_METHOD" in
+  apt)
+    DOWNGRADE_CMD="sudo apt-get install -y --allow-downgrades squid-tentacle=${OLD_VERSION_APT:-<previous-version>} && sudo systemctl restart $SERVICE_NAME"
+    ;;
+  yum)
+    DOWNGRADE_CMD="sudo dnf downgrade -y squid-tentacle-${OLD_VERSION_RPM:-<previous-version>} && sudo systemctl restart $SERVICE_NAME"
+    ;;
+  *)
+    DOWNGRADE_CMD="(unknown method '$INSTALL_METHOD' — manual intervention required)"
+    ;;
+esac
+
+echo "::error:: $INSTALL_METHOD method — automatic rollback not implemented. To recover:"
+echo "  $DOWNGRADE_CMD"
+write_status "ROLLBACK_NEEDED" "$INSTALL_METHOD upgrade failed health check; manual rollback required: $DOWNGRADE_CMD"
+exit 4

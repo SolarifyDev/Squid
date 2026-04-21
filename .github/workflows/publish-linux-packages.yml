@@ -31,8 +31,14 @@ name: Build & publish Linux packages (deb / rpm + APT/RPM repo)
 # ==============================================================================
 
 on:
-  release:
-    types: [published]
+  # Trigger automatically when the tarball-publishing workflow finishes.
+  # NOT using `release: [published]` because releases created via GITHUB_TOKEN
+  # do NOT fire release events (GitHub's infinite-loop safeguard). workflow_run
+  # DOES fire regardless of token type, which is why verify-linux-packages.yml
+  # uses the same trigger pattern.
+  workflow_run:
+    workflows: ['Build & Publish Linux Tentacle']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -49,12 +55,45 @@ env:
   REPO_COMPONENT: main
 
 concurrency:
-  group: publish-linux-packages-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  # Serialise per-tag so back-to-back pushes of the same tag can't race.
+  # Falls back to head_branch for workflow_run (the tag ref that triggered
+  # the upstream workflow) and inputs.tag for manual dispatch.
+  group: publish-linux-packages-${{ github.event.workflow_run.head_branch || inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+# Gate the whole workflow: only proceed when the upstream run SUCCEEDED and
+# was triggered by a tag push (not a main-branch push, which doesn't produce
+# a GitHub Release to re-package). Manual dispatch always runs.
 jobs:
+  # Single guard job that short-circuits the rest if the trigger conditions
+  # aren't met. Downstream jobs depend on this via `needs:` so a skipped
+  # guard = skipped pipeline.
+  guard:
+    runs-on: ubuntu-latest
+    # Proceed if:
+    #   (a) manual workflow_dispatch — operator knows what they're doing, OR
+    #   (b) upstream workflow SUCCEEDED AND its head_branch isn't 'main'.
+    # The head_branch != 'main' filter is how we tell "tag push" from
+    # "branch push to main" — both trigger the upstream, but only the tag
+    # push produces a Release for us to re-package. Branch names that
+    # aren't main (feature branches) don't push to origin main so they
+    # can't actually trigger the upstream workflow in practice, but the
+    # check is belt-and-suspenders in case of future trigger changes.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch != 'main')
+    steps:
+      - name: Summarise why this run is proceeding
+        run: |
+          echo "event:       ${{ github.event_name }}"
+          echo "head_branch: ${{ github.event.workflow_run.head_branch || '<manual dispatch>' }}"
+          echo "conclusion:  ${{ github.event.workflow_run.conclusion || '<manual dispatch>' }}"
+
   # ── Job 1: Build signed deb + rpm per arch ───────────────────────────────
   build:
+    needs: guard
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
