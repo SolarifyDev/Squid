@@ -66,9 +66,17 @@ SERVICE_NAME="{{SERVICE_NAME}}"
 SERVICE_USER="{{SERVICE_USER}}"
 HEALTHCHECK_URL="{{HEALTHCHECK_URL}}"
 
-LOCK_FILE="/tmp/squid-tentacle-upgrade-$TARGET_VERSION.lock"
 STATUS_DIR="/var/lib/squid-tentacle"
 STATUS_FILE="$STATUS_DIR/last-upgrade.json"
+# Lock file lives in the service-user-owned state dir (NOT /tmp) so a stale
+# root-owned lock left by a previous debug session / failed scope run can't
+# block squid-tentacle's Phase A from starting a new upgrade. /tmp's sticky
+# bit means the service user can't unlink a root-owned file there without
+# sudo — a state we'd then need another sudoers rule to recover from.
+# STATUS_DIR is always squid-tentacle-owned (set up by install-tentacle.sh),
+# and Phase B's touch of an existing squid-tentacle-owned file doesn't
+# change ownership, so the lock stays squid-tentacle-writable forever.
+LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
 # Deterministic tempfile path so the sudoers `mv` rule can match precisely:
@@ -111,8 +119,18 @@ if [ "${SYSTEMD_VERSION:-0}" -lt 239 ]; then
 fi
 
 # ── Idempotency guard ────────────────────────────────────────────────────────
-touch "$LOCK_FILE"
-exec {LOCK_FD}>"$LOCK_FILE"
+# Ensure lock dir exists (fresh installs that pre-date the post-Phase-2-Part-2
+# install-tentacle.sh may not have created it yet). sudoers allows this via
+# `sudo mkdir -p /var/lib/squid-tentacle` — if the rule isn't there we
+# swallow the failure and the subsequent `touch` surfaces a clearer error.
+sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
+
+# Open read-only for flock. flock works on read-only fds, so this succeeds
+# even if a stray root-owned lock file blocks our write. The touch-if-missing
+# creates the file the FIRST time (while the parent dir is squid-tentacle-
+# owned, the file inherits our ownership).
+[ -f "$LOCK_FILE" ] || touch "$LOCK_FILE"
+exec {LOCK_FD}< "$LOCK_FILE"
 
 if ! flock -n "$LOCK_FD"; then
   echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."

@@ -127,8 +127,21 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // would drop the `flock -n` line and go back to TOCTOU + orphan files.
         RenderedScript.ShouldContain("flock -n",
             customMessage: "must use kernel flock for idempotency, not file-existence check");
-        RenderedScript.ShouldContain("/tmp/squid-tentacle-upgrade-",
-            customMessage: "lock file must be in /tmp (world-writable) to avoid sudo-permission gymnastics");
+        // Lock file lives in the squid-tentacle-owned state dir, NOT /tmp.
+        // Production hit: a stale root-owned /tmp lock from a previous debug
+        // session blocked the service user from starting new upgrades
+        // ("touch: Permission denied") because /tmp's sticky bit prevents
+        // non-owners from overwriting. The state dir's ownership invariant
+        // (always squid-tentacle) eliminates that class of bug.
+        // LOCK_FILE is defined as $STATUS_DIR/upgrade-$TARGET_VERSION.lock,
+        // so the rendered text has `STATUS_DIR/upgrade-` literally (and
+        // STATUS_DIR resolves to /var/lib/squid-tentacle at runtime).
+        RenderedScript.ShouldContain("LOCK_FILE=\"$STATUS_DIR/upgrade-",
+            customMessage: "lock file must live under $STATUS_DIR (service-user-owned /var/lib/squid-tentacle) so ownership stays squid-tentacle across scope re-exec");
+        RenderedScript.ShouldContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
+            customMessage: "STATUS_DIR must resolve to the canonical path install-tentacle.sh pre-creates with squid-tentacle ownership");
+        RenderedScript.ShouldNotContain("/tmp/squid-tentacle-upgrade-",
+            customMessage: "/tmp lock path was abandoned — sticky-bit + Phase B root runs was a sharp edge we shouldn't regress to");
     }
 
     [Fact]
