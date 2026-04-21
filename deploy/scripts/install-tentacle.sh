@@ -78,6 +78,64 @@ install_runtime_deps || true
 #
 # For "latest", use GitHub's /releases/latest/download redirect — always resolves.
 # For a specific version, try the tag as-given first; if that 404s, fall back to "v"-prefixed.
+SQUID_BASE_URL="${SQUID_BASE_URL:-https://squid.solarifyai.com}"
+
+# ── Optimistic package-manager install (Phase 2 Part 2 symmetry) ─────────────
+# Try our signed APT/RPM repo BEFORE falling back to a direct GitHub Releases
+# tarball download. squid.solarifyai.com is Cloudflare-fronted so CN/slow-region
+# clients are 5-10x faster via the package manager than via github.com/releases.
+# Matches the 3-method priority order the in-UI upgrade flow uses:
+# apt → yum → tarball.
+#
+# Only attempted for VERSION=latest because our reprepro config keeps a single
+# version per (package, arch) — `apt install squid-tentacle=1.3.8` fails if
+# stable currently has 1.4.1. Explicit --version installs keep going through
+# tarball which is tag-pinned on GitHub Releases (retained per-tag forever).
+#
+# Operator can force-skip the package-manager path with NO_PKG_INSTALL=1 to
+# reproduce the exact pre-Phase-2-Part-2 behaviour (for debugging).
+PKG_INSTALL_DONE=0
+if [ "$VERSION" = "latest" ] && [ "${NO_PKG_INSTALL:-0}" != "1" ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "Attempting install via Squid APT repo (${SQUID_BASE_URL}/apt) — typically faster than GitHub direct..."
+
+        install -m 0755 -d /etc/apt/keyrings
+        if curl -fL --connect-timeout 15 --max-time 60 "${SQUID_BASE_URL}/public.key" 2>/dev/null \
+             | gpg --dearmor -o /etc/apt/keyrings/squid.gpg 2>/dev/null; then
+            chmod a+r /etc/apt/keyrings/squid.gpg
+            ARCH_DEB=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+            echo "deb [arch=${ARCH_DEB} signed-by=/etc/apt/keyrings/squid.gpg] ${SQUID_BASE_URL}/apt stable main" \
+                > /etc/apt/sources.list.d/squid.list
+
+            if apt-get update -qq && \
+               DEBIAN_FRONTEND=noninteractive apt-get install -y ${BINARY_NAME}; then
+                echo "Installed ${BINARY_NAME} via APT"
+                PKG_INSTALL_DONE=1
+            else
+                echo "APT install failed — falling back to tarball from GitHub Releases"
+            fi
+        else
+            echo "Failed to fetch ${SQUID_BASE_URL}/public.key — APT repo unavailable, falling back to tarball"
+            rm -f /etc/apt/sources.list.d/squid.list /etc/apt/keyrings/squid.gpg 2>/dev/null
+        fi
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+        echo "Attempting install via Squid YUM repo (${SQUID_BASE_URL}/rpm)..."
+
+        if curl -fL --connect-timeout 15 --max-time 60 "${SQUID_BASE_URL}/rpm/squid-tentacle.repo" \
+             -o /etc/yum.repos.d/squid-tentacle.repo 2>/dev/null; then
+            YUM_BIN=$(command -v dnf || command -v yum)
+            if $YUM_BIN install -y ${BINARY_NAME}; then
+                echo "Installed ${BINARY_NAME} via $YUM_BIN"
+                PKG_INSTALL_DONE=1
+            else
+                echo "$YUM_BIN install failed — falling back to tarball"
+                rm -f /etc/yum.repos.d/squid-tentacle.repo 2>/dev/null
+            fi
+        fi
+    fi
+fi
+
+# ── Tarball fallback — only if no package manager did the install ────────────
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -105,45 +163,47 @@ download_ok() {
          "$1" -o "$ARCHIVE_PATH"
 }
 
-if [ "$VERSION" = "latest" ]; then
-    URL="${DOWNLOAD_BASE}/latest/download/${BINARY_NAME}-${RID}.tar.gz"
-    echo "Downloading from ${URL}..."
+if [ "$PKG_INSTALL_DONE" != "1" ]; then
+    if [ "$VERSION" = "latest" ]; then
+        URL="${DOWNLOAD_BASE}/latest/download/${BINARY_NAME}-${RID}.tar.gz"
+        echo "Downloading from ${URL}..."
 
-    if ! download_ok "$URL"; then
-        echo ""
-        echo "Error: Failed to download latest release from ${URL}"
-        echo "Possible causes (in order of likelihood):"
-        echo "  1. GitHub + CDN slow from this region (China) → retry or pin --version X.Y.Z for a specific tag"
-        echo "  2. No 'latest' release exists (check ${DOWNLOAD_BASE}/latest)"
-        echo "  3. Outbound HTTPS to github.com blocked by firewall/proxy"
-        echo "  4. For air-gapped installs, set DOWNLOAD_BASE to a private mirror"
-        exit 1
-    fi
-else
-    # Try both tag formats: plain version (e.g. 1.2.7) and v-prefixed (e.g. v1.2.7).
-    URL_PLAIN="${DOWNLOAD_BASE}/download/${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
-    URL_V_PREFIXED="${DOWNLOAD_BASE}/download/v${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
-
-    echo "Downloading from ${URL_PLAIN}..."
-
-    if ! download_ok "$URL_PLAIN"; then
-        echo "Tag '${VERSION}' not found (or network error), retrying with 'v${VERSION}'..."
-        echo "Downloading from ${URL_V_PREFIXED}..."
-
-        if ! download_ok "$URL_V_PREFIXED"; then
+        if ! download_ok "$URL"; then
             echo ""
-            echo "Error: Could not download ${VERSION} from either tag form."
-            echo "  Tried: ${URL_PLAIN}"
-            echo "  Tried: ${URL_V_PREFIXED}"
-            echo "  Releases list: ${DOWNLOAD_BASE}"
+            echo "Error: Failed to download latest release from ${URL}"
+            echo "Possible causes (in order of likelihood):"
+            echo "  1. GitHub + CDN slow from this region (China) → retry or pin --version X.Y.Z for a specific tag"
+            echo "  2. No 'latest' release exists (check ${DOWNLOAD_BASE}/latest)"
+            echo "  3. Outbound HTTPS to github.com blocked by firewall/proxy"
+            echo "  4. For air-gapped installs, set DOWNLOAD_BASE to a private mirror"
             exit 1
         fi
-    fi
-fi
+    else
+        # Try both tag formats: plain version (e.g. 1.2.7) and v-prefixed (e.g. v1.2.7).
+        URL_PLAIN="${DOWNLOAD_BASE}/download/${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
+        URL_V_PREFIXED="${DOWNLOAD_BASE}/download/v${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
 
-# Extract (tar contents are flat — no wrapper dir)
-mkdir -p "$INSTALL_DIR"
-tar xzf "$ARCHIVE_PATH" -C "$INSTALL_DIR"
+        echo "Downloading from ${URL_PLAIN}..."
+
+        if ! download_ok "$URL_PLAIN"; then
+            echo "Tag '${VERSION}' not found (or network error), retrying with 'v${VERSION}'..."
+            echo "Downloading from ${URL_V_PREFIXED}..."
+
+            if ! download_ok "$URL_V_PREFIXED"; then
+                echo ""
+                echo "Error: Could not download ${VERSION} from either tag form."
+                echo "  Tried: ${URL_PLAIN}"
+                echo "  Tried: ${URL_V_PREFIXED}"
+                echo "  Releases list: ${DOWNLOAD_BASE}"
+                exit 1
+            fi
+        fi
+    fi
+
+    # Extract (tar contents are flat — no wrapper dir)
+    mkdir -p "$INSTALL_DIR"
+    tar xzf "$ARCHIVE_PATH" -C "$INSTALL_DIR"
+fi
 
 # Make binaries executable. Calamari is spawned by Tentacle at runtime, so it also needs +x.
 chmod +x "$INSTALL_DIR/Squid.Tentacle"
