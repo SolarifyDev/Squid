@@ -83,8 +83,21 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 ARCHIVE_PATH="$TMP_DIR/tentacle.tar.gz"
 
+# curl options for robustness against slow cross-border routes (China ↔
+# GitHub can easily run 30-60s for a fresh connection + CDN handoff):
+#   --connect-timeout 15  — cap TLS handshake (separate from --max-time)
+#   --max-time 300        — 5 min overall budget per attempt (65 MB tarball
+#                           over a slow link can take 2-3 min)
+#   --retry 3 --retry-delay 5 --retry-all-errors
+#                         — retry on network errors + 4xx + 5xx (default
+#                           retry only covers transient network failures)
+# Stderr is NOT silenced anymore — the previous `2>/dev/null` hid the real
+# reason for failure (TLS timeout, DNS, cert, ...) behind a generic
+# "Failed to download" message.
 download_ok() {
-    curl -fsSL --retry 3 "$1" -o "$ARCHIVE_PATH" 2>/dev/null
+    curl -fL --connect-timeout 15 --max-time 300 \
+         --retry 3 --retry-delay 5 --retry-all-errors \
+         "$1" -o "$ARCHIVE_PATH"
 }
 
 if [ "$VERSION" = "latest" ]; then
@@ -92,8 +105,13 @@ if [ "$VERSION" = "latest" ]; then
     echo "Downloading from ${URL}..."
 
     if ! download_ok "$URL"; then
-        echo "Error: Failed to download latest release."
-        echo "  Check: ${DOWNLOAD_BASE}/latest"
+        echo ""
+        echo "Error: Failed to download latest release from ${URL}"
+        echo "Possible causes (in order of likelihood):"
+        echo "  1. GitHub + CDN slow from this region (China) → retry or pin --version X.Y.Z for a specific tag"
+        echo "  2. No 'latest' release exists (check ${DOWNLOAD_BASE}/latest)"
+        echo "  3. Outbound HTTPS to github.com blocked by firewall/proxy"
+        echo "  4. For air-gapped installs, set DOWNLOAD_BASE to a private mirror"
         exit 1
     fi
 else
@@ -104,12 +122,15 @@ else
     echo "Downloading from ${URL_PLAIN}..."
 
     if ! download_ok "$URL_PLAIN"; then
-        echo "Tag '${VERSION}' not found, retrying with 'v${VERSION}'..."
+        echo "Tag '${VERSION}' not found (or network error), retrying with 'v${VERSION}'..."
         echo "Downloading from ${URL_V_PREFIXED}..."
 
         if ! download_ok "$URL_V_PREFIXED"; then
-            echo "Error: Neither tag '${VERSION}' nor 'v${VERSION}' has a release asset for ${RID}."
-            echo "  Available releases: ${DOWNLOAD_BASE}"
+            echo ""
+            echo "Error: Could not download ${VERSION} from either tag form."
+            echo "  Tried: ${URL_PLAIN}"
+            echo "  Tried: ${URL_V_PREFIXED}"
+            echo "  Releases list: ${DOWNLOAD_BASE}"
             exit 1
         fi
     fi
