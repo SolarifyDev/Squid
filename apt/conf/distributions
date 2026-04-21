@@ -1,0 +1,8 @@
+Origin: Squid Tentacle
+Label: Squid Tentacle APT repository
+Suite: stable
+Codename: stable
+Architectures: amd64 arm64
+Components: main
+Description: Squid Tentacle Linux deployment agent
+SignWith: B6344A200A22E20AB750AC1DEE1DC4EB3E3D417B

@@ -1,0 +1,253 @@
+#!/bin/bash
+set -euo pipefail
+
+# Squid Tentacle Linux Installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | sudo bash
+# Or:    sudo bash install-tentacle.sh [--version 1.2.7] [--install-dir /opt/squid-tentacle]
+
+BINARY_NAME="squid-tentacle"
+VERSION="${TENTACLE_VERSION:-latest}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/squid-tentacle}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://github.com/SolarifyDev/Squid/releases}"
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --version) VERSION="$2"; shift 2 ;;
+        --install-dir) INSTALL_DIR="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+# Detect architecture
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)  RID="linux-x64" ;;
+    aarch64) RID="linux-arm64" ;;
+    arm64)   RID="linux-arm64" ;;
+    *) echo "Error: Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# Require root for default install dir
+if [ "$INSTALL_DIR" = "/opt/squid-tentacle" ] && [ "$(id -u)" -ne 0 ]; then
+    echo "Error: Root privileges required. Run with:"
+    echo "  curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | sudo bash"
+    echo ""
+    echo "Or install to a user directory:"
+    echo "  curl ... | INSTALL_DIR=\$HOME/.squid-tentacle bash"
+    exit 1
+fi
+
+echo "=== Squid Tentacle Installer ==="
+echo "Version:  ${VERSION}"
+echo "Arch:     ${RID}"
+echo "Install:  ${INSTALL_DIR}"
+echo ""
+
+# Install runtime dependencies (.NET 9 self-contained needs libicu + ca-certificates).
+# Detect the host package manager and install silently if libicu is missing.
+install_runtime_deps() {
+    if ldconfig -p 2>/dev/null | grep -q "libicuuc"; then
+        return 0
+    fi
+
+    echo "Installing runtime dependencies (libicu, ca-certificates)..."
+
+    if command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq libicu-dev ca-certificates >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q libicu ca-certificates >/dev/null
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y -q libicu ca-certificates >/dev/null
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache --quiet icu-libs ca-certificates
+    else
+        echo "Warning: couldn't detect package manager — install libicu manually."
+        return 1
+    fi
+}
+
+install_runtime_deps || true
+
+# Resolve download URL.
+# GitHub Actions publishes two tar.gz per arch under each release tag:
+#   squid-tentacle-${VERSION}-${RID}.tar.gz     (versioned)
+#   squid-tentacle-${RID}.tar.gz                (unversioned "latest" copy)
+#
+# For "latest", use GitHub's /releases/latest/download redirect — always resolves.
+# For a specific version, try the tag as-given first; if that 404s, fall back to "v"-prefixed.
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+ARCHIVE_PATH="$TMP_DIR/tentacle.tar.gz"
+
+download_ok() {
+    curl -fsSL --retry 3 "$1" -o "$ARCHIVE_PATH" 2>/dev/null
+}
+
+if [ "$VERSION" = "latest" ]; then
+    URL="${DOWNLOAD_BASE}/latest/download/${BINARY_NAME}-${RID}.tar.gz"
+    echo "Downloading from ${URL}..."
+
+    if ! download_ok "$URL"; then
+        echo "Error: Failed to download latest release."
+        echo "  Check: ${DOWNLOAD_BASE}/latest"
+        exit 1
+    fi
+else
+    # Try both tag formats: plain version (e.g. 1.2.7) and v-prefixed (e.g. v1.2.7).
+    URL_PLAIN="${DOWNLOAD_BASE}/download/${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
+    URL_V_PREFIXED="${DOWNLOAD_BASE}/download/v${VERSION}/${BINARY_NAME}-${VERSION}-${RID}.tar.gz"
+
+    echo "Downloading from ${URL_PLAIN}..."
+
+    if ! download_ok "$URL_PLAIN"; then
+        echo "Tag '${VERSION}' not found, retrying with 'v${VERSION}'..."
+        echo "Downloading from ${URL_V_PREFIXED}..."
+
+        if ! download_ok "$URL_V_PREFIXED"; then
+            echo "Error: Neither tag '${VERSION}' nor 'v${VERSION}' has a release asset for ${RID}."
+            echo "  Available releases: ${DOWNLOAD_BASE}"
+            exit 1
+        fi
+    fi
+fi
+
+# Extract (tar contents are flat — no wrapper dir)
+mkdir -p "$INSTALL_DIR"
+tar xzf "$ARCHIVE_PATH" -C "$INSTALL_DIR"
+
+# Make binaries executable. Calamari is spawned by Tentacle at runtime, so it also needs +x.
+chmod +x "$INSTALL_DIR/Squid.Tentacle"
+[ -f "$INSTALL_DIR/Squid.Calamari" ] && chmod +x "$INSTALL_DIR/Squid.Calamari"
+
+# Create well-known-name symlink inside install dir
+ln -sf "$INSTALL_DIR/Squid.Tentacle" "$INSTALL_DIR/${BINARY_NAME}"
+
+# Expose on PATH
+if [ -d /usr/local/bin ]; then
+    ln -sf "$INSTALL_DIR/${BINARY_NAME}" /usr/local/bin/${BINARY_NAME}
+    echo "Installed: /usr/local/bin/${BINARY_NAME}"
+else
+    echo "Add to PATH: export PATH=\"${INSTALL_DIR}:\$PATH\""
+fi
+
+# Create a dedicated non-login system user that owns cert/config/workspace dirs.
+# The systemd unit can then run with User=${SERVICE_USER} instead of root, so a
+# compromised script payload can't pivot to root on the host. Skipped when
+# --no-user is passed (for dev/test or when an operator wants to manage the
+# identity themselves).
+SERVICE_USER="${SERVICE_USER:-squid-tentacle}"
+if [ "${CREATE_USER:-yes}" = "yes" ]; then
+    if ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+        if command -v useradd >/dev/null 2>&1; then
+            useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
+            echo "Created system user: ${SERVICE_USER}"
+        elif command -v adduser >/dev/null 2>&1; then
+            adduser --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
+            echo "Created system user: ${SERVICE_USER}"
+        fi
+    fi
+fi
+
+# Create the system-scope config directory for multi-instance support.
+# Register + run will read/write here; restricting to owner-only protects the
+# API key and server thumbprint that get persisted after a successful `register`.
+CONFIG_DIR="/etc/squid-tentacle"
+if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR/instances"
+    chmod 700 "$CONFIG_DIR"
+    echo "Created config dir: ${CONFIG_DIR}"
+fi
+
+# Workspace for script staging. Created upfront so the service user owns it
+# (otherwise the first script run does it under root and permissions drift).
+WORKSPACE_DIR="${WORKSPACE_DIR:-/squid/work}"
+mkdir -p "$WORKSPACE_DIR"
+
+# Upgrade state directory — consumed by upgrade-linux-tentacle.sh which writes
+# /var/lib/squid-tentacle/last-upgrade.json on every upgrade attempt. Server
+# reads this file on the next health check to learn the upgrade's outcome
+# after the Halibut connection dies mid-restart. Pre-creating with correct
+# owner avoids a sudo dance in the upgrade script and matches Octopus's
+# "exit-code-to-disk" out-of-band reporting pattern.
+STATE_DIR="/var/lib/squid-tentacle"
+mkdir -p "$STATE_DIR"
+chmod 755 "$STATE_DIR"
+
+# Transfer ownership to the service user if one exists.
+if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$WORKSPACE_DIR" "$INSTALL_DIR" "$STATE_DIR" 2>/dev/null || true
+    echo "Ownership set to ${SERVICE_USER}: ${CONFIG_DIR}, ${WORKSPACE_DIR}, ${INSTALL_DIR}, ${STATE_DIR}"
+fi
+
+# ── Sudoers rule for the upgrade flow ────────────────────────────────────────
+# The upgrade bash script runs as the service user. Its ONLY escalation point
+# is `sudo systemd-run --scope ...` which detaches into a separate cgroup so
+# `systemctl restart squid-tentacle` doesn't kill the script. EVERYTHING after
+# the scope entry runs AS ROOT inside the scope (systemd-run's child is the
+# invoking sudo's uid=0 — so in-scope `sudo` calls are no-ops).
+#
+# This means the sudoers rule can be narrow: permit the single systemd-run
+# escalation + the 3 pre-scope status-file writes (mkdir, mv, chown). Nothing
+# else. No blanket `ALL`, no wildcarded systemctl, no arbitrary mv.
+if getent passwd "$SERVICE_USER" >/dev/null 2>&1 && [ -d /etc/sudoers.d ]; then
+    SUDOERS_FILE="/etc/sudoers.d/squid-tentacle-upgrade"
+    cat > "${SUDOERS_FILE}.tmp" <<SUDOERS_EOF
+# Auto-generated by install-tentacle.sh.
+# Remove this file to disable in-UI upgrades (they'll prompt for password and hang).
+#
+# The scope entry is the only real privilege. Once inside the scope the bash
+# runs as root so no further sudo rules are needed — scope's children inherit
+# uid=0 from the sudo that launched systemd-run.
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemd-run --scope --collect --quiet *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/systemd-run --scope --collect --quiet *
+
+# Pre-scope status file writes (write_status() helper runs before scope entry
+# so it can log IN_PROGRESS / FAILED before the scope even starts).
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mkdir -p ${STATE_DIR}
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv ${STATE_DIR}/.last-upgrade.* ${STATE_DIR}/last-upgrade.json
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/chown ${SERVICE_USER}\:${SERVICE_USER} ${STATE_DIR}/last-upgrade.json
+SUDOERS_EOF
+    # visudo -c validates the file; if it rejects, we skip install rather
+    # than corrupt sudoers (a broken sudoers locks out root on strict configs).
+    if visudo -c -f "${SUDOERS_FILE}.tmp" >/dev/null 2>&1; then
+        chmod 440 "${SUDOERS_FILE}.tmp"
+        mv "${SUDOERS_FILE}.tmp" "${SUDOERS_FILE}"
+        echo "Installed upgrade sudoers rule: ${SUDOERS_FILE}"
+    else
+        echo "Warning: generated sudoers rule failed validation; NOT installed. In-UI upgrades will prompt for password and hang."
+        rm -f "${SUDOERS_FILE}.tmp"
+    fi
+fi
+
+# Verify binary is runnable (use the `help` subcommand — `--help` is routed to RunCommand in Program.cs).
+if command -v ${BINARY_NAME} >/dev/null 2>&1; then
+    if ${BINARY_NAME} help >/dev/null 2>&1; then
+        echo "Verified: ${BINARY_NAME} executable"
+    else
+        echo "Warning: ${BINARY_NAME} installed but did not run successfully."
+        echo "  Check glibc version (.NET 9 self-contained requires glibc 2.31+):"
+        echo "    ldd --version | head -1"
+    fi
+fi
+
+echo ""
+echo "=== Installation Complete ==="
+echo ""
+echo "Next steps:"
+# `sudo` on register is required — without it the persisted config lands in
+# ~/.config/squid-tentacle/... (invoking user's home), but the systemd unit
+# runs as the dedicated squid-tentacle system user, which reads from
+# /etc/squid-tentacle/... Mismatch → service crash-loops on
+# UnauthorizedAccessException. Register as root → config in /etc → post-register
+# chown hands it to the service user.
+echo "  sudo squid-tentacle register \\"
+echo "    --server https://your-squid-server:7078 \\"
+echo "    --api-key API-XXXX \\"
+echo "    --role web-server \\"
+echo "    --environment Production \\"
+echo "    --flavor LinuxTentacle"
+echo "  sudo squid-tentacle service install"

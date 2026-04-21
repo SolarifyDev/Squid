@@ -1,0 +1,6 @@
+Archive: stable
+Component: main
+Origin: Squid Tentacle
+Label: Squid Tentacle APT repository
+Architecture: amd64
+Description: Squid Tentacle Linux deployment agent
