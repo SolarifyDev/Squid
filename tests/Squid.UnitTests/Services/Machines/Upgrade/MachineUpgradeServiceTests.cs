@@ -650,6 +650,16 @@ public sealed class MachineUpgradeServiceTests
         // shutdown) — NOT an error. Only the outcome log should fire
         // (at Information level) with status=Exception; no Log.Error
         // should pollute ops dashboards.
+        //
+        // Filter the assertion by the `[UpgradeAudit]` message-template
+        // prefix (same approach as the sibling _Exception_ test above) —
+        // Serilog.Log.Logger is a GLOBAL static, so any test running in
+        // parallel that emits its own Log.Error through unrelated code
+        // would pollute our sink and trip an unscoped
+        // `ShouldNotContain(... Level == Error)`. Restricting to audit-
+        // tagged events makes this test assert ONLY on
+        // MachineUpgradeService's behaviour regardless of what else is
+        // running in the xUnit parallel group.
         var originalLogger = Serilog.Log.Logger;
         var sink = new CapturingLogSink();
         Serilog.Log.Logger = new Serilog.LoggerConfiguration()
@@ -666,8 +676,10 @@ public sealed class MachineUpgradeServiceTests
             await Should.ThrowAsync<OperationCanceledException>(() =>
                 _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 1 }, CancellationToken.None));
 
-            sink.Events.ShouldNotContain(e => e.Level == Serilog.Events.LogEventLevel.Error,
-                "cancellation is not an error — must not emit Log.Error");
+            sink.Events.ShouldNotContain(
+                e => e.Level == Serilog.Events.LogEventLevel.Error
+                  && e.MessageTemplate.Text.Contains("[UpgradeAudit]"),
+                "cancellation is not an error — MachineUpgradeService must not emit a [UpgradeAudit] Log.Error event");
         }
         finally
         {
