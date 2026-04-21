@@ -184,17 +184,25 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     private static MachineUpgradeOutcome InterpretMidScriptDisconnect(Machine machine, HalibutClientException ex)
     {
-        // Halibut disconnect AFTER StartScriptAsync acked is EXPECTED — the
-        // agent restarts the squid-tentacle service as part of the upgrade.
-        // Treat as Initiated; the next health check confirms whether the new
-        // version came up.
-        Log.Information("[Upgrade] Halibut disconnect mid-script for {Machine} (expected on service restart): {Reason}", machine.Name, ex.Message);
+        // Halibut disconnect AFTER StartScriptAsync acked is EXPECTED — Phase 1
+        // the upgrade script detaches into a transient systemd scope via
+        // `exec sudo systemd-run --scope`; the scoped continuation restarts the
+        // tentacle service (safely, since the scope is in a separate cgroup).
+        // The original Halibut-connected bash lives in the tentacle's own cgroup,
+        // so it dies when the service restarts — expected and necessary.
+        //
+        // The scope continues independently: atomic swap → systemctl restart →
+        // health check → version verify → writes /var/lib/squid-tentacle/last-upgrade.json.
+        // The NEXT tentacle health check invalidates the agent-version cache
+        // (AgentVersionMayHaveChanged=true below), triggers a fresh Capabilities
+        // probe, and the reported version confirms success.
+        Log.Information("[Upgrade] Halibut disconnect mid-script for {Machine} (expected — scope detached and service restart in progress): {Reason}", machine.Name, ex.Message);
 
         return new MachineUpgradeOutcome
         {
             Status = MachineUpgradeStatus.Initiated,
-            Detail = "Upgrade dispatched; agent disconnected mid-script as expected during restart. Verify outcome via next health check.",
-            AgentVersionMayHaveChanged = true   // script reached restart phase → version most likely changed
+            Detail = "Upgrade dispatched to transient scope; agent disconnected mid-script as expected during restart. Outcome confirmed on next health check via reported version.",
+            AgentVersionMayHaveChanged = true   // scope survives restart and will complete swap → version most likely changed
         };
     }
 
