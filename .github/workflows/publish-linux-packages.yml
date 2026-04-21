@@ -192,12 +192,26 @@ jobs:
 
       - name: Sign .rpm
         run: |
-          echo "%_gpg_name ${KEY_EMAIL}" > ~/.rpmmacros
-          # rpmsign needs the key with no passphrase (we use --no-protection above)
-          # AND needs --define "_gpg_sign_cmd_extra_args" to pass --pinentry-mode loopback
-          # for non-TTY environments.
-          echo "%__gpg_sign_cmd %{__gpg} gpg --batch --pinentry-mode loopback --no-armor --no-secmem-warning --local-user ${KEY_EMAIL} --sign --detach-sign --output %{__signature_filename} %{__plaintext_filename}" >> ~/.rpmmacros
+          # rpmsign config: tell it which key to use + override gpg invocation
+          # for headless / passphrase-less use. Without --pinentry-mode loopback
+          # gpg tries to attach a TTY and fails on the Actions runner.
+          cat > ~/.rpmmacros <<MACROS
+          %_gpg_name ${KEY_EMAIL}
+          %__gpg_sign_cmd %{__gpg} gpg --batch --pinentry-mode loopback --no-armor --no-secmem-warning --local-user ${KEY_EMAIL} --sign --detach-sign --output %{__signature_filename} %{__plaintext_filename}
+          MACROS
+
           rpmsign --addsign *.rpm
+
+          # `rpm --checksig` verifies BOTH the digest (always OK for a freshly-
+          # built file) AND the GPG signature. The signature check requires the
+          # signer's public key to be in **rpm's own keyring** (separate from
+          # the GnuPG keyring rpmsign just signed with). Without this import,
+          # rpm reports "digests SIGNATURES NOT OK" even though the package
+          # *is* signed correctly — the failure is purely in our local
+          # verification step, not the published signature.
+          gpg --export --armor "${KEY_EMAIL}" | sudo tee /tmp/squid-pubkey.asc > /dev/null
+          sudo rpm --import /tmp/squid-pubkey.asc
+
           rpm --checksig *.rpm
 
       - name: Compute SHA256 sidecars
