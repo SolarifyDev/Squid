@@ -21,18 +21,26 @@ namespace Squid.Core.Services.Machines.Upgrade.Methods;
 /// </remarks>
 public sealed class YumUpgradeMethod : ILinuxUpgradeMethod
 {
+    /// <summary>
+    /// RPM packaging release iteration — must match the <c>-1</c> in
+    /// <c>publish-linux-packages.yml</c>'s
+    /// <c>--package "squid-tentacle-${V}-1.${arch}.rpm"</c>. If we ever rev
+    /// that, this constant moves with it.
+    /// <para><b>Pinned by</b>
+    /// <c>YumUpgradeMethodTests.PackagingRelease_PinnedToWorkflowContract</c>
+    /// — the test asserts this value matches the literal in the workflow
+    /// YAML so a drift between producer (CI) and consumer (upgrade script)
+    /// can't pass CI silently and cause every yum upgrade to fall through
+    /// to tarball.</para>
+    /// </summary>
+    public const string PackagingRelease = "1";
+
     public string Name => "yum";
 
     public bool RequiresExplicitSwap => false;
 
     public string RenderDetectAndInstall(string targetVersion)
     {
-        // RPM packaging release iteration — must match the `-1` in
-        // publish-linux-packages.yml's `--package "squid-tentacle-${V}-1.${arch}.rpm"`.
-        // If we ever rev that, this constant moves with it. Hardcoding here
-        // is fine because the symmetry with the producer is what matters,
-        // and the producer is in the same repo.
-        const string packagingRelease = "1";
 
         return $$"""
                  if [ "$INSTALL_OK" != "1" ]; then
@@ -41,13 +49,13 @@ public sealed class YumUpgradeMethod : ILinuxUpgradeMethod
                    elif command -v yum >/dev/null 2>&1; then YUM_BIN=yum
                    fi
                    if [ -n "$YUM_BIN" ] && [ -f /etc/yum.repos.d/squid-tentacle.repo ]; then
-                     echo "[upgrade-method:yum] Squid RPM repo configured — attempting \`$YUM_BIN install squid-tentacle-{{targetVersion}}-{{packagingRelease}}\`"
+                     echo "[upgrade-method:yum] Squid RPM repo configured — attempting \`$YUM_BIN install squid-tentacle-{{targetVersion}}-{{PackagingRelease}}\`"
                      OLD_VERSION_RPM=$(rpm -q squid-tentacle --qf '%{VERSION}-%{RELEASE}' 2>/dev/null || echo "<none>")
                      echo "[upgrade-method:yum] Pre-upgrade version: $OLD_VERSION_RPM"
-                     if sudo $YUM_BIN install -y "squid-tentacle-{{targetVersion}}-{{packagingRelease}}"; then
+                     if sudo $YUM_BIN install -y "squid-tentacle-{{targetVersion}}-{{PackagingRelease}}"; then
                        INSTALL_OK=1
                        INSTALL_METHOD=yum
-                       echo "[upgrade-method:yum] Installed squid-tentacle-{{targetVersion}}-{{packagingRelease}} via $YUM_BIN"
+                       echo "[upgrade-method:yum] Installed squid-tentacle-{{targetVersion}}-{{PackagingRelease}} via $YUM_BIN"
                      else
                        echo "[upgrade-method:yum] $YUM_BIN install failed (exit $?); falling through to next method"
                      fi
