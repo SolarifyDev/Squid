@@ -352,6 +352,15 @@ jobs:
       - name: Configure reprepro
         run: |
           mkdir -p repo/apt/conf
+          # Limit: 5 — keep the last 5 versions in the pool.
+          # Without this, reprepro defaults to `Limit: 1` and REMOVES the
+          # previous version's .deb on every publish — which breaks the
+          # apt rollback path our upgrade script documents. If an operator
+          # follows the printed `apt-get install --allow-downgrades
+          # squid-tentacle=<OLD>` command after a failed upgrade, the old
+          # .deb must still be in the repo or the install fails with
+          # "Version '<OLD>' was not found". 5 versions = ~6 weeks of
+          # history at a weekly cadence, generous buffer.
           cat > repo/apt/conf/distributions <<EOF
           Origin: Squid Tentacle
           Label: Squid Tentacle APT repository
@@ -361,6 +370,7 @@ jobs:
           Components: ${REPO_COMPONENT}
           Description: Squid Tentacle Linux deployment agent
           SignWith: ${KEY_FP}
+          Limit: 5
           EOF
           cat > repo/apt/conf/options <<EOF
           verbose
@@ -379,9 +389,29 @@ jobs:
           done
 
       # ─── RPM repo ──────────────────────────────────────────────────────────
-      - name: Copy .rpm + regenerate repodata
+      - name: Copy .rpm + retention pruning + regenerate repodata
+        env:
+          RPM_KEEP_COUNT: 5
         run: |
           cp packages/*.rpm repo/rpm/
+
+          # Retention: keep the last $RPM_KEEP_COUNT versions per arch. Without
+          # this, every release adds a fresh .rpm while leaving all history
+          # → gh-pages grows unbounded and hits GitHub's 5GB soft limit after
+          # roughly a year of weekly releases. Mirrors reprepro's `Limit: 5`
+          # policy on the APT side so apt/yum rollback windows are symmetric.
+          cd repo/rpm
+          for arch in x86_64 aarch64; do
+            # sort -rV: reverse version-aware sort (1.3.10 > 1.3.9, not > 1.3.1 as
+            # plain sort would do). tail -n +$((KEEP+1)): skip first $KEEP, rest
+            # go to xargs rm.
+            ls squid-tentacle-*-1.${arch}.rpm 2>/dev/null \
+              | sort -rV \
+              | tail -n "+$((RPM_KEEP_COUNT + 1))" \
+              | xargs -r rm -v
+          done
+          cd -
+
           createrepo_c --update repo/rpm/
 
           # Sign repomd.xml — required for `repo_gpgcheck=1` on clients.
