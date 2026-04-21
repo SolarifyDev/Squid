@@ -42,15 +42,32 @@ public sealed class MultiSyntaxScriptE2ETests : IDisposable
     [Fact]
     public void Python_PrintHello_CapturedInLogs()
     {
+        // Pre-existing flakiness fixed here (sibling to 980dfe3): under parallel
+        // CI load, Python can exit before the async OutputDataReceived handlers
+        // drain the final `print` lines, leaving GetStatus with empty logs.
+        // Two-layer fix matching Python_StdErrOutput_TaggedAsErrorSource:
+        //   1. flush=True — defeat Python's line-buffering race with exit.
+        //   2. Poll GetStatus with a cursor until BOTH expected lines surface
+        //      (or hit 30s timeout) — decouples from process Exited timing.
         if (!IsCommandAvailable("python3", "--version")) return;
 
-        var output = RunAndCollectOutput(
-            "import sys\nprint('hello-from-python')\nprint(f'major={sys.version_info.major}')",
+        var command = MakeCommand(
+            "import sys\nprint('hello-from-python', flush=True)\nprint(f'major={sys.version_info.major}', flush=True)",
             ScriptType.Python);
+        _service.StartScript(command);
+        _createdTickets.Add(command.ScriptTicket);
 
-        output.allText.ShouldContain("hello-from-python");
-        output.allText.ShouldContain("major=3");
-        output.exitCode.ShouldBe(0);
+        var logs = WaitForLogsContainingAll(command.ScriptTicket, new[] { "hello-from-python", "major=3" }, TimeSpan.FromSeconds(30));
+
+        var allText = string.Join("\n", logs.Select(l => l.Text));
+
+        allText.ShouldContain("hello-from-python");
+        allText.ShouldContain("major=3");
+
+        // Exit code is available once the script has run — GetStatus gives it
+        // via status.ExitCode; we read a final status to confirm success.
+        var finalStatus = _service.GetStatus(new ScriptStatusRequest(command.ScriptTicket, 0));
+        finalStatus.ExitCode.ShouldBe(0);
     }
 
     [Fact]
@@ -184,6 +201,34 @@ public sealed class MultiSyntaxScriptE2ETests : IDisposable
 
         var status = _service.GetStatus(new ScriptStatusRequest(command.ScriptTicket, startResp.NextLogSequence));
         return (startResp.Logs.Concat(status.Logs).ToList(), status.ExitCode);
+    }
+
+    /// <summary>
+    /// Polls GetStatus until every expected substring has appeared in the
+    /// collected log stream (or the timeout is hit). Source-agnostic — unlike
+    /// <see cref="WaitForBothLogLines"/>, all substrings can be on the same
+    /// source (both stdout, for example). Drains the log cursor on each poll
+    /// so nothing is re-fetched; returns as soon as every substring is seen.
+    /// </summary>
+    private List<ProcessOutput> WaitForLogsContainingAll(ScriptTicket ticket, IReadOnlyList<string> substrings, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        var collected = new List<ProcessOutput>();
+        long cursor = 0;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var status = _service.GetStatus(new ScriptStatusRequest(ticket, cursor));
+            cursor = status.NextLogSequence;
+            collected.AddRange(status.Logs);
+
+            if (substrings.All(s => collected.Any(l => l.Text.Contains(s, StringComparison.Ordinal))))
+                return collected;
+
+            Thread.Sleep(100);
+        }
+
+        return collected;
     }
 
     private bool WaitForLogContaining(ScriptTicket ticket, string substring, TimeSpan timeout)
