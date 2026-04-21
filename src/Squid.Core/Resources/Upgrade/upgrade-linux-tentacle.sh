@@ -175,15 +175,36 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   if [ "$INSTALL_METHOD" = "tarball" ] && [ "$INSTALL_OK" != "1" ]; then
     echo "[upgrade-method:tarball] Pre-flight: probing $DOWNLOAD_URL"
 
-    if ! curl -fsSI --max-time 10 "$DOWNLOAD_URL" >/dev/null 2>&1; then
-      echo "::error:: Target tarball not reachable: $DOWNLOAD_URL"
-      write_status "FAILED" "Target tarball not reachable: $DOWNLOAD_URL"
+    # HEAD probe with retries. GitHub Releases from certain regions
+    # (notably CN behind slow cross-border routes) routinely exceeds 10s
+    # for a single handshake. --retry 2 + --retry-all-errors covers TCP
+    # reset, DNS hiccup, and transient 5xx without false-positive exit 6.
+    # --connect-timeout is separate from --max-time: connect caps the TLS
+    # handshake specifically, max-time caps the whole operation.
+    # Operator can override the URL base via
+    # SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL for air-gap / mirror
+    # scenarios — if they're hitting this line from China, pointing the
+    # env var at a CN mirror fixes it permanently.
+    if ! curl -fsSI --connect-timeout 15 --max-time 30 \
+               --retry 2 --retry-delay 5 --retry-all-errors \
+               "$DOWNLOAD_URL" >/dev/null 2>&1; then
+      echo "::error:: Target tarball not reachable after 2 retries: $DOWNLOAD_URL"
+      echo "::error:: Likely causes:"
+      echo "  1. GitHub Releases is slow from this region (China → try again, or configure APT repo to use squid.solarifyai.com)"
+      echo "  2. Tarball isn't published yet (recent tag — wait 1-2 min for build-publish-linux-tentacle.yml to finish)"
+      echo "  3. Firewall blocks github.com (check outbound HTTPS egress)"
+      echo "  4. For an air-gapped mirror, set SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL on the server pod"
+      write_status "FAILED" "Target tarball not reachable after retries: $DOWNLOAD_URL"
       exit 6
     fi
 
     ARCHIVE="$STAGE/tentacle.tar.gz"
     echo "[upgrade-method:tarball] Downloading $DOWNLOAD_URL ..."
-    curl -fsSL --retry 3 --retry-delay 2 --max-time 120 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
+    # --max-time 300 (was 120): cross-border ~65MB download can hit 2-3 min
+    # from CN at peak hours. 5 min is a generous budget that still fails
+    # loudly for true network blackholes.
+    curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 5 --retry-all-errors \
+         --max-time 300 "$DOWNLOAD_URL" -o "$ARCHIVE" || {
       echo "::error:: Download failed from $DOWNLOAD_URL"
       write_status "FAILED" "Download failed"
       exit 2
