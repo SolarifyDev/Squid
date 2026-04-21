@@ -115,21 +115,26 @@ public sealed class MultiSyntaxScriptE2ETests : IDisposable
     {
         // Confirms we set PYTHONUNBUFFERED=1 — without it `print()` buffers
         // until process exit, which would defeat the live log streaming the
-        // operator UI relies on. The 2-second sleep proves the line appears
-        // BEFORE the script naturally finishes.
+        // operator UI relies on. The sleep proves the line appears BEFORE the
+        // script naturally finishes.
+        //
+        // Timing margin: python3 cold-startup + first print + async-log-drain
+        // + GetStatus polling roundtrip can easily exceed 1.5s on a loaded CI
+        // runner (measured ~1.8s on GitHub Actions ubuntu-latest under load).
+        // 3s sleep with 2500ms wait leaves ~500ms of buffer between "we observe
+        // early-line" and "late-line would appear" — still proves streaming
+        // without racing the scheduler.
         if (!IsCommandAvailable("python3", "--version")) return;
 
-        var script = "import time\nprint('early-line', flush=False)\ntime.sleep(2)\nprint('late-line', flush=False)";
+        var script = "import time\nprint('early-line', flush=False)\ntime.sleep(3)\nprint('late-line', flush=False)";
         var command = MakeCommand(script, ScriptType.Python);
 
         _service.StartScript(command);
         _createdTickets.Add(command.ScriptTicket);
 
-        // Poll within ~1.5 seconds of start — we should already have early-line
-        // even though the script hasn't slept long enough to exit.
-        var observed = WaitForLogContaining(command.ScriptTicket, "early-line", TimeSpan.FromMilliseconds(1500));
+        var observed = WaitForLogContaining(command.ScriptTicket, "early-line", TimeSpan.FromMilliseconds(2500));
 
-        observed.ShouldBeTrue("early-line must stream before the script's sleep finishes (PYTHONUNBUFFERED=1)");
+        observed.ShouldBeTrue("early-line must stream before the script's 3s sleep finishes (PYTHONUNBUFFERED=1)");
     }
 
     [Fact]
