@@ -1,7 +1,33 @@
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Squid.Core.Services.Machines.Upgrade;
+
+/// <summary>
+/// One entry from the agent-side <c>upgrade-events.jsonl</c> file.
+/// Each represents a key transition during an upgrade attempt:
+/// start → method-selected → scope-exec → restart-start → healthz-pass → success.
+/// Server streams these to the UI task activity log in order (B3).
+/// </summary>
+public sealed record UpgradeEvent
+{
+    /// <summary>Timestamp of the event (ISO8601 UTC).</summary>
+    [JsonPropertyName("t")]
+    public DateTimeOffset? Timestamp { get; init; }
+
+    /// <summary>Phase indicator: "A" (pre-scope) or "B" (in scope).</summary>
+    [JsonPropertyName("phase")]
+    public string Phase { get; init; } = string.Empty;
+
+    /// <summary>Short tag identifying the transition: "start", "restart-start", etc.</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = string.Empty;
+
+    /// <summary>Human-readable message for UI display.</summary>
+    [JsonPropertyName("msg")]
+    public string Message { get; init; } = string.Empty;
+}
 
 /// <summary>
 /// Typed projection of the agent-side <c>/var/lib/squid-tentacle/last-upgrade.json</c>
@@ -73,5 +99,33 @@ public sealed record UpgradeStatusPayload
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Deserialise the agent-side JSONL events file (one event per line,
+    /// line order = chronological). Skips malformed / empty lines rather
+    /// than failing — a single corrupted event shouldn't hide the dozen
+    /// others that are fine. Never throws. Returns empty list if input is
+    /// null/empty or every line fails to parse.
+    /// </summary>
+    public static IReadOnlyList<UpgradeEvent> TryParseEvents(string rawJsonl)
+    {
+        if (string.IsNullOrWhiteSpace(rawJsonl)) return Array.Empty<UpgradeEvent>();
+
+        var result = new List<UpgradeEvent>();
+
+        using var reader = new StringReader(rawJsonl);
+        string line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            UpgradeEvent parsed = null;
+            try { parsed = JsonSerializer.Deserialize<UpgradeEvent>(line); } catch { /* skip malformed */ }
+
+            if (parsed != null) result.Add(parsed);
+        }
+
+        return result;
     }
 }

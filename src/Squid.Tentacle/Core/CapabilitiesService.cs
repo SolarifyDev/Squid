@@ -15,26 +15,48 @@ public class CapabilitiesService : ICapabilitiesService
     public const string UpgradeStatusMetadataKey = "upgradeStatus";
 
     /// <summary>
+    /// Key under which the upgrade events JSONL log is exposed in the
+    /// <c>Metadata</c> dictionary (B1, 1.5.0). Contents: one JSON object
+    /// per line, each describing a key transition during the upgrade
+    /// (start, method-try, scope-exec, restart-start, healthz-pass,
+    /// success, etc.). Server streams these to the UI task activity log
+    /// so operators see real-time progress instead of the "silent for
+    /// 20 seconds while scope restarts" gap. Absent when no upgrade
+    /// events have ever been emitted.
+    /// </summary>
+    public const string UpgradeEventsMetadataKey = "upgradeEvents";
+
+    /// <summary>
     /// Canonical location of the on-disk upgrade status file written by
     /// <c>upgrade-linux-tentacle.sh</c>'s <c>write_status</c> helper.
     /// </summary>
     private const string UpgradeStatusFilePath = "/var/lib/squid-tentacle/last-upgrade.json";
 
+    /// <summary>
+    /// JSONL event log written by <c>upgrade-linux-tentacle.sh</c>'s
+    /// <c>emit_event</c> helper — append-only for the duration of one
+    /// upgrade attempt, truncated at Phase A start of the next attempt.
+    /// </summary>
+    private const string UpgradeEventsFilePath = "/var/lib/squid-tentacle/upgrade-events.jsonl";
+
     private readonly Dictionary<string, string> _metadata;
     private readonly Func<string> _upgradeStatusReader;
+    private readonly Func<string> _upgradeEventsReader;
 
     public CapabilitiesService() : this(metadata: null) { }
 
-    public CapabilitiesService(Dictionary<string, string> metadata) : this(metadata, DefaultUpgradeStatusReader) { }
+    public CapabilitiesService(Dictionary<string, string> metadata)
+        : this(metadata, DefaultUpgradeStatusReader, DefaultUpgradeEventsReader) { }
 
     /// <summary>
-    /// Test-friendly ctor: caller can inject a status-file reader to avoid
-    /// touching the real filesystem in unit tests.
+    /// Test-friendly ctor: caller can inject both status-file and events-file
+    /// readers to avoid touching the real filesystem in unit tests.
     /// </summary>
-    internal CapabilitiesService(Dictionary<string, string> metadata, Func<string> upgradeStatusReader)
+    internal CapabilitiesService(Dictionary<string, string> metadata, Func<string> upgradeStatusReader, Func<string> upgradeEventsReader = null)
     {
         _metadata = MergeWithRuntimeCapabilities(metadata);
         _upgradeStatusReader = upgradeStatusReader ?? DefaultUpgradeStatusReader;
+        _upgradeEventsReader = upgradeEventsReader ?? DefaultUpgradeEventsReader;
     }
 
     public CapabilitiesResponse GetCapabilities(CapabilitiesRequest request)
@@ -46,6 +68,10 @@ public class CapabilitiesService : ICapabilitiesService
         var upgradeStatus = _upgradeStatusReader();
         if (!string.IsNullOrEmpty(upgradeStatus))
             metadataForThisCall[UpgradeStatusMetadataKey] = upgradeStatus;
+
+        var upgradeEvents = _upgradeEventsReader();
+        if (!string.IsNullOrEmpty(upgradeEvents))
+            metadataForThisCall[UpgradeEventsMetadataKey] = upgradeEvents;
 
         return new CapabilitiesResponse
         {
@@ -76,6 +102,25 @@ public class CapabilitiesService : ICapabilitiesService
             // any error so a broken filesystem can't degrade the whole
             // Capabilities RPC (which also carries os/shells/version info
             // needed for deployment script selection).
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Read the JSONL events file for the current/last upgrade. Returns
+    /// empty string if no file (no upgrade ever run) or any IO error.
+    /// Same swallow-errors principle as the status reader.
+    /// </summary>
+    private static string DefaultUpgradeEventsReader()
+    {
+        try
+        {
+            return File.Exists(UpgradeEventsFilePath)
+                ? File.ReadAllText(UpgradeEventsFilePath)
+                : string.Empty;
+        }
+        catch
+        {
             return string.Empty;
         }
     }

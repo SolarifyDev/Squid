@@ -232,4 +232,77 @@ public sealed class UpgradeDispatchLockReconcilerTests
         payload.StartedAt.Value.UtcDateTime.ShouldBe(new DateTime(2026, 4, 22, 2, 57, 3, DateTimeKind.Utc));
         payload.ScriptPid.ShouldBe(21539);
     }
+
+    // ── TryParseEvents: JSONL event log parsing (B1) ─────────────────────────
+
+    [Fact]
+    public void TryParseEvents_NullOrEmpty_ReturnsEmptyList()
+    {
+        UpgradeStatusPayload.TryParseEvents(null).Count.ShouldBe(0);
+        UpgradeStatusPayload.TryParseEvents("").Count.ShouldBe(0);
+        UpgradeStatusPayload.TryParseEvents("   \n   \n").Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void TryParseEvents_WellFormedJsonl_DeserialisesInOrder()
+    {
+        // Realistic event log from a successful apt-path upgrade.
+        var raw = """
+            {"t":"2026-04-22T02:57:03Z","phase":"A","kind":"start","msg":"Upgrade to 1.5.0 starting"}
+            {"t":"2026-04-22T02:57:04Z","phase":"A","kind":"method-selected","msg":"Method: apt"}
+            {"t":"2026-04-22T02:57:44Z","phase":"A","kind":"scope-exec","msg":"Detaching to systemd scope"}
+            {"t":"2026-04-22T02:57:47Z","phase":"B","kind":"restart-start","msg":"Running systemctl restart"}
+            {"t":"2026-04-22T02:58:00Z","phase":"B","kind":"healthz-pass","msg":"Service active and healthz OK"}
+            {"t":"2026-04-22T02:58:02Z","phase":"B","kind":"success","msg":"Upgrade to 1.5.0 successful via apt"}
+            """;
+
+        var events = UpgradeStatusPayload.TryParseEvents(raw);
+
+        events.Count.ShouldBe(6);
+        events[0].Kind.ShouldBe("start");
+        events[0].Phase.ShouldBe("A");
+        events[2].Kind.ShouldBe("scope-exec");
+        events[5].Kind.ShouldBe("success");
+        events[5].Message.ShouldContain("1.5.0");
+
+        // Timestamp ordering must be preserved (JSONL is chronological).
+        for (var i = 1; i < events.Count; i++)
+            events[i].Timestamp.Value.ShouldBeGreaterThanOrEqualTo(events[i - 1].Timestamp.Value);
+    }
+
+    [Fact]
+    public void TryParseEvents_SkipsMalformedLines_PreservesValidOnes()
+    {
+        // A corrupted mid-stream line shouldn't hide the events before/after.
+        var raw = """
+            {"t":"2026-04-22T02:57:03Z","phase":"A","kind":"start","msg":"ok"}
+            { this is not valid json
+            {"t":"2026-04-22T02:57:47Z","phase":"B","kind":"restart-start","msg":"ok"}
+            {"broken"
+            {"t":"2026-04-22T02:58:02Z","phase":"B","kind":"success","msg":"ok"}
+            """;
+
+        var events = UpgradeStatusPayload.TryParseEvents(raw);
+
+        events.Count.ShouldBe(3,
+            customMessage: "malformed lines must be skipped, not fail the whole parse — otherwise one bad event hides the progress of the other dozen.");
+        events[0].Kind.ShouldBe("start");
+        events[1].Kind.ShouldBe("restart-start");
+        events[2].Kind.ShouldBe("success");
+    }
+
+    [Fact]
+    public void TryParseEvents_IgnoresBlankLines()
+    {
+        var raw = """
+            {"t":"2026-04-22T02:57:03Z","phase":"A","kind":"start","msg":"ok"}
+
+            {"t":"2026-04-22T02:58:02Z","phase":"B","kind":"success","msg":"ok"}
+
+            """;
+
+        var events = UpgradeStatusPayload.TryParseEvents(raw);
+
+        events.Count.ShouldBe(2);
+    }
 }

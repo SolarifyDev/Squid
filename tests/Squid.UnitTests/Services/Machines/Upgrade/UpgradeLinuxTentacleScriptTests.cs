@@ -609,6 +609,56 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_HasStructuredEventLog_WithKeyTransitions()
+    {
+        // B1 (1.5.0): every key transition emits a JSONL event so the
+        // server can stream progress to the UI. Pin each critical
+        // transition by its kind tag so a refactor that drops any is
+        // visible here immediately.
+        RenderedScript.ShouldContain("EVENTS_FILE=\"$STATUS_DIR/upgrade-events.jsonl\"",
+            customMessage: "events file path must match the CapabilitiesService reader's expectation");
+
+        RenderedScript.ShouldContain("emit_event A start",
+            customMessage: "must emit 'start' at Phase A entry (UI baseline event)");
+        RenderedScript.ShouldContain("emit_event A disk-precheck-pass",
+            customMessage: "disk check success must emit an event so UI shows progress past the pre-flight phase");
+        RenderedScript.ShouldContain("emit_event A method-selected",
+            customMessage: "method selection must emit an event so UI shows which path (apt/yum/tarball) was chosen");
+        RenderedScript.ShouldContain("emit_event A scope-exec",
+            customMessage: "scope detach must emit an event — this is the last thing UI sees before the ~20s Halibut gap");
+        RenderedScript.ShouldContain("emit_event B swapped",
+            customMessage: "Phase B must emit swapped event so UI knows binary is in place, only restart remaining");
+        RenderedScript.ShouldContain("emit_event B restart-start",
+            customMessage: "restart start event — operator sees the critical service-restart moment");
+        RenderedScript.ShouldContain("emit_event B healthz-pass",
+            customMessage: "health-check pass event — operator's confidence signal that new binary is alive");
+        RenderedScript.ShouldContain("emit_event B success",
+            customMessage: "terminal success event — UI can mark task green without waiting for status file");
+    }
+
+    [Fact]
+    public void Script_EventsFile_TruncatedInPhaseAOnly_NotReResetInPhaseB()
+    {
+        // If Phase B truncated the events file on re-exec, all Phase A
+        // events would disappear — UI would lose the early progress
+        // narrative. Phase A truncates via `: | sudo tee > /dev/null`;
+        // Phase B only appends (via printf >> file).
+        RenderedScript.ShouldContain("if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]; then\n  sudo mkdir -p \"$STATUS_DIR\"",
+            customMessage: "events-file truncation must be gated on !SQUID_UPGRADE_SCOPED so Phase B doesn't reset Phase A's events");
+    }
+
+    [Fact]
+    public void Script_EmitEvent_HasHardCapAgainstRunawayLoops()
+    {
+        // Defensive: if a future bug introduces a loop that keeps
+        // emit_event-ing, we must bound disk usage. 50 events is
+        // plenty for any legitimate upgrade (observed ~10 events
+        // per apt-path run).
+        RenderedScript.ShouldContain("EVENTS_MAX=50",
+            customMessage: "emit_event must cap total events per upgrade to prevent a runaway loop from filling the disk");
+    }
+
+    [Fact]
     public void Script_StatusFile_RecordsInstallMethod()
     {
         // The status file's installMethod field tells the server (via
