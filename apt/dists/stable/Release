@@ -2,28 +2,28 @@ Origin: Squid Tentacle
 Label: Squid Tentacle APT repository
 Suite: stable
 Codename: stable
-Date: Wed, 22 Apr 2026 13:50:42 UTC
+Date: Wed, 22 Apr 2026 23:37:17 UTC
 Architectures: amd64 arm64
 Components: main
 Description: Squid Tentacle Linux deployment agent
 MD5Sum:
- 20594b94cf1848df3934797c8ba96e11 633 main/binary-amd64/Packages
- 91f8ab0cc60007a102ef77e3fdc99e58 436 main/binary-amd64/Packages.gz
+ e98e0d9bbed70f7e92c5605d3f313a8e 633 main/binary-amd64/Packages
+ 4f9cf0e454ed0b85cc4e30297a7f4249 436 main/binary-amd64/Packages.gz
  77c9fb903e2d2d0341524664761d840d 163 main/binary-amd64/Release
- cc6d3c1263ad6a16b9cd8f5817f7157b 633 main/binary-arm64/Packages
- 06783e3544f72084a7b96dabdfa1fb27 438 main/binary-arm64/Packages.gz
+ ba68e0f90f5cea6ec0e8f7397809e24a 633 main/binary-arm64/Packages
+ a86b88969f5eb0942e578a17aa84e800 437 main/binary-arm64/Packages.gz
  07ab0e95f799fed75362392c39787fa0 163 main/binary-arm64/Release
 SHA1:
- 254bcd923d7f1ce45f66c3a0210aa36754b5b274 633 main/binary-amd64/Packages
- dcdf484dac6a653022155a8bd17f8023c49c3b21 436 main/binary-amd64/Packages.gz
+ 944eda463dc56376d12728cc9ae05f4fd25806be 633 main/binary-amd64/Packages
+ 6b645432007e8dd1dca48eeffa8ced58c13398df 436 main/binary-amd64/Packages.gz
  af55fdfe8138ba277651884a53adfcd10ef32c01 163 main/binary-amd64/Release
- 63e80180b61316f779085b000e772daca03ca6b2 633 main/binary-arm64/Packages
- 7f596f62436ba9ba222509d1123b7d2c93d1139d 438 main/binary-arm64/Packages.gz
+ 630c799e88a2b6dc82819a3714105a1068bae1be 633 main/binary-arm64/Packages
+ 43a27ff31c09b6d0b864d3f6226ad6eac1e71bf4 437 main/binary-arm64/Packages.gz
  ccefe191de5438e8b467928c0c739e8b49e89aa8 163 main/binary-arm64/Release
 SHA256:
- d81059e1e793a00e05495a00159c80075cdf380459aff99a8bca65dc79f93ba8 633 main/binary-amd64/Packages
- 93e72c1bf914992129870e4a68dceb1900b8f0545e96b313ecf2ab86ec5c1fd6 436 main/binary-amd64/Packages.gz
+ a5ca4270cb43d7158364df0222fba902890b5ae6d1708c73124f0e8f7336e7c3 633 main/binary-amd64/Packages
+ 58cdac294aef366fed488646f92ad42ac88f233166a65668c46aa297d8647780 436 main/binary-amd64/Packages.gz
  fb59e748f95ae5bdcb3811a2e265a4f215fe36a550d4acb06982d79199075fbb 163 main/binary-amd64/Release
- d8ef7521b89a7eeae2757e3e47daa97751eb62aad22bf49fea0965bb76006674 633 main/binary-arm64/Packages
- 0260d54b49079ae8059e5d1c7bbbac1bae55052072035a36d5784c3f3e3dd6dd 438 main/binary-arm64/Packages.gz
+ 383eab18f9f159dd745a62f15663ee1b90df1f9b1e14a5bc92cec517f655fc34 633 main/binary-arm64/Packages
+ f1a6e35c1a41cfeddad07d015406aa0937e43c1489fef9b5c4044c7f90a76be2 437 main/binary-arm64/Packages.gz
  ec4ebc3d8d2a43d4e694840fdf19235fbd093456c3371869def82fcf7434d316 163 main/binary-arm64/Release
