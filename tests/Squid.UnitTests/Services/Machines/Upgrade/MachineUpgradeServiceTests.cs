@@ -2,6 +2,7 @@ using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.Machines.Upgrade;
@@ -25,6 +26,7 @@ public sealed class MachineUpgradeServiceTests
     private readonly Mock<IMachineUpgradeStrategy> _linuxStrategy = new();
     private readonly Mock<IMachineUpgradeStrategy> _k8sStrategy = new();
     private readonly Mock<IRedisSafeRunner> _redisLock = new();
+    private readonly Mock<ISquidBackgroundJobClient> _backgroundJobClient = new();
     private readonly MachineUpgradeService _service;
 
     public MachineUpgradeServiceTests()
@@ -56,7 +58,8 @@ public sealed class MachineUpgradeServiceTests
             _runtimeCache,
             _versionRegistry.Object,
             new[] { _linuxStrategy.Object, _k8sStrategy.Object },
-            _redisLock.Object);
+            _redisLock.Object,
+            _backgroundJobClient.Object);
     }
 
     [Fact]
@@ -245,7 +248,8 @@ public sealed class MachineUpgradeServiceTests
             _runtimeCache,
             _versionRegistry.Object,
             new[] { _linuxStrategy.Object, rogueStrategy.Object },   // BOTH claim TentaclePolling
-            _redisLock.Object);
+            _redisLock.Object,
+            _backgroundJobClient.Object);
         ArrangeMachine(id: 201, style: nameof(CommunicationStyle.TentaclePolling));
 
         var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
@@ -552,6 +556,85 @@ public sealed class MachineUpgradeServiceTests
             s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "strategy must NOT run when lock acquisition failed — that is the entire point of the lock");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_OnVersionChange_SchedulesPostUpgradeHealthCheck()
+    {
+        // 1.6.x UX fix: after a successful dispatch that may have changed
+        // the agent version, the service (a) invalidates the version cache
+        // and (b) schedules a delayed Hangfire health check so the cache
+        // REFRESHES (not just empties) before the next scheduled check.
+        //
+        // Without this, UI showed "unknown" from dispatch-time until the
+        // next scheduled health check — operators had to manually click
+        // "Run health check" to confirm the upgrade landed.
+        //
+        // Pin: a successful strategy outcome with AgentVersionMayHaveChanged
+        // MUST produce a Schedule<IMachineHealthCheckService>(...) call.
+        ArrangeMachine(id: 301, style: nameof(CommunicationStyle.TentaclePolling));
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome
+            {
+                Status = MachineUpgradeStatus.Upgraded,
+                Detail = "upgrade dispatched",
+                AgentVersionMayHaveChanged = true
+            });
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 301 }, CancellationToken.None);
+
+        _backgroundJobClient.Verify(
+            c => c.Schedule<IMachineHealthCheckService>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
+                MachineUpgradeService.PostUpgradeHealthCheckDelay,
+                It.IsAny<string>()),
+            Times.Once(),
+            "successful upgrade dispatch with AgentVersionMayHaveChanged=true must schedule a delayed health check to refresh the server-side version cache");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_VersionUnchanged_DoesNotSchedulePostUpgradeHealthCheck()
+    {
+        // No-op outcomes (UpToDate, NotSupported, Failed pre-dispatch)
+        // shouldn't trigger the refresh — nothing changed, cache is still
+        // accurate. Otherwise we'd wake Hangfire + the health check for
+        // zero reason on every "already on latest" click.
+        ArrangeMachine(id: 302, style: nameof(CommunicationStyle.TentaclePolling));
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome
+            {
+                Status = MachineUpgradeStatus.AlreadyUpToDate,
+                Detail = "already on 1.4.0",
+                AgentVersionMayHaveChanged = false
+            });
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 302 }, CancellationToken.None);
+
+        _backgroundJobClient.Verify(
+            c => c.Schedule<IMachineHealthCheckService>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<string>()),
+            Times.Never(),
+            "no-op outcomes must not schedule a post-upgrade health check — nothing changed");
+    }
+
+    [Fact]
+    public void PostUpgradeHealthCheckDelay_InReasonableRange()
+    {
+        // Too short → health check fires before agent finishes Phase B
+        // restart, sees agent unreachable, cache stays empty, operator
+        // still sees "unknown".
+        // Too long → operator waits unnecessarily.
+        //
+        // Observed Phase B timings: apt/yum ~10-15s, tarball ~20-30s,
+        // Halibut reconnect +5-15s. 45s sits in the sweet spot.
+        MachineUpgradeService.PostUpgradeHealthCheckDelay.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(30),
+            "delay < 30s risks firing before agent finishes Phase B + Halibut reconnect");
+        MachineUpgradeService.PostUpgradeHealthCheckDelay.ShouldBeLessThanOrEqualTo(TimeSpan.FromMinutes(2),
+            "delay > 2min wastes operator time — by then they've already clicked manual Run Health Check");
     }
 
     [Fact]
