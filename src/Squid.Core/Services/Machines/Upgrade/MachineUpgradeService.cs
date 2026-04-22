@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Requests.Machines;
@@ -44,19 +45,38 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>
+    /// Delay before the post-upgrade health check kicks in (1.6.x fix for
+    /// "agent version shows 'unknown' in UI until operator clicks manual
+    /// health check" UX gap). Sized to comfortably exceed the typical
+    /// Phase B sequence: binary swap + systemctl restart + Halibut
+    /// reconnect. Agent usually reconnects within 5-15s post-restart;
+    /// 45s gives headroom for slow distros (observed: tarball on a 2-core
+    /// VM, reconnect at 12s; apt on fast network, reconnect at 6s).
+    ///
+    /// <para>Too short → health check fires before agent is back online,
+    /// reports unreachable, cache stays empty, operator still sees
+    /// "unknown". Too long → operator waits unnecessarily. 45s is the
+    /// sweet spot based on observed Phase B timings across all three
+    /// install methods.</para>
+    /// </summary>
+    internal static readonly TimeSpan PostUpgradeHealthCheckDelay = TimeSpan.FromSeconds(45);
+
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
     private readonly ITentacleVersionRegistry _versionRegistry;
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
     private readonly IRedisSafeRunner _redisLock;
+    private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
         _versionRegistry = versionRegistry;
         _strategies = strategies;
         _redisLock = redisLock;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
@@ -330,10 +350,18 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     /// <summary>
     /// Drop the cached agent version when the strategy says the binary may
-    /// have changed — the next health check then repopulates from a fresh
-    /// Capabilities probe. Without this, the cached old version would
-    /// shadow the upgrade for up to a full health-check interval, making
-    /// the UI show "still on N-1" even after the agent reports N.
+    /// have changed AND schedule a delayed health check (1.6.x fix) so the
+    /// cache gets REFRESHED (not just emptied) before the next scheduled
+    /// health check — without the scheduled refresh, UI showed the agent
+    /// as "unknown version" for up to the health-check interval (hours
+    /// by default) and operators had to manually click "Run health check"
+    /// to confirm the upgrade landed.
+    ///
+    /// <para>The scheduled refresh fires after
+    /// <see cref="PostUpgradeHealthCheckDelay"/> (45s), giving the agent
+    /// time to finish Phase B (binary swap + systemctl restart + Halibut
+    /// reconnect). Hangfire re-scopes, so the health check runs with a
+    /// fresh DI container — safe even though this service is scoped.</para>
     ///
     /// <para>Outcome-driven (audit N-6): each strategy explicitly sets
     /// <see cref="MachineUpgradeOutcome.AgentVersionMayHaveChanged"/> based on
@@ -343,7 +371,32 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// </summary>
     private void InvalidateCacheIfChanged(int machineId, MachineUpgradeOutcome outcome)
     {
-        if (outcome.AgentVersionMayHaveChanged) _runtimeCache.Invalidate(machineId);
+        if (!outcome.AgentVersionMayHaveChanged) return;
+
+        _runtimeCache.Invalidate(machineId);
+
+        // Schedule a delayed refresh via Hangfire. Fire-and-forget — errors
+        // here must not bubble back to the operator's HTTP request (the
+        // upgrade already succeeded; a failed post-check is a cosmetic
+        // issue, not a correctness issue). Try/catch guards against
+        // Hangfire storage exceptions (Redis down mid-request etc).
+        try
+        {
+            _backgroundJobClient.Schedule<IMachineHealthCheckService>(
+                svc => svc.ManualHealthCheckAsync(machineId, CancellationToken.None),
+                PostUpgradeHealthCheckDelay);
+
+            Log.Information(
+                "[UpgradeAudit] Scheduled post-upgrade health check for machine {MachineId} in {DelaySeconds}s",
+                machineId, PostUpgradeHealthCheckDelay.TotalSeconds);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex,
+                "[UpgradeAudit] Failed to schedule post-upgrade health check for machine {MachineId} — " +
+                "UI will show 'unknown' version until operator manually clicks Run Health Check or next scheduled check fires",
+                machineId);
+        }
     }
 
     // ── Response shaping ─────────────────────────────────────────────────────

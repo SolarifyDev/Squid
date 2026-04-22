@@ -181,22 +181,44 @@ public class CapabilitiesService : ICapabilitiesService
             if (!File.Exists(UpgradeLogFilePath)) return string.Empty;
 
             var bytes = File.ReadAllBytes(UpgradeLogFilePath);
-            if (bytes.Length == 0) return string.Empty;
-
-            if (bytes.Length <= MaxUpgradeLogBytes)
-                return System.Text.Encoding.UTF8.GetString(bytes);
-
-            // Head-truncate: keep the last N bytes so operators see the
-            // MOST RECENT output (rollback + healthz details). Prepend
-            // a marker so the client knows content was elided.
-            var keep = MaxUpgradeLogBytes - 128;  // leave room for marker
-            var tail = System.Text.Encoding.UTF8.GetString(bytes, bytes.Length - keep, keep);
-            return $"[…{bytes.Length - keep} earlier bytes truncated by CapabilitiesService cap ({MaxUpgradeLogBytes})…]\n{tail}";
+            return TailTruncateForMetadata(bytes, MaxUpgradeLogBytes);
         }
         catch
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Pure byte-to-string tail-truncation with UTF-8 boundary safety.
+    /// Extracted for direct unit testing; the file-reading wrapper above
+    /// handles IO concerns.
+    ///
+    /// <para><b>UTF-8 boundary safety (audit D.3):</b> the raw byte-
+    /// offset cut could land mid-character. A UTF-8 continuation byte has
+    /// top bits <c>10</c> (mask <c>0xC0</c> → <c>0x80</c>); a lead byte
+    /// has <c>0</c>, <c>110</c>, <c>1110</c>, or <c>11110</c> (mask
+    /// <c>0xC0</c> → NOT <c>0x80</c>). Advance <c>startByte</c> forward
+    /// over any continuation bytes until we find a lead byte (or reach
+    /// end of array). Result: the returned string is guaranteed to
+    /// decode cleanly; worst case we drop up to 3 extra bytes at the
+    /// head (max UTF-8 sequence length minus 1).</para>
+    /// </summary>
+    internal static string TailTruncateForMetadata(byte[] bytes, int maxBytes)
+    {
+        if (bytes == null || bytes.Length == 0) return string.Empty;
+
+        if (bytes.Length <= maxBytes)
+            return System.Text.Encoding.UTF8.GetString(bytes);
+
+        var startByte = bytes.Length - (maxBytes - 128);  // leave room for marker
+        while (startByte < bytes.Length && (bytes[startByte] & 0xC0) == 0x80)
+        {
+            startByte++;
+        }
+        var keep = bytes.Length - startByte;
+        var tail = System.Text.Encoding.UTF8.GetString(bytes, startByte, keep);
+        return $"[…{startByte} earlier bytes truncated by CapabilitiesService cap ({maxBytes})…]\n{tail}";
     }
 
     private static Dictionary<string, string> MergeWithRuntimeCapabilities(Dictionary<string, string> overrides)

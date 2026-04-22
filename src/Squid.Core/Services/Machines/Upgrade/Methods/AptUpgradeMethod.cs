@@ -134,8 +134,17 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                      # we lose auto-rollback for THIS upgrade attempt but the
                      # upgrade itself proceeds and operator falls back to the
                      # manual rollback instruction in the ROLLBACK_NEEDED detail.
+                     #
+                     # Input validation (audit D.2 / 1.6.x fix): OLD_VERSION_APT
+                     # comes from dpkg-query at runtime. Normally plain semver,
+                     # but a corrupted package DB could theoretically surface
+                     # bytes with shell / URL metacharacters. Validate against a
+                     # strict semver-ish whitelist BEFORE embedding in the
+                     # snapshot URL or file path — mirrors safe_version() in the
+                     # main script's Phase B rollback path.
                      SQUID_UPGRADE_ROLLBACK_SNAPSHOT=""
-                     if [ "$OLD_VERSION_APT" != "<none>" ]; then
+                     if [ "$OLD_VERSION_APT" != "<none>" ] \
+                          && printf '%s' "$OLD_VERSION_APT" | grep -qE '^[a-zA-Z0-9._~+-]+$'; then
                        ARCH_DEB=$(dpkg --print-architecture 2>/dev/null || echo amd64)
                        GH_BASE_URL="${SQUID_GITHUB_RELEASE_BASE_URL:-https://github.com/SolarifyDev/Squid/releases/download}"
                        SNAPSHOT_URL="${GH_BASE_URL}/${OLD_VERSION_APT}/squid-tentacle_${OLD_VERSION_APT}_${ARCH_DEB}.deb"
@@ -151,6 +160,8 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                          echo "[upgrade-method:apt] WARNING: snapshot download failed — auto-rollback unavailable for this upgrade (will fall back to manual instruction on failure)"
                          rm -f "${SNAPSHOT_PATH}.tmp" 2>/dev/null
                        fi
+                     elif [ "$OLD_VERSION_APT" != "<none>" ]; then
+                       echo "[upgrade-method:apt] WARNING: OLD_VERSION_APT='$OLD_VERSION_APT' contains unexpected characters — skipping snapshot download to avoid URL injection"
                      fi
 
                      # NOTE: NO `DEBIAN_FRONTEND=noninteractive` env var on the install line.

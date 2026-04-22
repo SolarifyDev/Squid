@@ -230,6 +230,26 @@ public sealed class AptUpgradeMethodTests
     }
 
     [Fact]
+    public void Render_SnapshotDownload_ValidatesOldVersionAgainstSemverWhitelist()
+    {
+        // Audit D.2 fix (1.6.x): OLD_VERSION_APT comes from dpkg-query at
+        // runtime — normally clean semver, but a corrupted package DB
+        // could surface bytes with shell/URL metachars. Before the fix,
+        // the value was embedded directly into the GitHub URL, which is
+        // an injection vector if dpkg output is untrusted.
+        //
+        // Pin: strict whitelist `^[a-zA-Z0-9._~+-]+$` guards the URL
+        // construction — mirrors the safe_version() semantics in the
+        // main script's Phase B rollback path.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("grep -qE '^[a-zA-Z0-9._~+-]+$'",
+            customMessage: "OLD_VERSION_APT must be validated against semver-ish whitelist BEFORE URL construction — prevents shell/URL injection from corrupted dpkg-query output");
+        snippet.ShouldContain("contains unexpected characters — skipping snapshot download",
+            customMessage: "rejected-value path must log a clear message so operator sees why auto-rollback is unavailable on this upgrade");
+    }
+
+    [Fact]
     public void Render_AptOperations_CapNetworkTimeoutAndRetries()
     {
         // Without explicit timeouts, `apt-get install` on a wedged proxy
