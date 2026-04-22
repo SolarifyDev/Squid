@@ -80,6 +80,48 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                  if [ "$INSTALL_OK" != "1" ]; then
                    if command -v apt-get >/dev/null 2>&1 && [ -f /etc/apt/sources.list.d/squid.list ]; then
                      echo "[upgrade-method:apt] Squid APT repo configured — attempting `apt-get install squid-tentacle={{targetVersion}}`"
+
+                     # ── A3 (1.6.0): dpkg lock preemption ────────────────────────────
+                     # Wait up to 90s if /var/lib/dpkg/lock-frontend is held by a
+                     # known background updater (apt-daily, unattended-upgrades).
+                     # Without this, our apt install would race the timer-driven
+                     # OS updater and lose with a generic "could not get lock"
+                     # error, falling through to tarball unnecessarily.
+                     #
+                     # Conservative: only wait when the holder is one of the known
+                     # Debian/Ubuntu auto-updaters (process name match). An
+                     # unknown holder might be an interactive admin session — we
+                     # don't want to wait 90s for that. Log + proceed; apt's own
+                     # lock contention will give a clear error.
+                     #
+                     # No `kill` — never SIGTERM a running unattended-upgrades.
+                     # Their transactions are atomic and interrupting mid-flight
+                     # leaves dpkg in needs-configure state that's harder to
+                     # recover from than waiting 60s.
+                     if command -v fuser >/dev/null 2>&1; then
+                       LOCK_HOLDER_PID=$(sudo fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -d ' ' || true)
+                       if [ -n "$LOCK_HOLDER_PID" ]; then
+                         LOCK_HOLDER_CMD=$(ps -p "$LOCK_HOLDER_PID" -o comm= 2>/dev/null | tr -d ' ' || echo "unknown")
+                         case "$LOCK_HOLDER_CMD" in
+                           unattended-upgr*|apt|apt-get|aptd|update-manager|packagekitd)
+                             echo "[upgrade-method:apt] dpkg lock held by $LOCK_HOLDER_CMD (PID $LOCK_HOLDER_PID) — waiting up to 90s for it to release"
+                             for wait_iter in $(seq 1 90); do
+                               sleep 1
+                               sudo fuser /var/lib/dpkg/lock-frontend 2>/dev/null >/dev/null || break
+                             done
+                             if sudo fuser /var/lib/dpkg/lock-frontend 2>/dev/null >/dev/null; then
+                               echo "[upgrade-method:apt] WARNING: dpkg lock STILL held after 90s; apt install may fail"
+                             else
+                               echo "[upgrade-method:apt] dpkg lock released"
+                             fi
+                             ;;
+                           *)
+                             echo "[upgrade-method:apt] WARNING: dpkg lock held by unknown process '$LOCK_HOLDER_CMD' (PID $LOCK_HOLDER_PID) — proceeding without wait, apt install may fail"
+                             ;;
+                         esac
+                       fi
+                     fi
+
                      # Capture the currently-installed version BEFORE upgrade so the operator can roll back manually if needed.
                      OLD_VERSION_APT=$(dpkg-query -W -f='${Version}' squid-tentacle 2>/dev/null || echo "<none>")
                      echo "[upgrade-method:apt] Pre-upgrade version: $OLD_VERSION_APT"

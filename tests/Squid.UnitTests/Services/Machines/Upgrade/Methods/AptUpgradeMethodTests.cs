@@ -140,6 +140,43 @@ public sealed class AptUpgradeMethodTests
     }
 
     [Fact]
+    public void Render_DpkgLockPreemption_WaitsForKnownAutoUpdaters()
+    {
+        // A3 (1.6.0): if /var/lib/dpkg/lock-frontend is held by apt-daily
+        // or unattended-upgrades, wait up to 90s for them to release
+        // before our apt install (which would otherwise lose the race).
+        // Pin: the lock probe, the known-process allowlist, the bounded
+        // wait, and the no-kill stance.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("sudo fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "must use fuser (not lsof — not always installed) to detect lock holder");
+
+        snippet.ShouldContain("unattended-upgr*|apt|apt-get|aptd|update-manager|packagekitd",
+            customMessage: "lock-wait must be gated on known auto-updater process names — interactive admin sessions get a different (warn-then-proceed) path");
+
+        snippet.ShouldContain("for wait_iter in $(seq 1 90)",
+            customMessage: "wait must be bounded (90s = comfortably > apt-daily's typical 30-60s runtime)");
+
+        snippet.ShouldNotContain("kill -",
+            customMessage: "must NEVER SIGTERM unattended-upgrades — interrupting mid-transaction leaves dpkg needs-configure, harder to recover from than waiting");
+    }
+
+    [Fact]
+    public void Render_DpkgLockPreemption_UnknownHolder_WarnsAndProceeds()
+    {
+        // The default branch of the case statement: an unknown lock holder
+        // (could be an interactive admin) gets a warning + proceed. Don't
+        // wait 90s for what might be a `sudo apt edit-sources` session.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("dpkg lock held by unknown process",
+            customMessage: "unknown holder must be logged with the actual process name so operators can diagnose");
+        snippet.ShouldContain("proceeding without wait",
+            customMessage: "unknown holder must NOT trigger the 90s wait — apt's own contention error gives operator a faster signal");
+    }
+
+    [Fact]
     public void Render_DownloadsPreUpgradeSnapshot_ToFixedRollbackPath()
     {
         // C1 (1.6.0): apt method downloads the CURRENT version's .deb from

@@ -401,6 +401,13 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dpkg -i --force-downgrade /var/lib
 # with a wildcard suffix for the version-release pair.
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dnf downgrade -y squid-tentacle-*
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/yum downgrade -y squid-tentacle-*
+
+# (6) dpkg lock probing (A3, 1.6.0). Phase A apt method polls
+# /var/lib/dpkg/lock-frontend to detect known background updaters
+# (apt-daily, unattended-upgrades) before apt install. fuser needs root
+# to read the lock fd. Both /bin and /usr/bin paths for usrmerge compat.
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/fuser /var/lib/dpkg/lock-frontend
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/fuser /var/lib/dpkg/lock-frontend
 SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).

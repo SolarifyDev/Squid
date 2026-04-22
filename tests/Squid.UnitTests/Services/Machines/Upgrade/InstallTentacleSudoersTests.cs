@@ -162,6 +162,22 @@ public sealed class InstallTentacleSudoersTests
             customMessage: "yum downgrade rule for RHEL 7 (no dnf)");
     }
 
+    [Fact]
+    public void InstallScript_SudoersBlock_ContainsDpkgLockProbeRule()
+    {
+        // A3 (1.6.0): Phase A apt method uses fuser to probe
+        // /var/lib/dpkg/lock-frontend for known background updaters.
+        // dpkg lock fd needs root to read — sudoers must permit fuser
+        // on this exact path. Both /bin and /usr/bin paths for usrmerge.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        heredoc.ShouldContain("/usr/bin/fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "fuser rule needed to probe dpkg lock holder before apt install");
+        heredoc.ShouldContain("/bin/fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "fuser /bin path also pinned for usrmerge compat (some distros symlink /bin → /usr/bin, sudo matches by string equality)");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
