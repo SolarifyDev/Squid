@@ -34,16 +34,38 @@ esac
 # with cryptic "Error relocating ...: symbol not found" messages.
 # `linux-musl-x64` is .NET's officially-supported RID for musl builds.
 #
-# Detection: `ldd --version` on glibc systems prints "ldd (GNU libc) ..."
-# or "... GLIBC ..."; on musl it prints "musl libc (x86_64) ..." to
-# stderr. Both are cheap to run. If ldd is missing entirely (very
-# minimal images), default to glibc — that's the majority case and
-# the musl RID can still be requested explicitly via env override.
-LIBC="glibc"
-if command -v ldd >/dev/null 2>&1; then
-    if ldd --version 2>&1 | grep -qi musl; then
+# Three-stage detection (audit D.4 fix, 1.6.x):
+#   1. Env var override — SQUID_LIBC=musl|glibc  (explicit operator wins)
+#   2. `ldd --version` output grep — works when ldd is installed
+#      (Alpine's has `musl libc (x86_64) ...` on stderr; glibc prints
+#      `ldd (GNU libc) ...` or `... GLIBC ...`)
+#   3. File-existence fallback — `/lib/ld-musl-*` presence. Works on
+#      minimal / distroless containers that strip ldd but keep the
+#      dynamic linker itself. Catches Void + Wolfi + Chimera, which
+#      D3's CI matrix can't easily smoke-test today.
+# If none of the three says "musl", default to glibc — the majority case.
+LIBC="${SQUID_LIBC:-}"
+
+if [ -z "$LIBC" ]; then
+    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
         LIBC="musl"
     fi
+fi
+
+if [ -z "$LIBC" ]; then
+    # File-glob fallback — compgen avoids bash-ism; a simple for-loop
+    # over /lib/ld-musl-* works in POSIX sh too. If any match exists,
+    # we're on musl.
+    for ld_musl in /lib/ld-musl-* /usr/lib/ld-musl-*; do
+        if [ -e "$ld_musl" ]; then
+            LIBC="musl"
+            break
+        fi
+    done
+fi
+
+if [ -z "$LIBC" ]; then
+    LIBC="glibc"
 fi
 
 if [ "$LIBC" = "musl" ]; then
