@@ -54,11 +54,22 @@ public sealed class UpgradeDispatchLockReconciler : IUpgradeDispatchLockReconcil
     /// </summary>
     internal static readonly TimeSpan StalenessThreshold = TimeSpan.FromMinutes(10);
 
-    private readonly IRedisSafeRunner _redisLock;
+    /// <summary>
+    /// Lazy resolution: Autofac builds the Func without instantiating
+    /// IRedisSafeRunner up front. Why: the integration test container
+    /// loads its own appsettings.json which (intentionally) omits Redis
+    /// config — eager resolution would fail at construction-time and
+    /// poison every TentacleHealthCheckStrategy resolution graph in
+    /// integration tests. With Func-based resolution, construction
+    /// always succeeds; if Redis genuinely isn't available, the call
+    /// inside ClearLockIfStaleAsync throws and the caller (also
+    /// inside try/catch) swallows + logs.
+    /// </summary>
+    private readonly Func<IRedisSafeRunner> _redisLockFactory;
 
-    public UpgradeDispatchLockReconciler(IRedisSafeRunner redisLock)
+    public UpgradeDispatchLockReconciler(Func<IRedisSafeRunner> redisLockFactory)
     {
-        _redisLock = redisLock;
+        _redisLockFactory = redisLockFactory;
     }
 
     public async Task ClearLockIfStaleAsync(int machineId, UpgradeStatusPayload status, CancellationToken ct)
@@ -73,7 +84,9 @@ public sealed class UpgradeDispatchLockReconciler : IUpgradeDispatchLockReconcil
             "deleting Redis dispatch lock {LockKey} to unblock operator retry",
             machineId, status.StartedAt, status.Status, status.SchemaVersion, lockKey);
 
-        await _redisLock.ExecuteAsync(async multiplexer =>
+        var redisLock = _redisLockFactory();
+
+        await redisLock.ExecuteAsync(async multiplexer =>
         {
             await multiplexer.GetDatabase().KeyDeleteAsync(lockKey).ConfigureAwait(false);
         }).ConfigureAwait(false);

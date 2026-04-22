@@ -26,8 +26,16 @@ public class ServiceCommandTests
         // (e.g. "run" or "run --instance NAME"). This test just verifies the ExecStart itself.
         unit.ShouldContain("ExecStart=/opt/squid-tentacle/Squid.Tentacle");
         unit.ShouldContain("WorkingDirectory=/opt/squid-tentacle");
-        unit.ShouldContain("Restart=always");
+
+        // 1.5.0 C4: Restart=on-failure (not `always`) + StartLimit* config
+        // prevents a bad-upgrade crash-loop. Pinned here AND in
+        // SystemdServiceHostTests.BuildUnitFile_HasStartLimitConfig_*.
+        // Both tests are the contract — they both must update together.
+        unit.ShouldContain("Restart=on-failure");
         unit.ShouldContain("RestartSec=10");
+        unit.ShouldContain("StartLimitBurst=3");
+        unit.ShouldContain("StartLimitIntervalSec=120");
+        unit.ShouldContain("StartLimitAction=none");
         unit.ShouldContain("KillSignal=SIGINT");
         unit.ShouldContain("TimeoutStopSec=60");
 
