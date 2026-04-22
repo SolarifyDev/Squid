@@ -351,14 +351,24 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/systemd-run --scope --collect --qu
 
 # (2) Phase 2 Part 2 — package-manager install methods. Pinned to package
 # name 'squid-tentacle' to prevent the service user installing anything else.
-# The targeted `apt-get update` form is the preferred one (scoped to our
+# The targeted apt-get update form is the preferred one (scoped to our
 # source file only, immune to broken third-party repos). The plain forms
 # stay as fallback for older agent scripts that still issue them.
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get update
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get update -qq
-${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get update -qq -o Dir::Etc::sourcelist=sources.list.d/squid.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::http::Timeout=60 -o Acquire::Retries=1
+# IMPORTANT: this heredoc is UNQUOTED (<<SUDOERS_EOF not <<'SUDOERS_EOF') so
+# bash can expand \${SERVICE_USER} / \${STATE_DIR}. That same unquoted mode
+# makes bash interpret backticks as command substitution inside comments.
+# Do NOT use backticks anywhere between here and SUDOERS_EOF — use plain
+# text only. A rogue backtick sequence (e.g. a subshell of apt-get update)
+# will inject its output into the generated sudoers file mid-stream,
+# producing a syntactically invalid file and silently disabling upgrades.
+# Colon escape: the \:\: below maps to literal :: in the compiled rule.
+# sudoers treats : as a field separator, rejecting an un-escaped :: with
+# a syntax error at the second colon; \: is the documented escape.
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get update -qq -o Dir\:\:Etc\:\:sourcelist=sources.list.d/squid.list -o Dir\:\:Etc\:\:sourceparts=- -o APT\:\:Get\:\:List-Cleanup=0 -o Acquire\:\:http\:\:Timeout=60 -o Acquire\:\:Retries=1
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y --allow-downgrades squid-tentacle=*
-${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y --allow-downgrades -o Acquire::http::Timeout=120 -o Acquire::Retries=1 squid-tentacle=*
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y --allow-downgrades -o Acquire\:\:http\:\:Timeout=120 -o Acquire\:\:Retries=1 squid-tentacle=*
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dnf install -y squid-tentacle-*
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/yum install -y squid-tentacle-*
 
@@ -376,12 +386,18 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_U
 SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).
-    if visudo -c -f "${SUDOERS_FILE}.tmp" >/dev/null 2>&1; then
+    # Capture stderr so operators can diagnose a template bug (don't swallow
+    # silently — that hid a `::` escape bug for an entire release cycle).
+    # `if VAR=$(...); then` is the ONLY form that exempts the assignment from
+    # `set -e` — a plain `VAR=$(failing); if [ $? ...` aborts the script.
+    if VISUDO_OUTPUT=$(visudo -c -f "${SUDOERS_FILE}.tmp" 2>&1); then
         chmod 440 "${SUDOERS_FILE}.tmp"
         mv "${SUDOERS_FILE}.tmp" "${SUDOERS_FILE}"
         echo "Installed upgrade sudoers rule: ${SUDOERS_FILE}"
     else
         echo "Warning: generated sudoers rule failed validation; NOT installed. In-UI upgrades will prompt for password and hang."
+        echo "  visudo output:"
+        echo "${VISUDO_OUTPUT}" | sed 's/^/    /'
         rm -f "${SUDOERS_FILE}.tmp"
     fi
 fi

@@ -1,5 +1,5 @@
 Package: squid-tentacle
-Version: 1.4.2
+Version: 1.4.3
 License: Proprietary
 Vendor: Solarify AI
 Architecture: arm64
@@ -9,10 +9,10 @@ Depends: libicu70 | libicu72 | libicu74 | libicu-dev
 Homepage: https://squid.solarifyai.com
 Priority: optional
 Section: default
-Filename: pool/main/s/squid-tentacle/squid-tentacle_1.4.2_arm64.deb
-Size: 67056518
-SHA256: b1a32f76cd4b896863145c62582a60805ae5511f33a608e7456e1503a44ac777
-SHA1: aeab7be6a7b33fd6e83a0acb31f1b9a31f6b7e72
-MD5sum: f0a3f7559005deddba6a73d800a93346
+Filename: pool/main/s/squid-tentacle/squid-tentacle_1.4.3_arm64.deb
+Size: 67052352
+SHA256: a7142f480847e918579722686ee248661d799fb8b2379ccfcd4c25ca49832f6c
+SHA1: 672b08cd5b787e2c20ebe80fec0cf73f534cd80a
+MD5sum: e592de80b2334b81be84607376ab31dc
 Description: Squid Tentacle — Linux deployment agent for the Squid automation server.
 
