@@ -22,11 +22,35 @@ done
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
-    x86_64)  RID="linux-x64" ;;
-    aarch64) RID="linux-arm64" ;;
-    arm64)   RID="linux-arm64" ;;
+    x86_64)  RID_ARCH="x64" ;;
+    aarch64) RID_ARCH="arm64" ;;
+    arm64)   RID_ARCH="arm64" ;;
     *) echo "Error: Unsupported architecture: $ARCH"; exit 1 ;;
 esac
+
+# D2 (1.6.0): detect libc flavour so we pick the right self-contained
+# .NET build. Alpine / Void / Chimera / Wolfi all ship musl-libc; a
+# glibc-targeted `linux-x64` binary crashes at startup on any of them
+# with cryptic "Error relocating ...: symbol not found" messages.
+# `linux-musl-x64` is .NET's officially-supported RID for musl builds.
+#
+# Detection: `ldd --version` on glibc systems prints "ldd (GNU libc) ..."
+# or "... GLIBC ..."; on musl it prints "musl libc (x86_64) ..." to
+# stderr. Both are cheap to run. If ldd is missing entirely (very
+# minimal images), default to glibc — that's the majority case and
+# the musl RID can still be requested explicitly via env override.
+LIBC="glibc"
+if command -v ldd >/dev/null 2>&1; then
+    if ldd --version 2>&1 | grep -qi musl; then
+        LIBC="musl"
+    fi
+fi
+
+if [ "$LIBC" = "musl" ]; then
+    RID="linux-musl-${RID_ARCH}"
+else
+    RID="linux-${RID_ARCH}"
+fi
 
 # Require root for default install dir
 if [ "$INSTALL_DIR" = "/opt/squid-tentacle" ] && [ "$(id -u)" -ne 0 ]; then

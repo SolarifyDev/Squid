@@ -192,6 +192,17 @@ jobs:
             arch_label: amd64
           - rid: linux-arm64
             arch_label: arm64
+          # D2 (1.6.0): Alpine / musl-libc support. Alpine's libc is musl,
+          # NOT glibc — a `linux-x64` self-contained .NET binary crashes
+          # at startup with "Error relocating ...: symbol not found" on
+          # Alpine. `linux-musl-x64` is .NET's officially-supported RID
+          # for musl builds. Same tarball + distribution layout as the
+          # glibc builds; install-tentacle.sh picks the right RID by
+          # probing `ldd --version` (musl vs glibc).
+          - rid: linux-musl-x64
+            arch_label: musl-x64
+          - rid: linux-musl-arm64
+            arch_label: musl-arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -289,7 +300,9 @@ jobs:
 
             | Platform | Architecture | Archive |
             |----------|-------------|---------|
-            | Linux | x64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-x64.tar.gz` |
-            | Linux | arm64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-arm64.tar.gz` |
+            | Linux (glibc) | x64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-x64.tar.gz` |
+            | Linux (glibc) | arm64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-arm64.tar.gz` |
+            | Linux (musl / Alpine) | x64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-musl-x64.tar.gz` |
+            | Linux (musl / Alpine) | arm64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-linux-musl-arm64.tar.gz` |
 
             See [CHANGELOG](https://github.com/SolarifyDev/Squid/compare/) for commit history.
