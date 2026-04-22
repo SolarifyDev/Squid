@@ -559,19 +559,21 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_OnVersionChange_SchedulesPostUpgradeHealthCheck()
+    public async Task UpgradeAsync_OnVersionChange_SchedulesRapidHealthCheckSeries()
     {
-        // 1.6.x UX fix: after a successful dispatch that may have changed
-        // the agent version, the service (a) invalidates the version cache
-        // and (b) schedules a delayed Hangfire health check so the cache
-        // REFRESHES (not just empties) before the next scheduled check.
+        // 1.6.x UX fix (real-time progress): after a successful dispatch
+        // that may have changed the agent version, the service schedules
+        // N Hangfire jobs at interval-spaced delays over the upgrade
+        // window. Each job re-captures events + log + version via a
+        // Capabilities RPC, populating server-side stores so FE polling
+        // sees near-real-time progress.
         //
-        // Without this, UI showed "unknown" from dispatch-time until the
-        // next scheduled health check — operators had to manually click
-        // "Run health check" to confirm the upgrade landed.
+        // Without the series, FE polling `/upgrade-events` during the
+        // 30-60s upgrade window would see "empty events" — the very
+        // symptom we're fixing.
         //
-        // Pin: a successful strategy outcome with AgentVersionMayHaveChanged
-        // MUST produce a Schedule<IMachineHealthCheckService>(...) call.
+        // Pin: exactly N = window/interval = 45/3 = 15 Hangfire jobs
+        // are scheduled on successful dispatch.
         ArrangeMachine(id: 301, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -584,22 +586,57 @@ public sealed class MachineUpgradeServiceTests
 
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 301 }, CancellationToken.None);
 
+        var expectedJobCount = MachineUpgradeService.UpgradePollingWindowSeconds / MachineUpgradeService.UpgradePollingIntervalSeconds;
         _backgroundJobClient.Verify(
             c => c.Schedule<IMachineHealthCheckService>(
                 It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
-                MachineUpgradeService.PostUpgradeHealthCheckDelay,
+                It.IsAny<TimeSpan>(),
                 It.IsAny<string>()),
-            Times.Once(),
-            "successful upgrade dispatch with AgentVersionMayHaveChanged=true must schedule a delayed health check to refresh the server-side version cache");
+            Times.Exactly(expectedJobCount),
+            $"successful upgrade dispatch must schedule exactly {expectedJobCount} rapid health checks covering the upgrade progress window");
     }
 
     [Fact]
-    public async Task UpgradeAsync_VersionUnchanged_DoesNotSchedulePostUpgradeHealthCheck()
+    public async Task UpgradeAsync_OnVersionChange_FirstCheckScheduledAtIntervalBoundary()
+    {
+        // Jobs fire at 3s, 6s, ..., 45s (interval = 3s, window = 45s).
+        // Verify the smallest scheduled delay is ≥ 3s — doesn't fire
+        // "immediately" which would race the agent's own Phase A start.
+        ArrangeMachine(id: 303, style: nameof(CommunicationStyle.TentaclePolling));
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome
+            {
+                Status = MachineUpgradeStatus.Upgraded,
+                Detail = "upgrade dispatched",
+                AgentVersionMayHaveChanged = true
+            });
+
+        var capturedDelays = new List<TimeSpan>();
+        _backgroundJobClient
+            .Setup(c => c.Schedule<IMachineHealthCheckService>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<string>()))
+            .Callback<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>, TimeSpan, string>(
+                (_, delay, _) => capturedDelays.Add(delay))
+            .Returns("mock-job-id");
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
+
+        capturedDelays.Min().ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(MachineUpgradeService.UpgradePollingIntervalSeconds),
+            customMessage: "first poll must wait at least one interval — no instant-fire that races Phase A");
+        capturedDelays.Max().ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(MachineUpgradeService.UpgradePollingWindowSeconds),
+            customMessage: "last poll must not exceed the window — bounded polling, no indefinite drain");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_VersionUnchanged_DoesNotSchedulePolling()
     {
         // No-op outcomes (UpToDate, NotSupported, Failed pre-dispatch)
-        // shouldn't trigger the refresh — nothing changed, cache is still
-        // accurate. Otherwise we'd wake Hangfire + the health check for
-        // zero reason on every "already on latest" click.
+        // shouldn't trigger 15 health checks — nothing changed, cache is
+        // still accurate. Otherwise we'd wake Hangfire ×15 times + the
+        // health check for zero reason on every "already on latest" click.
         ArrangeMachine(id: 302, style: nameof(CommunicationStyle.TentaclePolling));
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -618,23 +655,26 @@ public sealed class MachineUpgradeServiceTests
                 It.IsAny<TimeSpan>(),
                 It.IsAny<string>()),
             Times.Never(),
-            "no-op outcomes must not schedule a post-upgrade health check — nothing changed");
+            "no-op outcomes must not schedule rapid polling — nothing to observe");
     }
 
     [Fact]
-    public void PostUpgradeHealthCheckDelay_InReasonableRange()
+    public void PollingWindowAndInterval_InReasonableRange()
     {
-        // Too short → health check fires before agent finishes Phase B
-        // restart, sees agent unreachable, cache stays empty, operator
-        // still sees "unknown".
-        // Too long → operator waits unnecessarily.
-        //
-        // Observed Phase B timings: apt/yum ~10-15s, tarball ~20-30s,
-        // Halibut reconnect +5-15s. 45s sits in the sweet spot.
-        MachineUpgradeService.PostUpgradeHealthCheckDelay.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(30),
-            "delay < 30s risks firing before agent finishes Phase B + Halibut reconnect");
-        MachineUpgradeService.PostUpgradeHealthCheckDelay.ShouldBeLessThanOrEqualTo(TimeSpan.FromMinutes(2),
-            "delay > 2min wastes operator time — by then they've already clicked manual Run Health Check");
+        // Bounds invariants:
+        //   • interval ≥ 2s (FE polls at 2-3s; any tighter wastes RPCs)
+        //   • interval ≤ 10s (> 10s and the FE sees "nothing new for 10s" gaps)
+        //   • window ≥ 30s (< 30s and slow tarballs won't finish in the window)
+        //   • window ≤ 2min (> 2min is noisy — waste after upgrade done)
+        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBeGreaterThanOrEqualTo(2,
+            "interval < 2s hammers the agent + Hangfire; matches FE poll cadence at 3s");
+        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBeLessThanOrEqualTo(10,
+            "interval > 10s creates visible refresh-gaps in UI progress");
+
+        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeGreaterThanOrEqualTo(30,
+            "window < 30s risks cutting off before slow tarball finishes");
+        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeLessThanOrEqualTo(120,
+            "window > 2min wastes RPCs after typical upgrade is long done");
     }
 
     [Fact]

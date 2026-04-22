@@ -46,21 +46,32 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
-    /// Delay before the post-upgrade health check kicks in (1.6.x fix for
-    /// "agent version shows 'unknown' in UI until operator clicks manual
-    /// health check" UX gap). Sized to comfortably exceed the typical
-    /// Phase B sequence: binary swap + systemctl restart + Halibut
-    /// reconnect. Agent usually reconnects within 5-15s post-restart;
-    /// 45s gives headroom for slow distros (observed: tarball on a 2-core
-    /// VM, reconnect at 12s; apt on fast network, reconnect at 6s).
+    /// Upper bound of the upgrade progress-polling window (1.6.x fix for
+    /// "events endpoint has no real-time data during the upgrade" UX
+    /// gap). During this window, health checks fire at <see cref="UpgradePollingIntervalSeconds"/>
+    /// intervals — each one re-captures the agent's upgrade-events JSONL +
+    /// Phase B log via Capabilities RPC, populating the server-side
+    /// timeline store so the FE's 2-3s polling sees near-real-time
+    /// progress.
     ///
-    /// <para>Too short → health check fires before agent is back online,
-    /// reports unreachable, cache stays empty, operator still sees
-    /// "unknown". Too long → operator waits unnecessarily. 45s is the
-    /// sweet spot based on observed Phase B timings across all three
-    /// install methods.</para>
+    /// <para>Sized to comfortably exceed the typical full Phase A + Phase
+    /// B sequence (30-40s observed across all install methods) plus
+    /// Halibut reconnect jitter.</para>
     /// </summary>
-    internal static readonly TimeSpan PostUpgradeHealthCheckDelay = TimeSpan.FromSeconds(45);
+    internal const int UpgradePollingWindowSeconds = 45;
+
+    /// <summary>
+    /// Interval between health checks during the upgrade polling window.
+    /// 3s matches the FE integration guide's recommended poll cadence —
+    /// UI sees events arrive within one FE poll cycle after they're
+    /// emitted on the agent.
+    ///
+    /// <para>Job count = window / interval = 45 / 3 = 15 Hangfire jobs
+    /// per upgrade. Each is a quick Capabilities RPC (~20ms on local,
+    /// ~200ms over WAN). Upper-bound ~3s of CPU time across all 15
+    /// jobs, negligible.</para>
+    /// </summary>
+    internal const int UpgradePollingIntervalSeconds = 3;
 
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
@@ -375,26 +386,43 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
         _runtimeCache.Invalidate(machineId);
 
-        // Schedule a delayed refresh via Hangfire. Fire-and-forget — errors
-        // here must not bubble back to the operator's HTTP request (the
-        // upgrade already succeeded; a failed post-check is a cosmetic
-        // issue, not a correctness issue). Try/catch guards against
-        // Hangfire storage exceptions (Redis down mid-request etc).
+        // Rapid-polling during the upgrade window: schedule N staggered
+        // Hangfire jobs that each re-capture the agent's upgrade-events
+        // JSONL + Phase B log via Capabilities RPC. Populates the
+        // server-side timeline store so the FE's 2-3s polling of
+        // /upgrade-events sees near-real-time progress instead of
+        // "empty until 45s post-upgrade."
+        //
+        // Fire-and-forget: errors here must not bubble back to the
+        // operator's HTTP request (the upgrade already succeeded; a
+        // failed observability-poll is a cosmetic issue). Try/catch
+        // guards against Hangfire storage exceptions (Redis down etc).
+        //
+        // Early-completion: if the upgrade finishes in 10s, the remaining
+        // jobs still fire — each one is a cheap no-op Capabilities RPC
+        // that re-reads the same terminal state (SUCCESS). ~200ms × 15
+        // jobs = 3s of total wasted work. Acceptable.
         try
         {
-            _backgroundJobClient.Schedule<IMachineHealthCheckService>(
-                svc => svc.ManualHealthCheckAsync(machineId, CancellationToken.None),
-                PostUpgradeHealthCheckDelay);
+            for (var seconds = UpgradePollingIntervalSeconds; seconds <= UpgradePollingWindowSeconds; seconds += UpgradePollingIntervalSeconds)
+            {
+                _backgroundJobClient.Schedule<IMachineHealthCheckService>(
+                    svc => svc.ManualHealthCheckAsync(machineId, CancellationToken.None),
+                    TimeSpan.FromSeconds(seconds));
+            }
 
             Log.Information(
-                "[UpgradeAudit] Scheduled post-upgrade health check for machine {MachineId} in {DelaySeconds}s",
-                machineId, PostUpgradeHealthCheckDelay.TotalSeconds);
+                "[UpgradeAudit] Scheduled {JobCount} rapid health checks for machine {MachineId} at {Interval}s intervals over {Window}s window",
+                UpgradePollingWindowSeconds / UpgradePollingIntervalSeconds,
+                machineId,
+                UpgradePollingIntervalSeconds,
+                UpgradePollingWindowSeconds);
         }
         catch (Exception ex)
         {
             Log.Warning(ex,
-                "[UpgradeAudit] Failed to schedule post-upgrade health check for machine {MachineId} — " +
-                "UI will show 'unknown' version until operator manually clicks Run Health Check or next scheduled check fires",
+                "[UpgradeAudit] Failed to schedule upgrade-progress polling for machine {MachineId} — " +
+                "UI will show stale version/events until next scheduled health check fires",
                 machineId);
         }
     }
