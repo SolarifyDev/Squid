@@ -659,6 +659,49 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_CapturesPreUpgradeBaseline_BeforeMethodDispatch()
+    {
+        // C5 (1.5.x): snapshot agent's current version + healthz BEFORE
+        // touching anything. Used in Phase B's failure-decision matrix
+        // to disambiguate "new binary broke it" vs "was already broken".
+        // Pin both captures so a refactor can't drop either.
+        RenderedScript.ShouldContain("BASELINE_VERSION=$(timeout 5",
+            customMessage: "must snapshot pre-upgrade version with bounded timeout (avoid hang on a wedged binary)");
+        RenderedScript.ShouldContain("BASELINE_HEALTHZ=\"OK\"",
+            customMessage: "must snapshot pre-upgrade healthz status (OK / FAIL) for Phase B's rollback decision");
+        RenderedScript.ShouldContain("emit_event A baseline",
+            customMessage: "baseline must be recorded as a structured event so operators see pre-upgrade state in the timeline");
+    }
+
+    [Fact]
+    public void Script_PropagatesBaselineToScopePhase_ViaEnvVars()
+    {
+        // Same propagation pattern as STARTED_AT — Phase B re-execs the
+        // script fresh, so without env-var passthrough Phase B would
+        // recompute the baseline (which by then reflects the NEW binary's
+        // state — wrong baseline, wrong rollback decision).
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_BASELINE_VERSION=\"$BASELINE_VERSION\"",
+            customMessage: "Phase A must pass BASELINE_VERSION to Phase B via env var");
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_BASELINE_HEALTHZ=\"$BASELINE_HEALTHZ\"",
+            customMessage: "Phase A must pass BASELINE_HEALTHZ to Phase B via env var");
+    }
+
+    [Fact]
+    public void Script_PhaseB_ConsultsBaselineBeforeRollback()
+    {
+        // The rollback path must check baseline state and emit a clear
+        // event when the failure is likely environmental rather than
+        // upgrade-caused. Removes operator ambiguity (and prevents
+        // chasing phantom regressions).
+        RenderedScript.ShouldContain("BASELINE_HEALTHZ_PRE=\"${SQUID_UPGRADE_BASELINE_HEALTHZ:-unknown}\"",
+            customMessage: "Phase B rollback path must read the baseline env var");
+        RenderedScript.ShouldContain("emit_event B baseline-was-fail",
+            customMessage: "if baseline was FAIL, emit a distinct event so operator sees 'failure may be environmental' in the timeline");
+        RenderedScript.ShouldContain("(was: $BASELINE_VERSION, healthz=$BASELINE_HEALTHZ_PRE)",
+            customMessage: "ROLLED_BACK status detail must include the baseline so operator sees what 'previous version' actually was");
+    }
+
+    [Fact]
     public void Script_StatusFile_RecordsInstallMethod()
     {
         // The status file's installMethod field tells the server (via

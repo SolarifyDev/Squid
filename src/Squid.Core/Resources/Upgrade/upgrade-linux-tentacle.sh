@@ -275,6 +275,30 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   write_status "IN_PROGRESS" "Selecting upgrade method"
   emit_event A start "Upgrade to $TARGET_VERSION starting"
 
+  # ── Pre-upgrade baseline (C5, 1.5.x) ─────────────────────────────────────
+  # Snapshot the agent's current version + healthz status BEFORE we touch
+  # anything. Used in Phase B's post-restart decision matrix:
+  #
+  #   baseline=OK   + post=OK   → success (happy path, expected)
+  #   baseline=OK   + post=FAIL → THE NEW VERSION BROKE IT — auto-rollback
+  #                                makes sense (Phase 3 C1+C2 will wire this)
+  #   baseline=FAIL + post=FAIL → broken before AND after → don't blame the
+  #                                upgrade; status detail mentions baseline
+  #                                was already failing so operator doesn't
+  #                                chase a phantom regression
+  #   baseline=FAIL + post=OK   → upgrade FIXED the agent (lucky path)
+  #
+  # The baseline is propagated through to Phase B via env vars, same
+  # mechanism as STARTED_AT (A2). Recorded as an event so operators see
+  # the pre-upgrade state in the timeline.
+  BASELINE_VERSION=$(timeout 5 "$INSTALL_DIR/squid-tentacle" version </dev/null 2>/dev/null | head -1 || echo "unknown")
+  if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
+    BASELINE_HEALTHZ="OK"
+  else
+    BASELINE_HEALTHZ="FAIL"
+  fi
+  emit_event A baseline "Pre-upgrade baseline: version=$BASELINE_VERSION healthz=$BASELINE_HEALTHZ"
+
   # ── Pre-flight: disk space (applies to ALL methods) ──────────────────────
   require_free_mb() {
     local path="$1" min_mb="$2" label="$3"
@@ -439,6 +463,8 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     --unit="squid-upgrade-$TARGET_VERSION-$$" \
     --setenv=SQUID_UPGRADE_SCOPED=1 \
     --setenv=SQUID_UPGRADE_STARTED_AT="$STARTED_AT" \
+    --setenv=SQUID_UPGRADE_BASELINE_VERSION="$BASELINE_VERSION" \
+    --setenv=SQUID_UPGRADE_BASELINE_HEALTHZ="$BASELINE_HEALTHZ" \
     --setenv=TARGET_VERSION="$TARGET_VERSION" \
     --setenv=INSTALL_DIR="$INSTALL_DIR" \
     --setenv=SERVICE_NAME="$SERVICE_NAME" \
@@ -581,8 +607,21 @@ fi
 # ── Rollback ─────────────────────────────────────────────────────────────────
 echo "::error:: Upgrade failed: $SERVICE_NAME did not become healthy after restart"
 
+# C5 (1.5.x): consult the pre-upgrade baseline before assuming the upgrade
+# itself is at fault. If healthz was already failing BEFORE we touched
+# anything, the post-upgrade failure is most likely environmental (network
+# blip, dependency unavailable, broken config) — not a regression in the
+# new binary. Tagging this in the operator-facing detail prevents the team
+# from chasing a phantom upgrade regression when the agent was actually
+# unhealthy beforehand.
+BASELINE_HEALTHZ_PRE="${SQUID_UPGRADE_BASELINE_HEALTHZ:-unknown}"
+if [ "$BASELINE_HEALTHZ_PRE" = "FAIL" ]; then
+  emit_event B baseline-was-fail "Pre-upgrade healthz was already FAIL — failure may be environmental, not upgrade-caused"
+fi
+
 if [ "$INSTALL_METHOD" = "tarball" ]; then
   echo "Rolling back via .bak directory (tarball method) ..."
+  emit_event B rollback-start "Tarball method: restoring previous version from .bak directory"
   write_status "ROLLING_BACK" "Health check failed after restart — restoring previous version from $BAK_DIR"
 
   timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -601,11 +640,17 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
 
   if [ "$ROLLBACK_OK" = "1" ]; then
     echo "Rollback to previous version succeeded; agent is healthy on the old binary."
-    write_status "ROLLED_BACK" "New binary failed health check; previous version restored and healthy"
+    emit_event B rollback-ok "Tarball rollback succeeded; running previous version $BASELINE_VERSION"
+    # C5 (1.5.x): annotate the rollback detail with the pre-upgrade
+    # baseline so operators see "we restored you to X-which-was-healthy"
+    # vs the previous flat "previous version restored". Removes operator
+    # ambiguity about what "previous version" was.
+    write_status "ROLLED_BACK" "New binary failed health check; restored previous version (was: $BASELINE_VERSION, healthz=$BASELINE_HEALTHZ_PRE)"
     exit 4
   fi
 
   echo "::error:: CRITICAL: rollback also failed. Agent is in an unknown state."
+  emit_event B rollback-fail "CRITICAL: tarball rollback also failed; agent in unknown state"
   write_status "ROLLBACK_CRITICAL_FAILED" "Agent in unknown state; manual intervention required"
   exit 9
 fi
