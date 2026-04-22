@@ -383,6 +383,17 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /tmp/squid-upgrade-status.* ${STATE
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mv /tmp/squid-upgrade-status.* ${STATE_DIR}/last-upgrade.json
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/chown ${SERVICE_USER}\:${SERVICE_USER} ${STATE_DIR}/last-upgrade.json
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_USER} ${STATE_DIR}/last-upgrade.json
+
+# (4) Auto-rollback support (C1+C2, 1.6.0). Phase A apt method downloads
+# the previous version's .deb to ${STATE_DIR}/rollback/ as a snapshot;
+# Phase B failure path runs `dpkg -i --force-downgrade snapshot.deb` to
+# restore. Path is wildcarded (squid-tentacle_*_*.deb) but locked to
+# our state dir so the service user can't dpkg -i an arbitrary file.
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mkdir -p ${STATE_DIR}/rollback
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir -p ${STATE_DIR}/rollback
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dpkg -i --force-downgrade /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
 SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).

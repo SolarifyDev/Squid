@@ -465,6 +465,7 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     --setenv=SQUID_UPGRADE_STARTED_AT="$STARTED_AT" \
     --setenv=SQUID_UPGRADE_BASELINE_VERSION="$BASELINE_VERSION" \
     --setenv=SQUID_UPGRADE_BASELINE_HEALTHZ="$BASELINE_HEALTHZ" \
+    --setenv=SQUID_UPGRADE_ROLLBACK_SNAPSHOT="${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" \
     --setenv=TARGET_VERSION="$TARGET_VERSION" \
     --setenv=INSTALL_DIR="$INSTALL_DIR" \
     --setenv=SERVICE_NAME="$SERVICE_NAME" \
@@ -655,9 +656,62 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
   exit 9
 fi
 
-# ── apt/yum: no auto-rollback (Phase 2 Part 2 v1) ──────────────────────────
-# Auto-downgrade isn't implemented in v1. The per-method hint below points
-# at whichever rollback path is actually feasible:
+# ── apt auto-rollback (C1+C2, 1.6.0) ────────────────────────────────────────
+# If Phase A's apt method downloaded a pre-upgrade snapshot .deb to
+# /var/lib/squid-tentacle/rollback/ AND the post-restart healthz failed,
+# auto-roll-back via `dpkg -i --force-downgrade snapshot.deb` + restart.
+# Verify health after rollback; on failure, escalate to ROLLBACK_CRITICAL_FAILED.
+#
+# Snapshot path was propagated via SQUID_UPGRADE_ROLLBACK_SNAPSHOT env var
+# from Phase A. Empty / file missing = snapshot unavailable (download failed,
+# OLD_VERSION_APT was <none>, etc) → fall through to manual instructions.
+if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" ] && [ -f "$SQUID_UPGRADE_ROLLBACK_SNAPSHOT" ]; then
+  echo "Auto-rollback: dpkg -i --force-downgrade $SQUID_UPGRADE_ROLLBACK_SNAPSHOT"
+  emit_event B rollback-start "Auto-rollback via snapshot .deb at $SQUID_UPGRADE_ROLLBACK_SNAPSHOT"
+  write_status "ROLLING_BACK" "Health check failed; restoring previous version via dpkg -i snapshot"
+
+  ROLLBACK_INSTALL_OK=0
+  if sudo dpkg -i --force-downgrade "$SQUID_UPGRADE_ROLLBACK_SNAPSHOT" >/dev/null 2>&1; then
+    ROLLBACK_INSTALL_OK=1
+  fi
+
+  if [ "$ROLLBACK_INSTALL_OK" = "1" ]; then
+    timeout 30 sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+
+    ROLLBACK_OK=0
+    for i in $(seq 1 30); do
+      if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
+          ROLLBACK_OK=1
+          break
+        fi
+      fi
+      sleep 1
+    done
+
+    if [ "$ROLLBACK_OK" = "1" ]; then
+      emit_event B rollback-ok "Auto-rolled back to ${BASELINE_VERSION:-previous version} via apt snapshot"
+      # Cleanup snapshot now that we've used it (it's stale).
+      sudo rm -f "$SQUID_UPGRADE_ROLLBACK_SNAPSHOT" 2>/dev/null || true
+      write_status "ROLLED_BACK" "Auto-rolled back from $TARGET_VERSION to ${BASELINE_VERSION:-previous version} via apt snapshot dpkg -i (was: healthz=$BASELINE_HEALTHZ_PRE)"
+      exit 4
+    fi
+
+    echo "::error:: Auto-rollback dpkg -i succeeded but service failed to start. Agent in unknown state."
+    emit_event B rollback-fail "Auto-rollback dpkg -i succeeded but service failed to start"
+    write_status "ROLLBACK_CRITICAL_FAILED" "Snapshot dpkg -i succeeded but service failed; manual intervention required"
+    exit 9
+  fi
+
+  echo "::warning:: Auto-rollback dpkg -i failed; falling through to manual instruction"
+  emit_event B rollback-fail "Auto-rollback dpkg -i itself failed; printing manual instruction"
+  # Fall through to the manual-instruction block below.
+fi
+
+# ── apt/yum: manual rollback fallback ──────────────────────────────────────
+# When auto-rollback isn't possible (snapshot missing, dpkg -i failed, or
+# yum method without snapshot), print a copy-paste-ready downgrade command
+# in the status detail so operators have a single-line recovery path.
 #
 #   apt: reprepro's APT repo only keeps the LATEST version (one-version-per-
 #     package-per-arch model). Old versions aren't in `stable` anymore, so

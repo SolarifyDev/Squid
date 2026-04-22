@@ -687,6 +687,51 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_PhaseB_AutoRollback_ExecutesSnapshotDpkgInstall_WhenSnapshotPresent()
+    {
+        // C2 (1.6.0): Phase B failure path now uses the snapshot .deb
+        // (downloaded by C1 in Phase A) to auto-rollback via dpkg -i +
+        // restart, BEFORE falling through to manual instructions. Pin
+        // the gating + the dpkg invocation + the post-rollback health
+        // verification + the success/failure branches.
+        RenderedScript.ShouldContain("if [ \"$INSTALL_METHOD\" = \"apt\" ] && [ -n \"${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}\" ] && [ -f \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\" ]",
+            customMessage: "auto-rollback gate: only when method=apt AND snapshot env var set AND snapshot file exists");
+
+        RenderedScript.ShouldContain("sudo dpkg -i --force-downgrade \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\"",
+            customMessage: "rollback uses dpkg -i --force-downgrade — sudoers has matching wildcard rule");
+
+        RenderedScript.ShouldContain("emit_event B rollback-start",
+            customMessage: "rollback initiation must emit a structured event for UI timeline");
+        RenderedScript.ShouldContain("emit_event B rollback-ok",
+            customMessage: "successful rollback must emit terminal event so UI marks task as ROLLED_BACK (not stuck)");
+        RenderedScript.ShouldContain("emit_event B rollback-fail",
+            customMessage: "failed rollback must emit terminal event so UI escalates to manual intervention banner");
+    }
+
+    [Fact]
+    public void Script_AutoRollback_PropagatesSnapshotPathThroughScopeEnv()
+    {
+        // Phase A captures SQUID_UPGRADE_ROLLBACK_SNAPSHOT; Phase B reads
+        // it. Same env-passthrough pattern as STARTED_AT and BASELINE_*.
+        // Without this propagation, Phase B's snapshot check would always
+        // fail (env var not in scope) — auto-rollback would silently
+        // never trigger.
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_ROLLBACK_SNAPSHOT=\"${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}\"",
+            customMessage: "snapshot path must propagate through systemd-run --setenv so Phase B sees it");
+    }
+
+    [Fact]
+    public void Script_AutoRollback_CleansUpSnapshotOnSuccess()
+    {
+        // After a successful auto-rollback, the snapshot .deb has served
+        // its purpose. Leaving it on disk would be a stale ~60MB blob
+        // (and could confuse a future manual-debug session). Clean up
+        // explicitly in the rollback-ok branch.
+        RenderedScript.ShouldContain("sudo rm -f \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\"",
+            customMessage: "successful auto-rollback must remove the snapshot .deb to free disk + avoid stale-file confusion");
+    }
+
+    [Fact]
     public void Script_PhaseB_ConsultsBaselineBeforeRollback()
     {
         // The rollback path must check baseline state and emit a clear
