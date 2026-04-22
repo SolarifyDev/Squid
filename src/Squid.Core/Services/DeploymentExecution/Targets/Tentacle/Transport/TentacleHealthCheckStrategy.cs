@@ -20,15 +20,25 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     /// </summary>
     internal const string UpgradeStatusMetadataKey = "upgradeStatus";
 
+    /// <summary>
+    /// Metadata key under which the agent embeds the JSONL upgrade events
+    /// log (B1, 1.5.0). Mirror of
+    /// <c>CapabilitiesService.UpgradeEventsMetadataKey</c> — pinned by
+    /// <c>UpgradeEventsMetadataKey_MatchesAgentContract</c>.
+    /// </summary>
+    internal const string UpgradeEventsMetadataKey = "upgradeEvents";
+
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
+    private readonly IUpgradeEventTimelineStore _upgradeEventStore;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _capabilitiesCache = capabilitiesCache;
         _upgradeLockReconciler = upgradeLockReconciler;
+        _upgradeEventStore = upgradeEventStore;
     }
 
     /// <summary>
@@ -59,6 +69,8 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
             CacheCapabilitiesFor(machine, response);
 
             await ReconcileStaleUpgradeIfNeededAsync(machine, response, ct).ConfigureAwait(false);
+
+            CaptureUpgradeEventTimeline(machine, response);
 
             var os = ReadMetadata(response, "os");
             var shell = ReadMetadata(response, "defaultShell");
@@ -103,6 +115,32 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
         catch (Exception ex)
         {
             Log.Warning(ex, "[UpgradeAudit] Stale-upgrade reconciler threw for machine {MachineId} — swallowed to keep health check independent", machine.Id);
+        }
+    }
+
+    /// <summary>
+    /// Parse the JSONL events log from the agent's metadata and store the
+    /// per-machine timeline so the API/UI layer can show real-time progress
+    /// (B2, 1.5.x). Same swallow-errors discipline as the reconciler — a
+    /// parse failure or store error must not degrade the underlying health
+    /// check. 1.4.x agents emit no events file → metadata key absent →
+    /// we just skip silently (no events to display, fall back to
+    /// status-file detail string only).
+    /// </summary>
+    private void CaptureUpgradeEventTimeline(Machine machine, CapabilitiesResponse response)
+    {
+        if (_upgradeEventStore == null || machine == null || response?.Metadata == null) return;
+
+        if (!response.Metadata.TryGetValue(UpgradeEventsMetadataKey, out var rawJsonl)) return;
+
+        try
+        {
+            var events = UpgradeStatusPayload.TryParseEvents(rawJsonl);
+            _upgradeEventStore.Store(machine.Id, events);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[UpgradeAudit] Failed to capture upgrade event timeline for machine {MachineId}", machine.Id);
         }
     }
 

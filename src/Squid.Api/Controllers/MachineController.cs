@@ -174,6 +174,29 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>
+    /// Real-time upgrade progress timeline (B2, 1.5.x). Returns the
+    /// chronological list of events emitted by the agent during the most
+    /// recent upgrade attempt — start, method-selected, scope-exec,
+    /// restart-start, healthz-pass, success (or failure-path equivalents).
+    /// FE polls this every 2-3s during an active upgrade to stream a live
+    /// progress narrative into the task activity log.
+    ///
+    /// <para>Empty events list when no upgrade has been attempted, the
+    /// agent is on 1.4.x (pre-events-file), or the server pod restarted
+    /// recently (cache cold; refills on next health check).</para>
+    /// </summary>
+    [HttpGet("{machineId:int}/upgrade-events")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeEventTimelineResponse))]
+    public async Task<IActionResult> GetUpgradeEventTimelineAsync(int machineId, CancellationToken ct)
+    {
+        var request = new GetUpgradeEventTimelineRequest { MachineId = machineId };
+
+        var response = await _mediator.RequestAsync<GetUpgradeEventTimelineRequest, GetUpgradeEventTimelineResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("{machineId:int}/upgrade")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
     public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)
