@@ -91,6 +91,36 @@ public sealed class AptUpgradeMethodTests
     }
 
     [Fact]
+    public void Render_DoesNotSetDebianFrontendEnvVar_BecauseSudoScrubsUnlistedEnv()
+    {
+        // Bug #4 from 1.4.3 E2E testing: passing `sudo DEBIAN_FRONTEND=noninteractive
+        // apt-get install ...` gets rejected by sudo with:
+        //   "sorry, you are not allowed to set the following environment
+        //    variables: DEBIAN_FRONTEND"
+        // sudo scrubs env by default and the sudoers rule has no SETENV: tag
+        // or env_keep entry for DEBIAN_FRONTEND. Result: apt install never
+        // runs and the upgrade fell through to tarball fallback, wasting
+        // bandwidth + time for an operation the package manager would have
+        // done in ~10s.
+        //
+        // Fix: rely on `apt-get install -y` alone to suppress prompts. Our
+        // squid-tentacle .deb has no debconf questions, so the noninteractive
+        // frontend var is pure belt-and-suspenders we can drop.
+        //
+        // Pin the absence of the RUNNABLE pattern `sudo DEBIAN_FRONTEND=` so
+        // a refactor that restores the env-var-on-sudo syntax fails here. We
+        // DON'T search for bare "DEBIAN_FRONTEND" because the comment above
+        // the install line mentions it deliberately as a do-not-do warning.
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+
+        snippet.ShouldNotContain("sudo DEBIAN_FRONTEND=",
+            customMessage: "sudo would reject `sudo DEBIAN_FRONTEND=... apt-get install` with " +
+                           "'not allowed to set DEBIAN_FRONTEND' — apt install never runs, upgrade " +
+                           "falls through to tarball. Rely on `-y` alone (squid-tentacle has no " +
+                           "debconf questions).");
+    }
+
+    [Fact]
     public void Render_AptGetUpdate_IsScopedToSquidSourcesListOnly()
     {
         // Real production failure: a machine with an expired v2raya.org apt
