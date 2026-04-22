@@ -197,6 +197,25 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>
+    /// Phase B bash log for the most recent upgrade attempt (B4, 1.6.0).
+    /// Operator clicks "View full log" on a failed task → FE calls this
+    /// endpoint → gets the full <c>/var/log/squid-tentacle-upgrade.log</c>
+    /// content as captured by the last health check (typically sub-minute
+    /// freshness). Tail-truncated to 50 KB at the agent side; beyond that
+    /// operators can SSH for the on-disk original.
+    /// </summary>
+    [HttpGet("{machineId:int}/upgrade-log")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeLogResponse))]
+    public async Task<IActionResult> GetUpgradeLogAsync(int machineId, CancellationToken ct)
+    {
+        var request = new GetUpgradeLogRequest { MachineId = machineId };
+
+        var response = await _mediator.RequestAsync<GetUpgradeLogRequest, GetUpgradeLogResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("{machineId:int}/upgrade")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
     public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)

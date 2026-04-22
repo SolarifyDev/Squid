@@ -140,6 +140,96 @@ public sealed class AptUpgradeMethodTests
     }
 
     [Fact]
+    public void Render_DpkgLockPreemption_WaitsForKnownAutoUpdaters()
+    {
+        // A3 (1.6.0): if /var/lib/dpkg/lock-frontend is held by apt-daily
+        // or unattended-upgrades, wait up to 90s for them to release
+        // before our apt install (which would otherwise lose the race).
+        // Pin: the lock probe, the known-process allowlist, the bounded
+        // wait, and the no-kill stance.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("sudo fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "must use fuser (not lsof — not always installed) to detect lock holder");
+
+        snippet.ShouldContain("unattended-upgr*|apt|apt-get|aptd|update-manager|packagekitd",
+            customMessage: "lock-wait must be gated on known auto-updater process names — interactive admin sessions get a different (warn-then-proceed) path");
+
+        snippet.ShouldContain("for wait_iter in $(seq 1 90)",
+            customMessage: "wait must be bounded (90s = comfortably > apt-daily's typical 30-60s runtime)");
+
+        snippet.ShouldNotContain("kill -",
+            customMessage: "must NEVER SIGTERM unattended-upgrades — interrupting mid-transaction leaves dpkg needs-configure, harder to recover from than waiting");
+    }
+
+    [Fact]
+    public void Render_DpkgLockPreemption_UnknownHolder_WarnsAndProceeds()
+    {
+        // The default branch of the case statement: an unknown lock holder
+        // (could be an interactive admin) gets a warning + proceed. Don't
+        // wait 90s for what might be a `sudo apt edit-sources` session.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("dpkg lock held by unknown process",
+            customMessage: "unknown holder must be logged with the actual process name so operators can diagnose");
+        snippet.ShouldContain("proceeding without wait",
+            customMessage: "unknown holder must NOT trigger the 90s wait — apt's own contention error gives operator a faster signal");
+    }
+
+    [Fact]
+    public void Render_DownloadsPreUpgradeSnapshot_ToFixedRollbackPath()
+    {
+        // C1 (1.6.0): apt method downloads the CURRENT version's .deb from
+        // GitHub Releases BEFORE triggering apt install, so Phase B can
+        // dpkg -i it on healthz failure. Pin the snapshot URL pattern,
+        // download tool flags, and destination path so refactors can't
+        // silently break auto-rollback.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("SNAPSHOT_URL=\"${GH_BASE_URL}/${OLD_VERSION_APT}/squid-tentacle_${OLD_VERSION_APT}_${ARCH_DEB}.deb\"",
+            customMessage: "snapshot URL must follow GitHub Release artefact naming so the same .deb operators can copy-paste matches what we auto-fetch");
+        snippet.ShouldContain("SNAPSHOT_PATH=\"/var/lib/squid-tentacle/rollback/squid-tentacle_${OLD_VERSION_APT}_${ARCH_DEB}.deb\"",
+            customMessage: "snapshot destination must be /var/lib/squid-tentacle/rollback/ — sudoers rule pins this prefix");
+        snippet.ShouldContain("curl -fsSL --connect-timeout 15 --max-time 120 --retry 2",
+            customMessage: "snapshot download must have bounded timeout (120s) and retries — long hang here delays the upgrade");
+        snippet.ShouldContain("SQUID_UPGRADE_ROLLBACK_SNAPSHOT=\"$SNAPSHOT_PATH\"",
+            customMessage: "successful download must export the path via env var so Phase B can find the snapshot");
+    }
+
+    [Fact]
+    public void Render_SnapshotDownloadFailure_IsNonFatal_UpgradeStillProceeds()
+    {
+        // C1 (1.6.0): if snapshot download fails (network blip, GH outage,
+        // OLD_VERSION not in releases), the upgrade itself MUST still
+        // proceed — auto-rollback is a "best effort" feature, not a
+        // prerequisite. Operator falls back to manual rollback instruction
+        // in the ROLLBACK_NEEDED detail.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("snapshot download failed — auto-rollback unavailable",
+            customMessage: "must explicitly log the snapshot-download failure so operators understand auto-rollback is unavailable for THIS upgrade");
+        // The non-fatal property: the snapshot block doesn't `exit` on download failure.
+        // Pin by checking that the apt-get install line appears AFTER the snapshot block —
+        // both run regardless of snapshot success.
+        var snapshotIdx = snippet.IndexOf("SNAPSHOT_URL=", StringComparison.Ordinal);
+        var aptInstallIdx = snippet.IndexOf("apt-get install -y --allow-downgrades", StringComparison.Ordinal);
+        aptInstallIdx.ShouldBeGreaterThan(snapshotIdx,
+            customMessage: "apt install must come AFTER snapshot block — confirms snapshot is best-effort, not blocking");
+    }
+
+    [Fact]
+    public void Render_SnapshotSkipped_WhenNoOldVersionInstalled()
+    {
+        // First-time install (OLD_VERSION_APT == "<none>") has nothing
+        // to roll back TO — skipping the snapshot avoids a guaranteed-fail
+        // GitHub fetch for a version string that's not a valid release.
+        var snippet = Method.RenderDetectAndInstall("1.6.0");
+
+        snippet.ShouldContain("if [ \"$OLD_VERSION_APT\" != \"<none>\" ]",
+            customMessage: "snapshot download must be guarded by 'previous version exists' — first-time installs have no rollback target");
+    }
+
+    [Fact]
     public void Render_AptOperations_CapNetworkTimeoutAndRetries()
     {
         // Without explicit timeouts, `apt-get install` on a wedged proxy

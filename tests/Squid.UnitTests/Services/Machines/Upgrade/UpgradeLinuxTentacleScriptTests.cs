@@ -687,6 +687,106 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_PhaseB_AutoRollback_ExecutesSnapshotDpkgInstall_WhenSnapshotPresent()
+    {
+        // C2 (1.6.0): Phase B failure path now uses the snapshot .deb
+        // (downloaded by C1 in Phase A) to auto-rollback via dpkg -i +
+        // restart, BEFORE falling through to manual instructions. Pin
+        // the gating + the dpkg invocation + the post-rollback health
+        // verification + the success/failure branches.
+        RenderedScript.ShouldContain("if [ \"$INSTALL_METHOD\" = \"apt\" ] && [ -n \"${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}\" ] && [ -f \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\" ]",
+            customMessage: "auto-rollback gate: only when method=apt AND snapshot env var set AND snapshot file exists");
+
+        RenderedScript.ShouldContain("sudo dpkg -i --force-downgrade \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\"",
+            customMessage: "rollback uses dpkg -i --force-downgrade — sudoers has matching wildcard rule");
+
+        RenderedScript.ShouldContain("emit_event B rollback-start",
+            customMessage: "rollback initiation must emit a structured event for UI timeline");
+        RenderedScript.ShouldContain("emit_event B rollback-ok",
+            customMessage: "successful rollback must emit terminal event so UI marks task as ROLLED_BACK (not stuck)");
+        RenderedScript.ShouldContain("emit_event B rollback-fail",
+            customMessage: "failed rollback must emit terminal event so UI escalates to manual intervention banner");
+    }
+
+    [Fact]
+    public void Script_AutoRollback_PropagatesSnapshotPathThroughScopeEnv()
+    {
+        // Phase A captures SQUID_UPGRADE_ROLLBACK_SNAPSHOT; Phase B reads
+        // it. Same env-passthrough pattern as STARTED_AT and BASELINE_*.
+        // Without this propagation, Phase B's snapshot check would always
+        // fail (env var not in scope) — auto-rollback would silently
+        // never trigger.
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_ROLLBACK_SNAPSHOT=\"${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}\"",
+            customMessage: "snapshot path must propagate through systemd-run --setenv so Phase B sees it");
+    }
+
+    [Fact]
+    public void Script_PhaseB_YumAutoRollback_UsesDnfDowngrade_WhenOldVersionAvailable()
+    {
+        // C3 (1.6.0): yum/dnf method's failure path uses dnf downgrade
+        // (or yum downgrade if dnf isn't available — RHEL 7 et al.).
+        // No snapshot needed — createrepo_c keeps last-5 versions
+        // indexed, so dnf can resolve the previous version directly.
+        // Pin the gate, the dnf invocation, and the dnf-vs-yum
+        // resolution.
+        RenderedScript.ShouldContain("if [ \"$INSTALL_METHOD\" = \"yum\" ] && [ -n \"${OLD_VERSION_RPM:-}\" ] && [ \"$OLD_VERSION_RPM\" != \"<none>\" ]",
+            customMessage: "yum auto-rollback gate: only when method=yum AND we have a non-<none> old version to roll back to");
+
+        RenderedScript.ShouldContain("if   command -v dnf >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=dnf",
+            customMessage: "must prefer dnf over yum (modern RHEL 8+/Rocky/Alma/Fedora ship dnf as the default)");
+        RenderedScript.ShouldContain("elif command -v yum >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=yum",
+            customMessage: "must fall back to yum on systems where dnf isn't installed (RHEL 7)");
+
+        RenderedScript.ShouldContain("sudo \"$YUM_BIN_FOR_ROLLBACK\" downgrade -y \"squid-tentacle-${OLD_VERSION_RPM}\"",
+            customMessage: "rollback uses native dnf/yum downgrade — sudoers has matching wildcard rule");
+    }
+
+    [Fact]
+    public void Script_YumAutoRollback_EmitsRollbackEventsForUI()
+    {
+        // Same event vocabulary as apt rollback so UI can render both
+        // method paths through the same rendering code.
+        var ymRollbackBlockStart = RenderedScript.IndexOf("if [ \"$INSTALL_METHOD\" = \"yum\" ]", StringComparison.Ordinal);
+        var ymRollbackBlockEnd = RenderedScript.IndexOf("# Fall through to the manual-instruction block below.", ymRollbackBlockStart + 1, StringComparison.Ordinal);
+        ymRollbackBlockStart.ShouldBeGreaterThan(-1, "yum rollback block must exist");
+        ymRollbackBlockEnd.ShouldBeGreaterThan(ymRollbackBlockStart, "yum block must reach the fall-through marker");
+
+        var ymBlock = RenderedScript.Substring(ymRollbackBlockStart, ymRollbackBlockEnd - ymRollbackBlockStart);
+
+        ymBlock.ShouldContain("emit_event B rollback-start",
+            customMessage: "yum rollback initiation event must be inside the yum block");
+        ymBlock.ShouldContain("emit_event B rollback-ok",
+            customMessage: "successful yum rollback must emit terminal event");
+        ymBlock.ShouldContain("emit_event B rollback-fail",
+            customMessage: "failed yum rollback must emit terminal event");
+    }
+
+    [Fact]
+    public void Script_PhaseB_TruncatesLogFile_ForPerRunCapture()
+    {
+        // B4 (1.6.0): Phase B truncates /var/log/squid-tentacle-upgrade.log
+        // at its entry so the server-exposed copy (read via Capabilities
+        // metadata into a 50KB-capped buffer) only contains THIS run's
+        // output. Before B4 the file appended forever — over time it
+        // would bloat and pre-truncate useful info at the 50KB cap head.
+        //
+        // Pin the truncation so a refactor can't regress to append-only.
+        RenderedScript.ShouldContain("sudo : > \"$LOG_FILE\"",
+            customMessage: "Phase B must truncate the log file at its entry — B4 relies on per-run-scoped log content");
+    }
+
+    [Fact]
+    public void Script_AutoRollback_CleansUpSnapshotOnSuccess()
+    {
+        // After a successful auto-rollback, the snapshot .deb has served
+        // its purpose. Leaving it on disk would be a stale ~60MB blob
+        // (and could confuse a future manual-debug session). Clean up
+        // explicitly in the rollback-ok branch.
+        RenderedScript.ShouldContain("sudo rm -f \"$SQUID_UPGRADE_ROLLBACK_SNAPSHOT\"",
+            customMessage: "successful auto-rollback must remove the snapshot .deb to free disk + avoid stale-file confusion");
+    }
+
+    [Fact]
     public void Script_PhaseB_ConsultsBaselineBeforeRollback()
     {
         // The rollback path must check baseline state and emit a clear

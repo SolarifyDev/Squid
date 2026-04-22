@@ -112,6 +112,72 @@ public sealed class InstallTentacleSudoersTests
             customMessage: "targeted apt-get update rule (scoped to squid.list) must be present — this is the P0 fix that prevents broken third-party repos from breaking our upgrade");
     }
 
+    [Fact]
+    public void InstallScript_SudoersBlock_ContainsAutoRollbackDpkgRule()
+    {
+        // C2 (1.6.0): Phase B auto-rollback runs `dpkg -i --force-downgrade
+        // /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb`. Without
+        // this sudoers rule, the rollback would fail on the dpkg step,
+        // leaving the agent stuck on the broken new version. Pin the
+        // wildcard pattern so a refactor that tightens / loosens it is
+        // a visible decision.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        // The dpkg rule uses literal path (no ${STATE_DIR} substitution
+        // because dpkg -i needs the explicit rollback location pinned in
+        // sudoers — wildcarding the parent dir would loosen the rule too
+        // far). Snapshot path is hard-locked.
+        heredoc.ShouldContain("/usr/bin/dpkg -i --force-downgrade /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb",
+            customMessage: "auto-rollback rule MUST exist + be locked to /var/lib/squid-tentacle/rollback/ — service user can't dpkg -i an arbitrary file");
+
+        // Rollback dir creation uses ${STATE_DIR} which expands to
+        // /var/lib/squid-tentacle at heredoc-write time (the heredoc is
+        // unquoted, so $vars expand to literal). The raw heredoc text
+        // we're inspecting still contains ${STATE_DIR}/rollback because
+        // we extract the SOURCE bash, not the post-expansion content.
+        heredoc.ShouldContain("/usr/bin/mkdir -p ${STATE_DIR}/rollback",
+            customMessage: "Phase A must be able to create the rollback dir for the snapshot download");
+
+        // The .tmp → final mv rule (literal path because the wildcard is
+        // already in the filename, no need for ${STATE_DIR} indirection).
+        heredoc.ShouldContain("/usr/bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb",
+            customMessage: "snapshot download lands at .tmp first, then mv to final — atomic write pattern needs sudoers permission");
+    }
+
+    [Fact]
+    public void InstallScript_SudoersBlock_ContainsYumDowngradeRules()
+    {
+        // C3 (1.6.0): yum auto-rollback path uses `dnf downgrade -y
+        // squid-tentacle-X.Y.Z-1` (or the yum equivalent on RHEL 7).
+        // Both binaries need a NOPASSWD rule, both pinned to the
+        // package-name wildcard so service user can't downgrade
+        // arbitrary packages.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        heredoc.ShouldContain("/usr/bin/dnf downgrade -y squid-tentacle-*",
+            customMessage: "dnf downgrade rule for modern RHEL/Rocky/Alma/Fedora");
+        heredoc.ShouldContain("/usr/bin/yum downgrade -y squid-tentacle-*",
+            customMessage: "yum downgrade rule for RHEL 7 (no dnf)");
+    }
+
+    [Fact]
+    public void InstallScript_SudoersBlock_ContainsDpkgLockProbeRule()
+    {
+        // A3 (1.6.0): Phase A apt method uses fuser to probe
+        // /var/lib/dpkg/lock-frontend for known background updaters.
+        // dpkg lock fd needs root to read — sudoers must permit fuser
+        // on this exact path. Both /bin and /usr/bin paths for usrmerge.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        heredoc.ShouldContain("/usr/bin/fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "fuser rule needed to probe dpkg lock holder before apt install");
+        heredoc.ShouldContain("/bin/fuser /var/lib/dpkg/lock-frontend",
+            customMessage: "fuser /bin path also pinned for usrmerge compat (some distros symlink /bin → /usr/bin, sudo matches by string equality)");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
