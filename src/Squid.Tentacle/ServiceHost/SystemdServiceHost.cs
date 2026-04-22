@@ -107,19 +107,43 @@ public sealed class SystemdServiceHost : IServiceHost
             ? $"User={request.RunAsUser}\nGroup={request.RunAsUser}\n"
             : string.Empty;
 
+        // ── Restart-on-failure hardening (C4, 1.5.0) ─────────────────────
+        // `Restart=always` alone would crash-loop a broken binary forever:
+        // a bad upgrade (glibc mismatch, missing config, corrupt package)
+        // wedges every 10 seconds — floods journalctl, consumes CPU for
+        // no purpose, and can keep the service from cleanly transitioning
+        // to a "failed" state that operators can see in the UI.
+        //
+        // StartLimitBurst + StartLimitIntervalSec tell systemd to give up
+        // after a bounded number of failed starts within a window:
+        //   • 3 failures in 120s → stop trying.
+        //   • StartLimitAction=none leaves the unit in `failed` state
+        //     instead of rebooting the host (systemd's default for
+        //     StartLimitAction is `none` but we set it explicitly for
+        //     operator readability).
+        //
+        // Trade-off: a genuinely transient startup failure (Redis not yet
+        // ready at boot, network up but DNS still propagating) could now
+        // cause the service to give up. Mitigation: 3 attempts * 10s wait
+        // = 40-60s of grace gives typical "infrastructure warming" plenty
+        // of headroom, and operators can `systemctl reset-failed` +
+        // `systemctl start` to resume.
         return $"""
             [Unit]
             Description={description}
             After=network.target
+            StartLimitBurst=3
+            StartLimitIntervalSec=120
 
             [Service]
             Type=simple
             ExecStart={execLine}
             WorkingDirectory={request.WorkingDirectory}
-            {userLines}Restart=always
+            {userLines}Restart=on-failure
             RestartSec=10
             KillSignal=SIGINT
             TimeoutStopSec=60
+            StartLimitAction=none
 
             [Install]
             WantedBy=multi-user.target

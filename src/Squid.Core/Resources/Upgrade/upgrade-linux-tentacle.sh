@@ -86,6 +86,18 @@ LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
 # back to bare `mktemp` (= /tmp/tmp.XXX) on failure — making the eventual
 # path ambiguous and breaking the sudoers pattern match when the fallback
 # fired. See the install-tentacle.sh sudoers rules for the matching pattern.
+#
+# Schema version 2 (1.5.0+): added startedAt (immutable across writes) and
+# scriptPid so the server can distinguish "upgrade genuinely in progress"
+# from "stale IN_PROGRESS left by a crashed script". Server reads status
+# file via CapabilitiesService and applies staleness heuristic:
+# IN_PROGRESS + startedAt > 10 min ago → auto-clear the stuck server task
+# and the Redis dispatch lock so next click proceeds. Schema v1 agents
+# (1.4.x) are backward-compatible; server degrades to "never auto-clear".
+#
+# STARTED_AT_EPOCH is captured once at script start (right below in the
+# outer block) so every write_status call during THIS invocation stamps
+# the same startedAt — treating "when did THIS upgrade attempt begin".
 write_status() {
   local status="$1"
   local detail="${2:-}"
@@ -96,10 +108,13 @@ write_status() {
   tmp=$(mktemp /tmp/squid-upgrade-status.XXXXXX)
   cat > "$tmp" <<STATUS_JSON
 {
+  "schemaVersion": 2,
   "targetVersion": "$TARGET_VERSION",
   "installMethod": "${INSTALL_METHOD:-unknown}",
   "status": "$status",
+  "startedAt": "$STARTED_AT",
   "updatedAt": "$now",
+  "scriptPid": $$,
   "detail": "$detail"
 }
 STATUS_JSON
@@ -109,6 +124,80 @@ STATUS_JSON
   # back to the next Capabilities health check to infer outcome from version.
   sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
+}
+
+# Captured once at script start so every write_status during this invocation
+# stamps the SAME startedAt (immutable within one upgrade attempt). If this
+# is the scope-phase re-exec (SQUID_UPGRADE_SCOPED=1), prefer the env var
+# passed through from Phase A so both phases share the same startedAt.
+STARTED_AT="${SQUID_UPGRADE_STARTED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+
+# ── Structured event log (B1, 1.5.0) ─────────────────────────────────────────
+# Append-only JSONL log of every key transition in an upgrade. Server reads
+# it via Capabilities RPC every 2s and streams to the UI task activity log
+# (B3) — operator sees real-time progress through Phase A + Phase B instead
+# of the current "go silent for 20 seconds while scope restarts" gap.
+#
+# JSONL (one JSON object per line) chosen over a JSON array inside the main
+# status file because:
+#   • Append-only → trivial in bash: `echo '{...}' >> file`.
+#   • No read-merge-write race (write_status already atomic via mv; events
+#     file is pure append and never competing with writers).
+#   • No jq dependency (minimal systemd containers don't ship jq).
+#   • Natural pairing with log-streaming semantics on the server side.
+#
+# File: /var/lib/squid-tentacle/upgrade-events.jsonl
+#   • Truncated in Phase A only (scope phase continues appending).
+#   • Max 50 events per run (hard cap — if we somehow exceed, something
+#     is looping pathologically and we stop logging to avoid disk fill).
+EVENTS_FILE="$STATUS_DIR/upgrade-events.jsonl"
+EVENTS_MAX=50
+
+# Phase A (first invocation) truncates so stale events from a PREVIOUS
+# upgrade attempt don't pollute this run's event stream. Phase B keeps
+# the file intact so its own events append to Phase A's.
+if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
+  sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
+  : | sudo tee "$EVENTS_FILE" >/dev/null 2>&1 || true
+  sudo chown "$SERVICE_USER:$SERVICE_USER" "$EVENTS_FILE" 2>/dev/null || true
+fi
+
+# emit_event — append one structured event. Arguments:
+#   $1 = phase       "A" | "B"
+#   $2 = kind        short tag e.g. "start", "method-try", "scope-exec"
+#   $3 = msg         human-readable; special chars (quotes, \) stripped
+#                    to keep the JSON parser-friendly without a true
+#                    escaper (we don't have one without jq).
+#
+# Event format:
+#   {"t":"2026-04-22T02:57:04Z","phase":"A","kind":"method-try","msg":"apt: update"}
+emit_event() {
+  local phase="$1" kind="$2" msg="${3:-}"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Cap: don't allow a runaway loop to fill the disk.
+  local line_count=0
+  if [ -f "$EVENTS_FILE" ]; then
+    line_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
+  fi
+  if [ "$line_count" -ge "$EVENTS_MAX" ]; then
+    return 0
+  fi
+
+  # Minimal JSON-safe escaping: drop quotes and backslashes from msg. Not
+  # a general JSON escaper, but events originate from our own echo strings
+  # (version numbers, method names, exit codes) — controlled alphabet.
+  local safe_msg
+  safe_msg=$(printf '%s' "$msg" | tr -d '"\\')
+
+  # Append via tee so one invocation both writes and handles permission
+  # (running as squid-tentacle → file owned by squid-tentacle → no sudo
+  # needed. If an earlier bug left root ownership, echo-append fails
+  # silently — acceptable since events are advisory).
+  printf '{"t":"%s","phase":"%s","kind":"%s","msg":"%s"}\n' \
+    "$now" "$phase" "$kind" "$safe_msg" \
+    >> "$EVENTS_FILE" 2>/dev/null || true
 }
 
 # ── systemd version probe (v239+ for --scope --collect) ──────────────────────
@@ -184,6 +273,7 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   OLD_VERSION_RPM=""
 
   write_status "IN_PROGRESS" "Selecting upgrade method"
+  emit_event A start "Upgrade to $TARGET_VERSION starting"
 
   # ── Pre-flight: disk space (applies to ALL methods) ──────────────────────
   require_free_mb() {
@@ -203,6 +293,7 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   }
   require_free_mb "$STAGE" 500 "/tmp staging"
   require_free_mb "$(dirname "$INSTALL_DIR")" 500 "install directory"
+  emit_event A disk-precheck-pass "Disk space sufficient (>=500MB on /tmp and install dir)"
 
   # ── Method dispatch (apt → yum → tarball-marker, server-injected) ────────
   # Each snippet's contract: short-circuit when INSTALL_OK=1 (a higher-
@@ -325,11 +416,13 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   # ── Bail if no method worked ────────────────────────────────────────────────
   if [ "$INSTALL_OK" != "1" ]; then
     echo "::error:: No upgrade method succeeded. Tried: apt, yum, tarball."
+    emit_event A method-exhausted "All install methods failed (apt+yum skipped or errored; tarball download failed)"
     write_status "FAILED" "No upgrade method succeeded — apt/yum repos not configured AND tarball download failed"
     exit 14
   fi
 
   echo "[upgrade] Method selected: $INSTALL_METHOD"
+  emit_event A method-selected "Method: $INSTALL_METHOD"
 
   # ── SCOPE DETACH ─────────────────────────────────────────────────────────
   # Re-exec self in a transient systemd scope so the upcoming `systemctl
@@ -341,9 +434,11 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   chmod +x "$SCOPED_SCRIPT"
 
   echo "Detaching to systemd scope for service restart (logs continue in /var/log/squid-tentacle-upgrade.log)..."
+  emit_event A scope-exec "Detaching to systemd scope for service restart"
   exec sudo systemd-run --scope --collect --quiet \
     --unit="squid-upgrade-$TARGET_VERSION-$$" \
     --setenv=SQUID_UPGRADE_SCOPED=1 \
+    --setenv=SQUID_UPGRADE_STARTED_AT="$STARTED_AT" \
     --setenv=TARGET_VERSION="$TARGET_VERSION" \
     --setenv=INSTALL_DIR="$INSTALL_DIR" \
     --setenv=SERVICE_NAME="$SERVICE_NAME" \
@@ -425,13 +520,16 @@ else
 fi
 
 write_status "SWAPPED" "New binary in place via $INSTALL_METHOD; about to restart service"
+emit_event B swapped "Binary in place via $INSTALL_METHOD; restarting service"
 
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
+emit_event B restart-start "Running systemctl restart $SERVICE_NAME"
 HEALTH_OK=0
 START_OK=1
 timeout 90 sudo systemctl restart "$SERVICE_NAME" || {
   echo "::error:: systemctl restart exceeded 90s or returned non-zero — taking rollback path."
+  emit_event B restart-fail "systemctl restart failed or timed out (90s)"
   START_OK=0
 }
 
@@ -441,11 +539,15 @@ if [ "$START_OK" = "1" ]; then
     if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
       if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
         HEALTH_OK=1
+        emit_event B healthz-pass "Service active and healthz responded OK after $i second(s)"
         break
       fi
     fi
     sleep 1
   done
+  if [ "$HEALTH_OK" != "1" ]; then
+    emit_event B healthz-fail "Service did not become healthy within 90s"
+  fi
 fi
 
 # ── Post-restart version sanity ──────────────────────────────────────────────
@@ -468,6 +570,7 @@ fi
 
 if [ "$HEALTH_OK" = "1" ]; then
   echo "✓ Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
+  emit_event B success "Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
   write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target (method=$INSTALL_METHOD)"
   if [ "$INSTALL_METHOD" = "tarball" ]; then
     sudo rm -rf "$BAK_DIR"

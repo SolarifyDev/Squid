@@ -570,6 +570,95 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_StatusFile_IncludesSchemaV2Fields_ForStaleDetection()
+    {
+        // A2 (1.5.0): server distinguishes "upgrade legitimately in progress"
+        // from "stale IN_PROGRESS left by a crashed script" using the
+        // startedAt + schemaVersion fields. Renaming/removing either would
+        // disable staleness detection silently — pin each field literally.
+        RenderedScript.ShouldContain("\"schemaVersion\": 2",
+            customMessage: "status JSON must declare schemaVersion=2 so UpgradeDispatchLockReconciler applies staleness detection");
+        RenderedScript.ShouldContain("\"startedAt\": \"$STARTED_AT\"",
+            customMessage: "status JSON must emit startedAt (immutable across write_status calls within one invocation) — reconciler keys off this to measure upgrade age");
+        RenderedScript.ShouldContain("\"scriptPid\": $$",
+            customMessage: "status JSON must include scriptPid for operator debugging (not currently consumed by server but recorded for post-mortem visibility)");
+    }
+
+    [Fact]
+    public void Script_StartedAt_CapturedOnceAtScriptStart_NotPerWrite()
+    {
+        // startedAt must reflect "when this upgrade invocation began",
+        // NOT "when write_status was last called" (that's what updatedAt
+        // is for). Otherwise the staleness window re-starts on every
+        // write and a stuck upgrade never looks stale.
+        //
+        // Pin: a single STARTED_AT assignment with the scope-phase-aware
+        // fallback that re-uses the Phase A value in Phase B.
+        RenderedScript.ShouldContain("STARTED_AT=\"${SQUID_UPGRADE_STARTED_AT:-$(date -u +",
+            customMessage: "STARTED_AT must be captured once per invocation; scope phase inherits via SQUID_UPGRADE_STARTED_AT env var so both phases share the same startedAt");
+    }
+
+    [Fact]
+    public void Script_ScopeDetach_PropagatesStartedAtThroughEnv()
+    {
+        // Scope re-exec runs the script fresh — without SQUID_UPGRADE_STARTED_AT
+        // being propagated, Phase B would generate a NEW startedAt,
+        // breaking the "total upgrade age" semantics the reconciler needs.
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_STARTED_AT=\"$STARTED_AT\"",
+            customMessage: "Phase A must pass STARTED_AT to Phase B via env var so scope re-exec sees the same wall-clock start time");
+    }
+
+    [Fact]
+    public void Script_HasStructuredEventLog_WithKeyTransitions()
+    {
+        // B1 (1.5.0): every key transition emits a JSONL event so the
+        // server can stream progress to the UI. Pin each critical
+        // transition by its kind tag so a refactor that drops any is
+        // visible here immediately.
+        RenderedScript.ShouldContain("EVENTS_FILE=\"$STATUS_DIR/upgrade-events.jsonl\"",
+            customMessage: "events file path must match the CapabilitiesService reader's expectation");
+
+        RenderedScript.ShouldContain("emit_event A start",
+            customMessage: "must emit 'start' at Phase A entry (UI baseline event)");
+        RenderedScript.ShouldContain("emit_event A disk-precheck-pass",
+            customMessage: "disk check success must emit an event so UI shows progress past the pre-flight phase");
+        RenderedScript.ShouldContain("emit_event A method-selected",
+            customMessage: "method selection must emit an event so UI shows which path (apt/yum/tarball) was chosen");
+        RenderedScript.ShouldContain("emit_event A scope-exec",
+            customMessage: "scope detach must emit an event — this is the last thing UI sees before the ~20s Halibut gap");
+        RenderedScript.ShouldContain("emit_event B swapped",
+            customMessage: "Phase B must emit swapped event so UI knows binary is in place, only restart remaining");
+        RenderedScript.ShouldContain("emit_event B restart-start",
+            customMessage: "restart start event — operator sees the critical service-restart moment");
+        RenderedScript.ShouldContain("emit_event B healthz-pass",
+            customMessage: "health-check pass event — operator's confidence signal that new binary is alive");
+        RenderedScript.ShouldContain("emit_event B success",
+            customMessage: "terminal success event — UI can mark task green without waiting for status file");
+    }
+
+    [Fact]
+    public void Script_EventsFile_TruncatedInPhaseAOnly_NotReResetInPhaseB()
+    {
+        // If Phase B truncated the events file on re-exec, all Phase A
+        // events would disappear — UI would lose the early progress
+        // narrative. Phase A truncates via `: | sudo tee > /dev/null`;
+        // Phase B only appends (via printf >> file).
+        RenderedScript.ShouldContain("if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]; then\n  sudo mkdir -p \"$STATUS_DIR\"",
+            customMessage: "events-file truncation must be gated on !SQUID_UPGRADE_SCOPED so Phase B doesn't reset Phase A's events");
+    }
+
+    [Fact]
+    public void Script_EmitEvent_HasHardCapAgainstRunawayLoops()
+    {
+        // Defensive: if a future bug introduces a loop that keeps
+        // emit_event-ing, we must bound disk usage. 50 events is
+        // plenty for any legitimate upgrade (observed ~10 events
+        // per apt-path run).
+        RenderedScript.ShouldContain("EVENTS_MAX=50",
+            customMessage: "emit_event must cap total events per upgrade to prevent a runaway loop from filling the disk");
+    }
+
+    [Fact]
     public void Script_StatusFile_RecordsInstallMethod()
     {
         // The status file's installMethod field tells the server (via

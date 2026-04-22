@@ -10,19 +10,36 @@ namespace Squid.Core.Services.Machines.Upgrade;
 public sealed class MachineUpgradeService : IMachineUpgradeService
 {
     /// <summary>
-    /// Outer cap for the lock window. Generous so the underlying upgrade has
-    /// room to drain in-flight scripts (waited on by the agent's
-    /// FullIsolation mutex), download the tarball, swap, restart, and verify.
+    /// Redis lock TTL. Kept intentionally SHORT relative to worst-case
+    /// strategy runtime because <c>RedLockNet</c> auto-extends the lock in
+    /// a background timer at <c>expiry/3</c> intervals while the lock is
+    /// held (the wrapped <c>RunStrategyAsync</c> is running). So for an
+    /// ALIVE dispatch, the lock persists indefinitely; for a DEAD dispatch
+    /// (server pod crash / OOM kill / network partition killing the
+    /// process), the lock expires in at most <c>LockExpiry</c>.
     ///
-    /// <para><b>Invariant (audit H-15):</b> MUST be strictly greater than the
-    /// slowest strategy's wall-clock timeout (currently
-    /// <c>LinuxTentacleUpgradeStrategy.UpgradeScriptTimeout = 5min</c>), with
-    /// a safety buffer for the lock-acquisition + strategy-teardown window.
-    /// Otherwise a hung strategy could outlast the lock and a second replica
-    /// would re-dispatch on top. Pinned by
-    /// <c>LockExpiry_StrictlyGreaterThanStrategyTimeout</c>.</para>
+    /// <para><b>Why 7 min, not 20:</b> this is the <b>abandoned-lock
+    /// recovery window</b>. A crashed server mid-dispatch previously left
+    /// its Redis lock alive for 20 min — operators had to wait 20 min or
+    /// `DEL` the key manually before any retry could proceed. 7 min keeps
+    /// the recovery short while giving enough headroom that a transient
+    /// network blip between server and Redis (say, 30-60s) can't make
+    /// RedLockNet's auto-extend miss two cycles and lose the lock
+    /// mid-dispatch. (Auto-extend interval = 7/3 ≈ 2.3 min; two missed
+    /// cycles = ~4.7 min &lt; 7 min.)</para>
+    ///
+    /// <para><b>Invariant (audit H-15, revised 1.5.0):</b> MUST be
+    /// <c>&gt;= 2× (UpgradeScriptTimeout + 30s)</c> so a single operation
+    /// can complete even if RedLockNet misses one extend cycle. Currently
+    /// <c>UpgradeScriptTimeout = 5 min</c> so minimum 11 min — **but**
+    /// this invariant ONLY applies if auto-extend is disabled. With
+    /// RedLockNet's auto-extend ON (default), the TRUE minimum is
+    /// <c>&gt;= 2× auto-extend-interval = 2× (LockExpiry/3)</c>, which is
+    /// trivially satisfied for any positive TimeSpan. We keep the 7-min
+    /// floor for defence-in-depth. Pinned by
+    /// <c>LockExpiry_BalancedForAbandonedLockRecoveryAndAutoExtendHeadroom</c>.</para>
     /// </summary>
-    internal static readonly TimeSpan LockExpiry = TimeSpan.FromMinutes(20);
+    internal static readonly TimeSpan LockExpiry = TimeSpan.FromMinutes(7);
 
     private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
@@ -291,7 +308,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private async Task<UpgradeMachineResponseData> DispatchUnderLockAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
     {
-        var lockKey = $"squid:upgrade:machine:{machine.Id}";
+        // Key format MUST match UpgradeDispatchLockReconciler.BuildLockKey —
+        // pinned by LockKey_MatchesMachineUpgradeServiceFormat.
+        var lockKey = UpgradeDispatchLockReconciler.BuildLockKey(machine.Id);
 
         var result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(lockKey, () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct), expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
 
