@@ -5,44 +5,44 @@ Origin: Squid Tentacle
 Label: Squid Tentacle APT repository
 Suite: stable
 Codename: stable
-Date: Wed, 22 Apr 2026 00:02:16 UTC
+Date: Wed, 22 Apr 2026 01:46:09 UTC
 Architectures: amd64 arm64
 Components: main
 Description: Squid Tentacle Linux deployment agent
 MD5Sum:
- 815a790fa029e8e41a1dcc4558af8a2b 633 main/binary-amd64/Packages
- 76396eb0121c8125b318a09f308e8303 437 main/binary-amd64/Packages.gz
+ 5e491ca66a694750afd581fc716d1ff9 633 main/binary-amd64/Packages
+ 21ea5e84aed345b42162e7e6ef55551a 437 main/binary-amd64/Packages.gz
  77c9fb903e2d2d0341524664761d840d 163 main/binary-amd64/Release
- 3ff892864e00f35ae2762cb7d1d58387 633 main/binary-arm64/Packages
- 6ac3ec3ee14c7c81ad9345b30454d609 435 main/binary-arm64/Packages.gz
+ 89d7d11fff8cfc17aaf9ccce31b30d56 633 main/binary-arm64/Packages
+ 6f42556b97baa6215321e49100a6805b 437 main/binary-arm64/Packages.gz
  07ab0e95f799fed75362392c39787fa0 163 main/binary-arm64/Release
 SHA1:
- 5564894c36e5043a665c6eb8774135cfb91a69e4 633 main/binary-amd64/Packages
- b81586dedff3716ae2e5b6891e282c131ce90cbf 437 main/binary-amd64/Packages.gz
+ 8d5ad6d648e520515cc0a262a89697e5cc3feac6 633 main/binary-amd64/Packages
+ e8e758955000a99aa38917bc079c389ab70b89ff 437 main/binary-amd64/Packages.gz
  af55fdfe8138ba277651884a53adfcd10ef32c01 163 main/binary-amd64/Release
- f1570b2718602b9f0b4247e3c422c590abb01cf6 633 main/binary-arm64/Packages
- e1565b04946e4b50c62a5c014d64e0e349c9654d 435 main/binary-arm64/Packages.gz
+ a176fbc57fdd329034f01dc9faca2957c7ed7748 633 main/binary-arm64/Packages
+ 8a378a2748e495c9245bf0e888959c43df38d590 437 main/binary-arm64/Packages.gz
  ccefe191de5438e8b467928c0c739e8b49e89aa8 163 main/binary-arm64/Release
 SHA256:
- 96c558173c5964695aedb9c2ea1c495297db9aee1692d3672e9d90dca88296a5 633 main/binary-amd64/Packages
- d85a003a968ac1860012e99a562838d5b51b64144d55bc181498bf830cf83fce 437 main/binary-amd64/Packages.gz
+ c086f16c3d1f20b69548aa43de9a178a501689f30edec8fe8ed92b903407ff0d 633 main/binary-amd64/Packages
+ 11722d05ff06263bff6498a2079f8b9e8b007afc196cd8691d92cb131c1fda82 437 main/binary-amd64/Packages.gz
  fb59e748f95ae5bdcb3811a2e265a4f215fe36a550d4acb06982d79199075fbb 163 main/binary-amd64/Release
- cef437b51d21cb9cc2764c451e586e724abfbded29674ca3b68e8632a627b144 633 main/binary-arm64/Packages
- 290f9e353fabd1268911aba744ad1d6929d7b73b30e0a6e4761860a87ab09c6f 435 main/binary-arm64/Packages.gz
+ 0e2c207ddffb164195d01b1f9545d189c18d324a994d7a84edb15dc0c7894abd 633 main/binary-arm64/Packages
+ 01fa0408c0c714a8d2a81fed5567838f2e77a1e04bf4e73344e005477c9d5385 437 main/binary-arm64/Packages.gz
  ec4ebc3d8d2a43d4e694840fdf19235fbd093456c3371869def82fcf7434d316 163 main/binary-arm64/Release
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEErhIS6ldAnyoF8gfr2zL5KCJMzCUFAmnoEAgACgkQ2zL5KCJM
-zCVmZRAAkZjIfXn9h2HF6d/V3+HqpNIdPSHdMnVBkJNi1xG3x0kwZAnMDffP4X0k
-1HZ30do1KM6jiGWSR103GlxUzQRDSHlPdjzMvJT5U13CA5UyRPCJpSDhMZejIXiI
-QtX6TvcIMKctvPvyyOYMXgnq1Ycw713Jn5Hz+bUuv3w5XxmP7CaN77s80oGFPVVR
-vC4h3sJKPc0bIeMfPbAN4ToWicaPvn7dr98KRNfCNpH/t7MIy2au4idTFgrr5r9q
-XWEGTK7Pe7tRaQNtGxYNZO+C7jHTiT5CvNjjA9vMKXtvLyH4ih3pLNmF8ochpnX2
-zNAulEZ6s0RhBznId9rX9dkbbSMycBR98srP03v8JmATuEisuZYbSxVQf0UMHiEf
-ShO7akA3W1BF4FMIwjQEg/Jf9mRMNOwAO1rH+rwOAfYuVnK/+9WCcKBNTpAYBrOU
-DJCDjcMDMcdRAGzyanofBJ9xvyCk2LEbw8E3fy2oATOECUVqN3ZE9FEOnWFWFS6t
-bEVvIa7BfZ/Wj8SZUnc8YpYm+vwfiamYbI1kwMe+zfcwbO6FiNLfLgbOq/MZWldX
-lOEce2NnAzOJ0uA8fx0L3gSl1BP6yyRnvpzXr1it3fpvZa6Gk9Jck2MrMCliCcvl
-buJXiMySdcyJmaMPcteUOJ8Un8tfSvc+Kw2Zi8vxqeYMZucE3Yo=
-=puzL
+iQIzBAEBCgAdFiEErhIS6ldAnyoF8gfr2zL5KCJMzCUFAmnoKGEACgkQ2zL5KCJM
+zCU6PQ//fZzMg4mXKYz2r27l/pZRLPB4M1AwWEWR+kFT5x+9MFqOqDScx9Q3MoOc
+EzrBlxnKD93drE7PuAFHGZdJDsSm/mSUva3WlH6w1YW5Um1rjFoYrE+IOxCy5t/p
+2Et4wFSMeFNDFUwwjSLR5Ne9H0JgUfkp8aivjsd6JsyJA31nQonu+ejk8TyOYnvN
+IOEA0mhcqHFa4LXdA9eidzJitxxtEwAzfAner9ifTm7E2RZEW+1SauVuGBVXeA+M
+GUjIJfJer6b3Ou/MeB1hjGv49mI0/nI7tAGuJ76Ui9aGGrZErxXz/q5cnMbjGOtd
+jQ3I16Brob3wIBoZdysB1IYbNuWxrw7Zgb/LUgAaCnMIuTBrpJx/2VQKCC23ZVdE
+pyxq7LJKCU2O7eLgjLt1f3jRMuVNYgyYRNZEK89d4lKR9/ABIoEn9OAUvcCQVF3l
+WX32xHvslb+STQ+QglzSDqni1A4yc51JgpSuldhLnUn3wZGL2y/DkEAq0B/zc2Ay
+KUiN0WL5TmZB3+TUyDwJa83HrQTLTsvqtSGCjv968/OT8lGKDeo3h5yVplFYSfOo
+fr5LZUYqGAtySZQ3IIaDjXTENk9tz3w16zvvli/NuXRnx6KjPGE8r3lSUQwrxDSv
+Q5HCAKjZ8rXJIXH2f9WIV3gXKHs8tjGCUx2xKSyNyXeFfwYsLNk=
+=lVhn
 -----END PGP SIGNATURE-----
