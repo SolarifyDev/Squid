@@ -57,13 +57,23 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                      # Capture the currently-installed version BEFORE upgrade so the operator can roll back manually if needed.
                      OLD_VERSION_APT=$(dpkg-query -W -f='${Version}' squid-tentacle 2>/dev/null || echo "<none>")
                      echo "[upgrade-method:apt] Pre-upgrade version: $OLD_VERSION_APT"
+                     # NOTE: NO `DEBIAN_FRONTEND=noninteractive` env var on the install line.
+                     # sudo scrubs env by default and only permits explicitly-listed vars via
+                     # env_keep / SETENV: tag. Bash syntax `sudo ENV=VAL cmd` tries to pass
+                     # ENV through sudo; without permission, sudo rejects the WHOLE command
+                     # with "sorry, you are not allowed to set the following environment
+                     # variables: DEBIAN_FRONTEND" — apt install never runs, falls through
+                     # to yum/tarball. Discovered in 1.4.3 E2E testing. The `-y` flag
+                     # alone is enough to suppress interactive prompts for our squid-tentacle
+                     # package (it has no debconf questions); DEBIAN_FRONTEND=noninteractive
+                     # was belt-and-suspenders we can safely drop.
                      if sudo apt-get update -qq \
                             -o Dir::Etc::sourcelist=sources.list.d/squid.list \
                             -o Dir::Etc::sourceparts=- \
                             -o APT::Get::List-Cleanup=0 \
                             -o Acquire::http::Timeout=60 \
                             -o Acquire::Retries=1 \
-                         && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades \
+                         && sudo apt-get install -y --allow-downgrades \
                                 -o Acquire::http::Timeout=120 \
                                 -o Acquire::Retries=1 \
                                 "squid-tentacle={{targetVersion}}"; then

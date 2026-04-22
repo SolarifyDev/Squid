@@ -118,23 +118,37 @@ if [ "${SYSTEMD_VERSION:-0}" -lt 239 ]; then
   exit 12
 fi
 
-# ── Idempotency guard ────────────────────────────────────────────────────────
-# Ensure lock dir exists (fresh installs that pre-date the post-Phase-2-Part-2
-# install-tentacle.sh may not have created it yet). sudoers allows this via
-# `sudo mkdir -p /var/lib/squid-tentacle` — if the rule isn't there we
-# swallow the failure and the subsequent `touch` surfaces a clearer error.
-sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
+# ── Idempotency guard (Phase A only) ────────────────────────────────────────
+# The flock is BYPASSED during Phase B (SQUID_UPGRADE_SCOPED=1). Reason:
+# Phase A does `exec sudo systemd-run --scope ... bash scoped.sh`. Bash exec
+# replaces itself with sudo — sudo inherits the lock file descriptor and
+# holds it OPEN (closed only when sudo exits, which happens AFTER systemd-run
+# returns, which happens AFTER the scope body completes). So during Phase B
+# in-scope, the lock is still visibly "held" on the same host. If Phase B
+# also calls `flock -n` on the same file, it fails and exits 0 as a no-op
+# — stranding the upgrade mid-flight (IN_PROGRESS forever, no service
+# restart, no version swap). Discovered in 1.4.3 end-to-end verification;
+# the bug had been latent since Phase 1 was shipped. Phase B is trivially
+# the only instance (systemd-run creates exactly one scope); it doesn't
+# need the idempotency guard.
+if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
+  # Ensure lock dir exists (fresh installs that pre-date the post-Phase-2-Part-2
+  # install-tentacle.sh may not have created it yet). sudoers allows this via
+  # `sudo mkdir -p /var/lib/squid-tentacle` — if the rule isn't there we
+  # swallow the failure and the subsequent `touch` surfaces a clearer error.
+  sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
 
-# Open read-only for flock. flock works on read-only fds, so this succeeds
-# even if a stray root-owned lock file blocks our write. The touch-if-missing
-# creates the file the FIRST time (while the parent dir is squid-tentacle-
-# owned, the file inherits our ownership).
-[ -f "$LOCK_FILE" ] || touch "$LOCK_FILE"
-exec {LOCK_FD}< "$LOCK_FILE"
+  # Open read-only for flock. flock works on read-only fds, so this succeeds
+  # even if a stray root-owned lock file blocks our write. The touch-if-missing
+  # creates the file the FIRST time (while the parent dir is squid-tentacle-
+  # owned, the file inherits our ownership).
+  [ -f "$LOCK_FILE" ] || touch "$LOCK_FILE"
+  exec {LOCK_FD}< "$LOCK_FILE"
 
-if ! flock -n "$LOCK_FD"; then
-  echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
-  exit 0
+  if ! flock -n "$LOCK_FD"; then
+    echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
+    exit 0
+  fi
 fi
 
 echo "=== Squid Tentacle upgrade ==="
@@ -506,13 +520,35 @@ fi
 #   yum: createrepo_c's repomd indexes every .rpm we leave in the pool; our
 #     publish workflow keeps the last 5 per arch. `dnf downgrade` resolves
 #     cleanly as long as OLD_VERSION is within that window.
+#
+# Version sanitization (audit J1): dpkg-query / rpm -q should return plain
+# semver-ish strings, but a corrupted package DB could surface bytes with
+# shell metacharacters. If an operator copy-pastes a DOWNGRADE_CMD string
+# with unescaped shell metachars, their interactive shell could execute
+# unintended commands. Safe_version() pins the value to a conservative
+# character class; anything outside it collapses to the placeholder so
+# the displayed command stays benign and obviously-incomplete.
+safe_version() {
+  local raw="${1:-}"
+  # Allow: semver chars only — alnum, dot, underscore, hyphen, tilde, plus.
+  # Anything else ($, `, space, ;, &, |, <, >, \, quotes, newline, …) rejects.
+  if printf '%s' "$raw" | grep -qE '^[a-zA-Z0-9._~+-]+$'; then
+    printf '%s' "$raw"
+  else
+    printf '<previous-version>'
+  fi
+}
+
+OLD_VERSION_APT_SAFE=$(safe_version "$OLD_VERSION_APT")
+OLD_VERSION_RPM_SAFE=$(safe_version "$OLD_VERSION_RPM")
+
 case "$INSTALL_METHOD" in
   apt)
     ARCH_DEB=$(dpkg --print-architecture 2>/dev/null || echo amd64)
-    DOWNGRADE_CMD="curl -fsSLo /tmp/squid-tentacle-rollback.deb \"https://github.com/SolarifyDev/Squid/releases/download/${OLD_VERSION_APT:-<previous-version>}/squid-tentacle_${OLD_VERSION_APT:-<previous-version>}_${ARCH_DEB}.deb\" && sudo dpkg -i /tmp/squid-tentacle-rollback.deb && sudo systemctl restart $SERVICE_NAME"
+    DOWNGRADE_CMD="curl -fsSLo /tmp/squid-tentacle-rollback.deb \"https://github.com/SolarifyDev/Squid/releases/download/${OLD_VERSION_APT_SAFE}/squid-tentacle_${OLD_VERSION_APT_SAFE}_${ARCH_DEB}.deb\" && sudo dpkg -i /tmp/squid-tentacle-rollback.deb && sudo systemctl restart $SERVICE_NAME"
     ;;
   yum)
-    DOWNGRADE_CMD="sudo dnf downgrade -y squid-tentacle-${OLD_VERSION_RPM:-<previous-version>} && sudo systemctl restart $SERVICE_NAME"
+    DOWNGRADE_CMD="sudo dnf downgrade -y squid-tentacle-${OLD_VERSION_RPM_SAFE} && sudo systemctl restart $SERVICE_NAME"
     ;;
   *)
     DOWNGRADE_CMD="(unknown method '$INSTALL_METHOD' — manual intervention required)"

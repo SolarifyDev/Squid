@@ -145,6 +145,41 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_FlockGuard_IsGatedOnPhaseA_NotRerunInScope()
+    {
+        // Bug #5 from 1.4.3 E2E testing: the flock guard was at the top of
+        // the script BEFORE the `SQUID_UPGRADE_SCOPED` check. Phase A's
+        // `exec sudo systemd-run --scope ... bash scoped.sh` replaces bash
+        // with sudo — sudo inherits the lock fd and holds it open until it
+        // exits, which happens AFTER the scope body returns. Phase B inside
+        // the scope then re-runs the flock check, sees the lock held (by
+        // parent sudo), and exits 0 as "already in progress — no-op". Net
+        // effect: upgrade dies silently after Phase A, service never
+        // restarts, status file stays at IN_PROGRESS forever.
+        //
+        // Fix: wrap the flock block inside `if [ -z "$SQUID_UPGRADE_SCOPED" ]`
+        // so Phase B skips it (it's trivially the only instance — systemd-run
+        // makes exactly one scope).
+        //
+        // Pin by locating the ACTIVE flock line (`if ! flock -n` — not the
+        // comment mentions of "flock -n") and verifying a SQUID_UPGRADE_SCOPED
+        // check appears above it in the source.
+        var flockIdx = RenderedScript.IndexOf("if ! flock -n", StringComparison.Ordinal);
+        flockIdx.ShouldBeGreaterThan(-1, "active `if ! flock -n` guard must still exist for Phase A idempotency");
+
+        var preFlock = RenderedScript.Substring(0, flockIdx);
+
+        // The Phase A gate must appear BEFORE the flock — not after.
+        var gateIdx = preFlock.LastIndexOf("if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]", StringComparison.Ordinal);
+        gateIdx.ShouldBeGreaterThan(-1,
+            "the flock guard MUST be wrapped in an `if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]` block. " +
+            "Without this gate, Phase B's re-run of the script (inside the systemd-run scope) " +
+            "would re-acquire flock on the same file — but sudo (the parent exec chain) still " +
+            "holds the lock fd until it exits, so Phase B sees 'already in progress' and exits 0. " +
+            "The upgrade dies silently after Phase A with status IN_PROGRESS and no service restart.");
+    }
+
+    [Fact]
     public void Script_UsesPosixDf_NotGnuOutputAvail()
     {
         // Audit H-13: df --output=avail is GNU-only (breaks Alpine/BusyBox).
@@ -500,6 +535,38 @@ public sealed class UpgradeLinuxTentacleScriptTests
             customMessage: "yum rollback path uses native `dnf downgrade` (createrepo_c keeps last 5 versions indexed)");
         RenderedScript.ShouldContain("ROLLBACK_NEEDED",
             customMessage: "apt/yum failure must use the ROLLBACK_NEEDED status (vs tarball's ROLLED_BACK) so FE can render the right CTA");
+    }
+
+    [Fact]
+    public void Script_RollbackCommand_SanitizesOldVersionBeforeEmbedding()
+    {
+        // Audit J1: dpkg-query / rpm -q SHOULD return plain semver strings,
+        // but a corrupted package DB could surface bytes with shell
+        // metacharacters. If those bytes land in the DOWNGRADE_CMD string
+        // that the server displays in the status detail, an operator who
+        // copy-pastes the command could execute unintended shell (`;`, `&&`,
+        // backticks, `$()`, etc.). The fix routes both OLD_VERSION_APT and
+        // OLD_VERSION_RPM through a safe_version() helper that rejects
+        // anything outside [A-Za-z0-9._~+-] — falling back to the
+        // <previous-version> placeholder so the displayed command is benign
+        // and obviously incomplete (operator notices + asks ops).
+        //
+        // Pin the sanitization layer exists and is applied to both variables
+        // so a refactor that "simplifies" by inlining the raw variable back
+        // into DOWNGRADE_CMD fails here.
+        RenderedScript.ShouldContain("safe_version()",
+            customMessage: "rollback command construction must route old-version strings through the safe_version() sanitizer — " +
+                           "raw embedding of $OLD_VERSION_APT / $OLD_VERSION_RPM is a shell-injection risk for operator copy-paste");
+        RenderedScript.ShouldContain("[a-zA-Z0-9._~+-]+",
+            customMessage: "safe_version() must whitelist semver chars only; a permissive pattern defeats the hardening");
+        RenderedScript.ShouldContain("OLD_VERSION_APT_SAFE=$(safe_version",
+            customMessage: "the sanitized form must be what gets embedded into the apt DOWNGRADE_CMD (not the raw $OLD_VERSION_APT)");
+        RenderedScript.ShouldContain("OLD_VERSION_RPM_SAFE=$(safe_version",
+            customMessage: "the sanitized form must be what gets embedded into the yum DOWNGRADE_CMD (not the raw $OLD_VERSION_RPM)");
+        RenderedScript.ShouldNotContain("${OLD_VERSION_APT:-<previous-version>}",
+            customMessage: "the old direct-embedding pattern has been replaced by safe_version() — if this returns, the J1 shell-injection risk is back");
+        RenderedScript.ShouldNotContain("${OLD_VERSION_RPM:-<previous-version>}",
+            customMessage: "same as above for RPM");
     }
 
     [Fact]
