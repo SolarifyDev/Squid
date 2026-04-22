@@ -555,22 +555,37 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public void LockExpiry_StrictlyGreaterThanStrategyTimeout_WithSafetyBuffer()
+    public void LockExpiry_BalancedForAbandonedLockRecoveryAndAutoExtendHeadroom()
     {
-        // Audit H-15 invariant. If the lock TTL expires before the
-        // strategy finishes, a second replica can pick up the now-free
-        // lock and dispatch a DUPLICATE upgrade on the same machine.
-        // The bash-side flock catches it, but the server-side log shows
-        // a redundant attempt which is operator-confusing.
+        // Invariant revised in 1.5.0 (Phase 1 A1). Rationale:
         //
-        // Buffer = 5 minutes on top of 2×(slowest strategy timeout) so
-        // graceful teardown (observer final poll, cache invalidation,
-        // response shaping) has headroom before the lock releases.
-        var strategyTimeout = LinuxTentacleUpgradeStrategy.UpgradeScriptTimeout;
-        var minimumAcceptableLockExpiry = strategyTimeout + strategyTimeout + TimeSpan.FromMinutes(5);
+        // RedLockNet auto-extends the lock at expiry/3 intervals while the
+        // wrapped operation (RunStrategyAsync) is running. So:
+        //   • ALIVE dispatch: lock persists indefinitely via auto-extend.
+        //   • DEAD dispatch (server crash / OOM / pod rescheduled): lock
+        //     expires in at most LockExpiry → operator can retry.
+        //
+        // Two competing forces on the TTL value:
+        //   (a) TOO SHORT → transient Redis network jitter could make
+        //       auto-extend miss > 1 cycle, losing the lock mid-dispatch.
+        //       Hard floor of 5 min so a 30-60s network blip is absorbed.
+        //   (b) TOO LONG → abandoned locks block operators for longer.
+        //       Before 1.5.0 this was 20 min — known operator pain point
+        //       (observed in 1.4.3 E2E: stuck for 20 min post server
+        //       restart before next click could proceed). Ceiling of 10
+        //       min keeps operator wait reasonable.
+        //
+        // Both bounds are tested so a future "raise this to fix a bug"
+        // reviewer is forced to acknowledge the abandoned-lock trade-off.
+        var expiry = MachineUpgradeService.LockExpiry;
 
-        MachineUpgradeService.LockExpiry.ShouldBeGreaterThan(minimumAcceptableLockExpiry,
-            $"LockExpiry ({MachineUpgradeService.LockExpiry}) must exceed 2× strategy timeout ({strategyTimeout}) + 5min safety buffer = {minimumAcceptableLockExpiry}. Future strategies with longer timeouts must update LockExpiry together.");
+        expiry.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(5),
+            $"LockExpiry ({expiry}) too short — 30-60s Redis network blip could make RedLockNet " +
+            "auto-extend miss a cycle (expiry/3 interval) and lose the lock mid-dispatch. 5 min floor.");
+
+        expiry.ShouldBeLessThanOrEqualTo(TimeSpan.FromMinutes(10),
+            $"LockExpiry ({expiry}) too long — crashed dispatch leaves orphan lock for up to this " +
+            "duration, blocking operator retries. 1.4.x 20-min default was the problem. 10 min ceiling.");
     }
 
     [Fact]
