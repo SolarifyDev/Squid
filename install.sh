@@ -22,11 +22,35 @@ done
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
-    x86_64)  RID="linux-x64" ;;
-    aarch64) RID="linux-arm64" ;;
-    arm64)   RID="linux-arm64" ;;
+    x86_64)  RID_ARCH="x64" ;;
+    aarch64) RID_ARCH="arm64" ;;
+    arm64)   RID_ARCH="arm64" ;;
     *) echo "Error: Unsupported architecture: $ARCH"; exit 1 ;;
 esac
+
+# D2 (1.6.0): detect libc flavour so we pick the right self-contained
+# .NET build. Alpine / Void / Chimera / Wolfi all ship musl-libc; a
+# glibc-targeted `linux-x64` binary crashes at startup on any of them
+# with cryptic "Error relocating ...: symbol not found" messages.
+# `linux-musl-x64` is .NET's officially-supported RID for musl builds.
+#
+# Detection: `ldd --version` on glibc systems prints "ldd (GNU libc) ..."
+# or "... GLIBC ..."; on musl it prints "musl libc (x86_64) ..." to
+# stderr. Both are cheap to run. If ldd is missing entirely (very
+# minimal images), default to glibc — that's the majority case and
+# the musl RID can still be requested explicitly via env override.
+LIBC="glibc"
+if command -v ldd >/dev/null 2>&1; then
+    if ldd --version 2>&1 | grep -qi musl; then
+        LIBC="musl"
+    fi
+fi
+
+if [ "$LIBC" = "musl" ]; then
+    RID="linux-musl-${RID_ARCH}"
+else
+    RID="linux-${RID_ARCH}"
+fi
 
 # Require root for default install dir
 if [ "$INSTALL_DIR" = "/opt/squid-tentacle" ] && [ "$(id -u)" -ne 0 ]; then
@@ -383,6 +407,31 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /tmp/squid-upgrade-status.* ${STATE
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mv /tmp/squid-upgrade-status.* ${STATE_DIR}/last-upgrade.json
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/chown ${SERVICE_USER}\:${SERVICE_USER} ${STATE_DIR}/last-upgrade.json
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_USER} ${STATE_DIR}/last-upgrade.json
+
+# (4) Auto-rollback support (C1+C2, 1.6.0). Phase A apt method downloads
+# the previous version's .deb to ${STATE_DIR}/rollback/ as a snapshot;
+# Phase B failure path runs `dpkg -i --force-downgrade snapshot.deb` to
+# restore. Path is wildcarded (squid-tentacle_*_*.deb) but locked to
+# our state dir so the service user can't dpkg -i an arbitrary file.
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mkdir -p ${STATE_DIR}/rollback
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir -p ${STATE_DIR}/rollback
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dpkg -i --force-downgrade /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+
+# (5) yum auto-rollback (C3, 1.6.0). dnf/yum downgrade natively restores
+# the previous RPM version (createrepo_c keeps the last 5 indexed; our
+# publish workflow respects that). Pinned to package name 'squid-tentacle'
+# with a wildcard suffix for the version-release pair.
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dnf downgrade -y squid-tentacle-*
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/yum downgrade -y squid-tentacle-*
+
+# (6) dpkg lock probing (A3, 1.6.0). Phase A apt method polls
+# /var/lib/dpkg/lock-frontend to detect known background updaters
+# (apt-daily, unattended-upgrades) before apt install. fuser needs root
+# to read the lock fd. Both /bin and /usr/bin paths for usrmerge compat.
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/fuser /var/lib/dpkg/lock-frontend
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/fuser /var/lib/dpkg/lock-frontend
 SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).
