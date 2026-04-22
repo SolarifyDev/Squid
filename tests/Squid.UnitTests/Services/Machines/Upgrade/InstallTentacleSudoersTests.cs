@@ -145,6 +145,23 @@ public sealed class InstallTentacleSudoersTests
             customMessage: "snapshot download lands at .tmp first, then mv to final — atomic write pattern needs sudoers permission");
     }
 
+    [Fact]
+    public void InstallScript_SudoersBlock_ContainsYumDowngradeRules()
+    {
+        // C3 (1.6.0): yum auto-rollback path uses `dnf downgrade -y
+        // squid-tentacle-X.Y.Z-1` (or the yum equivalent on RHEL 7).
+        // Both binaries need a NOPASSWD rule, both pinned to the
+        // package-name wildcard so service user can't downgrade
+        // arbitrary packages.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        heredoc.ShouldContain("/usr/bin/dnf downgrade -y squid-tentacle-*",
+            customMessage: "dnf downgrade rule for modern RHEL/Rocky/Alma/Fedora");
+        heredoc.ShouldContain("/usr/bin/yum downgrade -y squid-tentacle-*",
+            customMessage: "yum downgrade rule for RHEL 7 (no dnf)");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>

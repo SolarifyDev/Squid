@@ -708,6 +708,57 @@ if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" 
   # Fall through to the manual-instruction block below.
 fi
 
+# ── yum auto-rollback (C3, 1.6.0) ──────────────────────────────────────────
+# Simpler than apt because dnf natively supports `dnf downgrade` and our
+# RPM repo (createrepo_c) keeps the last 5 versions indexed. No snapshot
+# needed — just invoke dnf downgrade and verify health.
+#
+# OLD_VERSION_RPM was captured by YumUpgradeMethod's Phase A snippet.
+# Empty / "<none>" = first-time install or capture failed → skip auto-
+# rollback, fall through to manual instruction.
+if [ "$INSTALL_METHOD" = "yum" ] && [ -n "${OLD_VERSION_RPM:-}" ] && [ "$OLD_VERSION_RPM" != "<none>" ]; then
+  YUM_BIN_FOR_ROLLBACK=""
+  if   command -v dnf >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=dnf
+  elif command -v yum >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=yum
+  fi
+
+  if [ -n "$YUM_BIN_FOR_ROLLBACK" ]; then
+    echo "Auto-rollback: $YUM_BIN_FOR_ROLLBACK downgrade -y squid-tentacle-${OLD_VERSION_RPM}"
+    emit_event B rollback-start "Auto-rollback via $YUM_BIN_FOR_ROLLBACK downgrade to ${OLD_VERSION_RPM}"
+    write_status "ROLLING_BACK" "Health check failed; restoring previous version via $YUM_BIN_FOR_ROLLBACK downgrade"
+
+    if sudo "$YUM_BIN_FOR_ROLLBACK" downgrade -y "squid-tentacle-${OLD_VERSION_RPM}" >/dev/null 2>&1; then
+      timeout 30 sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+
+      ROLLBACK_OK=0
+      for i in $(seq 1 30); do
+        if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+          if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
+            ROLLBACK_OK=1
+            break
+          fi
+        fi
+        sleep 1
+      done
+
+      if [ "$ROLLBACK_OK" = "1" ]; then
+        emit_event B rollback-ok "Auto-rolled back to ${BASELINE_VERSION:-${OLD_VERSION_RPM}} via $YUM_BIN_FOR_ROLLBACK downgrade"
+        write_status "ROLLED_BACK" "Auto-rolled back from $TARGET_VERSION to ${OLD_VERSION_RPM} via $YUM_BIN_FOR_ROLLBACK downgrade (was: healthz=$BASELINE_HEALTHZ_PRE)"
+        exit 4
+      fi
+
+      echo "::error:: Auto-rollback $YUM_BIN_FOR_ROLLBACK downgrade succeeded but service failed to start. Agent in unknown state."
+      emit_event B rollback-fail "Rollback $YUM_BIN_FOR_ROLLBACK downgrade succeeded but service failed to start"
+      write_status "ROLLBACK_CRITICAL_FAILED" "Rollback dnf downgrade succeeded but service failed; manual intervention required"
+      exit 9
+    fi
+
+    echo "::warning:: Auto-rollback $YUM_BIN_FOR_ROLLBACK downgrade failed; falling through to manual instruction"
+    emit_event B rollback-fail "Auto-rollback $YUM_BIN_FOR_ROLLBACK downgrade itself failed; printing manual instruction"
+    # Fall through to the manual-instruction block below.
+  fi
+fi
+
 # ── apt/yum: manual rollback fallback ──────────────────────────────────────
 # When auto-rollback isn't possible (snapshot missing, dpkg -i failed, or
 # yum method without snapshot), print a copy-paste-ready downgrade command

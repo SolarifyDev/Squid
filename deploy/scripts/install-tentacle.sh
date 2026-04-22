@@ -394,6 +394,13 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir -p ${STATE_DIR}/rollback
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dpkg -i --force-downgrade /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb
+
+# (5) yum auto-rollback (C3, 1.6.0). dnf/yum downgrade natively restores
+# the previous RPM version (createrepo_c keeps the last 5 indexed; our
+# publish workflow respects that). Pinned to package name 'squid-tentacle'
+# with a wildcard suffix for the version-release pair.
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dnf downgrade -y squid-tentacle-*
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/yum downgrade -y squid-tentacle-*
 SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).

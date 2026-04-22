@@ -721,6 +721,47 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_PhaseB_YumAutoRollback_UsesDnfDowngrade_WhenOldVersionAvailable()
+    {
+        // C3 (1.6.0): yum/dnf method's failure path uses dnf downgrade
+        // (or yum downgrade if dnf isn't available — RHEL 7 et al.).
+        // No snapshot needed — createrepo_c keeps last-5 versions
+        // indexed, so dnf can resolve the previous version directly.
+        // Pin the gate, the dnf invocation, and the dnf-vs-yum
+        // resolution.
+        RenderedScript.ShouldContain("if [ \"$INSTALL_METHOD\" = \"yum\" ] && [ -n \"${OLD_VERSION_RPM:-}\" ] && [ \"$OLD_VERSION_RPM\" != \"<none>\" ]",
+            customMessage: "yum auto-rollback gate: only when method=yum AND we have a non-<none> old version to roll back to");
+
+        RenderedScript.ShouldContain("if   command -v dnf >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=dnf",
+            customMessage: "must prefer dnf over yum (modern RHEL 8+/Rocky/Alma/Fedora ship dnf as the default)");
+        RenderedScript.ShouldContain("elif command -v yum >/dev/null 2>&1; then YUM_BIN_FOR_ROLLBACK=yum",
+            customMessage: "must fall back to yum on systems where dnf isn't installed (RHEL 7)");
+
+        RenderedScript.ShouldContain("sudo \"$YUM_BIN_FOR_ROLLBACK\" downgrade -y \"squid-tentacle-${OLD_VERSION_RPM}\"",
+            customMessage: "rollback uses native dnf/yum downgrade — sudoers has matching wildcard rule");
+    }
+
+    [Fact]
+    public void Script_YumAutoRollback_EmitsRollbackEventsForUI()
+    {
+        // Same event vocabulary as apt rollback so UI can render both
+        // method paths through the same rendering code.
+        var ymRollbackBlockStart = RenderedScript.IndexOf("if [ \"$INSTALL_METHOD\" = \"yum\" ]", StringComparison.Ordinal);
+        var ymRollbackBlockEnd = RenderedScript.IndexOf("# Fall through to the manual-instruction block below.", ymRollbackBlockStart + 1, StringComparison.Ordinal);
+        ymRollbackBlockStart.ShouldBeGreaterThan(-1, "yum rollback block must exist");
+        ymRollbackBlockEnd.ShouldBeGreaterThan(ymRollbackBlockStart, "yum block must reach the fall-through marker");
+
+        var ymBlock = RenderedScript.Substring(ymRollbackBlockStart, ymRollbackBlockEnd - ymRollbackBlockStart);
+
+        ymBlock.ShouldContain("emit_event B rollback-start",
+            customMessage: "yum rollback initiation event must be inside the yum block");
+        ymBlock.ShouldContain("emit_event B rollback-ok",
+            customMessage: "successful yum rollback must emit terminal event");
+        ymBlock.ShouldContain("emit_event B rollback-fail",
+            customMessage: "failed yum rollback must emit terminal event");
+    }
+
+    [Fact]
     public void Script_AutoRollback_CleansUpSnapshotOnSuccess()
     {
         // After a successful auto-rollback, the snapshot .deb has served
