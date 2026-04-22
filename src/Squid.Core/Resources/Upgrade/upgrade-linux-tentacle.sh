@@ -86,6 +86,18 @@ LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
 # back to bare `mktemp` (= /tmp/tmp.XXX) on failure — making the eventual
 # path ambiguous and breaking the sudoers pattern match when the fallback
 # fired. See the install-tentacle.sh sudoers rules for the matching pattern.
+#
+# Schema version 2 (1.5.0+): added startedAt (immutable across writes) and
+# scriptPid so the server can distinguish "upgrade genuinely in progress"
+# from "stale IN_PROGRESS left by a crashed script". Server reads status
+# file via CapabilitiesService and applies staleness heuristic:
+# IN_PROGRESS + startedAt > 10 min ago → auto-clear the stuck server task
+# and the Redis dispatch lock so next click proceeds. Schema v1 agents
+# (1.4.x) are backward-compatible; server degrades to "never auto-clear".
+#
+# STARTED_AT_EPOCH is captured once at script start (right below in the
+# outer block) so every write_status call during THIS invocation stamps
+# the same startedAt — treating "when did THIS upgrade attempt begin".
 write_status() {
   local status="$1"
   local detail="${2:-}"
@@ -96,10 +108,13 @@ write_status() {
   tmp=$(mktemp /tmp/squid-upgrade-status.XXXXXX)
   cat > "$tmp" <<STATUS_JSON
 {
+  "schemaVersion": 2,
   "targetVersion": "$TARGET_VERSION",
   "installMethod": "${INSTALL_METHOD:-unknown}",
   "status": "$status",
+  "startedAt": "$STARTED_AT",
   "updatedAt": "$now",
+  "scriptPid": $$,
   "detail": "$detail"
 }
 STATUS_JSON
@@ -110,6 +125,12 @@ STATUS_JSON
   sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
 }
+
+# Captured once at script start so every write_status during this invocation
+# stamps the SAME startedAt (immutable within one upgrade attempt). If this
+# is the scope-phase re-exec (SQUID_UPGRADE_SCOPED=1), prefer the env var
+# passed through from Phase A so both phases share the same startedAt.
+STARTED_AT="${SQUID_UPGRADE_STARTED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 
 # ── systemd version probe (v239+ for --scope --collect) ──────────────────────
 SYSTEMD_VERSION=$(systemctl --version 2>/dev/null | head -1 | awk '{print $2}' | grep -oE '^[0-9]+' || echo 0)
@@ -344,6 +365,7 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   exec sudo systemd-run --scope --collect --quiet \
     --unit="squid-upgrade-$TARGET_VERSION-$$" \
     --setenv=SQUID_UPGRADE_SCOPED=1 \
+    --setenv=SQUID_UPGRADE_STARTED_AT="$STARTED_AT" \
     --setenv=TARGET_VERSION="$TARGET_VERSION" \
     --setenv=INSTALL_DIR="$INSTALL_DIR" \
     --setenv=SERVICE_NAME="$SERVICE_NAME" \

@@ -570,6 +570,45 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_StatusFile_IncludesSchemaV2Fields_ForStaleDetection()
+    {
+        // A2 (1.5.0): server distinguishes "upgrade legitimately in progress"
+        // from "stale IN_PROGRESS left by a crashed script" using the
+        // startedAt + schemaVersion fields. Renaming/removing either would
+        // disable staleness detection silently — pin each field literally.
+        RenderedScript.ShouldContain("\"schemaVersion\": 2",
+            customMessage: "status JSON must declare schemaVersion=2 so UpgradeDispatchLockReconciler applies staleness detection");
+        RenderedScript.ShouldContain("\"startedAt\": \"$STARTED_AT\"",
+            customMessage: "status JSON must emit startedAt (immutable across write_status calls within one invocation) — reconciler keys off this to measure upgrade age");
+        RenderedScript.ShouldContain("\"scriptPid\": $$",
+            customMessage: "status JSON must include scriptPid for operator debugging (not currently consumed by server but recorded for post-mortem visibility)");
+    }
+
+    [Fact]
+    public void Script_StartedAt_CapturedOnceAtScriptStart_NotPerWrite()
+    {
+        // startedAt must reflect "when this upgrade invocation began",
+        // NOT "when write_status was last called" (that's what updatedAt
+        // is for). Otherwise the staleness window re-starts on every
+        // write and a stuck upgrade never looks stale.
+        //
+        // Pin: a single STARTED_AT assignment with the scope-phase-aware
+        // fallback that re-uses the Phase A value in Phase B.
+        RenderedScript.ShouldContain("STARTED_AT=\"${SQUID_UPGRADE_STARTED_AT:-$(date -u +",
+            customMessage: "STARTED_AT must be captured once per invocation; scope phase inherits via SQUID_UPGRADE_STARTED_AT env var so both phases share the same startedAt");
+    }
+
+    [Fact]
+    public void Script_ScopeDetach_PropagatesStartedAtThroughEnv()
+    {
+        // Scope re-exec runs the script fresh — without SQUID_UPGRADE_STARTED_AT
+        // being propagated, Phase B would generate a NEW startedAt,
+        // breaking the "total upgrade age" semantics the reconciler needs.
+        RenderedScript.ShouldContain("--setenv=SQUID_UPGRADE_STARTED_AT=\"$STARTED_AT\"",
+            customMessage: "Phase A must pass STARTED_AT to Phase B via env var so scope re-exec sees the same wall-clock start time");
+    }
+
+    [Fact]
     public void Script_StatusFile_RecordsInstallMethod()
     {
         // The status file's installMethod field tells the server (via

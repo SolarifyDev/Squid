@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
@@ -11,13 +12,23 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 
 public class TentacleHealthCheckStrategy : IHealthCheckStrategy
 {
+    /// <summary>
+    /// Metadata key under which the agent embeds raw upgrade-status JSON on
+    /// every Capabilities RPC. Mirror of
+    /// <c>CapabilitiesService.UpgradeStatusMetadataKey</c> on the agent
+    /// side — pinned by <c>UpgradeStatusMetadataKey_MatchesAgentContract</c>.
+    /// </summary>
+    internal const string UpgradeStatusMetadataKey = "upgradeStatus";
+
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
+    private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _capabilitiesCache = capabilitiesCache;
+        _upgradeLockReconciler = upgradeLockReconciler;
     }
 
     /// <summary>
@@ -47,6 +58,8 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
 
             CacheCapabilitiesFor(machine, response);
 
+            await ReconcileStaleUpgradeIfNeededAsync(machine, response, ct).ConfigureAwait(false);
+
             var os = ReadMetadata(response, "os");
             var shell = ReadMetadata(response, "defaultShell");
             var osInfo = string.IsNullOrEmpty(os) ? string.Empty : $", OS={os}";
@@ -64,6 +77,33 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     {
         if (_capabilitiesCache == null || machine == null) return;
         _capabilitiesCache.Store(machine.Id, response.Metadata, response.AgentVersion);
+    }
+
+    /// <summary>
+    /// If the agent reports a stale IN_PROGRESS upgrade (schema v2+ only —
+    /// 1.4.x agents are silently skipped), delete the server-side Redis
+    /// dispatch lock so the next operator click isn't blocked. Never throws
+    /// — a reconciler failure MUST NOT turn a healthy tentacle into an
+    /// unhealthy one in the health-check UI.
+    /// </summary>
+    private async Task ReconcileStaleUpgradeIfNeededAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
+    {
+        if (_upgradeLockReconciler == null || machine == null || response?.Metadata == null) return;
+
+        if (!response.Metadata.TryGetValue(UpgradeStatusMetadataKey, out var rawStatusJson)) return;
+
+        var payload = UpgradeStatusPayload.TryParse(rawStatusJson);
+
+        if (payload == null) return;
+
+        try
+        {
+            await _upgradeLockReconciler.ClearLockIfStaleAsync(machine.Id, payload, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[UpgradeAudit] Stale-upgrade reconciler threw for machine {MachineId} — swallowed to keep health check independent", machine.Id);
+        }
     }
 
     private static string ReadMetadata(CapabilitiesResponse response, string key)

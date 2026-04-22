@@ -308,7 +308,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private async Task<UpgradeMachineResponseData> DispatchUnderLockAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
     {
-        var lockKey = $"squid:upgrade:machine:{machine.Id}";
+        // Key format MUST match UpgradeDispatchLockReconciler.BuildLockKey —
+        // pinned by LockKey_MatchesMachineUpgradeServiceFormat.
+        var lockKey = UpgradeDispatchLockReconciler.BuildLockKey(machine.Id);
 
         var result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(lockKey, () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct), expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
 
