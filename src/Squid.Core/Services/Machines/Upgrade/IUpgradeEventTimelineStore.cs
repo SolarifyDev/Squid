@@ -40,6 +40,18 @@ public interface IUpgradeEventTimelineStore
     IReadOnlyList<UpgradeEvent> Get(int machineId);
 
     /// <summary>
+    /// Store the Phase B log text (B4, 1.6.0). Server exposes this via
+    /// <c>GET /api/machine/{id}/upgrade-log</c> for operator debugging
+    /// without SSH. Empty string clears the entry.
+    /// </summary>
+    void StoreLog(int machineId, string log);
+
+    /// <summary>
+    /// Read the cached Phase B log text. Empty string on cold cache.
+    /// </summary>
+    string GetLog(int machineId);
+
+    /// <summary>
     /// Drop the cached entry. Called after a successful upgrade if we want
     /// the next upgrade attempt to start from a clean slate (the agent
     /// truncates its JSONL file on Phase A start anyway, so this is purely
@@ -51,6 +63,7 @@ public interface IUpgradeEventTimelineStore
 public sealed class InMemoryUpgradeEventTimelineStore : IUpgradeEventTimelineStore, ISingletonDependency
 {
     private readonly ConcurrentDictionary<int, IReadOnlyList<UpgradeEvent>> _byMachine = new();
+    private readonly ConcurrentDictionary<int, string> _logByMachine = new();
 
     public void Store(int machineId, IReadOnlyList<UpgradeEvent> events)
     {
@@ -62,5 +75,19 @@ public sealed class InMemoryUpgradeEventTimelineStore : IUpgradeEventTimelineSto
         return _byMachine.TryGetValue(machineId, out var events) ? events : Array.Empty<UpgradeEvent>();
     }
 
-    public void Clear(int machineId) => _byMachine.TryRemove(machineId, out _);
+    public void StoreLog(int machineId, string log)
+    {
+        _logByMachine[machineId] = log ?? string.Empty;
+    }
+
+    public string GetLog(int machineId)
+    {
+        return _logByMachine.TryGetValue(machineId, out var log) ? log : string.Empty;
+    }
+
+    public void Clear(int machineId)
+    {
+        _byMachine.TryRemove(machineId, out _);
+        _logByMachine.TryRemove(machineId, out _);
+    }
 }

@@ -28,6 +28,12 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     /// </summary>
     internal const string UpgradeEventsMetadataKey = "upgradeEvents";
 
+    /// <summary>
+    /// Metadata key under which the agent embeds the Phase B bash log
+    /// (B4, 1.6.0). Mirror of <c>CapabilitiesService.UpgradeLogMetadataKey</c>.
+    /// </summary>
+    internal const string UpgradeLogMetadataKey = "upgradeLog";
+
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
@@ -141,6 +147,20 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
         catch (Exception ex)
         {
             Log.Warning(ex, "[UpgradeAudit] Failed to capture upgrade event timeline for machine {MachineId}", machine.Id);
+        }
+
+        // B4 (1.6.0): also capture the Phase B log text if the agent
+        // embedded it. Same swallow-errors discipline.
+        if (response.Metadata.TryGetValue(UpgradeLogMetadataKey, out var rawLog) && !string.IsNullOrEmpty(rawLog))
+        {
+            try
+            {
+                _upgradeEventStore.StoreLog(machine.Id, rawLog);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[UpgradeAudit] Failed to capture Phase B log for machine {MachineId}", machine.Id);
+            }
         }
     }
 

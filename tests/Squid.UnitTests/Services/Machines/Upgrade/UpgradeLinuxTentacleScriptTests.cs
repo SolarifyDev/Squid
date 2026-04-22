@@ -762,6 +762,20 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_PhaseB_TruncatesLogFile_ForPerRunCapture()
+    {
+        // B4 (1.6.0): Phase B truncates /var/log/squid-tentacle-upgrade.log
+        // at its entry so the server-exposed copy (read via Capabilities
+        // metadata into a 50KB-capped buffer) only contains THIS run's
+        // output. Before B4 the file appended forever — over time it
+        // would bloat and pre-truncate useful info at the 50KB cap head.
+        //
+        // Pin the truncation so a refactor can't regress to append-only.
+        RenderedScript.ShouldContain("sudo : > \"$LOG_FILE\"",
+            customMessage: "Phase B must truncate the log file at its entry — B4 relies on per-run-scoped log content");
+    }
+
+    [Fact]
     public void Script_AutoRollback_CleansUpSnapshotOnSuccess()
     {
         // After a successful auto-rollback, the snapshot .deb has served

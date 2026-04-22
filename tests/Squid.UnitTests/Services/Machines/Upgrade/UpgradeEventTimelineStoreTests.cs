@@ -92,4 +92,67 @@ public sealed class UpgradeEventTimelineStoreTests
         store.Get(1)[0].Kind.ShouldBe("machine-1");
         store.Get(2)[0].Kind.ShouldBe("machine-2");
     }
+
+    // ── Phase B log cache (B4, 1.6.0) ────────────────────────────────────────
+
+    [Fact]
+    public void GetLog_ColdCache_ReturnsEmptyString_NeverNull()
+    {
+        // FE's "View full log" button renders the string directly — null
+        // would crash a .length/.split call. Cold cache must be "".
+        var store = new InMemoryUpgradeEventTimelineStore();
+
+        store.GetLog(machineId: 42).ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public void StoreLog_Then_GetLog_RoundTripsTheText()
+    {
+        var store = new InMemoryUpgradeEventTimelineStore();
+        var logText = "=== In scope: continuing upgrade ===\nRestarting service...\n✓ Upgrade successful";
+
+        store.StoreLog(machineId: 7, log: logText);
+
+        store.GetLog(7).ShouldBe(logText);
+    }
+
+    [Fact]
+    public void StoreLog_NullNormalisesToEmpty()
+    {
+        var store = new InMemoryUpgradeEventTimelineStore();
+
+        store.StoreLog(1, null);
+
+        store.GetLog(1).ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public void StoreLog_OverwritesPreviousEntry()
+    {
+        // Same replace-not-append semantics as Store() for events — log
+        // file gets truncated at Phase B start, so the cache always
+        // reflects the current run.
+        var store = new InMemoryUpgradeEventTimelineStore();
+
+        store.StoreLog(1, "old run output");
+        store.StoreLog(1, "NEW run output");
+
+        store.GetLog(1).ShouldBe("NEW run output");
+    }
+
+    [Fact]
+    public void Clear_RemovesBothEventsAndLog()
+    {
+        // Cleanup helper must zero both entries — otherwise a partial
+        // clear could leave stale log text visible while events show
+        // fresh data, confusing operators.
+        var store = new InMemoryUpgradeEventTimelineStore();
+        store.Store(1, new[] { new UpgradeEvent { Kind = "x" } });
+        store.StoreLog(1, "some log");
+
+        store.Clear(1);
+
+        store.Get(1).Count.ShouldBe(0);
+        store.GetLog(1).ShouldBe(string.Empty);
+    }
 }

@@ -491,6 +491,14 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 
 LOG_FILE="/var/log/squid-tentacle-upgrade.log"
+
+# B4 (1.6.0): truncate the log at the start of each Phase B so the server-
+# exposed copy only contains THIS run's output (not concatenated history
+# from months of upgrades). Server reads via CapabilitiesService and
+# exposes through /api/machine/{id}/upgrade-log for operator debugging.
+# Operators who need historical logs can still SSH to the agent — the
+# journal records everything. Tee creates the file fresh if missing.
+sudo : > "$LOG_FILE" 2>/dev/null || sudo truncate -s 0 "$LOG_FILE" 2>/dev/null || true
 sudo touch "$LOG_FILE" 2>/dev/null || true
 sudo chmod 644 "$LOG_FILE" 2>/dev/null || true
 exec > >(sudo tee -a "$LOG_FILE") 2>&1
