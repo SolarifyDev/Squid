@@ -442,9 +442,29 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_U
 
 # (4) Auto-rollback support (C1+C2, 1.6.0). Phase A apt method downloads
 # the previous version's .deb to ${STATE_DIR}/rollback/ as a snapshot;
-# Phase B failure path runs `dpkg -i --force-downgrade snapshot.deb` to
+# Phase B failure path runs dpkg -i --force-downgrade <snapshot> to
 # restore. Path is wildcarded (squid-tentacle_*_*.deb) but locked to
 # our state dir so the service user can't dpkg -i an arbitrary file.
+#
+# HEREDOC SAFETY NOTE — quoting commands above without the usual
+# backtick/doublequote style is DELIBERATE. The enclosing heredoc is
+# unquoted (<<SUDOERS_EOF, not <<'SUDOERS_EOF') because we need
+# ${SERVICE_USER}/${STATE_DIR} to expand. Side effect: bash ALSO runs
+# command substitution on any backtick pair — even inside comment
+# lines. A previous commit wrote the example dpkg command wrapped in
+# backticks here; install-tentacle.sh then tried to execute that dpkg
+# command at install time, printing "cannot access archive" mid-run
+# and inserting the empty command-output into the generated sudoers
+# file. That incident was harmless (empty in a comment) but a future
+# backtick pair whose output isn't empty could corrupt sudoers syntax
+# → visudo -c rejects → sudoers file not installed → in-UI upgrade
+# silently disabled fleet-wide. Rules of thumb for this block:
+#   1. Do NOT use backtick-style command quoting anywhere between the
+#      heredoc start and SUDOERS_EOF — use the angle-bracket form
+#      (<example>) or drop the example entirely.
+#   2. The InstallTentacleSudoersTests regression suite has a test that
+#      fails on any backticks in the heredoc body. If you're reading
+#      this because that test flagged your edit, re-shape the comment.
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mkdir -p ${STATE_DIR}/rollback
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir -p ${STATE_DIR}/rollback
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb.tmp /var/lib/squid-tentacle/rollback/squid-tentacle_*.deb

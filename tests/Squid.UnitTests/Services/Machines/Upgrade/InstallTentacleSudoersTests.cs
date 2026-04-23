@@ -178,6 +178,48 @@ public sealed class InstallTentacleSudoersTests
             customMessage: "fuser /bin path also pinned for usrmerge compat (some distros symlink /bin → /usr/bin, sudo matches by string equality)");
     }
 
+    [Fact]
+    public void InstallScript_SudoersHeredoc_ContainsNoBacktickCommandSubstitution()
+    {
+        // Regression guard discovered 1.6.x: the sudoers heredoc uses
+        // <<SUDOERS_EOF (unquoted) so bash can expand ${SERVICE_USER} and
+        // ${STATE_DIR}. Side effect: bash ALSO runs command substitution
+        // on any backtick-pair inside the heredoc body — even inside
+        // comment lines. The block comment for the (4) Auto-rollback
+        // section previously wrapped an example dpkg command in
+        // backticks. install-tentacle.sh then tried to execute that
+        // dpkg command at install time, printed "cannot access archive
+        // 'snapshot.deb'" to the user's terminal mid-run, and inserted
+        // the empty command-substitution result into the sudoers file.
+        //
+        // THAT particular incident was harmless (the empty string
+        // landed inside a comment, sudoers remained syntactically
+        // valid). But a future backtick pair whose executed output
+        // isn't empty WILL corrupt the generated sudoers file, visudo
+        // will reject it in the `if VISUDO_OUTPUT=$(visudo -c ...)`
+        // branch, the file never gets installed, and every new agent
+        // ships with broken in-UI upgrade — a fleet-wide regression
+        // that only manifests on the first operator click, which is
+        // the worst possible time to discover it.
+        //
+        // This test is cheap (a single regex over the extracted
+        // heredoc) and makes the invariant "no backticks in the
+        // sudoers heredoc, ever" enforceable by CI rather than
+        // enforced by a comment that future contributors will miss.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+        var heredoc = ExtractSudoersHeredocBody(scriptContent);
+
+        heredoc.ShouldNotContain("`",
+            customMessage:
+                "install-tentacle.sh's sudoers heredoc (<<SUDOERS_EOF, not <<'SUDOERS_EOF') " +
+                "must contain ZERO backticks — bash runs command substitution on any backtick " +
+                "pair, including those inside comment lines, injecting the executed command's " +
+                "output into the generated /etc/sudoers.d/squid-tentacle-upgrade file. " +
+                "If you're quoting an example command in a comment, use angle brackets like " +
+                "<dpkg -i ...> or drop the quotes entirely. See the block-comment inside the " +
+                "(4) Auto-rollback section of install-tentacle.sh for context.");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
