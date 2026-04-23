@@ -54,11 +54,25 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// timeline store so the FE's 2-3s polling sees near-real-time
     /// progress.
     ///
-    /// <para>Sized to comfortably exceed the typical full Phase A + Phase
-    /// B sequence (30-40s observed across all install methods) plus
-    /// Halibut reconnect jitter.</para>
+    /// <para>Sized to cover the FULL typical Phase A + Phase B + Halibut
+    /// reconnect sequence. Empirical timing from local end-to-end tests:
+    /// click → Phase A start: ~1s; Phase A download + method-selected:
+    /// 30s (apt path); Phase B binary swap: 1s; systemctl restart +
+    /// tentacle reconnect: 30-35s; healthz-pass + success: at ~T+63s.
+    /// Setting the window to 90s (30 × 3s jobs) comfortably covers this
+    /// including the reconnect jitter variance, with 30 × ~200ms ≈ 6s
+    /// of worst-case wasted Capabilities RPCs — negligible.</para>
+    ///
+    /// <para>The 45s predecessor was chosen assuming the typical sequence
+    /// ended at ~T+40s — that held for tarball install but apt install
+    /// has ~20s extra in package-download + dpkg-runtime that pushes
+    /// terminal events to T+60-65s, past the window. Symptom: UI showed
+    /// "stalled" even though agent was healthy — FE never saw the
+    /// terminal `success` event because server's events store stopped
+    /// refreshing at T+45s and the subsequent manual health check was
+    /// 30s later (FE's post-Initiated setTimeout).</para>
     /// </summary>
-    internal const int UpgradePollingWindowSeconds = 45;
+    internal const int UpgradePollingWindowSeconds = 90;
 
     /// <summary>
     /// Interval between health checks during the upgrade polling window.
@@ -66,9 +80,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// UI sees events arrive within one FE poll cycle after they're
     /// emitted on the agent.
     ///
-    /// <para>Job count = window / interval = 45 / 3 = 15 Hangfire jobs
+    /// <para>Job count = window / interval = 90 / 3 = 30 Hangfire jobs
     /// per upgrade. Each is a quick Capabilities RPC (~20ms on local,
-    /// ~200ms over WAN). Upper-bound ~3s of CPU time across all 15
+    /// ~200ms over WAN). Upper-bound ~6s of CPU time across all 30
     /// jobs, negligible.</para>
     /// </summary>
     internal const int UpgradePollingIntervalSeconds = 3;
