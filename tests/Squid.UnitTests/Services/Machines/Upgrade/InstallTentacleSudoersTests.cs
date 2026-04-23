@@ -179,6 +179,70 @@ public sealed class InstallTentacleSudoersTests
     }
 
     [Fact]
+    public void InstallScript_PreCreatesRollbackDir_OwnedByServiceUser()
+    {
+        // Regression guard: commit bbf09bc added `mkdir -p "$STATE_DIR/rollback"`
+        // right before the recursive `chown -R $SERVICE_USER:$SERVICE_USER
+        // $STATE_DIR` line, so /var/lib/squid-tentacle/rollback/ is owned by
+        // the service user at install time.
+        //
+        // Without this preemptive mkdir, the first upgrade attempt creates the
+        // dir via `sudo mkdir -p` AT RUNTIME, which produces a root:root-owned
+        // dir (sudoers allows the mkdir, but the resulting dir inherits root
+        // ownership). The auto-rollback snapshot download in AptUpgradeMethod
+        // runs `curl -o /var/lib/squid-tentacle/rollback/<file>.tmp` AS the
+        // tentacle service user (non-root) — which then fails with
+        // `curl: (23) Failure writing output to destination` because service
+        // user can't write into a root-owned directory.
+        //
+        // Observable symptom: auto-rollback is silently disabled. Every
+        // upgrade attempt that triggers Phase A apt-install path prints a
+        // scary but harmless-looking curl-23 in the log, then proceeds
+        // without a snapshot. If the subsequent upgrade fails post-restart
+        // and needs to roll back, there's no snapshot and the script
+        // escalates to ROLLBACK_NEEDED (manual operator intervention).
+        //
+        // Two invariants this test guards:
+        //   1. The literal `mkdir -p "$STATE_DIR/rollback"` line exists.
+        //   2. It appears BEFORE the chown line — if someone moves it AFTER
+        //      the recursive chown, the newly created subdir doesn't get
+        //      chowned because `mkdir -p` on an already-existing parent
+        //      doesn't trigger a retroactive chown walk up from the parent.
+        //      The rollback subdir stays root:root and the bug reproduces.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+
+        const string mkdirRollbackLine = "mkdir -p \"$STATE_DIR/rollback\"";
+        const string chownRecursiveLine = "chown -R \"$SERVICE_USER:$SERVICE_USER\"";
+
+        var mkdirIndex = scriptContent.IndexOf(mkdirRollbackLine, StringComparison.Ordinal);
+        var chownIndex = scriptContent.IndexOf(chownRecursiveLine, StringComparison.Ordinal);
+
+        mkdirIndex.ShouldBeGreaterThan(-1,
+            customMessage:
+                $"install-tentacle.sh must pre-create $STATE_DIR/rollback so the service " +
+                $"user (not root) owns it. Expected literal line '{mkdirRollbackLine}' " +
+                "to appear in the script. Without this, the first upgrade attempt " +
+                "creates the dir via sudo mkdir → root:root → curl can't write snapshot " +
+                "→ auto-rollback silently disabled. See commit bbf09bc for the full " +
+                "incident.");
+
+        chownIndex.ShouldBeGreaterThan(-1,
+            customMessage:
+                $"install-tentacle.sh must recursively chown $STATE_DIR to the service user. " +
+                $"Expected literal '{chownRecursiveLine}' — if this line was renamed/removed, " +
+                "this test needs updating. Absent chown line == rollback-dir mkdir has no " +
+                "effect, bbf09bc reproduces.");
+
+        mkdirIndex.ShouldBeLessThan(chownIndex,
+            customMessage:
+                "The `mkdir -p \"$STATE_DIR/rollback\"` line must come BEFORE the recursive " +
+                "chown line, not after. If it comes after, the newly created rollback dir " +
+                "is root:root and the service user can't write the snapshot — reproducing " +
+                "exactly the bbf09bc bug. Ordering of mkdir-before-chown is load-bearing, " +
+                "not stylistic.");
+    }
+
+    [Fact]
     public void InstallScript_SudoersHeredoc_ContainsNoBacktickCommandSubstitution()
     {
         // Regression guard discovered 1.6.x: the sudoers heredoc uses
