@@ -352,6 +352,20 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private async Task<UpgradeMachineResponseData> RunStrategyAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
     {
+        // Schedule rapid-polling health checks BEFORE the strategy dispatch so
+        // the server-side upgrade-events timeline fills up during the observer
+        // wait (50–180s for LinuxTentacle — scope detach + systemctl restart +
+        // Halibut reconnect). Previously this was called AFTER the dispatch
+        // returned, meaning the FE polled /upgrade-events and saw "empty" for
+        // the entire observer-wait window — looked exactly like a broken API
+        // even though the agent was actively running the upgrade script.
+        //
+        // Fire-and-forget via Hangfire — no observable side effect if the
+        // strategy then fails-fast at validation (e.g. invalid target version).
+        // Worst case is a burst of 15 cheap Capabilities RPCs against a
+        // machine that didn't actually upgrade; trivially tolerable.
+        ScheduleRapidPolling(machine.Id);
+
         var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
 
         InvalidateCacheIfChanged(machine.Id, outcome);
@@ -385,23 +399,31 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         if (!outcome.AgentVersionMayHaveChanged) return;
 
         _runtimeCache.Invalidate(machineId);
+    }
 
-        // Rapid-polling during the upgrade window: schedule N staggered
-        // Hangfire jobs that each re-capture the agent's upgrade-events
-        // JSONL + Phase B log via Capabilities RPC. Populates the
-        // server-side timeline store so the FE's 2-3s polling of
-        // /upgrade-events sees near-real-time progress instead of
-        // "empty until 45s post-upgrade."
-        //
-        // Fire-and-forget: errors here must not bubble back to the
-        // operator's HTTP request (the upgrade already succeeded; a
-        // failed observability-poll is a cosmetic issue). Try/catch
-        // guards against Hangfire storage exceptions (Redis down etc).
-        //
-        // Early-completion: if the upgrade finishes in 10s, the remaining
-        // jobs still fire — each one is a cheap no-op Capabilities RPC
-        // that re-reads the same terminal state (SUCCESS). ~200ms × 15
-        // jobs = 3s of total wasted work. Acceptable.
+    /// <summary>
+    /// Schedules the rapid-polling burst that populates the server-side
+    /// upgrade-events timeline during the observer wait window. Called
+    /// BEFORE strategy dispatch so the FE's /upgrade-events polling sees
+    /// live data (vs. "empty" for 50–180s while observer waits for the
+    /// restart-disconnected script to re-report).
+    ///
+    /// <para>Each scheduled job is a Capabilities RPC that re-reads the
+    /// agent's upgrade-events JSONL + last-upgrade.json + Phase B log.
+    /// Jobs fire every <see cref="UpgradePollingIntervalSeconds"/> seconds
+    /// for <see cref="UpgradePollingWindowSeconds"/> seconds total.</para>
+    ///
+    /// <para>Fire-and-forget: errors here must not bubble back to the
+    /// operator's HTTP request (a failed observability-poll is cosmetic).
+    /// Try/catch guards against Hangfire storage exceptions (Redis down etc).</para>
+    ///
+    /// <para>Early-completion: if the upgrade finishes in 10s, the remaining
+    /// jobs still fire — each is a cheap no-op Capabilities RPC that reads
+    /// the same terminal state. ~200ms × 15 jobs = 3s of wasted work —
+    /// tolerable for the UX win.</para>
+    /// </summary>
+    private void ScheduleRapidPolling(int machineId)
+    {
         try
         {
             for (var seconds = UpgradePollingIntervalSeconds; seconds <= UpgradePollingWindowSeconds; seconds += UpgradePollingIntervalSeconds)

@@ -1,4 +1,5 @@
 using Halibut;
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -486,6 +487,39 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         outcome.Detail.ShouldContain("disconnect");
         outcome.AgentVersionMayHaveChanged.ShouldBeTrue(
             "mid-script disconnect = script reached restart phase → version most likely changed → cache must refresh");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_LivenessProbeTripsAfterDispatch_TreatedAsInitiatedNotFailed()
+    {
+        // ②' Liveness probe abort is the SAME "agent disconnected mid-script
+        // because it restarted" scenario as HalibutClientException, but
+        // surfaced through HalibutScriptObserver's independent probe loop
+        // (AgentUnreachableException) instead of a GetStatus/Complete RPC
+        // failure. Before this mapping, the probe abort fell through to
+        // the generic Exception catch and surfaced as "Failed:
+        // AgentUnreachableException" — telling the UI the upgrade failed
+        // even though the scoped script was mid-flight and about to
+        // complete. Operators saw Failed in the UI while the agent
+        // silently succeeded. Must map to Initiated like the Halibut
+        // mid-script path.
+        var (strategy, _, observer) = BuildMockedStrategy();
+        var machine = MakeMachine(25, "TentaclePolling", "sub-25", "AABB");
+
+        observer
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .ThrowsAsync(new AgentUnreachableException("mars mac", consecutiveFailures: 2));
+
+        var outcome = await strategy.UpgradeAsync(machine, "1.5.5", CancellationToken.None);
+
+        outcome.Status.ShouldBe(MachineUpgradeStatus.Initiated,
+            "liveness probe mid-restart = script reached restart phase → Initiated, NOT Failed");
+        outcome.Detail.ShouldContain("liveness",
+            customMessage: "detail must name the probe mechanism so operators understand why the observer aborted");
+        outcome.Detail.ShouldContain("2",
+            customMessage: "detail must include the consecutive-failure count from the exception");
+        outcome.AgentVersionMayHaveChanged.ShouldBeTrue(
+            "probe abort = script reached restart phase → version most likely changed → cache must refresh");
     }
 
     [Fact]

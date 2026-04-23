@@ -631,31 +631,50 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_VersionUnchanged_DoesNotSchedulePolling()
+    public async Task UpgradeAsync_StrategyReportsNoVersionChange_SchedulesPollingButPreservesRuntimeCache()
     {
-        // No-op outcomes (UpToDate, NotSupported, Failed pre-dispatch)
-        // shouldn't trigger 15 health checks — nothing changed, cache is
-        // still accurate. Otherwise we'd wake Hangfire ×15 times + the
-        // health check for zero reason on every "already on latest" click.
+        // Post 1.6.x rapid-polling-moved-earlier refactor: ScheduleRapidPolling
+        // now fires BEFORE strategy dispatch (so the FE sees live events
+        // during the 50-180s observer wait). The rapid burst is always
+        // scheduled — cheap (15 × ~200ms Capabilities RPCs = 3s wasted work
+        // worst case) and worth the UX win.
+        //
+        // But the RUNTIME VERSION CACHE invalidation stays gated on
+        // AgentVersionMayHaveChanged — we must NOT evict a known-good
+        // cached version just because a dispatch failed pre-restart (e.g.
+        // agent unreachable before StartScriptAsync acked). That would
+        // leave the UI showing "unknown version" until the next health
+        // check lands, for zero benefit. This test pins that separation:
+        // polling scheduled REGARDLESS, cache evict only on
+        // AgentVersionMayHaveChanged=true.
+        //
+        // Realistic trigger: InterpretPreDispatchFailure path in
+        // LinuxTentacleUpgradeStrategy — script never reached the agent,
+        // so the binary is unchanged, cache is still accurate.
         ArrangeMachine(id: 302, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(302, new Dictionary<string, string>(), agentVersion: "1.3.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome
             {
-                Status = MachineUpgradeStatus.AlreadyUpToDate,
-                Detail = "already on 1.4.0",
+                Status = MachineUpgradeStatus.Failed,
+                Detail = "Upgrade dispatch failed before the agent acknowledged the script — the upgrade did NOT run.",
                 AgentVersionMayHaveChanged = false
             });
 
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 302 }, CancellationToken.None);
 
+        _runtimeCache.TryGet(302).AgentVersion.ShouldBe("1.3.0",
+            "AgentVersionMayHaveChanged=false MUST NOT invalidate the runtime cache — preserve the last-known-good version in the UI");
+
+        var expectedJobCount = MachineUpgradeService.UpgradePollingWindowSeconds / MachineUpgradeService.UpgradePollingIntervalSeconds;
         _backgroundJobClient.Verify(
             c => c.Schedule<IMachineHealthCheckService>(
                 It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<string>()),
-            Times.Never(),
-            "no-op outcomes must not schedule rapid polling — nothing to observe");
+            Times.Exactly(expectedJobCount),
+            "rapid polling is ALWAYS scheduled so the FE sees live progress regardless of outcome — decoupled from cache invalidation");
     }
 
     [Fact]
