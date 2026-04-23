@@ -252,6 +252,33 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var entries = logReader.ReadFrom(lastSeq - 1);
         var logs = entries.Select(e => e.ToProcessOutput()).ToList();
 
+        // Orphan-state detection (1.6.x fix): if the state file says
+        // Progress=Running but the process is gone, we're looking at
+        // an abandoned script — likely its owning tentacle was killed
+        // (e.g. Phase B of a self-upgrade restarted the tentacle while
+        // its own script was "in progress"). Without this check, the
+        // server's Halibut script observer would poll GetStatus forever
+        // (state says Running), HTTP dispatch request hangs for the
+        // full 5-min timeout, Redis upgrade lock stays held, operator's
+        // UI shows a spinner that never resolves.
+        //
+        // Detection: check if state.ProcessId still points to a live
+        // process. If not (Process.GetProcessById throws), the script
+        // is orphaned — report Complete with UnknownResult so the
+        // observer can finalize cleanly and release the lock.
+        if (!state.IsComplete() && state.ProcessId.HasValue && state.ProcessId.Value > 0 && !IsProcessAlive(state.ProcessId.Value))
+        {
+            Log.Information(
+                "[LocalScriptService] Orphan script detected: ticket {TicketId} had Progress=Running " +
+                "with ProcessId {ProcessId} but that PID is no longer alive. Reporting as Complete with " +
+                "UnknownResult so the server-side observer can release its lock instead of polling forever.",
+                ticket.TaskId, state.ProcessId.Value);
+
+            response = new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, logs,
+                state.NextLogSequence > 0 ? state.NextLogSequence : Math.Max(0, logReader.GetHighestSequence() + 1));
+            return true;
+        }
+
         var processState = state.IsComplete() ? ProcessState.Complete : ProcessState.Running;
         var exitCode = state.ExitCode ?? 0;
         var nextSeq = state.NextLogSequence > 0
@@ -260,6 +287,26 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         response = new ScriptStatusResponse(ticket, processState, exitCode, logs, nextSeq);
         return true;
+    }
+
+    /// <summary>
+    /// Best-effort liveness check for a PID the current process doesn't own.
+    /// Returns false if Process.GetProcessById throws (PID not found),
+    /// if the process is HasExited, or any exception — we treat all error
+    /// cases as "process is gone" so orphan-state detection errs on the
+    /// side of releasing the server-side observer.
+    /// </summary>
+    private static bool IsProcessAlive(int processId)
+    {
+        try
+        {
+            using var proc = System.Diagnostics.Process.GetProcessById(processId);
+            return !proc.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
