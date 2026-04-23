@@ -5,6 +5,7 @@ using System.Threading;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.ScriptExecution.State;
 
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
@@ -77,6 +78,47 @@ public class LocalScriptServiceTests : IDisposable
 
         status.State.ShouldBe(ProcessState.Complete);
         status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void GetStatus_OrphanStateFile_DeadPid_ReportsComplete_NotRunning()
+    {
+        // 1.6.x regression guard for the "upgrade HTTP dispatch hangs 5min"
+        // bug: if the tentacle process that was running a script gets
+        // killed mid-execution (e.g. Phase B systemctl restart during
+        // self-upgrade), it leaves behind a state.json with Progress=Running
+        // + a now-dead ProcessId. Before the fix, a new tentacle's
+        // GetStatus would read that file and return ProcessState.Running
+        // forever — the server-side Halibut observer would poll forever,
+        // the Redis upgrade lock would stay held, the operator's UI would
+        // show a spinner indefinitely.
+        //
+        // After fix: GetStatus detects the dead ProcessId and reports
+        // Complete with UnknownResult so the observer can release its
+        // lock.
+        //
+        // Simulation: manually craft a workDir + state.json with a PID
+        // guaranteed not to exist (int.MaxValue) and call GetStatus.
+        var ticketId = Guid.NewGuid().ToString("N");
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-scripts-{ticketId}");
+        Directory.CreateDirectory(workDir);
+        _createdTickets.Add(ticketId);
+
+        var stateStore = new ScriptStateStoreFactory().Create(workDir);
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Running,
+            ProcessId = int.MaxValue,  // guaranteed to not match any live PID
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket(ticketId), 0));
+
+        status.State.ShouldBe(ProcessState.Complete,
+            customMessage: "orphan state file with dead PID must be reported as Complete so the server's Halibut observer can finalize — otherwise it polls forever and the upgrade HTTP request hangs for the full 5-min script timeout");
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult,
+            customMessage: "orphan scripts report UnknownResult (we can't determine the actual exit code since the process is gone) — matches the unknown-ticket fallback semantics");
     }
 
     [Fact]
