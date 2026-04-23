@@ -156,10 +156,24 @@ EVENTS_MAX=50
 # Phase A (first invocation) truncates so stale events from a PREVIOUS
 # upgrade attempt don't pollute this run's event stream. Phase B keeps
 # the file intact so its own events append to Phase A's.
+#
+# Direct truncate (no sudo) — the file is either:
+#   (a) new, created by the `>` redirect as $SERVICE_USER (Phase A runs
+#       as the tentacle service user), OR
+#   (b) existing, already owned by $SERVICE_USER (either from a prior run
+#       where emit_event's `>>` append created it, or from the install
+#       script pre-creating $STATE_DIR with service-user ownership).
+#
+# The old code used `sudo tee` + `sudo chown`, but neither `/usr/bin/tee`
+# nor `/bin/chown .../upgrade-events.jsonl` are in the sudoers allowlist
+# — both calls failed silently, `|| true` swallowed the error, and the
+# file was NEVER truncated. Events accumulated across runs until the
+# EVENTS_MAX=50 cap fired, then every subsequent emit_event became a
+# no-op. Observationally: after N upgrades the UI event timeline froze
+# mid-upgrade at whatever event pushed the count past 50.
 if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
-  sudo mkdir -p "$STATUS_DIR" 2>/dev/null || true
-  : | sudo tee "$EVENTS_FILE" >/dev/null 2>&1 || true
-  sudo chown "$SERVICE_USER:$SERVICE_USER" "$EVENTS_FILE" 2>/dev/null || true
+  mkdir -p "$STATUS_DIR" 2>/dev/null || true
+  : > "$EVENTS_FILE" 2>/dev/null || true
 fi
 
 # emit_event — append one structured event. Arguments:

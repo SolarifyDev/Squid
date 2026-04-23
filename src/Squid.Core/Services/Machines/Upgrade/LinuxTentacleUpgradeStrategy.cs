@@ -1,5 +1,6 @@
 using System.Reflection;
 using Halibut;
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -165,6 +166,10 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         {
             return InterpretPreDispatchFailure(machine, ex);
         }
+        catch (AgentUnreachableException ex) when (dispatchAcked)
+        {
+            return InterpretLivenessProbeAbort(machine, ex);
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -239,6 +244,37 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             $"Upgrade dispatch failed before the agent acknowledged the script — the upgrade did NOT run. " +
             $"Likely causes: agent process down, polling subscription not registered, server-agent thumbprint trust missing, " +
             $"or network/firewall blocking the polling channel. Halibut detail: {ex.Message}");
+    }
+
+    private static MachineUpgradeOutcome InterpretLivenessProbeAbort(Machine machine, AgentUnreachableException ex)
+    {
+        // Liveness probe tripped AFTER StartScriptAsync acked. This is the SAME
+        // mid-restart disconnect as the HalibutClientException case above, but
+        // surfaced through the probe loop instead of a GetStatus/Complete RPC
+        // failure. Root cause is the same — Phase B's `exec sudo systemd-run
+        // --scope` detaches the script into a transient scope and restarts the
+        // tentacle; the old Halibut polling connection dies and the new one
+        // needs a few seconds to re-establish.
+        //
+        // Before this mapping, the probe abort fell through to the generic
+        // Exception catch and surfaced as "Failed: AgentUnreachableException",
+        // telling the UI the upgrade failed even though the scoped script was
+        // mid-flight and about to finish. Operators saw "Failed" in the UI
+        // while the agent silently completed the upgrade — brutal UX.
+        //
+        // Same Initiated semantics as the HalibutClientException path: the
+        // agent-version cache is invalidated and a burst of rapid health
+        // checks is scheduled by MachineUpgradeService to reconcile the
+        // actual outcome from the next Capabilities probe.
+        Log.Information("[Upgrade] Liveness probe tripped mid-script for {Machine} after {Failures} consecutive probe failures (expected — scope detached, tentacle restart in progress)",
+            machine.Name, ex.ConsecutiveFailures);
+
+        return new MachineUpgradeOutcome
+        {
+            Status = MachineUpgradeStatus.Initiated,
+            Detail = $"Upgrade dispatched to transient scope; agent went unreachable after {ex.ConsecutiveFailures} consecutive liveness probes — expected during service restart. Outcome confirmed on next health check via reported version.",
+            AgentVersionMayHaveChanged = true
+        };
     }
 
     // ── Script + command construction ────────────────────────────────────────

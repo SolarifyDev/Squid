@@ -641,10 +641,22 @@ public sealed class UpgradeLinuxTentacleScriptTests
     {
         // If Phase B truncated the events file on re-exec, all Phase A
         // events would disappear — UI would lose the early progress
-        // narrative. Phase A truncates via `: | sudo tee > /dev/null`;
-        // Phase B only appends (via printf >> file).
-        RenderedScript.ShouldContain("if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]; then\n  sudo mkdir -p \"$STATUS_DIR\"",
+        // narrative. Phase A truncates via `: > $EVENTS_FILE`; Phase B
+        // only appends (via printf >> file).
+        //
+        // Direct `>` (no sudo) — the file is owned by $SERVICE_USER either
+        // from a fresh create (bash redirect inherits the shell's euid) or
+        // from a prior run's emit_event `>>` append. The pre-1.6.x code
+        // used `sudo tee` which silently failed because /usr/bin/tee isn't
+        // in the sudoers allowlist — events accumulated across runs, the
+        // EVENTS_MAX=50 cap then turned emit_event into a no-op mid-upgrade
+        // and the UI progress timeline froze.
+        RenderedScript.ShouldContain("if [ -z \"${SQUID_UPGRADE_SCOPED:-}\" ]; then\n  mkdir -p \"$STATUS_DIR\"",
             customMessage: "events-file truncation must be gated on !SQUID_UPGRADE_SCOPED so Phase B doesn't reset Phase A's events");
+        RenderedScript.ShouldContain(": > \"$EVENTS_FILE\"",
+            customMessage: "Phase A truncate must use direct `>` redirect — `sudo tee` silently fails because tee isn't in sudoers, events then accumulate across runs until EVENTS_MAX caps emit_event to a no-op");
+        RenderedScript.ShouldNotContain(": | sudo tee \"$EVENTS_FILE\"",
+            customMessage: "stale pre-1.6.x truncate — `sudo tee` silently failed, leaving events.jsonl accumulating across runs");
     }
 
     [Fact]
