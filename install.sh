@@ -309,6 +309,16 @@ STATE_DIR="/var/lib/squid-tentacle"
 mkdir -p "$STATE_DIR"
 chmod 755 "$STATE_DIR"
 
+# Auto-rollback snapshot dir (C1+C2, 1.6.0). Phase A's apt method writes the
+# previous-version .deb here as a best-effort rollback snapshot; Phase B's
+# failure path runs `dpkg -i --force-downgrade` from this dir. The curl that
+# downloads the snapshot runs AS $SERVICE_USER (non-root), so the directory
+# MUST be writable by that user. If we skip this and let the runtime sudo
+# `mkdir -p` create it on first upgrade, the dir ends up root:root 0755 and
+# curl fails with "(23) Failure writing output" — auto-rollback silently
+# disabled for every upgrade.
+mkdir -p "$STATE_DIR/rollback"
+
 # Transfer ownership to the service user if one exists.
 if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
     chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$WORKSPACE_DIR" "$INSTALL_DIR" "$STATE_DIR" 2>/dev/null || true
