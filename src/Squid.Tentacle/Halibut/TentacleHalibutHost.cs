@@ -13,8 +13,19 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     private readonly HalibutRuntime _runtime;
     private readonly TentacleSettings _settings;
 
+    // P0-T.4: signals the Halibut polling loop to stop picking up new RPCs on drain.
+    // Replaces the pre-fix `CancellationToken.None` wired into every Poll() call.
+    private readonly CancellationTokenSource _pollCts = new();
+
     public bool IsListening { get; private set; }
     public int ListeningPort { get; private set; }
+
+    /// <summary>
+    /// The cancellation token threaded into every <c>HalibutRuntime.Poll</c> call.
+    /// Exposed <c>internal</c> so unit tests can assert the cancel wiring without
+    /// standing up a real Halibut runtime.
+    /// </summary>
+    internal CancellationToken PollCancellationToken => _pollCts.Token;
 
     public TentacleHalibutHost(
         X509Certificate2 tentacleCert,
@@ -90,7 +101,11 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
             for (var i = 0; i < connectionCount; i++)
             {
-                _runtime.Poll(pollUri, serverEndpoint, CancellationToken.None);
+                // P0-T.4: use the host's own CT so CancelPolling() can stop the loop
+                // cleanly during drain. Pre-fix this was CancellationToken.None and
+                // the only way to stop polling was disposing the runtime — which
+                // races with in-flight RPCs.
+                _runtime.Poll(pollUri, serverEndpoint, _pollCts.Token);
                 totalConnections++;
             }
         }
@@ -153,9 +168,23 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     }
 
 
+    public void CancelPolling()
+    {
+        // Idempotent — CancellationTokenSource.Cancel is documented safe to call
+        // multiple times but will no-op after the first. The IsCancellationRequested
+        // check avoids the (harmless) state transition notifications in logs.
+        if (!_pollCts.IsCancellationRequested)
+            _pollCts.Cancel();
+    }
+
     public async ValueTask DisposeAsync()
     {
+        // Cancel polling first so in-flight RPCs complete rather than racing the
+        // runtime disposal. Matches the shutdown sequence documented in
+        // TentacleApp.RunAsync (cancel → drain → dispose).
+        CancelPolling();
         await _runtime.DisposeAsync().ConfigureAwait(false);
+        _pollCts.Dispose();
     }
 
     private sealed class AsyncScriptServiceAdapter : IScriptServiceAsync

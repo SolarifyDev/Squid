@@ -3,6 +3,7 @@ using Halibut.Diagnostics;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Halibut;
 using Squid.Message.Contracts.Tentacle;
@@ -15,14 +16,22 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
     private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
+    private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly TimeSpan _defaultScriptTimeout;
 
-    public HalibutMachineExecutionStrategy(IHalibutClientFactory halibutClientFactory, ICalamariPayloadBuilder payloadBuilder, IHalibutScriptObserver observer, HalibutSetting halibutSetting, IMachineCircuitBreakerRegistry breakerRegistry = null)
+    public HalibutMachineExecutionStrategy(
+        IHalibutClientFactory halibutClientFactory,
+        ICalamariPayloadBuilder payloadBuilder,
+        IHalibutScriptObserver observer,
+        HalibutSetting halibutSetting,
+        IMachineCircuitBreakerRegistry breakerRegistry = null,
+        IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
+        _capabilitiesCache = capabilitiesCache;
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -40,6 +49,10 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // the success/failure of *this* call feeds back into the state machine.
         var breaker = _breakerRegistry?.GetOrCreate(request.Machine.Id);
         breaker?.ThrowIfOpen();
+
+        // P0-E.3: log the protocol dispatch decision from the capabilities cache.
+        // Observability today; the branch site is already wired for E.2's V2 rollout.
+        LogProtocolDispatchDecision(request.Machine.Id, request.Machine.Name);
 
         var scriptClient = _halibutClientFactory.CreateClient(endpoint);
 
@@ -194,6 +207,35 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
         var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash)[..32].ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// P0-E.3: emit a structured log line naming which script-service protocol
+    /// version we're about to dispatch, based on the cached capabilities from the
+    /// last health check. Server-side V2 isn't implemented yet (E.2, 🏔️ ARCH), so
+    /// we always dispatch V1 regardless of the cache — but the read site is now
+    /// wired and operators get visibility today.
+    /// </summary>
+    private void LogProtocolDispatchDecision(int machineId, string machineName)
+    {
+        if (_capabilitiesCache == null) return;
+
+        var caps = _capabilitiesCache.TryGet(machineId);
+
+        if (caps == MachineRuntimeCapabilities.Empty)
+        {
+            Log.Debug(
+                "[Deploy] Machine {MachineName} has no cached capabilities — dispatching V1 " +
+                "(cache cold; first health check hasn't landed yet)",
+                machineName);
+            return;
+        }
+
+        var version = caps.SupportsScriptServiceV2 ? "v2-capable" : "v1-only";
+        Log.Debug(
+            "[Deploy] Machine {MachineName} protocol: {ProtocolVersion} (cached services: " +
+            "[{Services}]). Dispatching V1 — V2 server-side not yet implemented (E.2).",
+            machineName, version, string.Join(", ", caps.SupportedServices));
     }
 
     internal static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)

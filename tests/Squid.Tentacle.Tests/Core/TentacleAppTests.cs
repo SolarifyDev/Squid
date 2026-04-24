@@ -297,6 +297,15 @@ public class TentacleAppTests : TimedTestBase
 
         drainableBackend.DrainCalls.ShouldBe(1);
         drainableBackend.LastDrainTimeout.TotalSeconds.ShouldBe(2);
+
+        // P0-T.4: CancelPolling must fire during shutdown (before drain). If this
+        // regresses, the agent keeps picking up new Halibut RPCs during drain and
+        // either extends drain past timeout or kills new scripts mid-execution.
+        halibutHost.CancelPollingCalls.ShouldBe(1,
+            customMessage:
+                "Shutdown must call halibutHost.CancelPolling() exactly once before drain. " +
+                "Pre-T.4 the poll loop ran with CancellationToken.None and couldn't be stopped " +
+                "until runtime disposal.");
     }
 
     [Fact]
@@ -417,6 +426,7 @@ public class TentacleAppTests : TimedTestBase
         public int ListeningPort { get; private set; }
         public bool IsListening { get; private set; }
         public bool Disposed { get; private set; }
+        public int CancelPollingCalls { get; private set; }
 
         public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
         {
@@ -432,6 +442,8 @@ public class TentacleAppTests : TimedTestBase
             ListeningPort = port;
             IsListening = true;
         }
+
+        public void CancelPolling() => CancelPollingCalls++;
 
         public ValueTask DisposeAsync()
         {
