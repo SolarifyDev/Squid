@@ -126,6 +126,31 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                      OLD_VERSION_APT=$(dpkg-query -W -f='${Version}' squid-tentacle 2>/dev/null || echo "<none>")
                      echo "[upgrade-method:apt] Pre-upgrade version: $OLD_VERSION_APT"
 
+                     # ── Sanitize BEFORE any downstream use (P0-F5, 1.6.x) ──────────
+                     # OLD_VERSION_APT comes from dpkg-query at runtime. Normally
+                     # plain semver, but a corrupted dpkg DB or malicious package
+                     # could surface bytes containing shell / URL metacharacters
+                     # (whitespace, quotes, $, backticks, newline, …). Without
+                     # sanitization HERE the tainted value propagates into:
+                     #   1. Scope env-pass line `--setenv=OLD_VERSION_APT="$OLD_VERSION_APT"`
+                     #      to systemd-run. Whitespace breaks arg parsing; a
+                     #      quote breaks the flag boundary and the scope either
+                     #      fails to start or enters with wrong env.
+                     #   2. Snapshot URL construction below — already has an
+                     #      inline regex guard, but that only protects the URL;
+                     #      the VARIABLE itself stays tainted for path (1).
+                     #   3. Phase B's safe_version() — too late; scope already
+                     #      misparsed.
+                     # Replace out-of-class values with the "<none>" sentinel
+                     # dpkg-query itself emits for the no-package case, so all
+                     # downstream branches treat it as "unknown / fresh install"
+                     # and skip snapshot + rollback-instruction paths naturally.
+                     if [ "$OLD_VERSION_APT" != "<none>" ] \
+                          && ! printf '%s' "$OLD_VERSION_APT" | grep -qE '^[a-zA-Z0-9._~+-]+$'; then
+                       echo "[upgrade-method:apt] WARNING: OLD_VERSION_APT contains unexpected characters — sanitizing to <none> (auto-rollback + downgrade instruction unavailable for this dispatch)"
+                       OLD_VERSION_APT="<none>"
+                     fi
+
                      # ── C1 (1.6.0): pre-upgrade snapshot for auto-rollback ─────────
                      # Download the CURRENT version's .deb from GitHub Releases so
                      # Phase B can `dpkg -i --force-downgrade` it on health-check

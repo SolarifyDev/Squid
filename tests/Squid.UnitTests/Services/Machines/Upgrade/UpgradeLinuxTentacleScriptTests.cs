@@ -523,6 +523,65 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_OldVersionApt_SanitizedBeforeDownstreamUse()
+    {
+        // P0-F5 regression guard (2026-04-24 audit).
+        //
+        // Bug: OLD_VERSION_APT comes from `dpkg-query -W -f='${Version}'`
+        // at runtime. For a healthy dpkg DB that's plain semver, but a
+        // corrupted DB or a malicious package could surface a value
+        // containing shell-unsafe bytes (whitespace, quotes, $, backticks,
+        // newline, etc.). Pre-1.6.x fix, the raw value was embedded in:
+        //
+        //   1. Snapshot URL construction — inline regex guard existed,
+        //      but only protected that path, left the VARIABLE tainted.
+        //   2. `--setenv=OLD_VERSION_APT="$OLD_VERSION_APT"` in the
+        //      systemd-run invocation. Whitespace breaks arg parsing,
+        //      quotes break the flag boundary — scope either fails to
+        //      start or enters with corrupt env.
+        //   3. Phase B reads scope env and calls safe_version() — too
+        //      late, scope already misparsed.
+        //
+        // Fix: sanitize IMMEDIATELY after the dpkg-query assignment —
+        // before any downstream use — and REASSIGN the raw variable to
+        // the "<none>" sentinel on bad input so every downstream path
+        // (snapshot URL, scope env, Phase B) treats it as unknown.
+        //
+        // Three invariants pinned below:
+        //   (a) The raw-reassignment sentinel appears in the script (proves
+        //       the fix is present, not just a parallel *_SAFE variable).
+        //   (b) The same strict whitelist regex appears in the apt method
+        //       section (proves the sanitize check has teeth).
+        //   (c) The warning echo that mentions sanitization exists, so
+        //       operators see the log when the guard fires.
+
+        RenderedScript.ShouldContain("OLD_VERSION_APT=\"<none>\"",
+            customMessage:
+                "The sanitize block must REASSIGN OLD_VERSION_APT (not just compute a parallel " +
+                "*_SAFE variable). Scope env-pass references the raw $OLD_VERSION_APT name — a " +
+                "parallel variable does nothing for that path. Using the `<none>` sentinel " +
+                "matches dpkg-query's own empty-state output so downstream branches don't need " +
+                "special-casing. See P0-F5 audit + the block in AptUpgradeMethod.cs right after " +
+                "the dpkg-query capture.");
+
+        RenderedScript.ShouldContain("OLD_VERSION_APT contains unexpected characters",
+            customMessage:
+                "Sanitize path must log a visible warning when it fires so operators can " +
+                "correlate a disabled auto-rollback with the tainted dpkg value that caused " +
+                "it. Silent sanitize is as bad as no sanitize for debugging.");
+
+        // The whitelist regex — same shape as Phase B's safe_version() and the
+        // snapshot-URL guard. Pinning the literal guarantees the regex is the
+        // strict semver character class, not a looser `[^\s]+` or similar.
+        RenderedScript.ShouldContain("'^[a-zA-Z0-9._~+-]+$'",
+            customMessage:
+                "whitelist regex must be the strict semver character class — " +
+                "same as Phase B's safe_version() + the snapshot-URL guard. A looser " +
+                "pattern (e.g. [^\\s]+) would admit URL-meta characters and re-expose the " +
+                "injection surface this test exists to close.");
+    }
+
+    [Fact]
     public void Script_AptMethod_UsesTargetedUpdate_ImmuneToBrokenThirdPartyRepos()
     {
         // Post-1.4.1 production lesson: a user machine with an expired
