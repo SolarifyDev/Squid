@@ -662,8 +662,11 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                     File.SetUnixFileMode(filePath,
                         UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
 
-                if (file.EncryptionPassword != null)
-                    File.WriteAllText(filePath + ".key", file.EncryptionPassword);
+                // P0-B.2 (2026-04-24 audit): the old `.key` sidecar file co-located the
+                // password with the ciphertext on disk — defeating encryption-at-rest for
+                // disk snapshots / backups / offline compromise. Password now only lives
+                // in memory on the ScriptFile instance and rides to the Calamari child
+                // process via env var (see BuildCalamariProcessStartInfo).
             }
             finally
             {
@@ -695,11 +698,21 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     // Process Execution
     // ========================================================================
 
+    /// <summary>
+    /// P0-B.2 (2026-04-24 audit): name of the environment variable that carries the
+    /// sensitive-variable encryption password from this process to the spawned
+    /// Calamari child. Paired with the same constant on the Calamari side — drift
+    /// between the two silently breaks sensitive-variable decryption. Pinned by
+    /// <c>SensitiveVariablePasswordTransportTests.CalamariSensitivePasswordEnvVar_ConstantNamePinned</c>
+    /// (tentacle) and <c>RunScriptCliHandlerSensitivePasswordEnvVarTests</c>
+    /// (calamari).
+    /// </summary>
+    internal const string CalamariSensitivePasswordEnvVar = "SQUID_CALAMARI_SENSITIVE_PASSWORD";
+
     private static Process StartProcess(string workDir, StartScriptCommand command)
     {
         var variablesPath = Path.Combine(workDir, "variables.json");
         var sensitiveVariablesPath = Path.Combine(workDir, "sensitiveVariables.json");
-        var sensitiveKeyPath = sensitiveVariablesPath + ".key";
 
         // Calamari only knows how to bootstrap Bash and PowerShell scripts (it
         // generates `export VAR=...` / `$VAR=...` preambles). For Python /
@@ -709,7 +722,16 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var canUseCalamari = command.ScriptSyntax == ScriptType.Bash || command.ScriptSyntax == ScriptType.PowerShell;
 
         if (File.Exists(variablesPath) && canUseCalamari)
-            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitiveKeyPath, command.Arguments);
+        {
+            // P0-B.2: password no longer on disk — pull it from the in-memory ScriptFile
+            // instance. Writing the `.key` sidecar defeated at-rest encryption; passing
+            // --password= via argv leaked through ps aux / /proc/<pid>/cmdline.
+            var sensitivePassword = command.Files?
+                .FirstOrDefault(f => string.Equals(Path.GetFileName(f.Name), "sensitiveVariables.json", StringComparison.Ordinal))
+                ?.EncryptionPassword;
+
+            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitivePassword, command.Arguments);
+        }
 
         return command.ScriptSyntax switch
         {
@@ -722,7 +744,34 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     }
 
     private static Process StartCalamariProcess(
-        string workDir, string variablesPath, string sensitiveVariablesPath, string sensitiveKeyPath, string[] arguments)
+        string workDir, string variablesPath, string sensitiveVariablesPath, string? sensitivePassword, string[] arguments)
+    {
+        var psi = BuildCalamariProcessStartInfo(
+            workDir,
+            variablesPath,
+            sensitiveVariablesPath,
+            sensitivePassword,
+            sensitiveCiphertextExists: File.Exists(sensitiveVariablesPath),
+            arguments);
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
+    }
+
+    /// <summary>
+    /// Build the <see cref="ProcessStartInfo"/> for the Calamari child. Pure function
+    /// (no disk reads except the caller-provided <paramref name="sensitiveCiphertextExists"/>
+    /// flag) so unit tests can verify the argv / env-var contract without spawning a
+    /// real process.
+    /// </summary>
+    internal static ProcessStartInfo BuildCalamariProcessStartInfo(
+        string workDir,
+        string variablesPath,
+        string sensitiveVariablesPath,
+        string? sensitivePassword,
+        bool sensitiveCiphertextExists,
+        string[] arguments)
     {
         var psi = new ProcessStartInfo
         {
@@ -737,14 +786,17 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         };
 
         psi.ArgumentList.Add("run-script");
-        psi.ArgumentList.Add($"--script=script.sh");
+        psi.ArgumentList.Add("--script=script.sh");
         psi.ArgumentList.Add($"--variables={variablesPath}");
 
-        if (File.Exists(sensitiveVariablesPath) && File.Exists(sensitiveKeyPath))
+        if (sensitiveCiphertextExists && !string.IsNullOrEmpty(sensitivePassword))
         {
-            var password = File.ReadAllText(sensitiveKeyPath).Trim();
             psi.ArgumentList.Add($"--sensitive={sensitiveVariablesPath}");
-            psi.ArgumentList.Add($"--password={password}");
+
+            // P0-B.2: password via env var, NOT argv. Env var is readable via
+            // /proc/<pid>/environ (mode 0600 — process owner / root only). argv is in
+            // /proc/<pid>/cmdline (typically world-readable 0444) and in ps aux.
+            psi.Environment[CalamariSensitivePasswordEnvVar] = sensitivePassword;
         }
 
         if (arguments != null && arguments.Length > 0)
@@ -754,9 +806,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 psi.ArgumentList.Add(arg);
         }
 
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
-        return process;
+        return psi;
     }
 
     private static Process StartBashProcess(string workDir, string[] arguments)
