@@ -164,11 +164,35 @@ public class SpaceIdInjectionSpecificationTests
         return context;
     }
 
+    [Fact]
+    public async Task SkipsInjection_WhenSpaceIdIsReadOnly()
+    {
+        // Defensive edge case: if someone declares ISpaceScoped with a read-only
+        // `SpaceId` (e.g. expression-bodied getter), the middleware must silently
+        // skip rather than blow up. The reflection filter's `!prop.CanWrite` gate
+        // catches this; this test pins the contract.
+        var spec = CreateSpec("5");
+        var message = new TestReadOnlySpaceScopedCommand();
+        var context = CreateContext(message);
+
+        Should.NotThrow(async () => await spec.BeforeExecute(context.Object, CancellationToken.None));
+
+        // Accessor still returns its computed value — middleware didn't throw and didn't corrupt.
+        ((ISpaceScoped)message).SpaceId.ShouldBe(7);
+    }
+
     // ========== Test Helper Classes ==========
 
     private class TestDirectSpaceScopedRequest : IRequest, ISpaceScoped
     {
         public int? SpaceId { get; set; }
+    }
+
+    private class TestReadOnlySpaceScopedCommand : ICommand, ISpaceScoped
+    {
+        // SpaceId is a get-only auto-property — `!prop.CanWrite` short-circuits the
+        // middleware. Exercises the CanWrite guard that previously had no test.
+        public int? SpaceId { get; } = 7;
     }
 
     private class TestExplicitSpaceScopedCommand : ICommand, ISpaceScoped

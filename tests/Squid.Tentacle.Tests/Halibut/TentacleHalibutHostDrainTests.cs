@@ -21,6 +21,16 @@ namespace Squid.Tentacle.Tests.Halibut;
 /// is passed to every <c>Poll</c> call. <see cref="ITentacleHalibutHost.CancelPolling"/>
 /// cancels that source; <c>TentacleApp.RunAsync</c> invokes it BEFORE the drain
 /// wait so the script-backend gets a clean "no new work arriving" window.</para>
+///
+/// <para><b>Halibut contract boundary</b>: these tests prove the host cancels the
+/// CT it owns when <c>CancelPolling</c> runs, and that the CT is the one wired
+/// into <c>_runtime.Poll(uri, endpoint, token)</c>. Whether Halibut's runtime
+/// actually observes that CT and exits its poll loop is Halibut's contract
+/// (package version 8.1.1052). That contract is exercised end-to-end in
+/// <c>Squid.E2ETests</c> by shutting down the real host mid-deploy and asserting
+/// no new RPCs arrive during the drain window; it is NOT re-asserted here to
+/// avoid unit-testing a third-party library. If Halibut changes its behaviour
+/// around <c>Poll(ct)</c>, the E2E coverage catches it.</para>
 /// </summary>
 [Trait("Category", TentacleTestCategories.Core)]
 public sealed class TentacleHalibutHostDrainTests

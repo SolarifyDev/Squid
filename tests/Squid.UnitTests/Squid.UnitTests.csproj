@@ -29,6 +29,11 @@
     <ProjectReference Include="..\..\src\Squid.Tentacle\Squid.Tentacle.csproj" />
     <ProjectReference Include="..\..\src\Squid.Core\Squid.Core.csproj" />
     <ProjectReference Include="..\..\src\Squid.Message\Squid.Message.csproj" />
+    <!-- P0-B.3: cross-project round-trip tests feed real SquidVariableEncryption.Encrypt
+         output into the real Calamari-side SensitiveVariableDecryptor.Decrypt, closing
+         the silent-drift gap that hand-mirrored helpers in either side's own test project
+         cannot catch. -->
+    <ProjectReference Include="..\..\src\Squid.Calamari\Squid.Calamari.csproj" />
   </ItemGroup>
 
 </Project>
