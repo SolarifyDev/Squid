@@ -100,6 +100,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        # Required by UpgradeDispatchLockReconcilerIntegrationTests (2026-04-24)
+        # which verify the reconciler's actual KeyDeleteAsync call against a
+        # real Redis instance. The test connects to 127.0.0.1:6379 matching
+        # src/Squid.Api/appsettings.json's RedisCacheConnectionString default.
+        # Without this service the test suite fails 2 tests on CI while
+        # passing locally (where operators typically run a dev Redis).
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
 
     steps:
       - name: Checkout

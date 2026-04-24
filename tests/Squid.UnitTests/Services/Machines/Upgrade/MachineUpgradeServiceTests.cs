@@ -10,6 +10,7 @@ using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
 using Squid.Message.Requests.Machines;
+using StackExchange.Redis;
 
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
@@ -559,6 +560,74 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public async Task UpgradeAsync_RedisInfrastructureDown_ReturnsDistinctFailure_NotContention()
+    {
+        // P0-F3 regression guard (2026-04-24 audit).
+        //
+        // Pre-fix: RedisSafeRunner.ExecuteWithLockAsync<T> catches EVERY
+        // exception (Redis down, network partition, TLS handshake fail,
+        // etc.) and returns default(T) = null — the EXACT same signal
+        // RedisSafeRunner uses for normal contention (lock already held).
+        // DispatchUnderLockAsync couldn't distinguish, so Redis-down and
+        // lock-held both mapped to "Machine is currently being upgraded
+        // by another request" — misleading the operator into retrying
+        // against broken infrastructure, and hiding the Redis outage
+        // until someone noticed the [Redis] log entries.
+        //
+        // Fix: RedisSafeRunner now throws LockAcquireFailedException on
+        // infra failure; DispatchUnderLockAsync catches it separately
+        // and returns a Failed response whose Detail explicitly names
+        // the infrastructure failure so operators know retry won't help
+        // until ops restores Redis.
+        //
+        // Two invariants this test pins:
+        //   1. Status is still Failed (not some swallowed success or new enum value)
+        //   2. Detail does NOT reuse the "being upgraded by another request"
+        //      contention message — that would be an infrastructure failure
+        //      masquerading as contention, defeating the whole fix.
+        ArrangeMachine(id: 62, style: nameof(CommunicationStyle.TentaclePolling));
+
+        _redisLock
+            .Setup(x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()))
+            .ThrowsAsync(new LockAcquireFailedException(
+                "squid:upgrade:machine:62",
+                new RedisConnectionException(ConnectionFailureType.SocketFailure, "Connection refused")));
+
+        var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 62 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed,
+            customMessage: "infra-failure must still map to a clean Failed response — operator should see the error, not a 500 from the HTTP layer");
+
+        resp.Detail.ShouldNotContain("currently being upgraded by another request",
+            customMessage:
+                "P0-F3: Redis-infra failure MUST NOT reuse the contention message. " +
+                "That is the whole point of the fix — operators otherwise interpret it as " +
+                "'another user is upgrading' and retry indefinitely against broken infrastructure.");
+
+        // The detail must signal it's an infrastructure problem, not user contention.
+        // Using "infrastructure" / "Redis" as the anchor is deliberate — a future refactor
+        // that phrases it as "unavailable" or "retry later" alone would collide with the
+        // contention message (which also says retry), so we pin one of the two infra terms.
+        (resp.Detail.Contains("infrastructure", StringComparison.OrdinalIgnoreCase)
+            || resp.Detail.Contains("Redis", StringComparison.OrdinalIgnoreCase)
+            || resp.Detail.Contains("lock", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeTrue(
+                customMessage:
+                    $"detail must name the infrastructure failure mode (Redis/lock/infrastructure) " +
+                    $"so operators understand retry won't help. Actual detail: '{resp.Detail}'");
+
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "strategy must NOT run when we couldn't even acquire the lock — just like contention, " +
+            "infra failure means we never had a chance to coordinate with peers");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_OnVersionChange_SchedulesRapidHealthCheckSeries()
     {
         // 1.6.x UX fix (real-time progress): after a successful dispatch
@@ -631,6 +700,86 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public async Task UpgradeAsync_ScheduleRapidPolling_FiresBeforeStrategyDispatch_NotAfter()
+    {
+        // Ordering invariant pinned by commit a2f4850:
+        //   ScheduleRapidPolling MUST run BEFORE strategy.UpgradeAsync.
+        //
+        // Why: strategy.UpgradeAsync (LinuxTentacleUpgradeStrategy) blocks
+        // for 50-180s inside HalibutScriptObserver.ObserveAndCompleteAsync,
+        // which waits for the restart-disconnected script to either
+        // complete via the orphan-PID detection (tentacle 1.5.5+) or trip
+        // the liveness probe. The rapid-polling Hangfire jobs are what
+        // refresh the server-side IUpgradeEventTimelineStore from the
+        // agent's events.jsonl via Capabilities RPC — the FE polls THAT
+        // store to render the live Phase A/B progress timeline. If we
+        // schedule polling AFTER strategy returns, the FE's
+        // /upgrade-events endpoint returns an empty events array for the
+        // ENTIRE observer-wait window (50-180s), making the API look
+        // broken even though the agent is actively progressing.
+        //
+        // Regression risk: the pre-a2f4850 placement (inside
+        // InvalidateCacheIfChanged, post-strategy) passes every OTHER
+        // rapid-polling test — job count, delay range, version-gated
+        // cache invalidation — because those only verify the SET of
+        // scheduled jobs, not the TIMESTAMP of scheduling relative to
+        // dispatch. A "refactor that tidies RunStrategyAsync" naturally
+        // gravitates back to the original placement and silently
+        // reintroduces the UI-blank bug. This test is the narrow guard
+        // that catches ordering regressions specifically.
+        //
+        // Mechanism: record each mock invocation into a shared
+        // ordering-list; assert the first element is a schedule call
+        // and that the strategy call appears AFTER all schedule calls.
+        ArrangeMachine(id: 777, style: nameof(CommunicationStyle.TentaclePolling));
+
+        var callOrder = new List<string>();
+
+        _backgroundJobClient
+            .Setup(c => c.Schedule<IMachineHealthCheckService>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<string>()))
+            .Callback(() => callOrder.Add("schedule"))
+            .Returns("mock-job-id");
+
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("strategy"))
+            .ReturnsAsync(new MachineUpgradeOutcome
+            {
+                Status = MachineUpgradeStatus.Upgraded,
+                Detail = "ok",
+                AgentVersionMayHaveChanged = true
+            });
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 777 }, CancellationToken.None);
+
+        callOrder.ShouldNotBeEmpty("neither strategy nor schedule fired — the arranged machine wasn't dispatchable, test is broken");
+
+        callOrder.First().ShouldBe("schedule",
+            customMessage:
+                "First call in sequence MUST be a rapid-polling schedule, NOT a strategy dispatch. " +
+                "If the first call is 'strategy', someone moved ScheduleRapidPolling back to " +
+                "post-dispatch (InvalidateCacheIfChanged) and reintroduced the UI-blank bug " +
+                "that a2f4850 fixed. The FE's /upgrade-events endpoint will now return empty " +
+                "data for 50-180s while the agent is actively upgrading.");
+
+        // Every schedule call must precede the strategy call. The exact layout
+        // should be: [schedule ×30, strategy]. Even one "strategy" before any
+        // "schedule" breaks the invariant.
+        var strategyIndex = callOrder.IndexOf("strategy");
+        strategyIndex.ShouldBeGreaterThan(-1, "strategy.UpgradeAsync must fire at least once");
+
+        var scheduleCallsBeforeStrategy = callOrder.Take(strategyIndex).All(c => c == "schedule");
+        scheduleCallsBeforeStrategy.ShouldBeTrue(
+            customMessage:
+                $"Every rapid-polling schedule call must fire BEFORE strategy.UpgradeAsync. " +
+                $"Actual call order: [{string.Join(", ", callOrder)}]. Expected all 'schedule' " +
+                $"entries to appear before the first 'strategy' entry.");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_StrategyReportsNoVersionChange_SchedulesPollingButPreservesRuntimeCache()
     {
         // Post 1.6.x rapid-polling-moved-earlier refactor: ScheduleRapidPolling
@@ -694,6 +843,71 @@ public sealed class MachineUpgradeServiceTests
             "window < 30s risks cutting off before slow tarball finishes");
         MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeLessThanOrEqualTo(120,
             "window > 2min wastes RPCs after typical upgrade is long done");
+    }
+
+    [Fact]
+    public void PollingWindowAndInterval_PinnedToExactEmpiricalValues()
+    {
+        // Exact-value pins baked in by commit 9b7531d (window: 45→90) and
+        // the earlier 1.5.6 series (interval: 3). Changing EITHER requires
+        // also updating THIS test with the new empirical rationale — the
+        // change is then a deliberate-decision signal, not an invisible
+        // refactor.
+        //
+        // Why `PollingWindowAndInterval_InReasonableRange` above is NOT
+        // enough: it accepts any value in [30, 120]. Nothing in that test
+        // prevents a regression back to 45 — which is EXACTLY the value
+        // that caused the "Upgrade event stream stalled" UX bug operators
+        // saw on 1.5.6/1.5.7 when the FE's /upgrade-events poll saw the
+        // server cache freeze at Phase B `restart-start` and never catch
+        // the subsequent `healthz-pass` + `success` events because they
+        // landed past the 45s window. See session transcript 2026-04-23
+        // for the reproducing measurement.
+        //
+        // The 90s window is sized for the MEASURED worst-realistic path:
+        //   T+0     click → ScheduleRapidPolling schedules 30 Hangfire jobs
+        //   T+0-30s Phase A (apt-get update + apt install 67 MB download)
+        //   T+30s   scope-exec → systemctl restart squid-tentacle
+        //   T+30-60s Phase B silent-window (old tentacle dies, new starts,
+        //           Halibut polling re-establishes)
+        //   T+51s   healthz-pass + success written to events.jsonl on agent
+        //           (measured on arm64 container running apt path)
+        //   T+60-90s final rapid-polls observe the terminal events and
+        //           populate IUpgradeEventTimelineStore — FE sees success.
+        //
+        // The 3s interval matches FE's UPGRADE_EVENTS_POLL_INTERVAL_MS in
+        // SquidWeb/src/pages/deploymentTargets/detail.tsx. If server-pull
+        // cadence exceeds FE-pull cadence, half the FE polls return
+        // duplicate data — wasted RPCs. Keep them in sync.
+        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBe(90,
+            customMessage:
+                "window pinned to the empirical apt-path terminal-event timing " +
+                "(T+51s measured) plus a ~40s reconnect-jitter cushion. Shrinking " +
+                "back to 45 reproduces the 'stream stalled' UX bug fixed in 1.5.8. " +
+                "See commit 9b7531d for the full incident analysis.");
+
+        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBe(3,
+            customMessage:
+                "interval pinned to 3s to match FE's UPGRADE_EVENTS_POLL_INTERVAL_MS " +
+                "in SquidWeb. Any other value creates a beat-frequency between server " +
+                "refresh and FE pull — operators see 'nothing new for X seconds' gaps " +
+                "or wasted duplicate-data polls depending on direction.");
+
+        // Sanity: window / interval must divide evenly. An uneven split means the
+        // last scheduled job fires BEFORE the window end, wasting coverage of the
+        // tail where terminal events usually land.
+        var jobCount = MachineUpgradeService.UpgradePollingWindowSeconds
+                     / MachineUpgradeService.UpgradePollingIntervalSeconds;
+        (MachineUpgradeService.UpgradePollingWindowSeconds % MachineUpgradeService.UpgradePollingIntervalSeconds).ShouldBe(0,
+            customMessage:
+                "window % interval must be 0 — otherwise the final scheduled job " +
+                "fires before window-end and terminal events (healthz-pass, success) " +
+                "that land in the unscheduled tail are missed by rapid-polling.");
+        jobCount.ShouldBe(30,
+            customMessage:
+                "30 rapid-polling jobs = 90s / 3s — this is the load-budget pinning. " +
+                "If either constant changes and the quotient drifts, the Hangfire " +
+                "job count changes and downstream backend cost expectations shift.");
     }
 
     [Fact]

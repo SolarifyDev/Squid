@@ -357,7 +357,34 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // pinned by LockKey_MatchesMachineUpgradeServiceFormat.
         var lockKey = UpgradeDispatchLockReconciler.BuildLockKey(machine.Id);
 
-        var result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(lockKey, () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct), expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
+        // Three outcomes after the 1.6.x RedisSafeRunner refactor (audit P0-F3):
+        //   - Non-null result: strategy ran to completion under the lock
+        //   - Null result: contention (another caller holds the lock)
+        //   - LockAcquireFailedException: infrastructure failure (Redis down,
+        //     network partition, etc.) — distinguishable from contention so
+        //     operators don't get misled into retrying against broken infra.
+        UpgradeMachineResponseData result;
+        try
+        {
+            result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                lockKey,
+                () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct),
+                expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
+        }
+        catch (LockAcquireFailedException ex)
+        {
+            // Infrastructure failure — surface as a distinct error so the
+            // operator understands retrying won't help until ops recovers
+            // Redis. Pre-fix this was indistinguishable from contention,
+            // masking Redis outages as "another user is upgrading".
+            return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
+                $"Upgrade dispatch could not acquire the distributed lock due to Redis " +
+                $"infrastructure failure ({ex.InnerException?.GetType().Name ?? "unknown"}: " +
+                $"{ex.InnerException?.Message ?? "no detail"}). No upgrade script was sent " +
+                "to the agent. This indicates a server-side infrastructure problem (Redis " +
+                "unreachable, TLS handshake refused, network partition) — retry once the " +
+                "infrastructure recovers, or contact your operator if it persists.");
+        }
 
         return result ?? BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
             $"Machine '{machine.Name}' is currently being upgraded by another request. " +

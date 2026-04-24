@@ -76,7 +76,14 @@ STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 # STATUS_DIR is always squid-tentacle-owned (set up by install-tentacle.sh),
 # and Phase B's touch of an existing squid-tentacle-owned file doesn't
 # change ownership, so the lock stays squid-tentacle-writable forever.
-LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
+#
+# CONCURRENCY: deliberately a single per-host file name, not per-target-
+# version. Pre-1.6.x the name included the target version, which meant
+# two concurrent operator clicks targeting different versions each got
+# their own flock, then raced the system-wide dpkg lock plus the single
+# status file plus the single events file. Pinned by
+# Script_LockFile_SingleFileAcrossAllVersions_NotVersionedPerTarget.
+LOCK_FILE="$STATUS_DIR/upgrade.lock"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
 # Deterministic tempfile path so the sudoers `mv` rule can match precisely:
@@ -190,13 +197,31 @@ emit_event() {
   local now
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Cap: don't allow a runaway loop to fill the disk.
-  local line_count=0
-  if [ -f "$EVENTS_FILE" ]; then
-    line_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
-  fi
-  if [ "$line_count" -ge "$EVENTS_MAX" ]; then
-    return 0
+  # Terminal-state events ALWAYS emit regardless of cap. These are the
+  # events operators MUST see for diagnosis — losing one because we hit
+  # the cap on the worst-case path (apt fail → yum fail → tarball fail
+  # → rollback fail) would strand the operator with no record of the
+  # critical final state. The list here must stay in sync with
+  # UPGRADE_EVENTS_TERMINAL_KINDS in SquidWeb (the FE uses the same
+  # set to stop polling once a terminal event arrives). Pinned by
+  # Script_EmitEvent_TerminalEventsBypassCap.
+  local is_terminal=0
+  case "$kind" in
+    success|rollback-ok|rollback-fail|rollback-critical-failed|method-exhausted|restart-fail|healthz-fail)
+      is_terminal=1
+      ;;
+  esac
+
+  # Cap: don't allow a runaway loop to fill the disk. Terminal events
+  # bypass so the operator-visible narrative always reaches a conclusion.
+  if [ "$is_terminal" -eq 0 ]; then
+    local line_count=0
+    if [ -f "$EVENTS_FILE" ]; then
+      line_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
+    fi
+    if [ "$line_count" -ge "$EVENTS_MAX" ]; then
+      return 0
+    fi
   fi
 
   # Minimal JSON-safe escaping: drop quotes and backslashes from msg. Not
@@ -249,7 +274,11 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   exec {LOCK_FD}< "$LOCK_FILE"
 
   if ! flock -n "$LOCK_FD"; then
-    echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
+    # NOTE: the in-flight upgrade on this host might be targeting a
+    # DIFFERENT version than $TARGET_VERSION — since 1.6.x the lock file
+    # is host-scoped, not version-scoped (see LOCK_FILE comment). We
+    # intentionally don't claim it's the SAME version here.
+    echo "An upgrade is already in progress on this host (flock held on $LOCK_FILE) — this delivery (target $TARGET_VERSION) is a no-op."
     exit 0
   fi
 fi

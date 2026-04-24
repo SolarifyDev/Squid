@@ -133,15 +133,55 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // ("touch: Permission denied") because /tmp's sticky bit prevents
         // non-owners from overwriting. The state dir's ownership invariant
         // (always squid-tentacle) eliminates that class of bug.
-        // LOCK_FILE is defined as $STATUS_DIR/upgrade-$TARGET_VERSION.lock,
-        // so the rendered text has `STATUS_DIR/upgrade-` literally (and
-        // STATUS_DIR resolves to /var/lib/squid-tentacle at runtime).
-        RenderedScript.ShouldContain("LOCK_FILE=\"$STATUS_DIR/upgrade-",
-            customMessage: "lock file must live under $STATUS_DIR (service-user-owned /var/lib/squid-tentacle) so ownership stays squid-tentacle across scope re-exec");
         RenderedScript.ShouldContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
             customMessage: "STATUS_DIR must resolve to the canonical path install-tentacle.sh pre-creates with squid-tentacle ownership");
         RenderedScript.ShouldNotContain("/tmp/squid-tentacle-upgrade-",
             customMessage: "/tmp lock path was abandoned — sticky-bit + Phase B root runs was a sharp edge we shouldn't regress to");
+    }
+
+    [Fact]
+    public void Script_LockFile_SingleFileAcrossAllVersions_NotVersionedPerTarget()
+    {
+        // Concurrency regression guard. Pre-1.6.x the LOCK_FILE path embedded
+        // $TARGET_VERSION:
+        //
+        //   LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
+        //
+        // This only serialized SAME-version redeliveries. If an operator
+        // clicked "Upgrade to 1.6.0" at t=0 and reconsidered at t=5s and
+        // clicked "Upgrade to 1.6.1", the two scripts acquired DIFFERENT
+        // flock files and ran concurrently:
+        //   - Both contended for the system-wide dpkg lock
+        //     (/var/lib/dpkg/lock-frontend)
+        //   - Both wrote to the single $STATUS_FILE
+        //     (/var/lib/squid-tentacle/last-upgrade.json), last-writer-wins
+        //   - Both emitted to the single $EVENTS_FILE
+        //     (/var/lib/squid-tentacle/upgrade-events.jsonl), interleaved
+        //   - dpkg-level contention, torn rollback state, opaque final outcome
+        //
+        // Fix: pin LOCK_FILE to a SINGLE per-host file —
+        // $STATUS_DIR/upgrade.lock — so BOTH same-version redeliveries AND
+        // different-version concurrent dispatches serialize on the same
+        // flock. The second arrival correctly detects the held lock and
+        // exits 0 as a no-op. Matches Octopus's machine-level serialization
+        // semantics.
+        //
+        // This test pins both directions: positive (new literal present)
+        // and negative (old pattern absent) so an incomplete refactor
+        // can't partially regress.
+        RenderedScript.ShouldContain("LOCK_FILE=\"$STATUS_DIR/upgrade.lock\"",
+            customMessage:
+                "LOCK_FILE must be a single per-host file with NO version suffix. " +
+                "A versioned lock lets a second operator click on a different target " +
+                "version bypass the first dispatch's flock and race into the same " +
+                "dpkg / status-file / events-file writes. Matches Octopus's " +
+                "per-machine upgrade lease semantics.");
+
+        RenderedScript.ShouldNotContain("upgrade-$TARGET_VERSION.lock",
+            customMessage:
+                "Regression: per-version LOCK_FILE reintroduces the concurrent-different-" +
+                "version race described above. If this assertion fails, someone brought " +
+                "back the pre-1.6.x pattern — revert and keep a single upgrade.lock.");
     }
 
     [Fact]
@@ -483,6 +523,65 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_OldVersionApt_SanitizedBeforeDownstreamUse()
+    {
+        // P0-F5 regression guard (2026-04-24 audit).
+        //
+        // Bug: OLD_VERSION_APT comes from `dpkg-query -W -f='${Version}'`
+        // at runtime. For a healthy dpkg DB that's plain semver, but a
+        // corrupted DB or a malicious package could surface a value
+        // containing shell-unsafe bytes (whitespace, quotes, $, backticks,
+        // newline, etc.). Pre-1.6.x fix, the raw value was embedded in:
+        //
+        //   1. Snapshot URL construction — inline regex guard existed,
+        //      but only protected that path, left the VARIABLE tainted.
+        //   2. `--setenv=OLD_VERSION_APT="$OLD_VERSION_APT"` in the
+        //      systemd-run invocation. Whitespace breaks arg parsing,
+        //      quotes break the flag boundary — scope either fails to
+        //      start or enters with corrupt env.
+        //   3. Phase B reads scope env and calls safe_version() — too
+        //      late, scope already misparsed.
+        //
+        // Fix: sanitize IMMEDIATELY after the dpkg-query assignment —
+        // before any downstream use — and REASSIGN the raw variable to
+        // the "<none>" sentinel on bad input so every downstream path
+        // (snapshot URL, scope env, Phase B) treats it as unknown.
+        //
+        // Three invariants pinned below:
+        //   (a) The raw-reassignment sentinel appears in the script (proves
+        //       the fix is present, not just a parallel *_SAFE variable).
+        //   (b) The same strict whitelist regex appears in the apt method
+        //       section (proves the sanitize check has teeth).
+        //   (c) The warning echo that mentions sanitization exists, so
+        //       operators see the log when the guard fires.
+
+        RenderedScript.ShouldContain("OLD_VERSION_APT=\"<none>\"",
+            customMessage:
+                "The sanitize block must REASSIGN OLD_VERSION_APT (not just compute a parallel " +
+                "*_SAFE variable). Scope env-pass references the raw $OLD_VERSION_APT name — a " +
+                "parallel variable does nothing for that path. Using the `<none>` sentinel " +
+                "matches dpkg-query's own empty-state output so downstream branches don't need " +
+                "special-casing. See P0-F5 audit + the block in AptUpgradeMethod.cs right after " +
+                "the dpkg-query capture.");
+
+        RenderedScript.ShouldContain("OLD_VERSION_APT contains unexpected characters",
+            customMessage:
+                "Sanitize path must log a visible warning when it fires so operators can " +
+                "correlate a disabled auto-rollback with the tainted dpkg value that caused " +
+                "it. Silent sanitize is as bad as no sanitize for debugging.");
+
+        // The whitelist regex — same shape as Phase B's safe_version() and the
+        // snapshot-URL guard. Pinning the literal guarantees the regex is the
+        // strict semver character class, not a looser `[^\s]+` or similar.
+        RenderedScript.ShouldContain("'^[a-zA-Z0-9._~+-]+$'",
+            customMessage:
+                "whitelist regex must be the strict semver character class — " +
+                "same as Phase B's safe_version() + the snapshot-URL guard. A looser " +
+                "pattern (e.g. [^\\s]+) would admit URL-meta characters and re-expose the " +
+                "injection surface this test exists to close.");
+    }
+
+    [Fact]
     public void Script_AptMethod_UsesTargetedUpdate_ImmuneToBrokenThirdPartyRepos()
     {
         // Post-1.4.1 production lesson: a user machine with an expired
@@ -668,6 +767,83 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // per apt-path run).
         RenderedScript.ShouldContain("EVENTS_MAX=50",
             customMessage: "emit_event must cap total events per upgrade to prevent a runaway loop from filling the disk");
+    }
+
+    [Fact]
+    public void Script_EmitEvent_TerminalEventsBypassCap()
+    {
+        // P0-F4 regression guard (2026-04-24 audit).
+        //
+        // Bug: EVENTS_MAX=50 is a blanket cap in emit_event — once 50
+        // events have been written, ALL subsequent emit_event calls
+        // become no-ops, INCLUDING the terminal-state events operators
+        // most need to see (success, rollback-*, *-fail, method-exhausted).
+        //
+        // Worst-case path that reaches the cap: apt-install fails (several
+        // method-try events) → fallback to yum-install fails (more events)
+        // → fallback to tarball succeeds-then-healthz-fail → rollback-start
+        // → rollback-fail → rollback-critical-failed. Easily 40-60 events
+        // across the dispatch path; in slow-network runs with extra retries
+        // the count crosses 50 exactly before the rollback-* terminal
+        // events land. UI timeline freezes at the worst possible moment —
+        // operator sees "restart-start" but never the critical "rollback-
+        // critical-failed" that tells them to manually intervene.
+        //
+        // Fix: the cap still applies to NORMAL events to bound disk use
+        // under runaway loops, but a small list of explicitly-terminal
+        // event kinds bypass it. These are the ones that MUST be emitted
+        // for operator diagnosis regardless of how many journey events
+        // preceded them.
+        //
+        // The terminal-kinds list here must stay in sync with
+        // UPGRADE_EVENTS_TERMINAL_KINDS in SquidWeb/src/pages/
+        // deploymentTargets/detail.tsx — FE uses the same set to stop
+        // polling once a terminal event arrives.
+        foreach (var terminalKind in new[]
+        {
+            "success",
+            "rollback-ok",
+            "rollback-fail",
+            "rollback-critical-failed",
+            "method-exhausted",
+            "restart-fail",
+            "healthz-fail"
+        })
+        {
+            RenderedScript.ShouldContain(terminalKind,
+                customMessage: $"terminal event kind '{terminalKind}' must appear in the script — " +
+                               "either as a literal in the bypass-cap list or as an emit_event call site. " +
+                               "The FE's UPGRADE_EVENTS_TERMINAL_KINDS set depends on these.");
+        }
+
+        // The bypass mechanism itself. We grep for a pattern that shows
+        // emit_event branches on $kind before checking the cap. Specific
+        // shape is flexible (case...esac or if [[ ]] or similar) — what
+        // matters is that at least ONE of the terminal kinds appears
+        // BEFORE the cap guard line, alongside the cap-applying logic.
+        var capIdx = RenderedScript.IndexOf("\"$line_count\" -ge \"$EVENTS_MAX\"", StringComparison.Ordinal);
+        capIdx.ShouldBeGreaterThan(-1,
+            "cap guard must still be present — runaway-loop protection should not be removed");
+
+        // Walk backward from the cap check to the top of emit_event and
+        // verify at least one terminal-kind literal appears before the
+        // cap. This is a soft check; exact shape is flexible.
+        var emitStart = RenderedScript.LastIndexOf("emit_event() {", capIdx, StringComparison.Ordinal);
+        emitStart.ShouldBeGreaterThan(-1, "emit_event function body not found");
+
+        var preCapBody = RenderedScript.Substring(emitStart, capIdx - emitStart);
+        var hasTerminalBypassBeforeCap = preCapBody.Contains("success")
+            || preCapBody.Contains("rollback-")
+            || preCapBody.Contains("method-exhausted")
+            || preCapBody.Contains("terminal");
+        hasTerminalBypassBeforeCap.ShouldBeTrue(
+            customMessage:
+                "emit_event must check for a terminal kind BEFORE the cap guard (so terminal " +
+                "events can bypass the cap). Current emit_event body between function-start and " +
+                "cap-check contains no terminal-event bypass — the fix from commit <this> has " +
+                "been reverted. Symptom if this regresses: once the cap fires on the worst-case " +
+                "path (apt fail → yum fail → tarball fail → rollback fail), operators never see " +
+                "the rollback-critical-failed event telling them to manually intervene.");
     }
 
     [Fact]
