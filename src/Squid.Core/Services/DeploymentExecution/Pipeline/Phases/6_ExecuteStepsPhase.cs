@@ -32,7 +32,12 @@ public sealed partial class ExecuteStepsPhase(
 
     private DeploymentTaskContext _ctx;
     private int _currentBatchIndex;
-    private readonly Dictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> _batchStates = new();
+
+    // P0-A.3 (2026-04-24 audit): parallel target executors write per-target completion
+    // via MarkTargetCompleted → GetOrCreateBatchState. Plain Dictionary races — non-atomic
+    // TryGetValue-then-Add loses mutations when two threads both see "not present".
+    // ConcurrentDictionary.GetOrAdd gives us atomic one-instance-per-key semantics.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> _batchStates = new();
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
@@ -127,19 +132,18 @@ public sealed partial class ExecuteStepsPhase(
 
     internal Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState GetOrCreateBatchState(int batchIndex)
     {
-        if (!_batchStates.TryGetValue(batchIndex, out var state))
-        {
-            state = new Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState();
-            _batchStates[batchIndex] = state;
-        }
-        return state;
+        // Atomic under concurrent callers — exactly one state instance per batchIndex
+        // survives the race.
+        return _batchStates.GetOrAdd(batchIndex, _ => new Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState());
     }
 
     internal void MarkTargetCompleted(int batchIndex, int machineId, bool failed)
     {
         var state = GetOrCreateBatchState(batchIndex);
-        if (failed) state.FailedMachineIds.Add(machineId);
-        else state.CompletedMachineIds.Add(machineId);
+        // AddCompleted / AddFailed serialise on the state's internal lock so parallel
+        // writers don't corrupt the underlying HashSet.
+        if (failed) state.AddFailed(machineId);
+        else state.AddCompleted(machineId);
     }
 
     private static string SerializeOutputVariables(List<VariableDto> variables)
