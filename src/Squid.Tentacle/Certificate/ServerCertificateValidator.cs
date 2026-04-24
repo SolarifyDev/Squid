@@ -11,14 +11,32 @@ namespace Squid.Tentacle.Certificate;
 public static class ServerCertificateValidator
 {
     /// <summary>
+    /// Env-var escape hatch: when set to <c>1</c>, <c>true</c>, or <c>yes</c>
+    /// (case-insensitive), preserves the pre-1.6.x "accept any server cert
+    /// with a warning if no thumbprint is configured" behaviour. Default
+    /// (env var unset) is fail-closed: a tentacle with no configured
+    /// <c>ServerCertificate</c> rejects invalid chains — this is the
+    /// correct MITM-defeating default.
+    ///
+    /// <para>Opt in ONLY for lab / CI / air-gapped environments where
+    /// the operator has knowingly accepted the risk. Pinning should be
+    /// the norm in production.</para>
+    ///
+    /// <para>Pinned literal; renaming breaks every operator who set the
+    /// env var by its documented name.</para>
+    /// </summary>
+    public const string AllowUnpinnedEnvVar = "SQUID_ALLOW_UNPINNED_SERVER_CERT";
+
+    /// <summary>
     /// Creates a <see cref="HttpClientHandler.ServerCertificateCustomValidationCallback"/>
     /// that validates the server certificate using the following strategy:
     /// <list type="number">
     ///   <item>If the OS certificate chain validates cleanly, accept immediately.</item>
     ///   <item>If <paramref name="expectedThumbprint"/> is configured and matches, accept (thumbprint pinning).</item>
     ///   <item>If <paramref name="expectedThumbprint"/> is configured but mismatches, reject.</item>
-    ///   <item>If no thumbprint is configured and chain validation failed, accept with a warning
-    ///         (backward-compatible — operators should configure <c>ServerCertificate</c>).</item>
+    ///   <item>If no thumbprint is configured and chain validation failed, reject by default
+    ///         (fail-closed) — unless the operator has opted in via
+    ///         <see cref="AllowUnpinnedEnvVar"/>, in which case accept with a warning.</item>
     /// </list>
     /// </summary>
     public static Func<HttpRequestMessage, X509Certificate2?, X509Chain?, SslPolicyErrors, bool>
@@ -41,33 +59,74 @@ public static class ServerCertificateValidator
             .Select(t => t.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var allowUnpinned = ReadAllowUnpinned();
+
         return (_, cert, _, sslPolicyErrors) =>
+            ValidateCore(sslPolicyErrors, cert?.Thumbprint, trusted, allowUnpinned);
+    }
+
+    /// <summary>
+    /// Pure decision logic extracted for unit testing. Takes the inputs
+    /// the callback would receive plus the opt-in flag and returns the
+    /// accept/reject verdict. Exposed <c>internal static</c> so the full
+    /// decision matrix (chain-valid, thumbprint-match, thumbprint-miss,
+    /// no-thumbprint-no-optin, no-thumbprint-optin) can be tested without
+    /// staging a real TLS handshake.
+    /// </summary>
+    internal static bool ValidateCore(
+        SslPolicyErrors sslPolicyErrors,
+        string? actualThumbprint,
+        IReadOnlySet<string> trusted,
+        bool allowUnpinned)
+    {
+        if (sslPolicyErrors == SslPolicyErrors.None)
+            return true;
+
+        if (trusted.Count > 0)
         {
-            if (sslPolicyErrors == SslPolicyErrors.None)
+            if (actualThumbprint != null && trusted.Contains(actualThumbprint))
                 return true;
 
-            if (trusted.Count > 0)
-            {
-                var actual = cert?.Thumbprint;
+            Log.Warning(
+                "Server certificate thumbprint mismatch: expected one of [{Expected}], got {Actual}. " +
+                "Verify the ServerCertificate setting matches one of the Squid Server's certificates",
+                string.Join(", ", trusted), actualThumbprint ?? "(null)");
+            return false;
+        }
 
-                if (actual != null && trusted.Contains(actual))
-                    return true;
-
-                Log.Warning(
-                    "Server certificate thumbprint mismatch: expected one of [{Expected}], got {Actual}. " +
-                    "Verify the ServerCertificate setting matches one of the Squid Server's certificates",
-                    string.Join(", ", trusted), actual ?? "(null)");
-                return false;
-            }
-
-            // Backward-compatible: accept but warn so operators know to configure pinning
+        // No thumbprint configured + chain validation errors.
+        // Pre-1.6.x: accepted with warning (MITM-door-wide-open).
+        // Post-fix: fail-closed unless explicit opt-in via env var.
+        if (allowUnpinned)
+        {
             Log.Warning(
                 "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
-                "thumbprint is configured for pinning — accepting for backward compatibility. " +
-                "Set the 'ServerCertificate' setting to the server's certificate thumbprint to enable pinning",
-                sslPolicyErrors);
+                "thumbprint is configured for pinning — accepting because {EnvVar}=1 is set. " +
+                "This allows MITM attacks on the server channel. Configure ServerCertificate with " +
+                "the Squid Server's thumbprint to eliminate the risk.",
+                sslPolicyErrors, AllowUnpinnedEnvVar);
             return true;
-        };
+        }
+
+        Log.Error(
+            "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
+            "thumbprint is configured for pinning — REJECTING the handshake to prevent MITM. " +
+            "Fix: set the 'ServerCertificate' setting to the Squid Server's certificate " +
+            "thumbprint. For dev / lab / air-gapped scenarios where you knowingly accept the " +
+            "risk of no pinning, set {EnvVar}=1 to allow unpinned connections.",
+            sslPolicyErrors, AllowUnpinnedEnvVar);
+        return false;
+    }
+
+    private static bool ReadAllowUnpinned()
+    {
+        var raw = Environment.GetEnvironmentVariable(AllowUnpinnedEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        var normalized = raw.Trim().ToLowerInvariant();
+
+        return normalized == "1" || normalized == "true" || normalized == "yes";
     }
 
     /// <summary>
