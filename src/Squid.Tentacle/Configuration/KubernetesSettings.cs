@@ -5,7 +5,14 @@ public class KubernetesSettings
     public string Namespace { get; set; } = "default";
     public string PvcClaimName { get; set; } = "squid-tentacle-workspace";
     public bool UseScriptPods { get; set; } = false;
-    public string ScriptPodImage { get; set; } = "bitnami/kubectl:latest";
+
+    // P0-C.1 (2026-04-24 audit): default is empty string, fail-closed at pod creation.
+    // Pre-fix default was "bitnami/kubectl:latest" — a registry compromise or tag repoint
+    // silently swapped a malicious image into every script pod in the cluster.
+    // Operators MUST set this to a '@sha256:<64-hex>' digest-pinned reference. For dev /
+    // CI scenarios where pinning is impractical, set SQUID_ALLOW_UNPINNED_SCRIPT_POD_IMAGE=1
+    // to accept tag-based references — see ScriptPodImageValidator for the full matrix.
+    public string ScriptPodImage { get; set; } = "";
     public string ScriptPodServiceAccount { get; set; } = "squid-script-sa";
     public string TentacleNamespace { get; set; } = "default";
     public int ScriptPodTimeoutSeconds { get; set; } = 1800;

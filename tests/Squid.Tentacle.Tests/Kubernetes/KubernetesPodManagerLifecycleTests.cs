@@ -16,7 +16,13 @@ public class KubernetesPodManagerLifecycleTests
 
     public KubernetesPodManagerLifecycleTests()
     {
-        var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
+        var settings = new KubernetesSettings
+        {
+            TentacleNamespace = "test-ns",
+            // Digest-pinned image required post P0-C.1 — BuildPodSpec rejects tag-only
+            // / empty references.
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77"
+        };
         _manager = new KubernetesPodManager(_ops.Object, settings);
     }
 

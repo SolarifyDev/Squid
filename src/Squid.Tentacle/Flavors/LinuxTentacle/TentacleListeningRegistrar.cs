@@ -16,6 +16,21 @@ namespace Squid.Tentacle.Flavors.LinuxTentacle;
 /// </summary>
 public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 {
+    /// <summary>
+    /// Env-var escape hatch: when set to <c>1</c>, <c>true</c>, or <c>yes</c>
+    /// (case-insensitive), allows <c>ServerUrl=http://…</c> with credentials
+    /// attached. Intended for dev / internal-only deploys where the
+    /// operator has decided https is overkill. Default behaviour (env var
+    /// unset) is fail-closed: http:// + secret throws at registration time
+    /// so cleartext-credential mis-deploys surface loudly.
+    ///
+    /// <para>Pinned by
+    /// <c>TentacleListeningRegistrarSchemeGuardTests.AllowHttpEnvVar_ConstantNamePinned</c>.
+    /// Renaming this constant would break every operator who set the env
+    /// var by its documented name.</para>
+    /// </summary>
+    public const string AllowHttpRegisterEnvVar = "SQUID_ALLOW_HTTP_REGISTER";
+
     private readonly TentacleSettings _settings;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -27,6 +42,59 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
     public TentacleListeningRegistrar(TentacleSettings settings)
     {
         _settings = settings;
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="serverUrl"/> uses a scheme safe for
+    /// transmitting the credential(s) identified by <paramref name="hasSecret"/>.
+    /// <list type="bullet">
+    ///   <item><c>https://</c>: always safe, regardless of secret presence.</item>
+    ///   <item><c>http://</c> without secret: safe — nothing confidential in flight.</item>
+    ///   <item><c>http://</c> with secret: throws unless <paramref name="allowHttpOverride"/>
+    ///         is <c>true</c> (operator-supplied via
+    ///         <see cref="AllowHttpRegisterEnvVar"/>).</item>
+    ///   <item>Anything else (ftp, file, malformed): throws regardless of other args.</item>
+    /// </list>
+    /// Exposed as <c>internal static</c> so the unit test suite can exercise
+    /// every decision branch without needing a full HTTP round-trip.
+    /// </summary>
+    internal static void EnsureSchemeSafeForSecret(string serverUrl, bool hasSecret, bool allowHttpOverride)
+    {
+        if (string.IsNullOrWhiteSpace(serverUrl))
+            throw new InvalidOperationException(
+                $"ServerUrl is empty or whitespace. Set it to 'https://<squid-server>:7078' or similar. " +
+                $"For dev against an http:// server, also set {AllowHttpRegisterEnvVar}=1.");
+
+        if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException(
+                $"ServerUrl '{serverUrl}' is not a valid absolute URL. Expected format: 'https://<host>:<port>'.");
+
+        var scheme = uri.Scheme.ToLowerInvariant();
+
+        if (scheme == "https") return;
+
+        if (scheme != "http")
+            throw new InvalidOperationException(
+                $"ServerUrl '{serverUrl}' uses scheme '{uri.Scheme}' — only http/https are supported. " +
+                $"Check for typos; expected 'https://<squid-server>:7078'.");
+
+        // http:// without a credential is permitted — no cleartext secret risk.
+        if (!hasSecret) return;
+
+        if (allowHttpOverride)
+        {
+            Log.Warning(
+                "ServerUrl '{ServerUrl}' uses http:// with a credential attached — cleartext over the wire. " +
+                "Permitted because {EnvVar}=1 is set. Verify this is a dev/internal-only deployment.",
+                serverUrl, AllowHttpRegisterEnvVar);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"ServerUrl '{serverUrl}' uses http:// but registration attaches a credential (ApiKey or " +
+            $"BearerToken) — the secret would ship in cleartext over the network. Fix the ServerUrl " +
+            $"to use https://, OR — for dev / internal-only deploys where you accept the risk — set " +
+            $"{AllowHttpRegisterEnvVar}=1 to opt in.");
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)
@@ -57,6 +125,9 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
             handler.Proxy = proxy;
             handler.UseProxy = true;
         }
+
+        var hasSecret = !string.IsNullOrEmpty(_settings.ApiKey) || !string.IsNullOrEmpty(_settings.BearerToken);
+        EnsureSchemeSafeForSecret(_settings.ServerUrl, hasSecret, ReadAllowHttpOverride());
 
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
@@ -96,6 +167,17 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
             ServerThumbprint = result?.Data?.ServerThumbprint ?? _settings.ServerCertificate,
             SubscriptionUri = string.Empty
         };
+    }
+
+    private static bool ReadAllowHttpOverride()
+    {
+        var raw = Environment.GetEnvironmentVariable(AllowHttpRegisterEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        var normalized = raw.Trim().ToLowerInvariant();
+
+        return normalized == "1" || normalized == "true" || normalized == "yes";
     }
 
     private string BuildListeningUri()

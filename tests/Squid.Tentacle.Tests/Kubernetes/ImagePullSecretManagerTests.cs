@@ -228,7 +228,7 @@ public class ImagePullSecretManagerTests
         {
             TentacleNamespace = "squid-ns",
             ScriptPodServiceAccount = "sa",
-            ScriptPodImage = "image:v1",
+            ScriptPodImage = "image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodTimeoutSeconds = 1800,
             ScriptPodCpuRequest = "25m",
             ScriptPodMemoryRequest = "100Mi",
@@ -265,7 +265,7 @@ public class ImagePullSecretManagerTests
         {
             TentacleNamespace = "squid-ns",
             ScriptPodServiceAccount = "sa",
-            ScriptPodImage = "image:v1",
+            ScriptPodImage = "image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodTimeoutSeconds = 1800,
             ScriptPodCpuRequest = "25m",
             ScriptPodMemoryRequest = "100Mi",
@@ -303,7 +303,7 @@ public class ImagePullSecretManagerTests
         {
             TentacleNamespace = "squid-ns",
             ScriptPodServiceAccount = "sa",
-            ScriptPodImage = "image:v1",
+            ScriptPodImage = "image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodTimeoutSeconds = 1800,
             ScriptPodCpuRequest = "25m",
             ScriptPodMemoryRequest = "100Mi",

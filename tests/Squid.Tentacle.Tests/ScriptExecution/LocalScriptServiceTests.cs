@@ -353,6 +353,88 @@ public class LocalScriptServiceTests : IDisposable
                 "the `> 0` guard — likely in a refactor trying to 'simplify' the predicate.");
     }
 
+    // ========================================================================
+    // TicketId whitelist — P0-T.2 regression guard (2026-04-24 audit).
+    //
+    // Pre-fix: ResolveWorkDir did Path.Combine(GetTempPath(), $"squid-tentacle-{ticketId}")
+    // with no validation of ticketId. Two attack vectors:
+    //   1. Absolute path injection — mitigated accidentally by the
+    //      `squid-tentacle-` prefix (Path.Combine concats instead of
+    //      second-arg-winning once the second arg starts with that
+    //      prefix literal).
+    //   2. Path traversal — `../../etc` produces `/tmp/squid-tentacle-../../etc`
+    //      which normalises to `/etc`. NOT mitigated; server-controlled
+    //      ticketId can write agent state, logs, scripts to arbitrary
+    //      host paths.
+    //
+    // Fix: ResolveWorkDir validates ticketId against ^[a-zA-Z0-9_-]{1,64}$
+    // and throws on any deviation. Regex is narrow enough to reject
+    // `.`, `/`, `\\`, null bytes, whitespace, and Unicode tricks while
+    // wide enough to admit every legitimate ticket shape (Guid N-format,
+    // SHA256 hex, UUID).
+    // ========================================================================
+
+    [Theory]
+    [InlineData("abcdef0123456789")]                                         // 16 hex — short guid-like
+    [InlineData("0123456789abcdef0123456789abcdef")]                         // 32 hex — Guid.ToString("N")
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")] // 64 hex — SHA256
+    [InlineData("upgrade-1-5-8")]                                            // hyphen OK
+    [InlineData("task_42")]                                                  // underscore OK
+    [InlineData("A")]                                                        // 1-char min
+    public void ResolveWorkDir_LegitimateTicketId_ReturnsPathUnderTemp(string ticketId)
+    {
+        var workDir = LocalScriptService.ResolveWorkDir(ticketId);
+
+        Path.GetFullPath(workDir).ShouldStartWith(Path.GetFullPath(Path.GetTempPath()),
+            customMessage:
+                "legitimate ticket IDs must resolve to a path UNDER the system temp dir — " +
+                "any result outside indicates the prefix isolation or the whitelist has broken");
+
+        workDir.ShouldContain(ticketId);
+    }
+
+    [Theory]
+    [InlineData("../../etc", "path traversal via `..` segments — the primary attack the whitelist defends against")]
+    [InlineData("../../../../../../etc/passwd", "deeper traversal")]
+    [InlineData("/etc/passwd", "absolute-path injection — prefix alone is not enough; whitelist also rejects leading slash")]
+    [InlineData("..\\..\\Windows", "Windows-style traversal with backslash")]
+    [InlineData("foo/bar", "forward slash is a path separator — must be rejected")]
+    [InlineData("foo\\bar", "backslash is a Windows path separator")]
+    [InlineData("", "empty ticketId means upstream lost the ScriptTicket — fail closed rather than writing to /tmp/squid-tentacle-")]
+    [InlineData(" ", "whitespace-only — same rationale as empty")]
+    [InlineData("ticket\0evil", "null-byte injection: OS APIs truncate at \\0, any value after is a post-null payload; whitelist rejects")]
+    [InlineData("ticket\nnewline", "newline could smuggle a second path or confuse log parsers")]
+    [InlineData("ticket with space", "whitespace admits rm-rf-with-space style confusion")]
+    [InlineData("foo.bar", "period outside hex range — reject to avoid `.` / `..` being the only problem")]
+    [InlineData("тикет", "non-ASCII Unicode — reject (legitimate ticketIds are ASCII hex/guid)")]
+    public void ResolveWorkDir_MaliciousTicketId_Throws(string ticketId, string rationale)
+    {
+        var thrown = Should.Throw<ArgumentException>(
+            () => LocalScriptService.ResolveWorkDir(ticketId),
+            customMessage:
+                $"malicious ticketId must be rejected. Rationale: {rationale}. " +
+                $"If this test starts failing, the whitelist regex in LocalScriptService.ResolveWorkDir " +
+                $"has been loosened or removed — the P0-T.2 path-traversal vector is re-opened.");
+
+        // The exception message should name the offending input so operators can diagnose log-spam.
+        thrown.Message.ShouldContain("ticketId",
+            customMessage: "exception must reference the parameter name so the root cause is obvious in logs");
+    }
+
+    [Fact]
+    public void ResolveWorkDir_TicketIdExceeding64Chars_Throws()
+    {
+        // 65 chars — one over SHA-256 hex length. No legitimate ticket exceeds 64 chars;
+        // this cap prevents DoS-via-long-filename and path-length-limit explosions on some FS.
+        var tooLong = new string('a', 65);
+
+        Should.Throw<ArgumentException>(
+            () => LocalScriptService.ResolveWorkDir(tooLong),
+            customMessage:
+                "ticketId > 64 chars must be rejected. Real tickets are at most SHA-256 hex (64 chars); " +
+                "longer values indicate either a bug or an attempt to trigger path-length edge cases.");
+    }
+
     [Fact]
     public void CompleteScript_CleansUpWorkDir()
     {

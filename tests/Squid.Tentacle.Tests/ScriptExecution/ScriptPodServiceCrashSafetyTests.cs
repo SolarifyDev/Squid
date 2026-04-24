@@ -25,7 +25,7 @@ public sealed class ScriptPodServiceCrashSafetyTests : IDisposable
         _kubernetesSettings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
