@@ -10,6 +10,7 @@ using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
 using Squid.Message.Requests.Machines;
+using StackExchange.Redis;
 
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
@@ -556,6 +557,74 @@ public sealed class MachineUpgradeServiceTests
             s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "strategy must NOT run when lock acquisition failed — that is the entire point of the lock");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_RedisInfrastructureDown_ReturnsDistinctFailure_NotContention()
+    {
+        // P0-F3 regression guard (2026-04-24 audit).
+        //
+        // Pre-fix: RedisSafeRunner.ExecuteWithLockAsync<T> catches EVERY
+        // exception (Redis down, network partition, TLS handshake fail,
+        // etc.) and returns default(T) = null — the EXACT same signal
+        // RedisSafeRunner uses for normal contention (lock already held).
+        // DispatchUnderLockAsync couldn't distinguish, so Redis-down and
+        // lock-held both mapped to "Machine is currently being upgraded
+        // by another request" — misleading the operator into retrying
+        // against broken infrastructure, and hiding the Redis outage
+        // until someone noticed the [Redis] log entries.
+        //
+        // Fix: RedisSafeRunner now throws LockAcquireFailedException on
+        // infra failure; DispatchUnderLockAsync catches it separately
+        // and returns a Failed response whose Detail explicitly names
+        // the infrastructure failure so operators know retry won't help
+        // until ops restores Redis.
+        //
+        // Two invariants this test pins:
+        //   1. Status is still Failed (not some swallowed success or new enum value)
+        //   2. Detail does NOT reuse the "being upgraded by another request"
+        //      contention message — that would be an infrastructure failure
+        //      masquerading as contention, defeating the whole fix.
+        ArrangeMachine(id: 62, style: nameof(CommunicationStyle.TentaclePolling));
+
+        _redisLock
+            .Setup(x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()))
+            .ThrowsAsync(new LockAcquireFailedException(
+                "squid:upgrade:machine:62",
+                new RedisConnectionException(ConnectionFailureType.SocketFailure, "Connection refused")));
+
+        var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 62 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed,
+            customMessage: "infra-failure must still map to a clean Failed response — operator should see the error, not a 500 from the HTTP layer");
+
+        resp.Detail.ShouldNotContain("currently being upgraded by another request",
+            customMessage:
+                "P0-F3: Redis-infra failure MUST NOT reuse the contention message. " +
+                "That is the whole point of the fix — operators otherwise interpret it as " +
+                "'another user is upgrading' and retry indefinitely against broken infrastructure.");
+
+        // The detail must signal it's an infrastructure problem, not user contention.
+        // Using "infrastructure" / "Redis" as the anchor is deliberate — a future refactor
+        // that phrases it as "unavailable" or "retry later" alone would collide with the
+        // contention message (which also says retry), so we pin one of the two infra terms.
+        (resp.Detail.Contains("infrastructure", StringComparison.OrdinalIgnoreCase)
+            || resp.Detail.Contains("Redis", StringComparison.OrdinalIgnoreCase)
+            || resp.Detail.Contains("lock", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeTrue(
+                customMessage:
+                    $"detail must name the infrastructure failure mode (Redis/lock/infrastructure) " +
+                    $"so operators understand retry won't help. Actual detail: '{resp.Detail}'");
+
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "strategy must NOT run when we couldn't even acquire the lock — just like contention, " +
+            "infra failure means we never had a chance to coordinate with peers");
     }
 
     [Fact]
