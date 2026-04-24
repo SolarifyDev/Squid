@@ -76,7 +76,14 @@ STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 # STATUS_DIR is always squid-tentacle-owned (set up by install-tentacle.sh),
 # and Phase B's touch of an existing squid-tentacle-owned file doesn't
 # change ownership, so the lock stays squid-tentacle-writable forever.
-LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
+#
+# CONCURRENCY: deliberately a single per-host file name, not per-target-
+# version. Pre-1.6.x the name included the target version, which meant
+# two concurrent operator clicks targeting different versions each got
+# their own flock, then raced the system-wide dpkg lock plus the single
+# status file plus the single events file. Pinned by
+# Script_LockFile_SingleFileAcrossAllVersions_NotVersionedPerTarget.
+LOCK_FILE="$STATUS_DIR/upgrade.lock"
 
 # ── Status file helper — atomic write via temp+rename ─────────────────────────
 # Deterministic tempfile path so the sudoers `mv` rule can match precisely:
@@ -249,7 +256,11 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   exec {LOCK_FD}< "$LOCK_FILE"
 
   if ! flock -n "$LOCK_FD"; then
-    echo "Upgrade to $TARGET_VERSION already in progress (flock held on $LOCK_FILE) — this delivery is a no-op."
+    # NOTE: the in-flight upgrade on this host might be targeting a
+    # DIFFERENT version than $TARGET_VERSION — since 1.6.x the lock file
+    # is host-scoped, not version-scoped (see LOCK_FILE comment). We
+    # intentionally don't claim it's the SAME version here.
+    echo "An upgrade is already in progress on this host (flock held on $LOCK_FILE) — this delivery (target $TARGET_VERSION) is a no-op."
     exit 0
   fi
 fi

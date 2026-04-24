@@ -133,15 +133,55 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // ("touch: Permission denied") because /tmp's sticky bit prevents
         // non-owners from overwriting. The state dir's ownership invariant
         // (always squid-tentacle) eliminates that class of bug.
-        // LOCK_FILE is defined as $STATUS_DIR/upgrade-$TARGET_VERSION.lock,
-        // so the rendered text has `STATUS_DIR/upgrade-` literally (and
-        // STATUS_DIR resolves to /var/lib/squid-tentacle at runtime).
-        RenderedScript.ShouldContain("LOCK_FILE=\"$STATUS_DIR/upgrade-",
-            customMessage: "lock file must live under $STATUS_DIR (service-user-owned /var/lib/squid-tentacle) so ownership stays squid-tentacle across scope re-exec");
         RenderedScript.ShouldContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
             customMessage: "STATUS_DIR must resolve to the canonical path install-tentacle.sh pre-creates with squid-tentacle ownership");
         RenderedScript.ShouldNotContain("/tmp/squid-tentacle-upgrade-",
             customMessage: "/tmp lock path was abandoned — sticky-bit + Phase B root runs was a sharp edge we shouldn't regress to");
+    }
+
+    [Fact]
+    public void Script_LockFile_SingleFileAcrossAllVersions_NotVersionedPerTarget()
+    {
+        // Concurrency regression guard. Pre-1.6.x the LOCK_FILE path embedded
+        // $TARGET_VERSION:
+        //
+        //   LOCK_FILE="$STATUS_DIR/upgrade-$TARGET_VERSION.lock"
+        //
+        // This only serialized SAME-version redeliveries. If an operator
+        // clicked "Upgrade to 1.6.0" at t=0 and reconsidered at t=5s and
+        // clicked "Upgrade to 1.6.1", the two scripts acquired DIFFERENT
+        // flock files and ran concurrently:
+        //   - Both contended for the system-wide dpkg lock
+        //     (/var/lib/dpkg/lock-frontend)
+        //   - Both wrote to the single $STATUS_FILE
+        //     (/var/lib/squid-tentacle/last-upgrade.json), last-writer-wins
+        //   - Both emitted to the single $EVENTS_FILE
+        //     (/var/lib/squid-tentacle/upgrade-events.jsonl), interleaved
+        //   - dpkg-level contention, torn rollback state, opaque final outcome
+        //
+        // Fix: pin LOCK_FILE to a SINGLE per-host file —
+        // $STATUS_DIR/upgrade.lock — so BOTH same-version redeliveries AND
+        // different-version concurrent dispatches serialize on the same
+        // flock. The second arrival correctly detects the held lock and
+        // exits 0 as a no-op. Matches Octopus's machine-level serialization
+        // semantics.
+        //
+        // This test pins both directions: positive (new literal present)
+        // and negative (old pattern absent) so an incomplete refactor
+        // can't partially regress.
+        RenderedScript.ShouldContain("LOCK_FILE=\"$STATUS_DIR/upgrade.lock\"",
+            customMessage:
+                "LOCK_FILE must be a single per-host file with NO version suffix. " +
+                "A versioned lock lets a second operator click on a different target " +
+                "version bypass the first dispatch's flock and race into the same " +
+                "dpkg / status-file / events-file writes. Matches Octopus's " +
+                "per-machine upgrade lease semantics.");
+
+        RenderedScript.ShouldNotContain("upgrade-$TARGET_VERSION.lock",
+            customMessage:
+                "Regression: per-version LOCK_FILE reintroduces the concurrent-different-" +
+                "version race described above. If this assertion fails, someone brought " +
+                "back the pre-1.6.x pattern — revert and keep a single upgrade.lock.");
     }
 
     [Fact]
