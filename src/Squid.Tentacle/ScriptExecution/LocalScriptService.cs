@@ -102,6 +102,14 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             TicketId = ticketId,
             Progress = ScriptProgress.Running,
             ProcessId = process.Id,
+            // OS-reported start time captured alongside the PID so orphan-state
+            // detection (TryBuildStatusFromPersistedLogs) can distinguish
+            // "same process still running" from "PID got recycled to an
+            // unrelated process". Without this, a long-running tentacle
+            // eventually hits PID wrap and reports a recycled PID's live
+            // status as the original script's — reintroducing the
+            // observer-hang bug's latent sequel.
+            ProcessStartedAt = TryGetProcessStartTime(process),
             CreatedAt = DateTimeOffset.UtcNow,
             StartedAt = DateTimeOffset.UtcNow
         });
@@ -253,26 +261,35 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var logs = entries.Select(e => e.ToProcessOutput()).ToList();
 
         // Orphan-state detection (1.6.x fix): if the state file says
-        // Progress=Running but the process is gone, we're looking at
-        // an abandoned script — likely its owning tentacle was killed
-        // (e.g. Phase B of a self-upgrade restarted the tentacle while
-        // its own script was "in progress"). Without this check, the
-        // server's Halibut script observer would poll GetStatus forever
-        // (state says Running), HTTP dispatch request hangs for the
-        // full 5-min timeout, Redis upgrade lock stays held, operator's
-        // UI shows a spinner that never resolves.
+        // Progress=Running but the recorded process is gone or has been
+        // recycled, we're looking at an abandoned script — likely its
+        // owning tentacle was killed (e.g. Phase B of a self-upgrade
+        // restarted the tentacle while its own script was "in progress").
+        // Without this check, the server's Halibut script observer would
+        // poll GetStatus forever (state says Running), HTTP dispatch
+        // request hangs for the full 5-min timeout, Redis upgrade lock
+        // stays held, operator's UI shows a spinner that never resolves.
         //
-        // Detection: check if state.ProcessId still points to a live
-        // process. If not (Process.GetProcessById throws), the script
-        // is orphaned — report Complete with UnknownResult so the
-        // observer can finalize cleanly and release the lock.
-        if (!state.IsComplete() && state.ProcessId.HasValue && state.ProcessId.Value > 0 && !IsProcessAlive(state.ProcessId.Value))
+        // Detection: check if state.ProcessId still points to the SAME
+        // process (PID alive AND start time matches the recorded value).
+        // Covers two failure modes:
+        //   (a) PID dead: Process.GetProcessById throws → !alive → Complete
+        //   (b) PID recycled: a long-running tentacle eventually sees the
+        //       OS reassign its dead script's PID to an unrelated process.
+        //       ProcessStartedAt cross-check fails → !alive → Complete
+        //
+        // Backward-compat: pre-1.6.x state files lack ProcessStartedAt
+        // (null) — the predicate falls back to PID-only liveness, matching
+        // the original behaviour the field didn't exist.
+        if (!state.IsComplete() && state.ProcessId.HasValue && state.ProcessId.Value > 0 && !IsSameProcessAlive(state.ProcessId.Value, state.ProcessStartedAt))
         {
             Log.Information(
                 "[LocalScriptService] Orphan script detected: ticket {TicketId} had Progress=Running " +
-                "with ProcessId {ProcessId} but that PID is no longer alive. Reporting as Complete with " +
-                "UnknownResult so the server-side observer can release its lock instead of polling forever.",
-                ticket.TaskId, state.ProcessId.Value);
+                "with ProcessId {ProcessId} (recorded start {RecordedStart}) but that PID is either " +
+                "no longer alive or has been recycled to a different process. Reporting as Complete " +
+                "with UnknownResult so the server-side observer can release its lock instead of " +
+                "polling forever.",
+                ticket.TaskId, state.ProcessId.Value, state.ProcessStartedAt);
 
             response = new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, logs,
                 state.NextLogSequence > 0 ? state.NextLogSequence : Math.Max(0, logReader.GetHighestSequence() + 1));
@@ -290,22 +307,71 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     }
 
     /// <summary>
-    /// Best-effort liveness check for a PID the current process doesn't own.
-    /// Returns false if Process.GetProcessById throws (PID not found),
-    /// if the process is HasExited, or any exception — we treat all error
-    /// cases as "process is gone" so orphan-state detection errs on the
-    /// side of releasing the server-side observer.
+    /// Best-effort liveness check for a PID the current process doesn't own,
+    /// with OPTIONAL start-time cross-check to defend against PID recycling.
+    ///
+    /// <para>If <paramref name="expectedStartedAt"/> is null (legacy state
+    /// files that predate the start-time capture), falls back to PID-only
+    /// liveness — same behaviour as the pre-1.6.x implementation.</para>
+    ///
+    /// <para>If <paramref name="expectedStartedAt"/> is supplied, the
+    /// process's actual <see cref="System.Diagnostics.Process.StartTime"/>
+    /// must match within a 2-second tolerance for the process to be
+    /// considered "still the same one that was recorded". A wider gap means
+    /// the PID has been recycled — the original script is gone, the current
+    /// occupant is unrelated. Tolerance covers clock rounding between
+    /// <c>Process.StartTime</c> (OS-reported) and <c>DateTimeOffset.UtcNow</c>
+    /// (caller's capture time); never seen more than ~50 ms drift in
+    /// practice, but 2 s leaves ample margin.</para>
+    ///
+    /// <para>Returns false on ANY exception (GetProcessById throws for
+    /// missing PID, StartTime throws for unreadable /proc entries, etc.)
+    /// — orphan-state detection errs on the side of releasing the
+    /// server-side observer. Losing a live script to a spurious "dead"
+    /// verdict is strictly better than hanging the observer forever on
+    /// a recycled one.</para>
     /// </summary>
-    private static bool IsProcessAlive(int processId)
+    private static bool IsSameProcessAlive(int processId, DateTimeOffset? expectedStartedAt)
     {
         try
         {
             using var proc = System.Diagnostics.Process.GetProcessById(processId);
-            return !proc.HasExited;
+
+            if (proc.HasExited) return false;
+
+            // Legacy state-file path: no recorded start time → PID-only check.
+            if (!expectedStartedAt.HasValue) return true;
+
+            var actualStart = proc.StartTime.ToUniversalTime();
+            var recorded = expectedStartedAt.Value.ToUniversalTime();
+
+            // 2-second tolerance — covers OS-reported-vs-caller-captured
+            // rounding skew without admitting a genuinely recycled PID.
+            return Math.Abs((actualStart - recorded).TotalSeconds) <= 2.0;
         }
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort capture of a freshly-spawned process's start time so
+    /// orphan-state detection can later verify the PID hasn't been recycled.
+    /// Returns null on any failure (process already exited between Start
+    /// and GetStartTime, /proc unreadable, etc.) — the resulting state
+    /// file will lack the field and orphan detection falls back to
+    /// PID-only liveness for that script.
+    /// </summary>
+    private static DateTimeOffset? TryGetProcessStartTime(System.Diagnostics.Process process)
+    {
+        try
+        {
+            return process.StartTime.ToUniversalTime();
+        }
+        catch
+        {
+            return null;
         }
     }
 

@@ -200,6 +200,111 @@ public class LocalScriptServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetStatus_OrphanStateFile_PidRecycled_ReportsComplete_NotRunning()
+    {
+        // PID-recycling regression guard (2026-04-24 audit P0-F2).
+        //
+        // Bug: IsProcessAlive only checks Process.GetProcessById(pid) —
+        // Linux PIDs recycle after kernel.pid_max (default 32768 on many
+        // distros; 4M on some). A tentacle running for several days with
+        // a busy script-execution workload will eventually reuse a PID
+        // from an earlier dead upgrade bash script. When the new, unrelated
+        // process receives the recycled PID:
+        //
+        //   1. Old upgrade bash PID=12345 dies during Phase B restart
+        //   2. state.json still shows Running + ProcessId=12345
+        //   3. systemd (or any user) gets assigned PID 12345 to a fresh
+        //      process — common, just how PID allocation works
+        //   4. Server polls GetStatus → IsProcessAlive(12345) returns true
+        //      (the RECYCLED process is genuinely alive)
+        //   5. Orphan-detection does NOT fire → ProcessState.Running
+        //   6. Server observer polls forever → Redis lock held → operator
+        //      can never retry → UI spinner for the full 5-min timeout
+        //
+        // This is the observer-hang bug's latent sequel: rare but real
+        // in long-running fleet agents.
+        //
+        // Fix: cross-check ProcessStartedAt in addition to PID liveness.
+        // When state.json records a (pid, startTime) pair, a live process
+        // at that PID whose actual StartTime differs from the recorded
+        // value means PID was recycled — the original script is gone,
+        // current occupant of the PID is unrelated.
+        //
+        // Simulation: write state with ProcessId = current test process
+        // PID (guaranteed alive) but ProcessStartedAt = 1970-01-01 (no
+        // real process could have that start time on a modern system).
+        // Predicate must treat this as recycled → Complete.
+        var ticketId = Guid.NewGuid().ToString("N");
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
+        Directory.CreateDirectory(workDir);
+        _createdTickets.Add(ticketId);
+
+        var aliveButMismatchedPid = Process.GetCurrentProcess().Id;
+
+        var stateStore = new ScriptStateStoreFactory().Create(workDir);
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Running,
+            ProcessId = aliveButMismatchedPid,
+            // Epoch — no real live process on any modern system has this start time.
+            ProcessStartedAt = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket(ticketId), 0));
+
+        status.State.ShouldBe(ProcessState.Complete,
+            customMessage:
+                "state file records ProcessStartedAt=1970 but the live process at this PID has " +
+                "a different actual StartTime — PID has been recycled since the script died. " +
+                "Must return Complete + UnknownResult so the observer can release its lock. " +
+                "Without this cross-check, the observer-hang bug reappears on long-running agents " +
+                "where PID allocation eventually wraps around.");
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult,
+            customMessage: "PID-recycled scripts are lost — report UnknownResult (same as dead-PID orphans)");
+    }
+
+    [Fact]
+    public void GetStatus_OrphanStateFile_PidAndStartTimeMatch_ReportsRunning()
+    {
+        // Happy-path companion: state file's (ProcessId, ProcessStartedAt)
+        // pair MATCHES the actual live process. That's the same script
+        // still running — we MUST report Running so the observer keeps
+        // polling for real completion.
+        //
+        // Without this test, a "simplify: always Complete if ProcessStartedAt
+        // is set" refactor would pass the recycled-PID test above and
+        // silently tear down every live upgrade script.
+        var ticketId = Guid.NewGuid().ToString("N");
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
+        Directory.CreateDirectory(workDir);
+        _createdTickets.Add(ticketId);
+
+        var currentProc = Process.GetCurrentProcess();
+
+        var stateStore = new ScriptStateStoreFactory().Create(workDir);
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Running,
+            ProcessId = currentProc.Id,
+            // Exact actual start time of the current process — no drift.
+            ProcessStartedAt = currentProc.StartTime.ToUniversalTime(),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket(ticketId), 0));
+
+        status.State.ShouldBe(ProcessState.Running,
+            customMessage:
+                "ProcessId AND ProcessStartedAt both match the live process — same script still " +
+                "running. Flipping this to Complete would tear down live upgrade scripts that " +
+                "match the recorded (pid, startTime) pair, mirror-imaging the observer-hang bug " +
+                "into premature teardown.");
+    }
+
+    [Fact]
     public void GetStatus_OrphanStateFile_ZeroPid_ReportsRunning_NotComplete()
     {
         // Edge case on the orphan-detection predicate's left-side guard
