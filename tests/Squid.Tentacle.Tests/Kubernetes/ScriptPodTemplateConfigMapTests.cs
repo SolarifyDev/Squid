@@ -9,11 +9,21 @@ namespace Squid.Tentacle.Tests.Kubernetes;
 
 public class ScriptPodTemplateConfigMapTests
 {
+    // Digest-pinned image required post P0-C.1 — BuildPodSpec rejects tag-only references.
+    // Tests that only exercise ScriptPodTemplateProvider directly (no CreatePod) are free
+    // to use tag-only images in their ScriptPodTemplate payloads — those never reach the
+    // validator.
+    private const string DefaultDigestImage =
+        "bitnami/kubectl@sha256:abc123def456789012345678901234567890123456789012345678901234aa77";
+
+    private const string TemplateOverrideDigestImage =
+        "custom/from-template@sha256:deadbeef0000000000000000000000000000000000000000000000000000cafe";
+
     private readonly KubernetesSettings _settings = new()
     {
         TentacleNamespace = "squid-ns",
         ScriptPodServiceAccount = "squid-script-sa",
-        ScriptPodImage = "bitnami/kubectl:1.28",
+        ScriptPodImage = DefaultDigestImage,
         ScriptPodTimeoutSeconds = 1800,
         ScriptPodCpuRequest = "25m",
         ScriptPodMemoryRequest = "100Mi",
@@ -33,7 +43,7 @@ public class ScriptPodTemplateConfigMapTests
     public void TryLoadTemplate_CrdExists_UsesCrdNotConfigMap()
     {
         var ops = new Mock<IKubernetesPodOperations>();
-        var crdTemplate = new ScriptPodTemplate { Image = "from-crd:v1" };
+        var crdTemplate = new ScriptPodTemplate { Image = TemplateOverrideDigestImage };
 
         var provider = new Mock<ScriptPodTemplateProvider>(null, _settings, ops.Object) { CallBase = false };
         provider.Setup(p => p.TryLoadTemplate(It.IsAny<string>())).Returns(crdTemplate);
@@ -41,7 +51,7 @@ public class ScriptPodTemplateConfigMapTests
         var manager = new KubernetesPodManager(ops.Object, _settings, provider.Object);
         var pod = CaptureCreatedPod(ops, manager);
 
-        pod.Spec.Containers[0].Image.ShouldBe("from-crd:v1");
+        pod.Spec.Containers[0].Image.ShouldBe(TemplateOverrideDigestImage);
         ops.Verify(o => o.ListConfigMaps(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
@@ -125,7 +135,7 @@ public class ScriptPodTemplateConfigMapTests
 
         var template = new ScriptPodTemplate
         {
-            Image = "custom/from-configmap:latest",
+            Image = TemplateOverrideDigestImage,
             AdditionalEnvVars = new List<V1EnvVar> { new() { Name = "FROM_CM", Value = "true" } }
         };
 
@@ -142,7 +152,7 @@ public class ScriptPodTemplateConfigMapTests
         var manager = new KubernetesPodManager(ops.Object, _settings, provider.Object);
         var pod = CaptureCreatedPod(ops, manager);
 
-        pod.Spec.Containers[0].Image.ShouldBe("custom/from-configmap:latest");
+        pod.Spec.Containers[0].Image.ShouldBe(TemplateOverrideDigestImage);
         pod.Spec.Containers[0].Env.ShouldNotBeNull();
         pod.Spec.Containers[0].Env.Any(e => e.Name == "FROM_CM" && e.Value == "true").ShouldBeTrue();
     }

@@ -8,6 +8,12 @@ public partial class KubernetesPodManager
 {
     private V1Pod BuildPodSpec(string podName, string ticketId, string ns, Dictionary<string, string>? additionalLabels = null)
     {
+        // P0-C.1: fail-closed guard on ScriptPodImage before it flows into V1Container.Image.
+        // Rejects tag-only / empty references to neutralise the registry-compromise RCE vector
+        // documented in ScriptPodImageValidator. Dev / CI escape hatch: env var
+        // SQUID_ALLOW_UNPINNED_SCRIPT_POD_IMAGE=1 acknowledges the risk and permits tag usage.
+        ScriptPodImageValidator.EnsureSafe(_settings.ScriptPodImage, ScriptPodImageValidator.ReadAllowUnpinnedOverride());
+
         var template = _templateProvider?.TryLoadTemplate();
         var rawScriptMode = _settings.RawScriptMode || string.IsNullOrEmpty(_settings.TentacleImage);
         var useInitContainer = !rawScriptMode;
@@ -227,7 +233,13 @@ public partial class KubernetesPodManager
         var mainContainer = pod.Spec.Containers[0];
 
         if (!string.IsNullOrEmpty(template.Image))
+        {
+            // P0-C.1 defence-in-depth: template override must also be digest-pinned.
+            // Otherwise an operator could comply with _settings.ScriptPodImage pinning but
+            // sidestep it via a template override and reopen the same RCE vector.
+            ScriptPodImageValidator.EnsureSafe(template.Image, ScriptPodImageValidator.ReadAllowUnpinnedOverride());
             mainContainer.Image = template.Image;
+        }
 
         if (template.Resources != null)
             mainContainer.Resources = template.Resources;

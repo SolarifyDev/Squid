@@ -9,11 +9,17 @@ namespace Squid.Tentacle.Tests.Kubernetes;
 
 public class KubernetesPodManagerPodSpecTests
 {
+    // Digest-pinned image used by most tests. Post-P0-C.1 fix, BuildPodSpec rejects
+    // tag-only images — tests that aren't exercising the validator itself still need
+    // a valid pinned reference so they don't trip the guard.
+    private const string TestDigestImage =
+        "bitnami/kubectl@sha256:abc123def456789012345678901234567890123456789012345678901234aa77";
+
     private readonly KubernetesSettings _settings = new()
     {
         TentacleNamespace = "squid-ns",
         ScriptPodServiceAccount = "squid-script-sa",
-        ScriptPodImage = "bitnami/kubectl:1.28",
+        ScriptPodImage = TestDigestImage,
         ScriptPodTimeoutSeconds = 1800,
         ScriptPodCpuRequest = "25m",
         ScriptPodMemoryRequest = "100Mi",
@@ -106,7 +112,7 @@ public class KubernetesPodManagerPodSpecTests
 
         var container = pod.Spec.Containers.ShouldHaveSingleItem();
         container.Name.ShouldBe("script");
-        container.Image.ShouldBe("bitnami/kubectl:1.28");
+        container.Image.ShouldBe(TestDigestImage);
         container.Command.ShouldBe(new[] { "bash" });
         container.Args.ShouldBe(new[] { $"/squid/work/{TicketId}/script.sh" });
         container.WorkingDir.ShouldBe($"/squid/work/{TicketId}");
@@ -451,7 +457,7 @@ public class KubernetesPodManagerPodSpecTests
         var pod = CaptureCreatedPodWithSettings(s => s.IsolateWorkspaceToEmptyDir = true);
 
         var initContainer = pod.Spec.InitContainers.First(c => c.Name == "copy-workspace");
-        initContainer.Image.ShouldBe("bitnami/kubectl:1.28");
+        initContainer.Image.ShouldBe(TestDigestImage);
         initContainer.Command.ShouldContain("sh");
         string.Join(" ", initContainer.Command).ShouldContain($"cp -a /squid/nfs-work/{TicketId}/. /squid/work/{TicketId}/");
     }
@@ -876,5 +882,47 @@ public class KubernetesPodManagerPodSpecTests
         manager.CreatePod(TicketId);
 
         return captured;
+    }
+
+    // ── P0-C.1 wiring tests: BuildPodSpec must invoke ScriptPodImageValidator
+    //
+    // The validator's own decision matrix is covered by ScriptPodImageValidationTests.
+    // These tests narrow-focus on the wiring — confirming that _settings.ScriptPodImage
+    // actually flows through the validator before being baked into the V1Pod. A silent
+    // wiring regression (e.g. someone deletes the EnsureSafe call during a refactor)
+    // would let a tag-only production default reopen the registry-compromise RCE.
+
+    [Fact]
+    public void CreatePod_WithTagOnlyScriptPodImage_Throws()
+    {
+        var thrown = Should.Throw<InvalidOperationException>(
+            () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = "bitnami/kubectl:latest"),
+            customMessage:
+                "BuildPodSpec must reject a tag-only ScriptPodImage. If this test passes, " +
+                "the validator wiring was removed — registry compromise / tag repoint RCE is back in scope.");
+
+        thrown.Message.ShouldContain("@sha256:",
+            customMessage: "error must name the required digest format so operators know what to fix");
+    }
+
+    [Fact]
+    public void CreatePod_WithEmptyScriptPodImage_Throws()
+    {
+        // Post-fix default is empty string — operator must explicitly set a digest-pinned
+        // value. CreatePod must refuse to emit a Pod with an unset image.
+        Should.Throw<InvalidOperationException>(
+            () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = ""),
+            customMessage:
+                "BuildPodSpec must reject empty ScriptPodImage — this is the post-fix fail-closed default");
+    }
+
+    [Fact]
+    public void CreatePod_WithDigestPinnedImage_SucceedsAndEmitsImageVerbatim()
+    {
+        // Positive wiring test — digest-pinned image flows through the validator and
+        // ends up in the V1Pod.Spec.Containers[0].Image unchanged.
+        var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodImage = TestDigestImage);
+
+        pod.Spec.Containers[0].Image.ShouldBe(TestDigestImage);
     }
 }

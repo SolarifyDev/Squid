@@ -37,7 +37,7 @@ public class ScriptPodServiceTests : IDisposable
         _kubernetesSettings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
@@ -756,7 +756,7 @@ public class ScriptPodServiceTests : IDisposable
         var settings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
@@ -1221,7 +1221,7 @@ public class ScriptPodServiceTests : IDisposable
         var settings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
@@ -1253,7 +1253,7 @@ public class ScriptPodServiceTests : IDisposable
         var settings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
@@ -1280,7 +1280,7 @@ public class ScriptPodServiceTests : IDisposable
         var settings = new KubernetesSettings
         {
             TentacleNamespace = "test-ns",
-            ScriptPodImage = "test-image:latest",
+            ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77",
             ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60,
             ScriptPodCpuRequest = "25m",
@@ -1582,7 +1582,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         var settings = new KubernetesSettings
         {
-            TentacleNamespace = "test-ns", ScriptPodImage = "test-image:latest", ScriptPodServiceAccount = "test-sa",
+            TentacleNamespace = "test-ns", ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77", ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60, ScriptPodCpuRequest = "25m", ScriptPodMemoryRequest = "100Mi",
             ScriptPodCpuLimit = "500m", ScriptPodMemoryLimit = "512Mi", PvcClaimName = "test-pvc",
             IsolationMutexTimeoutMinutes = 1
@@ -1838,7 +1838,7 @@ public class ScriptPodServiceTests : IDisposable
     {
         return new KubernetesSettings
         {
-            TentacleNamespace = "test-ns", ScriptPodImage = "test-image:latest", ScriptPodServiceAccount = "test-sa",
+            TentacleNamespace = "test-ns", ScriptPodImage = "test-image@sha256:abc123def456789012345678901234567890123456789012345678901234aa77", ScriptPodServiceAccount = "test-sa",
             ScriptPodTimeoutSeconds = 60, ScriptPodCpuRequest = "25m", ScriptPodMemoryRequest = "100Mi",
             ScriptPodCpuLimit = "500m", ScriptPodMemoryLimit = "512Mi", PvcClaimName = "test-pvc",
             MaxPendingScripts = maxPending

@@ -8,11 +8,18 @@ namespace Squid.Tentacle.Tests.Kubernetes;
 
 public class ScriptPodTemplateMergeTests
 {
+    // Digest-pinned images required post P0-C.1 — BuildPodSpec rejects tag-only references.
+    private const string DefaultDigestImage =
+        "bitnami/kubectl@sha256:abc123def456789012345678901234567890123456789012345678901234aa77";
+
+    private const string CustomDigestImage =
+        "custom/image@sha256:deadbeef0000000000000000000000000000000000000000000000000000cafe";
+
     private readonly KubernetesSettings _settings = new()
     {
         TentacleNamespace = "squid-ns",
         ScriptPodServiceAccount = "squid-script-sa",
-        ScriptPodImage = "bitnami/kubectl:1.28",
+        ScriptPodImage = DefaultDigestImage,
         ScriptPodTimeoutSeconds = 1800,
         ScriptPodCpuRequest = "25m",
         ScriptPodMemoryRequest = "100Mi",
@@ -32,7 +39,7 @@ public class ScriptPodTemplateMergeTests
     {
         var pod = CaptureCreatedPod(template: null);
 
-        pod.Spec.Containers[0].Image.ShouldBe("bitnami/kubectl:1.28");
+        pod.Spec.Containers[0].Image.ShouldBe(DefaultDigestImage);
     }
 
     [Fact]
@@ -50,11 +57,11 @@ public class ScriptPodTemplateMergeTests
     [Fact]
     public void CreatePod_TemplateOverridesImage()
     {
-        var template = new ScriptPodTemplate { Image = "custom/image:v2" };
+        var template = new ScriptPodTemplate { Image = CustomDigestImage };
 
         var pod = CaptureCreatedPod(template);
 
-        pod.Spec.Containers[0].Image.ShouldBe("custom/image:v2");
+        pod.Spec.Containers[0].Image.ShouldBe(CustomDigestImage);
     }
 
     [Fact]
@@ -64,7 +71,26 @@ public class ScriptPodTemplateMergeTests
 
         var pod = CaptureCreatedPod(template);
 
-        pod.Spec.Containers[0].Image.ShouldBe("bitnami/kubectl:1.28");
+        pod.Spec.Containers[0].Image.ShouldBe(DefaultDigestImage);
+    }
+
+    [Fact]
+    public void CreatePod_TemplateTagOnlyImage_Throws()
+    {
+        // P0-C.1 defence-in-depth: the template.Image override must ALSO pass digest-pin
+        // validation. Otherwise an operator could comply with _settings.ScriptPodImage
+        // pinning but sidestep it via a template override and reopen the registry-compromise
+        // RCE vector.
+        var template = new ScriptPodTemplate { Image = "custom/image:v2" };
+
+        var thrown = Should.Throw<InvalidOperationException>(
+            () => CaptureCreatedPod(template),
+            customMessage:
+                "template.Image override must be validated. If this test passes, the override " +
+                "path bypasses digest pinning and reopens the RCE vector.");
+
+        thrown.Message.ShouldContain("@sha256:",
+            customMessage: "error must name the required digest format");
     }
 
     // ========================================================================
