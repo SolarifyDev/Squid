@@ -4,8 +4,22 @@ public class TentacleSettings
 {
     public const string DefaultKubernetesAgentChartRef = "oci://registry-1.docker.io/squidcd/kubernetes-agent";
 
+    /// <summary>
+    /// Sentinel value of <see cref="ServerUrl"/> that means "operator hasn't
+    /// configured a real server yet, skip auto-registration". Used by the listening
+    /// registrar and the <c>register</c> CLI command.
+    ///
+    /// <para>P0-T.6 (2026-04-24 audit): pre-fix, two call sites compared
+    /// <see cref="ServerUrl"/> against this literal verbatim. Now the literal lives in
+    /// one place and the comparison goes through
+    /// <see cref="IsAutoRegistrationUnconfigured"/> so drift between call sites is
+    /// impossible. Pinned by
+    /// <c>TentacleSettingsSentinelTests.DefaultServerUrlSentinel_Pinned</c>.</para>
+    /// </summary>
+    public const string DefaultServerUrlSentinel = "https://localhost:7078";
+
     public string Flavor { get; set; } = string.Empty;
-    public string ServerUrl { get; set; } = "https://localhost:7078";
+    public string ServerUrl { get; set; } = DefaultServerUrlSentinel;
     public string ServerCommsUrl { get; set; } = string.Empty;
     public string BearerToken { get; set; } = string.Empty;
     public string ApiKey { get; set; } = string.Empty;
@@ -67,6 +81,26 @@ public class TentacleSettings
     /// proxies, which covers Squid/Zscaler/BlueCoat enterprise deployments.
     /// </summary>
     public ProxySettings Proxy { get; set; } = new();
+
+    /// <summary>
+    /// P0-T.6 (2026-04-24 audit): single source of truth for "is this ServerUrl still
+    /// the default-unconfigured sentinel or blank?". Both
+    /// <c>TentacleListeningRegistrar.RegisterAsync</c> (silently skip) and
+    /// <c>RegisterCommand.ExecuteAsync</c> (refuse with usage help) route through here
+    /// so a drift in one place doesn't silently desync the other.
+    ///
+    /// <para>Returns <c>true</c> only for null / whitespace-only / the exact sentinel.
+    /// Any other value — including <c>http://localhost:7078</c> and
+    /// <c>https://localhost:9999</c> — is treated as a real configuration the operator
+    /// wants registered. This unblocks legitimate local-dev deploys that pre-fix were
+    /// silently dropped by the magic-string compare.</para>
+    /// </summary>
+    public static bool IsAutoRegistrationUnconfigured(string? serverUrl)
+    {
+        if (string.IsNullOrWhiteSpace(serverUrl)) return true;
+
+        return string.Equals(serverUrl, DefaultServerUrlSentinel, StringComparison.Ordinal);
+    }
 
     public List<string> GetServerCommsUrls()
     {

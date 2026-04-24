@@ -94,7 +94,11 @@ public sealed class RegisterCommand : ITentacleCommand
 
         var settings = TentacleApp.LoadTentacleSettings(merged);
 
-        if (string.IsNullOrWhiteSpace(settings.ServerUrl) || settings.ServerUrl == "https://localhost:7078")
+        // P0-T.6 (2026-04-24 audit): shared helper with the listening registrar so both
+        // call sites agree on what "unconfigured" means. A drift here used to let the
+        // registrar treat the default URL as real while the CLI rejected it (or vice
+        // versa), confusing operators.
+        if (TentacleSettings.IsAutoRegistrationUnconfigured(settings.ServerUrl))
         {
             Console.Error.WriteLine("Error: --server is required");
             Console.Error.WriteLine("Usage: squid-tentacle register --server URL --api-key KEY --role ROLE --environment ENV [--comms-url URL]");

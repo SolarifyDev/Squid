@@ -99,7 +99,9 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_settings.ServerUrl) || _settings.ServerUrl == "https://localhost:7078")
+        // P0-T.6 (2026-04-24 audit): helper centralizes the "still the default sentinel?"
+        // decision so this compare can't drift from the one in RegisterCommand.
+        if (TentacleSettings.IsAutoRegistrationUnconfigured(_settings.ServerUrl))
         {
             Log.Warning("Listening mode — no ServerUrl configured, skipping auto-registration");
 
