@@ -74,51 +74,77 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
 
-        Directory.CreateDirectory(workDir);
-        SetDirectoryPermissions(workDir);
-
-        var stateStore = _stateStoreFactory.Create(workDir);
-        stateStore.Save(new ScriptState
+        // P0-T.5 (2026-04-24 audit): ownership of isolationHandle stays with the local
+        // until RunningScript is constructed. Every step between acquire and that
+        // construction can throw (Directory.CreateDirectory, state-store save, file
+        // writes, process start). Pre-fix, any such exception leaked the handle and
+        // the mutex stayed held forever — subsequent FullIsolation scripts with the
+        // same mutex name blocked until their configured timeout fired. The T.7 fix
+        // made this more reachable because WriteAdditionalFiles now rethrows.
+        //
+        // The try / catch transfers disposal responsibility in one place: if we get
+        // past RunningScript construction, ownership is RunningScript's (it disposes
+        // the handle on Complete / Cancel / error). We null out the local so the
+        // catch block doesn't double-dispose.
+        try
         {
-            TicketId = ticketId,
-            Progress = ScriptProgress.Starting,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+            Directory.CreateDirectory(workDir);
+            SetDirectoryPermissions(workDir);
 
-        var syntax = command.ScriptSyntax;
-        WriteScriptFile(workDir, command.ScriptBody, syntax);
-        WriteAdditionalFiles(workDir, command.Files);
+            var stateStore = _stateStoreFactory.Create(workDir);
+            stateStore.Save(new ScriptState
+            {
+                TicketId = ticketId,
+                Progress = ScriptProgress.Starting,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
 
-        var process = StartProcess(workDir, command);
-        var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
-        var traceId = ResolveParentTraceId(command);
-        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
+            var syntax = command.ScriptSyntax;
+            WriteScriptFile(workDir, command.ScriptBody, syntax);
+            WriteAdditionalFiles(workDir, command.Files);
 
-        BeginReadOutput(process, running);
-        _scripts[ticketId] = running;
+            var process = StartProcess(workDir, command);
+            var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
+            var traceId = ResolveParentTraceId(command);
+            var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
 
-        stateStore.Save(new ScriptState
+            // Ownership transferred — RunningScript.Dispose now owns the mutex handle.
+            isolationHandle = null;
+
+            BeginReadOutput(process, running);
+            _scripts[ticketId] = running;
+
+            stateStore.Save(new ScriptState
+            {
+                TicketId = ticketId,
+                Progress = ScriptProgress.Running,
+                ProcessId = process.Id,
+                // OS-reported start time captured alongside the PID so orphan-state
+                // detection (TryBuildStatusFromPersistedLogs) can distinguish
+                // "same process still running" from "PID got recycled to an
+                // unrelated process". Without this, a long-running tentacle
+                // eventually hits PID wrap and reports a recycled PID's live
+                // status as the original script's — reintroducing the
+                // observer-hang bug's latent sequel.
+                ProcessStartedAt = TryGetProcessStartTime(process),
+                CreatedAt = DateTimeOffset.UtcNow,
+                StartedAt = DateTimeOffset.UtcNow
+            });
+
+            Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
+
+            WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
+
+            return BuildStatus(command.ScriptTicket, running);
+        }
+        catch
         {
-            TicketId = ticketId,
-            Progress = ScriptProgress.Running,
-            ProcessId = process.Id,
-            // OS-reported start time captured alongside the PID so orphan-state
-            // detection (TryBuildStatusFromPersistedLogs) can distinguish
-            // "same process still running" from "PID got recycled to an
-            // unrelated process". Without this, a long-running tentacle
-            // eventually hits PID wrap and reports a recycled PID's live
-            // status as the original script's — reintroducing the
-            // observer-hang bug's latent sequel.
-            ProcessStartedAt = TryGetProcessStartTime(process),
-            CreatedAt = DateTimeOffset.UtcNow,
-            StartedAt = DateTimeOffset.UtcNow
-        });
-
-        Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
-
-        WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
-
-        return BuildStatus(command.ScriptTicket, running);
+            // Dispose releases the mutex; LockRelease.Dispose is idempotent so re-entry
+            // during exception unwinding is safe. Null after the successful RunningScript
+            // transfer means this is a no-op on the happy path.
+            isolationHandle?.Dispose();
+            throw;
+        }
     }
 
     private static string? ResolveParentTraceId(StartScriptCommand command)
@@ -636,11 +662,19 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                     File.SetUnixFileMode(filePath,
                         UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
 
-                if (file.EncryptionPassword != null)
-                    File.WriteAllText(filePath + ".key", file.EncryptionPassword);
+                // P0-B.2 (2026-04-24 audit): the old `.key` sidecar file co-located the
+                // password with the ciphertext on disk — defeating encryption-at-rest for
+                // disk snapshots / backups / offline compromise. Password now only lives
+                // in memory on the ScriptFile instance and rides to the Calamari child
+                // process via env var (see BuildCalamariProcessStartInfo).
             }
-            catch
+            finally
             {
+                // P0-T.7 (2026-04-24 audit): cleanup must always run, but the exception
+                // must bubble up to the caller. Pre-fix this was `catch { cleanup; }` with
+                // no rethrow — write failures silently disappeared and the script ran
+                // against an incomplete workspace. Empty catch reopens that vector; use
+                // finally + implicit rethrow instead.
                 if (File.Exists(tempPath))
                     File.Delete(tempPath);
             }
@@ -664,11 +698,21 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     // Process Execution
     // ========================================================================
 
+    /// <summary>
+    /// P0-B.2 (2026-04-24 audit): name of the environment variable that carries the
+    /// sensitive-variable encryption password from this process to the spawned
+    /// Calamari child. Paired with the same constant on the Calamari side — drift
+    /// between the two silently breaks sensitive-variable decryption. Pinned by
+    /// <c>SensitiveVariablePasswordTransportTests.CalamariSensitivePasswordEnvVar_ConstantNamePinned</c>
+    /// (tentacle) and <c>RunScriptCliHandlerSensitivePasswordEnvVarTests</c>
+    /// (calamari).
+    /// </summary>
+    internal const string CalamariSensitivePasswordEnvVar = "SQUID_CALAMARI_SENSITIVE_PASSWORD";
+
     private static Process StartProcess(string workDir, StartScriptCommand command)
     {
         var variablesPath = Path.Combine(workDir, "variables.json");
         var sensitiveVariablesPath = Path.Combine(workDir, "sensitiveVariables.json");
-        var sensitiveKeyPath = sensitiveVariablesPath + ".key";
 
         // Calamari only knows how to bootstrap Bash and PowerShell scripts (it
         // generates `export VAR=...` / `$VAR=...` preambles). For Python /
@@ -678,7 +722,16 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var canUseCalamari = command.ScriptSyntax == ScriptType.Bash || command.ScriptSyntax == ScriptType.PowerShell;
 
         if (File.Exists(variablesPath) && canUseCalamari)
-            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitiveKeyPath, command.Arguments);
+        {
+            // P0-B.2: password no longer on disk — pull it from the in-memory ScriptFile
+            // instance. Writing the `.key` sidecar defeated at-rest encryption; passing
+            // --password= via argv leaked through ps aux / /proc/<pid>/cmdline.
+            var sensitivePassword = command.Files?
+                .FirstOrDefault(f => string.Equals(Path.GetFileName(f.Name), "sensitiveVariables.json", StringComparison.Ordinal))
+                ?.EncryptionPassword;
+
+            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitivePassword, command.Arguments);
+        }
 
         return command.ScriptSyntax switch
         {
@@ -691,7 +744,34 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     }
 
     private static Process StartCalamariProcess(
-        string workDir, string variablesPath, string sensitiveVariablesPath, string sensitiveKeyPath, string[] arguments)
+        string workDir, string variablesPath, string sensitiveVariablesPath, string? sensitivePassword, string[] arguments)
+    {
+        var psi = BuildCalamariProcessStartInfo(
+            workDir,
+            variablesPath,
+            sensitiveVariablesPath,
+            sensitivePassword,
+            sensitiveCiphertextExists: File.Exists(sensitiveVariablesPath),
+            arguments);
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
+    }
+
+    /// <summary>
+    /// Build the <see cref="ProcessStartInfo"/> for the Calamari child. Pure function
+    /// (no disk reads except the caller-provided <paramref name="sensitiveCiphertextExists"/>
+    /// flag) so unit tests can verify the argv / env-var contract without spawning a
+    /// real process.
+    /// </summary>
+    internal static ProcessStartInfo BuildCalamariProcessStartInfo(
+        string workDir,
+        string variablesPath,
+        string sensitiveVariablesPath,
+        string? sensitivePassword,
+        bool sensitiveCiphertextExists,
+        string[] arguments)
     {
         var psi = new ProcessStartInfo
         {
@@ -706,14 +786,17 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         };
 
         psi.ArgumentList.Add("run-script");
-        psi.ArgumentList.Add($"--script=script.sh");
+        psi.ArgumentList.Add("--script=script.sh");
         psi.ArgumentList.Add($"--variables={variablesPath}");
 
-        if (File.Exists(sensitiveVariablesPath) && File.Exists(sensitiveKeyPath))
+        if (sensitiveCiphertextExists && !string.IsNullOrEmpty(sensitivePassword))
         {
-            var password = File.ReadAllText(sensitiveKeyPath).Trim();
             psi.ArgumentList.Add($"--sensitive={sensitiveVariablesPath}");
-            psi.ArgumentList.Add($"--password={password}");
+
+            // P0-B.2: password via env var, NOT argv. Env var is readable via
+            // /proc/<pid>/environ (mode 0600 — process owner / root only). argv is in
+            // /proc/<pid>/cmdline (typically world-readable 0444) and in ps aux.
+            psi.Environment[CalamariSensitivePasswordEnvVar] = sensitivePassword;
         }
 
         if (arguments != null && arguments.Length > 0)
@@ -723,9 +806,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 psi.ArgumentList.Add(arg);
         }
 
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
-        return process;
+        return psi;
     }
 
     private static Process StartBashProcess(string workDir, string[] arguments)

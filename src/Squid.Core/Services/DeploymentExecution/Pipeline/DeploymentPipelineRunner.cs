@@ -39,7 +39,20 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
 
-            if (ctx.FailureEncountered)
+            // P0-A.1 (2026-04-24 audit): cancel wins over fail in the pre-terminal-write
+            // race. If the user clicked cancel (registryCts) or the caller cancelled the
+            // external token (ct) while a step failure was being captured on the context,
+            // the task must end Cancelled — not Failed. Pre-fix the FailureEncountered
+            // check ran first and races produced DeploymentFailedEvent while the UI
+            // showed "cancel requested". Checkpoint + downstream consumers then latched
+            // on the wrong terminal state. We still let timeouts fall through to the
+            // OCE handler below (timeoutCts raises OCE mid-execution, not here).
+            if (registryCts.Token.IsCancellationRequested || ct.IsCancellationRequested)
+            {
+                await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
+                await completion.OnCancelledAsync(ctx, timeout.Token);
+            }
+            else if (ctx.FailureEncountered)
             {
                 var ex = new InvalidOperationException("One or more steps failed during deployment");
                 await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);

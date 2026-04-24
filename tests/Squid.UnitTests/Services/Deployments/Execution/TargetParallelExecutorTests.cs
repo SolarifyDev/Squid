@@ -186,4 +186,134 @@ public class TargetParallelExecutorTests
 
         result.ShouldBe(0);
     }
+
+    // ── P0-A.2 regression guard (2026-04-24 audit) ──────────────────────────────
+    //
+    // Pre-fix, ExecuteAllConcurrentAsync and ExecuteThrottledAsync both awaited
+    // Task.WhenAll directly. Task.WhenAll rethrows only the FIRST thrown exception
+    // on a faulted task set — subsequent task failures are marked "observed" and
+    // then silently discarded. In a deployment context this meant: three targets
+    // in the same step could all fail for different reasons, and only one target's
+    // error would surface. The operator fixed the first, re-deployed, hit the
+    // second, fixed that, re-deployed, hit the third — cost and confusion.
+    //
+    // The fix awaits all tasks then aggregates every faulted Exception.InnerExceptions
+    // into a single AggregateException with a count-qualified message. Pure
+    // cancellation (no actual failures, just CT.Cancel) still propagates as a clean
+    // OperationCanceledException — callers that catch OCE explicitly continue to work.
+
+    [Fact]
+    public async Task ExecuteAllConcurrent_MultipleFailures_AllCollectedInAggregate()
+    {
+        var items = new List<int> { 1, 2, 3 };
+
+        var ex = await Should.ThrowAsync<AggregateException>(async () =>
+        {
+            await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 0, async (item, ct) =>
+            {
+                await Task.Yield();
+                throw new InvalidOperationException($"target-{item}-boom");
+            }, CancellationToken.None);
+        });
+
+        ex.InnerExceptions.Count.ShouldBe(3,
+            customMessage:
+                "all 3 target failures must surface together. Pre-fix Task.WhenAll rethrew only " +
+                "the first one — the other two were silently observed and dropped. Operators " +
+                "were driven into fix-first-error / redeploy / repeat cycles.");
+
+        var messages = ex.InnerExceptions.Select(e => e.Message).OrderBy(m => m).ToList();
+        messages.ShouldBe(new List<string> { "target-1-boom", "target-2-boom", "target-3-boom" });
+    }
+
+    [Fact]
+    public async Task ExecuteThrottled_MultipleFailures_AllCollectedInAggregate()
+    {
+        // Throttled path has its own Task.WhenAll (items > maxParallelism > 1).
+        var items = Enumerable.Range(1, 5).ToList();
+
+        var ex = await Should.ThrowAsync<AggregateException>(async () =>
+        {
+            await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 2, async (item, ct) =>
+            {
+                await Task.Yield();
+
+                if (item % 2 == 0)
+                    throw new InvalidOperationException($"target-{item}-even-fail");
+
+                return item;
+            }, CancellationToken.None);
+        });
+
+        ex.InnerExceptions.Count.ShouldBe(2,
+            customMessage: "items 2 and 4 both throw — both must surface");
+
+        ex.InnerExceptions.Select(e => e.Message).OrderBy(m => m).ToList().ShouldBe(
+            new List<string> { "target-2-even-fail", "target-4-even-fail" });
+    }
+
+    [Fact]
+    public async Task ExecuteAllConcurrent_FailureCountInAggregateMessage()
+    {
+        // Operators reading logs should immediately see "2 of 4 tasks failed" rather
+        // than having to count InnerExceptions themselves.
+        var items = new List<int> { 1, 2, 3, 4 };
+
+        var ex = await Should.ThrowAsync<AggregateException>(async () =>
+        {
+            await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 0, async (item, ct) =>
+            {
+                await Task.Yield();
+
+                if (item <= 2)
+                    throw new InvalidOperationException($"fail-{item}");
+
+                return item;
+            }, CancellationToken.None);
+        });
+
+        ex.Message.ShouldContain("2",
+            customMessage: "aggregate message must name how many targets failed");
+        ex.Message.ShouldContain("4",
+            customMessage: "aggregate message must name the total target count for context");
+    }
+
+    [Fact]
+    public async Task ExecuteAllConcurrent_CancellationRequested_PropagatesOperationCanceled()
+    {
+        // Pure cancellation is NOT an aggregate error — only one thing happened
+        // (the operator cancelled). Callers that catch OperationCanceledException
+        // explicitly for "user cancelled deploy" must not find an AggregateException
+        // wrapping nothing-but-OCEs. Pre-fix and post-fix share this behaviour; the
+        // regression guard is that our fix didn't accidentally broaden the wrap.
+        using var cts = new CancellationTokenSource();
+        var items = Enumerable.Range(1, 5).ToList();
+
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+        {
+            await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 0, async (item, ct) =>
+            {
+                if (item == 3)
+                    cts.Cancel();
+
+                await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                return item;
+            }, cts.Token);
+        });
+    }
+
+    [Fact]
+    public async Task ExecuteAllConcurrent_AllSucceed_ReturnsResultsInOrder()
+    {
+        // Happy path regression — fix must not break ordered-return semantics.
+        var items = new List<int> { 1, 2, 3, 4 };
+
+        var results = await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 0, async (item, ct) =>
+        {
+            await Task.Yield();
+            return item * 10;
+        }, CancellationToken.None);
+
+        results.ShouldBe(new List<int> { 10, 20, 30, 40 });
+    }
 }

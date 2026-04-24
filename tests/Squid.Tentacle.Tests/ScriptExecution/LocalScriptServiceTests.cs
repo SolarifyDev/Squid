@@ -707,6 +707,184 @@ public class LocalScriptServiceTests : IDisposable
         }
     }
 
+    // P0-T.7 (2026-04-24 audit): WriteAdditionalFiles had an empty catch block that
+    // swallowed every write failure (DataStream transfer error, disk full, permission
+    // denied, target-path collision, …) and kept iterating. The script then executed
+    // against an incomplete workspace and produced silently-wrong results. The fix
+    // reroutes cleanup into a finally block and rethrows — the caller must know the
+    // workspace is not usable and fail the script start path-fast.
+
+    [Fact]
+    public void WriteAdditionalFiles_TargetPathIsDirectory_RethrowsInsteadOfSilentlySucceeding()
+    {
+        // File.Move can't overwrite a directory — this forces a real exception mid-loop.
+        // Pre-fix the empty catch swallowed it and the test's later assertion (no file
+        // at target.txt) would pass silently. Post-fix the call itself throws.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-dir-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "target.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("target.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1, 2, 3 }), null)
+            };
+
+            Should.Throw<Exception>(
+                () => LocalScriptService.WriteAdditionalFiles(workDir, files),
+                customMessage:
+                    "write failures must rethrow. A swallowed exception here lets the script " +
+                    "run with a missing input file — silently-wrong deploys. Empty catch is " +
+                    "the P0-T.7 vector; regressing reopens it.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteAdditionalFiles_FirstFileFails_SubsequentFilesNotWritten()
+    {
+        // Stronger variant: if the first file fails, we must NOT continue writing
+        // subsequent files — the caller needs a clean failure, not a partial workspace.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-order-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "a.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("a.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null),   // fails
+                new("b.txt", global::Halibut.DataStream.FromBytes(new byte[] { 2 }), null),   // would succeed if loop continued
+            };
+
+            Should.Throw<Exception>(() => LocalScriptService.WriteAdditionalFiles(workDir, files));
+
+            File.Exists(Path.Combine(workDir, "b.txt")).ShouldBeFalse(
+                customMessage:
+                    "after the first file write fails the loop must NOT continue — a partial " +
+                    "workspace is worse than a clean failure, and the caller sees only the first " +
+                    "exception anyway.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteAdditionalFiles_WriteFails_TempFileCleanedUp()
+    {
+        // Cleanup contract: even when we rethrow, the temp file from Path.GetTempFileName
+        // must be removed. Otherwise a torrent of failed writes leaks bytes under /tmp.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-cleanup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        var tempFilesBefore = Directory.GetFiles(Path.GetTempPath(), "tmp*")
+            .Select(Path.GetFileName)
+            .ToHashSet();
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "target.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("target.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null)
+            };
+
+            Should.Throw<Exception>(() => LocalScriptService.WriteAdditionalFiles(workDir, files));
+
+            var tempFilesAfter = Directory.GetFiles(Path.GetTempPath(), "tmp*")
+                .Select(Path.GetFileName)
+                .ToHashSet();
+
+            var leaked = tempFilesAfter.Except(tempFilesBefore).ToList();
+
+            leaked.ShouldBeEmpty(
+                customMessage:
+                    $"temp file(s) leaked into {Path.GetTempPath()} after failed write: " +
+                    $"[{string.Join(", ", leaked)}]. Cleanup must happen in finally before rethrow.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    // ========================================================================
+    // P0-T.5: mutex-leak on mid-acquire exception
+    // ========================================================================
+    //
+    // Pre-fix, StartScript acquired the isolation mutex at the top then proceeded
+    // through several can-throw steps (directory creation, file writes, process
+    // start). Any exception between the acquire line and the RunningScript
+    // construction that transfers ownership left the mutex held forever —
+    // subsequent scripts needing the same FullIsolation lock hung indefinitely.
+    //
+    // With the T.7 rethrow fix landed, WriteAdditionalFiles now reliably throws
+    // on write failure, making this leak much more reachable in practice.
+
+    [Fact]
+    public void StartScript_WriteFailsAfterMutexAcquire_MutexReleased()
+    {
+        var mutexName = $"t5-leak-{Guid.NewGuid():N}";
+        var firstTicketId = Guid.NewGuid().ToString("N");
+        var firstWorkDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{firstTicketId}");
+        Directory.CreateDirectory(firstWorkDir);
+
+        // Pre-create a directory where WriteAdditionalFiles will try to place a file.
+        // File.Move(tempfile, "blocker") then throws → T.7 rethrow propagates out of
+        // WriteAdditionalFiles → StartScript exits via the throw while the mutex is
+        // still held by the local isolationHandle. Post-fix, the fix guarantees the
+        // handle gets disposed on that path.
+        Directory.CreateDirectory(Path.Combine(firstWorkDir, "blocker"));
+
+        var failingCommand = new StartScriptCommand(
+            new ScriptTicket(firstTicketId),
+            "echo 'never runs'",
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromSeconds(30),
+            mutexName,
+            Array.Empty<string>(),
+            null,
+            TimeSpan.Zero,
+            new ScriptFile("blocker", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null));
+
+        _createdTickets.Add(firstTicketId);
+
+        Should.Throw<Exception>(() => _service.StartScript(failingCommand),
+            customMessage: "first script must fail to trigger the mutex-leak path we're guarding");
+
+        // Second script with SAME FullIsolation mutex name. If the mutex leaked, the
+        // acquire blocks for its own timeout and this call throws with "Failed to
+        // acquire isolation mutex". Post-fix it succeeds quickly.
+        var secondTicketId = Guid.NewGuid().ToString("N");
+        var secondCommand = new StartScriptCommand(
+            new ScriptTicket(secondTicketId),
+            "echo 'should start'",
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromSeconds(5),
+            mutexName,
+            Array.Empty<string>(),
+            null,
+            TimeSpan.Zero);
+
+        _createdTickets.Add(secondTicketId);
+
+        Should.NotThrow(() => _service.StartScript(secondCommand),
+            customMessage:
+                "P0-T.5: isolation mutex was not released after the first script failed " +
+                "mid-setup. Subsequent scripts needing the same FullIsolation lock hang " +
+                "until their configured timeout fires. Regressing this leak brings back " +
+                "the 'stuck mutex after failed script' outage class.");
+    }
+
     // ========================================================================
     // Drain / Graceful Shutdown
     // ========================================================================
