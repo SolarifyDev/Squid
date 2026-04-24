@@ -133,7 +133,7 @@ From **2026-04-23 deep-scan** (24 findings) — cross-verified by this audit rou
 | ID | Severity | File:Line | Problem | Status |
 |---|---|---|---|---|
 | **T.1** | 🔴 P0 | `Tentacle/Certificate/ServerCertificateValidator.cs:63-69` | TLS pin fallback: unpinned certs accepted with warning. MITM door open. No `InsecureAllowUnpinned` opt-in. | ⬜ |
-| **T.2** | 🔴 P0 | `Tentacle/ScriptExecution/LocalScriptService.cs:217` | `ticketId` path traversal via `../../`. Absolute-path attack inoculated by `squid-tentacle-` prefix; `..` traversal still works. | ⬜ |
+| **T.2** | 🔴 P0 | `Tentacle/ScriptExecution/LocalScriptService.cs:217` | `ticketId` path traversal via `../../`. Absolute-path attack inoculated by `squid-tentacle-` prefix; `..` traversal still works. | ✅ (phase1) | Added `TicketIdWhitelist = ^[a-zA-Z0-9_-]{1,64}$` regex + throw-on-mismatch in `ResolveWorkDir`. 20 tests (6 legit + 13 malicious theory + 1 length-cap). |
 | **T.3** | 🔴 P0 | `Tentacle/Core/TentacleHalibutHost.cs:167-177` | Sync-over-async adapter: `IAsyncScriptService.StartScriptAsync => Task.FromResult(_inner.StartScript(command))`. Inside `LocalScriptService.cs:72` there's `_isolationMutex.AcquireAsync().GetAwaiter().GetResult()`. Blocks Halibut worker threads. | 🔀 ARCH |
 | **T.4** | 🔴 P0 | `Tentacle/Core/TentacleHalibutHost.cs:93` | `_runtime.Poll(pollUri, serverEndpoint, CancellationToken.None)` — no CTS for graceful drain. | ⬜ |
 | **T.5** | 🔴 P0 | `Tentacle/ScriptExecution/LocalScriptService.cs:72-95` | mutex handle acquired but not transferred to RunningScript until line 95. Any exception between → mutex stuck forever. | ⬜ |

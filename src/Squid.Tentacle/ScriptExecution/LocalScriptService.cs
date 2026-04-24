@@ -213,8 +213,40 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         return new ScriptStatusResponse(ticket, processState, exitCode, new List<ProcessOutput>(), state.NextLogSequence);
     }
 
-    private static string ResolveWorkDir(string ticketId)
-        => Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
+    /// <summary>
+    /// Strict whitelist for ticket IDs embedded in the workspace directory name.
+    /// Accepts only alphanumerics + hyphen + underscore, 1-64 chars.
+    /// <para>Why narrow: the server embeds <c>ticketId</c> straight into a
+    /// filesystem path under <c>/tmp</c> via <see cref="ResolveWorkDir"/>. A
+    /// value containing <c>..</c>, <c>/</c>, <c>\\</c>, null bytes, or
+    /// whitespace lets a compromised-server or a log-spoofed input escape
+    /// the temp dir and write agent state / script bodies / logs to
+    /// arbitrary host paths. The <c>squid-tentacle-</c> prefix inoculates
+    /// against bare-absolute-path injection (Path.Combine wins with absolute
+    /// second arg, but the literal prefix makes the concatenation
+    /// non-absolute) — it does NOT prevent <c>../../</c> segments, which
+    /// normalise past the prefix and out of /tmp.</para>
+    /// <para>Why 64 chars: the longest legitimate ticket shape is a SHA-256
+    /// hex string (64 chars). Guid N-format is 32. A 65-char ticket is
+    /// either a bug or an attempt to hit filesystem path-length limits.</para>
+    /// <para>Pinned by <c>ResolveWorkDir_MaliciousTicketId_Throws</c> +
+    /// <c>ResolveWorkDir_LegitimateTicketId_ReturnsPathUnderTemp</c>.</para>
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex TicketIdWhitelist =
+        new("^[a-zA-Z0-9_-]{1,64}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    internal static string ResolveWorkDir(string ticketId)
+    {
+        if (ticketId == null || !TicketIdWhitelist.IsMatch(ticketId))
+            throw new ArgumentException(
+                $"Invalid ticketId (got: '{ticketId ?? "<null>"}'). Must match {TicketIdWhitelist} — " +
+                "alphanumerics + hyphen + underscore, 1-64 chars. Path-traversal, whitespace, " +
+                "null bytes, and non-ASCII characters are rejected to prevent workspace-dir " +
+                "escape attacks.",
+                nameof(ticketId));
+
+        return Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticketId}");
+    }
 
     private static void WaitForEarlyCompletion(RunningScript running, TimeSpan duration)
     {
