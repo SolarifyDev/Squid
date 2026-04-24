@@ -3,6 +3,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Authorization;
 using Squid.Message.Enums;
+using Squid.Message.Hardening;
 using Squid.Message.Models.Authorization;
 
 namespace Squid.Core.Services.Authorization;
@@ -124,6 +125,22 @@ public class UserRoleService(
     }
 
     /// <summary>
+    /// Env var that selects enforcement mode for the role-assignment privesc
+    /// guard. Recognised values: <c>off</c> / <c>warn</c> / <c>strict</c>.
+    ///
+    /// <para><b>Default differs from the deployment-config validators</b>:
+    /// this guard defaults to <see cref="EnforcementMode.Strict"/> because it
+    /// closes a true privilege-escalation vector (TeamEdit → AdministerSystem),
+    /// not a deployment-configuration choice. Warn-as-default would silently
+    /// reopen the privesc; operators who genuinely need the legacy permissive
+    /// behaviour during a migration window opt OUT explicitly.</para>
+    ///
+    /// <para>Pinned literal — see
+    /// <c>UserRoleServiceTests.RoleAssignmentEnforcementEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string RoleAssignmentEnforcementEnvVar = "SQUID_ROLE_ASSIGNMENT_ENFORCEMENT";
+
+    /// <summary>
     /// P0-D.2 privilege-escalation guard. Pre-fix, a caller with <c>TeamEdit</c> could
     /// attach a role containing <c>AdministerSystem</c> (or any other <c>SystemOnly</c>
     /// permission) to their own team — transitively escalating themselves to full admin.
@@ -134,9 +151,16 @@ public class UserRoleService(
     /// (assigning system-only role at space level) still surfaces first — better
     /// developer feedback when the request is simply mal-formed.</para>
     ///
-    /// <para>Fails closed on a null caller identity (null <see cref="ICurrentUser.Id"/>):
-    /// better to refuse the assignment than silently default to "system" / "internal"
-    /// user which would itself be a privesc.</para>
+    /// <para><b>Mode-aware</b>: behaviour depends on the
+    /// <see cref="EnforcementMode"/> resolved from
+    /// <see cref="RoleAssignmentEnforcementEnvVar"/>. Default is
+    /// <see cref="EnforcementMode.Strict"/> — this is a true privesc check, not a
+    /// deployment-config compatibility knob. Warn allows the assignment but logs;
+    /// Off skips the check entirely (dev / migration window only).</para>
+    ///
+    /// <para>Null caller identity (null <see cref="ICurrentUser.Id"/>) is treated
+    /// as no permissions — under Strict mode this throws, mirroring "user has no
+    /// AdministerSystem".</para>
     /// </summary>
     private async Task EnsureCallerCanAssignRoleAsync(int userRoleId, CancellationToken ct)
     {
@@ -146,27 +170,59 @@ public class UserRoleService(
         var containsSystemOnly = targetPermissions.Any(p => p.GetScope() == PermissionScope.SystemOnly);
         if (!containsSystemOnly) return;
 
+        var mode = EnforcementModeReader.Read(RoleAssignmentEnforcementEnvVar, EnforcementMode.Strict);
+
+        if (mode == EnforcementMode.Off) return;
+
+        var callerHoldsAdmin = await CallerHoldsAdministerSystemAsync(ct).ConfigureAwait(false);
+        if (callerHoldsAdmin) return;
+
+        EnforcePrivescBlocked(mode, userRoleId);
+    }
+
+    private async Task<bool> CallerHoldsAdministerSystemAsync(CancellationToken ct)
+    {
         var callerId = currentUser.Id;
-        if (callerId == null)
-            throw new InvalidOperationException(
-                "Cannot assign a role with system-level permissions: no authenticated caller identified. " +
-                "This path must only be reached from an authenticated HTTP context.");
+        if (callerId == null) return false;
 
-        var request = new PermissionCheckRequest
+        var result = await authorizationService.CheckPermissionAsync(
+            new PermissionCheckRequest
+            {
+                UserId = callerId.Value,
+                Permission = Permission.AdministerSystem,
+                SpaceId = null,
+            },
+            ct).ConfigureAwait(false);
+
+        return result.IsAuthorized;
+    }
+
+    private static void EnforcePrivescBlocked(EnforcementMode mode, int userRoleId)
+    {
+        switch (mode)
         {
-            UserId = callerId.Value,
-            Permission = Permission.AdministerSystem,
-            SpaceId = null,
-        };
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "Role {UserRoleId} contains system-level permissions and the caller does NOT hold " +
+                    "AdministerSystem. Allowing the assignment in Warn mode (backward compat) — this is " +
+                    "the P0-D.2 privesc vector. Set {EnvVar}=strict (the recommended default) to refuse.",
+                    userRoleId, RoleAssignmentEnforcementEnvVar);
+                return;
 
-        var result = await authorizationService.CheckPermissionAsync(request, ct).ConfigureAwait(false);
+            case EnforcementMode.Strict:
+                throw new InvalidOperationException(
+                    "Assigning a role that contains system-level permissions (UserView, UserEdit, " +
+                    "UserRoleView, UserRoleEdit, SpaceView, SpaceCreate, SpaceEdit, SpaceDelete, " +
+                    "AdministerSystem) requires the caller to hold AdministerSystem. This guard " +
+                    "prevents a TeamEdit holder from bundling AdministerSystem into a role and handing " +
+                    "it to their own team to escalate privileges. To suppress this rejection during a " +
+                    $"migration window only, set {RoleAssignmentEnforcementEnvVar}=warn (allow + log) " +
+                    $"or {RoleAssignmentEnforcementEnvVar}=off (skip check entirely).");
 
-        if (!result.IsAuthorized)
-            throw new InvalidOperationException(
-                "Assigning a role that contains system-level permissions (UserView, UserEdit, UserRoleView, " +
-                "UserRoleEdit, SpaceView, SpaceCreate, SpaceEdit, SpaceDelete, AdministerSystem) requires " +
-                "the caller to hold AdministerSystem. This guard prevents a TeamEdit holder from bundling " +
-                "AdministerSystem into a role and handing it to their own team to escalate privileges.");
+            // Off is handled by an early return upstream — never reaches this switch.
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
+        }
     }
 
     public async Task RemoveRoleFromTeamAsync(int scopedUserRoleId, CancellationToken ct = default)

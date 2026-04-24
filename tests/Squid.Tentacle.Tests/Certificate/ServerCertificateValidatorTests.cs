@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Net.Security;
+using Squid.Message.Hardening;
 using Squid.Tentacle.Certificate;
 
 namespace Squid.Tentacle.Tests.Certificate;
@@ -104,112 +105,124 @@ public class ServerCertificateValidatorTests
     }
 
     // ========================================================================
-    // ValidateCore — P0-T.1 fail-closed decision matrix
+    // ValidateCore — P0-T.1 three-mode decision matrix (Phase-3 refactor)
     //
-    // Pre-fix, the validator accepted ANY self-signed cert with only a log
-    // warning when no ServerCertificate thumbprint was configured — classic
-    // MITM-door-wide-open. An operator who forgot to paste the pin into
-    // config got a tentacle that trusted anyone claiming to be a Squid
-    // Server; on any untrusted network path an attacker intercepts
-    // registration + polling RPCs.
-    //
-    // Fix: default fail-closed. When no thumbprint is configured AND the
-    // chain is invalid, reject the handshake. Operators who knowingly
-    // accept the risk (lab, air-gap during rotation, internal CI) opt in
-    // via SQUID_ALLOW_UNPINNED_SERVER_CERT=1.
+    // Pre-Phase-1, the validator accepted ANY self-signed cert with only a log
+    // warning when no thumbprint was configured. Phase-1 fix: fail-closed by
+    // default. Phase-3 refactor: three-mode pattern (Off / Warn / Strict) so
+    // backward compat is preserved while the operator can opt INTO Strict for
+    // production hardening. Default is Warn — accepts the unpinned cert with
+    // a structured warning, matching pre-Phase-1 behaviour for any deploy that
+    // never set SQUID_ALLOW_UNPINNED_SERVER_CERT.
     // ========================================================================
 
     [Fact]
-    public void AllowUnpinnedEnvVar_ConstantNamePinned()
+    public void EnforcementEnvVar_ConstantNamePinned()
     {
-        // Rename-resistant pin: any operator who opts in via the
-        // documented env var name would lose pinning if the constant were
-        // renamed silently. Hard-pinning here forces the rename to be an
-        // explicit decision.
-        ServerCertificateValidator.AllowUnpinnedEnvVar.ShouldBe("SQUID_ALLOW_UNPINNED_SERVER_CERT");
+        ServerCertificateValidator.EnforcementEnvVar.ShouldBe("SQUID_SERVER_CERT_ENFORCEMENT");
     }
 
-    [Fact]
-    public void ValidateCore_ChainValid_AcceptsRegardlessOfThumbprint()
+    // ── Happy paths (mode-independent) ──────────────────────────────────────
+
+    [Theory]
+    [InlineData(EnforcementMode.Off)]
+    [InlineData(EnforcementMode.Warn)]
+    [InlineData(EnforcementMode.Strict)]
+    public void ValidateCore_ChainValid_AcceptsInAnyMode(EnforcementMode mode)
     {
-        // Happy path: cert is signed by a CA the OS trusts. No need to
-        // look at thumbprint or opt-in env var.
+        // OS-trusted CA chain → always accept; thumbprint and mode irrelevant.
         var result = ServerCertificateValidator.ValidateCore(
             sslPolicyErrors: SslPolicyErrors.None,
             actualThumbprint: "ANY_THUMBPRINT",
             trusted: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-            allowUnpinned: false);
+            mode: mode);
 
         result.ShouldBeTrue("clean OS chain validation is always accepted");
     }
 
-    [Fact]
-    public void ValidateCore_ChainInvalid_ThumbprintMatches_Accepts()
+    [Theory]
+    [InlineData(EnforcementMode.Off)]
+    [InlineData(EnforcementMode.Warn)]
+    [InlineData(EnforcementMode.Strict)]
+    public void ValidateCore_ChainInvalid_ThumbprintMatches_AcceptsInAnyMode(EnforcementMode mode)
     {
-        // Self-signed server cert — expected in Squid's typical deploy.
-        // Chain fails (no CA root), but the thumbprint matches the pinned
-        // one → trust.
+        // Self-signed server cert + matching pin → trust; this is THE point
+        // of pinning. Mode irrelevant once a pin is configured + matched.
         var result = ServerCertificateValidator.ValidateCore(
             sslPolicyErrors: SslPolicyErrors.RemoteCertificateChainErrors,
             actualThumbprint: "AABB1234",
             trusted: new HashSet<string>(new[] { "AABB1234" }, StringComparer.OrdinalIgnoreCase),
-            allowUnpinned: false);
+            mode: mode);
 
-        result.ShouldBeTrue("thumbprint match overrides chain validation errors — the whole point of pinning");
+        result.ShouldBeTrue("thumbprint match overrides chain errors — the whole point of pinning");
     }
 
-    [Fact]
-    public void ValidateCore_ChainInvalid_ThumbprintMismatches_Rejects()
+    [Theory]
+    [InlineData(EnforcementMode.Off)]
+    [InlineData(EnforcementMode.Warn)]
+    [InlineData(EnforcementMode.Strict)]
+    public void ValidateCore_ChainInvalid_ThumbprintMismatches_RejectsInAnyMode(EnforcementMode mode)
     {
-        // Attacker-presented cert with a different thumbprint than the
-        // pin. MUST reject.
+        // Attacker-presented cert vs configured pin → reject under every mode.
+        // Pin mismatch is unambiguous attack signal; no enforcement mode can
+        // wave that through.
         var result = ServerCertificateValidator.ValidateCore(
             sslPolicyErrors: SslPolicyErrors.RemoteCertificateChainErrors,
             actualThumbprint: "CCCCCCCC",
             trusted: new HashSet<string>(new[] { "AABB1234" }, StringComparer.OrdinalIgnoreCase),
-            allowUnpinned: false);
+            mode: mode);
 
         result.ShouldBeFalse(
             customMessage:
-                "thumbprint mismatch MUST reject — this is the core MITM defence. " +
+                $"thumbprint mismatch MUST reject in {mode} — pin mismatch is the core MITM signal. " +
                 "If this test fails, someone weakened the pinning check.");
     }
 
+    // ── Unpinned-chain-failure: mode-dependent ──────────────────────────────
+
     [Fact]
-    public void ValidateCore_ChainInvalid_NoThumbprintConfigured_AllowUnpinnedFalse_Rejects()
+    public void ValidateCore_ChainInvalid_NoThumbprint_Strict_Rejects()
     {
-        // The P0 failure mode this fix exists to close. Pre-fix: returned
-        // true with a warning. Post-fix: returns false (fail-closed) so
-        // the operator sees registration fail loudly.
         var result = ServerCertificateValidator.ValidateCore(
             sslPolicyErrors: SslPolicyErrors.RemoteCertificateChainErrors,
             actualThumbprint: "ATTACKER_CERT",
             trusted: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-            allowUnpinned: false);
+            mode: EnforcementMode.Strict);
 
         result.ShouldBeFalse(
             customMessage:
-                "no thumbprint configured + invalid chain MUST reject by default. " +
-                "If this test fails, the MITM-door-open regression is back — any operator " +
-                "who skipped configuring ServerCertificate trusts arbitrary self-signed certs.");
+                "Strict mode rejects invalid-chain + no-pin — production hardening posture. " +
+                "If operator wants this behaviour they set SQUID_SERVER_CERT_ENFORCEMENT=strict.");
     }
 
     [Fact]
-    public void ValidateCore_ChainInvalid_NoThumbprintConfigured_AllowUnpinnedTrue_Accepts()
+    public void ValidateCore_ChainInvalid_NoThumbprint_Warn_AcceptsWithWarning_BackwardCompat()
     {
-        // Explicit opt-in: operator has decided this tentacle runs in an
-        // environment where self-signed certs without pinning are
-        // acceptable (dev container, temporary rotation window).
+        // The whole point of Phase-3: Warn-as-default preserves pre-Phase-1
+        // behaviour so deploys that didn't pin a thumbprint AND don't have a
+        // public-CA cert continue to work. Operator sees warning in logs.
         var result = ServerCertificateValidator.ValidateCore(
             sslPolicyErrors: SslPolicyErrors.RemoteCertificateChainErrors,
             actualThumbprint: "SOME_SELF_SIGNED",
             trusted: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-            allowUnpinned: true);
+            mode: EnforcementMode.Warn);
 
         result.ShouldBeTrue(
             customMessage:
-                "explicit opt-in (SQUID_ALLOW_UNPINNED_SERVER_CERT=1) must preserve the " +
-                "pre-fix accept-with-warning behaviour. Otherwise we break every dev and " +
-                "air-gapped deploy that didn't bother pinning.");
+                "Warn mode (default) must accept invalid-chain + no-pin — preserves backward " +
+                "compat. Pre-Phase-3 the strict-by-default broke every deploy that didn't set " +
+                "ServerCertificate.");
+    }
+
+    [Fact]
+    public void ValidateCore_ChainInvalid_NoThumbprint_Off_AcceptsSilently()
+    {
+        var result = ServerCertificateValidator.ValidateCore(
+            sslPolicyErrors: SslPolicyErrors.RemoteCertificateChainErrors,
+            actualThumbprint: "SOME_SELF_SIGNED",
+            trusted: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            mode: EnforcementMode.Off);
+
+        result.ShouldBeTrue("Off mode accepts unpinned silently — explicit opt-out for tests");
     }
 }

@@ -8,11 +8,13 @@ public partial class KubernetesPodManager
 {
     private V1Pod BuildPodSpec(string podName, string ticketId, string ns, Dictionary<string, string>? additionalLabels = null)
     {
-        // P0-C.1: fail-closed guard on ScriptPodImage before it flows into V1Container.Image.
-        // Rejects tag-only / empty references to neutralise the registry-compromise RCE vector
-        // documented in ScriptPodImageValidator. Dev / CI escape hatch: env var
-        // SQUID_ALLOW_UNPINNED_SCRIPT_POD_IMAGE=1 acknowledges the risk and permits tag usage.
-        ScriptPodImageValidator.EnsureSafe(_settings.ScriptPodImage, ScriptPodImageValidator.ReadAllowUnpinnedOverride());
+        // P0-C.1 (refactored under Phase-3 three-mode hardening pattern): validate
+        // ScriptPodImage against the digest-pin requirement. Default mode is Warn —
+        // tag-only references log a structured warning but proceed (preserves
+        // backward compat for deploys shipped with the original tag-based default).
+        // Operators flip SQUID_SCRIPT_POD_IMAGE_ENFORCEMENT=strict for production
+        // hardening; CLAUDE.md §"Hardening Three-Mode Enforcement" for the pattern.
+        ScriptPodImageValidator.EnsureSafe(_settings.ScriptPodImage, ScriptPodImageValidator.ReadMode());
 
         var template = _templateProvider?.TryLoadTemplate();
         var rawScriptMode = _settings.RawScriptMode || string.IsNullOrEmpty(_settings.TentacleImage);
@@ -234,10 +236,11 @@ public partial class KubernetesPodManager
 
         if (!string.IsNullOrEmpty(template.Image))
         {
-            // P0-C.1 defence-in-depth: template override must also be digest-pinned.
-            // Otherwise an operator could comply with _settings.ScriptPodImage pinning but
-            // sidestep it via a template override and reopen the same RCE vector.
-            ScriptPodImageValidator.EnsureSafe(template.Image, ScriptPodImageValidator.ReadAllowUnpinnedOverride());
+            // P0-C.1 defence-in-depth: template.Image override must also pass the
+            // digest-pin check under the same enforcement mode. Otherwise an operator
+            // could comply at _settings.ScriptPodImage and sidestep via a template
+            // override.
+            ScriptPodImageValidator.EnsureSafe(template.Image, ScriptPodImageValidator.ReadMode());
             mainContainer.Image = template.Image;
         }
 

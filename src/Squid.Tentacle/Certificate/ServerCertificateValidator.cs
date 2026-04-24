@@ -1,42 +1,44 @@
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using Serilog;
+using Squid.Message.Hardening;
 
 namespace Squid.Tentacle.Certificate;
 
 /// <summary>
-/// Builds TLS certificate validation callbacks for Tentacle → Server HTTP connections.
-/// Supports thumbprint pinning (for self-signed server certs) and standard chain validation.
+/// Builds TLS certificate validation callbacks for Tentacle → Server HTTP
+/// connections. Supports thumbprint pinning (for self-signed server certs) and
+/// standard chain validation.
+///
+/// <para>Follows the project-wide three-mode hardening pattern (CLAUDE.md
+/// §"Hardening Three-Mode Enforcement"). Behaviour when no thumbprint is
+/// configured AND chain validation fails depends on
+/// <see cref="EnforcementEnvVar"/>: Off accepts silently, Warn (default) accepts
+/// with warning (preserves backward compat for deploys that rely on a public CA
+/// cert + don't pin a thumbprint), Strict rejects.</para>
 /// </summary>
 public static class ServerCertificateValidator
 {
     /// <summary>
-    /// Env-var escape hatch: when set to <c>1</c>, <c>true</c>, or <c>yes</c>
-    /// (case-insensitive), preserves the pre-1.6.x "accept any server cert
-    /// with a warning if no thumbprint is configured" behaviour. Default
-    /// (env var unset) is fail-closed: a tentacle with no configured
-    /// <c>ServerCertificate</c> rejects invalid chains — this is the
-    /// correct MITM-defeating default.
+    /// Env var that selects the enforcement mode for unpinned-cert handling.
+    /// Recognised values: <c>off</c> / <c>warn</c> / <c>strict</c>; default
+    /// (unset / blank) is <see cref="EnforcementMode.Warn"/>.
     ///
-    /// <para>Opt in ONLY for lab / CI / air-gapped environments where
-    /// the operator has knowingly accepted the risk. Pinning should be
-    /// the norm in production.</para>
-    ///
-    /// <para>Pinned literal; renaming breaks every operator who set the
-    /// env var by its documented name.</para>
+    /// <para>Pinned literal; renaming breaks every operator who set the env
+    /// var by its documented name.</para>
     /// </summary>
-    public const string AllowUnpinnedEnvVar = "SQUID_ALLOW_UNPINNED_SERVER_CERT";
+    public const string EnforcementEnvVar = "SQUID_SERVER_CERT_ENFORCEMENT";
 
     /// <summary>
     /// Creates a <see cref="HttpClientHandler.ServerCertificateCustomValidationCallback"/>
-    /// that validates the server certificate using the following strategy:
+    /// validating the server certificate as follows:
     /// <list type="number">
-    ///   <item>If the OS certificate chain validates cleanly, accept immediately.</item>
-    ///   <item>If <paramref name="expectedThumbprint"/> is configured and matches, accept (thumbprint pinning).</item>
+    ///   <item>If the OS certificate chain validates cleanly, accept.</item>
+    ///   <item>If <paramref name="expectedThumbprint"/> is configured and matches, accept.</item>
     ///   <item>If <paramref name="expectedThumbprint"/> is configured but mismatches, reject.</item>
-    ///   <item>If no thumbprint is configured and chain validation failed, reject by default
-    ///         (fail-closed) — unless the operator has opted in via
-    ///         <see cref="AllowUnpinnedEnvVar"/>, in which case accept with a warning.</item>
+    ///   <item>If no thumbprint is configured and chain validation failed,
+    ///         delegate to the <see cref="EnforcementMode"/> resolved from
+    ///         <see cref="EnforcementEnvVar"/>.</item>
     /// </list>
     /// </summary>
     public static Func<HttpRequestMessage, X509Certificate2?, X509Chain?, SslPolicyErrors, bool>
@@ -47,9 +49,8 @@ public static class ServerCertificateValidator
 
     /// <summary>
     /// Multi-thumbprint overload — mirrors Octopus's <c>TrustedOctopusServers</c>
-    /// list. Useful when rotating Server certs (trust both old and new while
-    /// deploying the rotation) or when a Tentacle talks to multiple Servers
-    /// (each with its own self-signed cert).
+    /// list. Useful when rotating Server certs or when a Tentacle talks to
+    /// multiple Servers each with its own self-signed cert.
     /// </summary>
     public static Func<HttpRequestMessage, X509Certificate2?, X509Chain?, SslPolicyErrors, bool>
         Create(IReadOnlyCollection<string> expectedThumbprints)
@@ -59,25 +60,24 @@ public static class ServerCertificateValidator
             .Select(t => t.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var allowUnpinned = ReadAllowUnpinned();
+        var mode = EnforcementModeReader.Read(EnforcementEnvVar);
 
         return (_, cert, _, sslPolicyErrors) =>
-            ValidateCore(sslPolicyErrors, cert?.Thumbprint, trusted, allowUnpinned);
+            ValidateCore(sslPolicyErrors, cert?.Thumbprint, trusted, mode);
     }
 
     /// <summary>
-    /// Pure decision logic extracted for unit testing. Takes the inputs
-    /// the callback would receive plus the opt-in flag and returns the
-    /// accept/reject verdict. Exposed <c>internal static</c> so the full
-    /// decision matrix (chain-valid, thumbprint-match, thumbprint-miss,
-    /// no-thumbprint-no-optin, no-thumbprint-optin) can be tested without
-    /// staging a real TLS handshake.
+    /// Pure decision logic exposed for unit testing. Takes the inputs the
+    /// callback would receive plus the resolved <see cref="EnforcementMode"/>
+    /// and returns the accept/reject verdict. Tests exercise the full
+    /// (chain-state × thumbprint-state × mode) matrix without staging a real
+    /// TLS handshake.
     /// </summary>
     internal static bool ValidateCore(
         SslPolicyErrors sslPolicyErrors,
         string? actualThumbprint,
         IReadOnlySet<string> trusted,
-        bool allowUnpinned)
+        EnforcementMode mode)
     {
         if (sslPolicyErrors == SslPolicyErrors.None)
             return true;
@@ -94,39 +94,43 @@ public static class ServerCertificateValidator
             return false;
         }
 
-        // No thumbprint configured + chain validation errors.
-        // Pre-1.6.x: accepted with warning (MITM-door-wide-open).
-        // Post-fix: fail-closed unless explicit opt-in via env var.
-        if (allowUnpinned)
-        {
-            Log.Warning(
-                "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
-                "thumbprint is configured for pinning — accepting because {EnvVar}=1 is set. " +
-                "This allows MITM attacks on the server channel. Configure ServerCertificate with " +
-                "the Squid Server's thumbprint to eliminate the risk.",
-                sslPolicyErrors, AllowUnpinnedEnvVar);
-            return true;
-        }
-
-        Log.Error(
-            "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
-            "thumbprint is configured for pinning — REJECTING the handshake to prevent MITM. " +
-            "Fix: set the 'ServerCertificate' setting to the Squid Server's certificate " +
-            "thumbprint. For dev / lab / air-gapped scenarios where you knowingly accept the " +
-            "risk of no pinning, set {EnvVar}=1 to allow unpinned connections.",
-            sslPolicyErrors, AllowUnpinnedEnvVar);
-        return false;
+        // No thumbprint configured + chain validation errors. Mode decides:
+        // Off  → silent accept (dev / tests / explicit opt-out)
+        // Warn → accept + warning (default — backward compat, MITM-door-open)
+        // Strict → reject (production hardening)
+        return EnforceUnpinned(sslPolicyErrors, mode);
     }
 
-    private static bool ReadAllowUnpinned()
+    private static bool EnforceUnpinned(SslPolicyErrors sslPolicyErrors, EnforcementMode mode)
     {
-        var raw = Environment.GetEnvironmentVariable(AllowUnpinnedEnvVar);
+        switch (mode)
+        {
+            case EnforcementMode.Off:
+                return true;
 
-        if (string.IsNullOrWhiteSpace(raw)) return false;
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
+                    "thumbprint is configured for pinning. Accepting in Warn mode — backward compat for " +
+                    "deploys that rely on a public CA but didn't pin. THIS ALLOWS MITM ON THE SERVER " +
+                    "CHANNEL. Set {EnvVar}=strict to refuse unpinned chain failures, or configure " +
+                    "ServerCertificate with the Squid Server's thumbprint to fix at the source.",
+                    sslPolicyErrors, EnforcementEnvVar);
+                return true;
 
-        var normalized = raw.Trim().ToLowerInvariant();
+            case EnforcementMode.Strict:
+                Log.Error(
+                    "Server TLS certificate has validation errors ({Errors}) and no ServerCertificate " +
+                    "thumbprint is configured for pinning. REJECTING the handshake (Strict mode) to " +
+                    "prevent MITM. Fix: set the 'ServerCertificate' setting to the Squid Server's " +
+                    "thumbprint, or set {EnvVar}=warn (allow + log) / {EnvVar}=off (silent) for " +
+                    "non-production scenarios.",
+                    sslPolicyErrors, EnforcementEnvVar);
+                return false;
 
-        return normalized == "1" || normalized == "true" || normalized == "yes";
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
+        }
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Squid.Message.Hardening;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
@@ -11,25 +12,27 @@ namespace Squid.Tentacle.Flavors.LinuxTentacle;
 
 /// <summary>
 /// Registers a Listening Tentacle with the Squid Server via
-/// <c>POST /api/machines/register/tentacle-listening</c>.
-/// The Agent sends its URI (host:port) and thumbprint so the Server knows how to connect back.
+/// <c>POST /api/machines/register/tentacle-listening</c>. The agent sends its
+/// URI (host:port) and thumbprint so the server knows how to connect back.
+///
+/// <para>Follows the project-wide three-mode hardening pattern (CLAUDE.md
+/// §"Hardening Three-Mode Enforcement"). When <see cref="TentacleSettings.ServerUrl"/>
+/// is <c>http://</c> AND a credential (ApiKey / BearerToken) is being attached,
+/// behaviour depends on the <see cref="EnforcementMode"/> resolved from
+/// <see cref="EnforcementEnvVar"/>: Off (silent allow), Warn (default — allow +
+/// structured warning, preserves backward compat), Strict (reject + throw).</para>
 /// </summary>
 public sealed class TentacleListeningRegistrar : ITentacleRegistrar
 {
     /// <summary>
-    /// Env-var escape hatch: when set to <c>1</c>, <c>true</c>, or <c>yes</c>
-    /// (case-insensitive), allows <c>ServerUrl=http://…</c> with credentials
-    /// attached. Intended for dev / internal-only deploys where the
-    /// operator has decided https is overkill. Default behaviour (env var
-    /// unset) is fail-closed: http:// + secret throws at registration time
-    /// so cleartext-credential mis-deploys surface loudly.
+    /// Env var that selects enforcement mode for the http+secret cleartext
+    /// guard. Recognised values: <c>off</c> / <c>warn</c> / <c>strict</c>;
+    /// default (unset / blank) is <see cref="EnforcementMode.Warn"/>.
     ///
-    /// <para>Pinned by
-    /// <c>TentacleListeningRegistrarSchemeGuardTests.AllowHttpEnvVar_ConstantNamePinned</c>.
-    /// Renaming this constant would break every operator who set the env
+    /// <para>Pinned literal — renaming breaks every operator who set the env
     /// var by its documented name.</para>
     /// </summary>
-    public const string AllowHttpRegisterEnvVar = "SQUID_ALLOW_HTTP_REGISTER";
+    public const string EnforcementEnvVar = "SQUID_REGISTER_HTTPS_ENFORCEMENT";
 
     private readonly TentacleSettings _settings;
 
@@ -47,27 +50,39 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
     /// <summary>
     /// Validates that <paramref name="serverUrl"/> uses a scheme safe for
     /// transmitting the credential(s) identified by <paramref name="hasSecret"/>.
+    ///
+    /// <para><b>Always-throw cases (mode-independent)</b>:</para>
     /// <list type="bullet">
-    ///   <item><c>https://</c>: always safe, regardless of secret presence.</item>
-    ///   <item><c>http://</c> without secret: safe — nothing confidential in flight.</item>
-    ///   <item><c>http://</c> with secret: throws unless <paramref name="allowHttpOverride"/>
-    ///         is <c>true</c> (operator-supplied via
-    ///         <see cref="AllowHttpRegisterEnvVar"/>).</item>
-    ///   <item>Anything else (ftp, file, malformed): throws regardless of other args.</item>
+    ///   <item>null / empty / whitespace ServerUrl</item>
+    ///   <item>Not an absolute URL</item>
+    ///   <item>Scheme other than http or https</item>
     /// </list>
-    /// Exposed as <c>internal static</c> so the unit test suite can exercise
-    /// every decision branch without needing a full HTTP round-trip.
+    ///
+    /// <para><b>Always-pass cases (mode-independent)</b>:</para>
+    /// <list type="bullet">
+    ///   <item><c>https://</c> with or without secret</item>
+    ///   <item><c>http://</c> without secret (no confidential payload)</item>
+    /// </list>
+    ///
+    /// <para><b>Mode-dependent case</b>: <c>http://</c> with secret →
+    /// Off accepts silently; Warn (default) accepts with structured warning;
+    /// Strict throws.</para>
+    ///
+    /// <para>Exposed <c>internal static</c> so the unit suite can exercise the
+    /// full (input × mode) matrix without an HTTP round-trip.</para>
     /// </summary>
-    internal static void EnsureSchemeSafeForSecret(string serverUrl, bool hasSecret, bool allowHttpOverride)
+    internal static void EnsureSchemeSafeForSecret(string serverUrl, bool hasSecret, EnforcementMode mode)
     {
         if (string.IsNullOrWhiteSpace(serverUrl))
             throw new InvalidOperationException(
                 $"ServerUrl is empty or whitespace. Set it to 'https://<squid-server>:7078' or similar. " +
-                $"For dev against an http:// server, also set {AllowHttpRegisterEnvVar}=1.");
+                $"This rejection is unconditional regardless of the {EnforcementEnvVar} mode — an empty " +
+                "URL can't reach any server.");
 
         if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri))
             throw new InvalidOperationException(
-                $"ServerUrl '{serverUrl}' is not a valid absolute URL. Expected format: 'https://<host>:<port>'.");
+                $"ServerUrl '{serverUrl}' is not a valid absolute URL. Expected format: " +
+                $"'https://<host>:<port>'. Unconditional rejection regardless of {EnforcementEnvVar}.");
 
         var scheme = uri.Scheme.ToLowerInvariant();
 
@@ -76,25 +91,40 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         if (scheme != "http")
             throw new InvalidOperationException(
                 $"ServerUrl '{serverUrl}' uses scheme '{uri.Scheme}' — only http/https are supported. " +
-                $"Check for typos; expected 'https://<squid-server>:7078'.");
+                $"Unconditional rejection regardless of {EnforcementEnvVar}.");
 
         // http:// without a credential is permitted — no cleartext secret risk.
         if (!hasSecret) return;
 
-        if (allowHttpOverride)
-        {
-            Log.Warning(
-                "ServerUrl '{ServerUrl}' uses http:// with a credential attached — cleartext over the wire. " +
-                "Permitted because {EnvVar}=1 is set. Verify this is a dev/internal-only deployment.",
-                serverUrl, AllowHttpRegisterEnvVar);
-            return;
-        }
+        EnforceHttpWithSecret(serverUrl, mode);
+    }
 
-        throw new InvalidOperationException(
-            $"ServerUrl '{serverUrl}' uses http:// but registration attaches a credential (ApiKey or " +
-            $"BearerToken) — the secret would ship in cleartext over the network. Fix the ServerUrl " +
-            $"to use https://, OR — for dev / internal-only deploys where you accept the risk — set " +
-            $"{AllowHttpRegisterEnvVar}=1 to opt in.");
+    private static void EnforceHttpWithSecret(string serverUrl, EnforcementMode mode)
+    {
+        switch (mode)
+        {
+            case EnforcementMode.Off:
+                return;
+
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "ServerUrl '{ServerUrl}' uses http:// with a credential attached — the credential " +
+                    "(ApiKey or BearerToken) ships in cleartext over the wire. Backward-compat mode " +
+                    "(default); set {EnvVar}=strict to refuse this combination, or fix the ServerUrl " +
+                    "to use https://.",
+                    serverUrl, EnforcementEnvVar);
+                return;
+
+            case EnforcementMode.Strict:
+                throw new InvalidOperationException(
+                    $"ServerUrl '{serverUrl}' uses http:// but registration attaches a credential " +
+                    "(ApiKey or BearerToken) — the secret would ship in cleartext. Fix the ServerUrl " +
+                    $"to use https://. To suppress this rejection, set {EnforcementEnvVar}=warn (allow + " +
+                    $"log warning) or {EnforcementEnvVar}=off (silent).");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
+        }
     }
 
     public async Task<TentacleRegistration> RegisterAsync(TentacleIdentity identity, CancellationToken ct)
@@ -129,7 +159,7 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
         }
 
         var hasSecret = !string.IsNullOrEmpty(_settings.ApiKey) || !string.IsNullOrEmpty(_settings.BearerToken);
-        EnsureSchemeSafeForSecret(_settings.ServerUrl, hasSecret, ReadAllowHttpOverride());
+        EnsureSchemeSafeForSecret(_settings.ServerUrl, hasSecret, EnforcementModeReader.Read(EnforcementEnvVar));
 
         using var client = new HttpClient(handler);
         client.BaseAddress = new Uri(_settings.ServerUrl);
@@ -169,17 +199,6 @@ public sealed class TentacleListeningRegistrar : ITentacleRegistrar
             ServerThumbprint = result?.Data?.ServerThumbprint ?? _settings.ServerCertificate,
             SubscriptionUri = string.Empty
         };
-    }
-
-    private static bool ReadAllowHttpOverride()
-    {
-        var raw = Environment.GetEnvironmentVariable(AllowHttpRegisterEnvVar);
-
-        if (string.IsNullOrWhiteSpace(raw)) return false;
-
-        var normalized = raw.Trim().ToLowerInvariant();
-
-        return normalized == "1" || normalized == "true" || normalized == "yes";
     }
 
     private string BuildListeningUri()

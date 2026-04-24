@@ -886,41 +886,72 @@ public class KubernetesPodManagerPodSpecTests
 
     // ── P0-C.1 wiring tests: BuildPodSpec must invoke ScriptPodImageValidator
     //
-    // The validator's own decision matrix is covered by ScriptPodImageValidationTests.
+    // The validator's own (input × mode) matrix is in ScriptPodImageValidationTests.
     // These tests narrow-focus on the wiring — confirming that _settings.ScriptPodImage
-    // actually flows through the validator before being baked into the V1Pod. A silent
-    // wiring regression (e.g. someone deletes the EnsureSafe call during a refactor)
+    // actually flows through the validator under the resolved enforcement mode. A
+    // silent wiring regression (someone deletes the EnsureSafe call during a refactor)
     // would let a tag-only production default reopen the registry-compromise RCE.
+    //
+    // Phase-3 default is Warn — tag-only no longer throws at the wiring layer. The
+    // wiring tests force the env var to Strict to assert the validator is called and
+    // receives the resolved mode. They restore the env var in finally to avoid
+    // contaminating other tests in the suite.
 
     [Fact]
-    public void CreatePod_WithTagOnlyScriptPodImage_Throws()
+    public void CreatePod_WithTagOnlyImage_StrictMode_ThrowsViaValidator()
     {
-        var thrown = Should.Throw<InvalidOperationException>(
-            () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = "bitnami/kubectl:latest"),
-            customMessage:
-                "BuildPodSpec must reject a tag-only ScriptPodImage. If this test passes, " +
-                "the validator wiring was removed — registry compromise / tag repoint RCE is back in scope.");
+        var previous = Environment.GetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar, "strict");
 
-        thrown.Message.ShouldContain("@sha256:",
-            customMessage: "error must name the required digest format so operators know what to fix");
+        try
+        {
+            var thrown = Should.Throw<InvalidOperationException>(
+                () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = "bitnami/kubectl:latest"),
+                customMessage:
+                    "with Strict mode env-var set, BuildPodSpec must reject tag-only image. If this " +
+                    "test passes, the validator wiring was removed and the registry-compromise RCE " +
+                    "vector is back in scope.");
+
+            thrown.Message.ShouldContain("@sha256:",
+                customMessage: "error must name the required digest format");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar, previous);
+        }
     }
 
     [Fact]
-    public void CreatePod_WithEmptyScriptPodImage_Throws()
+    public void CreatePod_WithTagOnlyImage_WarnMode_DoesNotThrow_BackwardCompat()
     {
-        // Post-fix default is empty string — operator must explicitly set a digest-pinned
-        // value. CreatePod must refuse to emit a Pod with an unset image.
-        Should.Throw<InvalidOperationException>(
-            () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = ""),
-            customMessage:
-                "BuildPodSpec must reject empty ScriptPodImage — this is the post-fix fail-closed default");
+        // Default mode (env var unset) is Warn. Tag-only image must NOT break pod
+        // creation — preserves backward compat for deploys shipped with the
+        // historical bitnami/kubectl:latest default. The validator emits a warning
+        // log; this test asserts only the no-throw contract.
+        var previous = Environment.GetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar, null);
+
+        try
+        {
+            Should.NotThrow(
+                () => CaptureCreatedPodWithSettings(s => s.ScriptPodImage = "bitnami/kubectl:latest"),
+                customMessage:
+                    "Phase-3 Warn-default must NOT break existing deploys. If this test fails, the " +
+                    "Phase-1 strict-by-default regression is back and operators upgrading to this " +
+                    "version will be unable to create script pods until they fix their config.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ScriptPodImageValidator.EnforcementEnvVar, previous);
+        }
     }
 
     [Fact]
     public void CreatePod_WithDigestPinnedImage_SucceedsAndEmitsImageVerbatim()
     {
-        // Positive wiring test — digest-pinned image flows through the validator and
-        // ends up in the V1Pod.Spec.Containers[0].Image unchanged.
+        // Positive wiring test (mode-independent) — digest-pinned image flows
+        // through the validator and lands on V1Pod.Spec.Containers[0].Image
+        // unchanged.
         var pod = CaptureCreatedPodWithSettings(s => s.ScriptPodImage = TestDigestImage);
 
         pod.Spec.Containers[0].Image.ShouldBe(TestDigestImage);
