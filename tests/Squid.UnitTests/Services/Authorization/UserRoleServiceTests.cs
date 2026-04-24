@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Authorization;
+using Squid.Message.Enums;
 using Squid.Message.Models.Authorization;
 
 namespace Squid.UnitTests.Services.Authorization;
@@ -14,11 +16,26 @@ public class UserRoleServiceTests
     private readonly Mock<IUserRoleDataProvider> _userRoleDataProvider = new();
     private readonly Mock<IScopedUserRoleDataProvider> _scopedUserRoleDataProvider = new();
     private readonly Mock<ITeamDataProvider> _teamDataProvider = new();
+    private readonly Mock<IAuthorizationService> _authorizationService = new();
+    private readonly Mock<ICurrentUser> _currentUser = new();
     private readonly UserRoleService _sut;
 
     public UserRoleServiceTests()
     {
-        _sut = new UserRoleService(_userRoleDataProvider.Object, _scopedUserRoleDataProvider.Object, _teamDataProvider.Object);
+        // Default: caller is user 42 and does NOT hold AdministerSystem. Individual tests
+        // override as needed. This is the safer default — a forgotten override shouldn't
+        // accidentally bypass the P0-D.2 anti-escalation guard.
+        _currentUser.Setup(u => u.Id).Returns(42);
+        _authorizationService
+            .Setup(a => a.CheckPermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PermissionCheckResult.Denied("default deny in unit test"));
+
+        _sut = new UserRoleService(
+            _userRoleDataProvider.Object,
+            _scopedUserRoleDataProvider.Object,
+            _teamDataProvider.Object,
+            _authorizationService.Object,
+            _currentUser.Object);
     }
 
     [Fact]
@@ -269,6 +286,12 @@ public class UserRoleServiceTests
         _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
         _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
 
+        // P0-D.2: target role contains AdministerSystem (SystemOnly) — caller must themselves
+        // hold AdministerSystem to assign it. Override the default-deny mock.
+        _authorizationService
+            .Setup(a => a.CheckPermissionAsync(It.Is<PermissionCheckRequest>(r => r.Permission == Permission.AdministerSystem && r.SpaceId == null), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PermissionCheckResult.Authorized());
+
         var result = await _sut.AssignRoleToTeamAsync(command);
 
         result.SpaceId.ShouldBeNull();
@@ -307,6 +330,127 @@ public class UserRoleServiceTests
         await _sut.RemoveRoleFromTeamAsync(100);
 
         _scopedUserRoleDataProvider.Verify(x => x.DeleteAsync(100, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── P0-D.2: privilege-escalation guard on role assignment ──
+    //
+    // Pre-fix, a caller with TeamEdit (at any level) could attach a role containing
+    // AdministerSystem (or any SystemOnly permission) to their own team — transitively
+    // granting themselves full admin. The guard refuses unless the caller themselves
+    // already holds AdministerSystem at system level.
+    //
+    // These tests pin every branch of the guard — without coverage a silent removal of
+    // the check would re-open the full-admin privesc vector. Existing scope-validation
+    // tests (AssignRoleToTeam_SpaceOnlyRoleAtSystemLevel_Throws etc.) remain green
+    // because the guard runs AFTER scope validation.
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleContainsAdministerSystem_CallerNotAdmin_Throws()
+    {
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { nameof(Permission.AdministerSystem) });
+        // Default mock returns Denied for any permission check — caller is NOT an admin.
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => _sut.AssignRoleToTeamAsync(command));
+
+        ex.Message.ShouldContain("AdministerSystem",
+            customMessage: "error must name the required caller-side permission");
+
+        _scopedUserRoleDataProvider.Verify(
+            x => x.AddAsync(It.IsAny<ScopedUserRole>(), true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            failMessage: "no scoped role must be written when the guard rejects the request");
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleContainsSystemOnlyPermission_CallerNotAdmin_Throws()
+    {
+        // Any SystemOnly permission (UserEdit, UserRoleEdit, SpaceEdit, …) triggers the
+        // guard — not only the literal AdministerSystem. Otherwise the attacker just picks
+        // a SystemOnly permission that's easier to bundle.
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 51, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(51, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { nameof(Permission.UserRoleEdit) });
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => _sut.AssignRoleToTeamAsync(command));
+
+        ex.Message.ShouldContain("AdministerSystem",
+            customMessage:
+                "even SystemOnly permissions other than AdministerSystem must require admin " +
+                "to assign — otherwise the attacker picks another SystemOnly permission");
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleOnlyHasSpaceOnlyPermissions_CallerNotAdmin_Succeeds()
+    {
+        // Negative scope: a purely space-level role can be freely assigned — the guard
+        // must only fire when a SystemOnly permission is present. Otherwise we'd break
+        // every legitimate TeamEdit workflow in the product.
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 52, SpaceId = 1 };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(52, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { nameof(Permission.ProjectView), nameof(Permission.DeploymentCreate) });
+        _userRoleDataProvider.Setup(x => x.GetByIdAsync(52, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserRole { Id = 52, Name = "Deployer" });
+        _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+        _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+        _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+
+        await _sut.AssignRoleToTeamAsync(command);
+
+        _scopedUserRoleDataProvider.Verify(
+            x => x.AddAsync(It.Is<ScopedUserRole>(r => r.UserRoleId == 52), true, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _authorizationService.Verify(
+            a => a.CheckPermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            failMessage:
+                "guard must short-circuit when role has no SystemOnly perms — otherwise we " +
+                "burn a DB round-trip on every space-only assignment");
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_MixedPermissionsContainingSystemOnly_CallerNotAdmin_Throws()
+    {
+        // Defence-in-depth: a mixed role (some SpaceOnly + some SystemOnly) still contains
+        // a SystemOnly perm. The guard must trigger — an attacker bundling AdministerSystem
+        // with ProjectView mustn't sneak past.
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 53, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(53, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string>
+            {
+                nameof(Permission.ProjectView),
+                nameof(Permission.AdministerSystem)
+            });
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => _sut.AssignRoleToTeamAsync(command),
+            customMessage: "mixed role containing SystemOnly perm must be rejected for non-admin callers");
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_NoAuthenticatedCaller_Throws()
+    {
+        // If ICurrentUser.Id is null (background job scope leaked in, DI misconfiguration,
+        // test mode), the guard fails closed rather than defaulting to admin — a bad
+        // default would itself be a privesc.
+        _currentUser.Setup(u => u.Id).Returns((int?)null);
+
+        var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 50, SpaceId = null };
+
+        _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(50, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { nameof(Permission.AdministerSystem) });
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => _sut.AssignRoleToTeamAsync(command),
+            customMessage: "guard must fail closed when caller identity is absent");
     }
 
     [Fact]

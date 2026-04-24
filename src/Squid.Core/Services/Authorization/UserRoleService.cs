@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Authorization;
 using Squid.Message.Enums;
@@ -21,7 +22,12 @@ public interface IUserRoleService : IScopedDependency
     Task<UserPermissionSetDto> GetUserPermissionsAsync(int userId, CancellationToken ct = default);
 }
 
-public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScopedUserRoleDataProvider scopedUserRoleDataProvider, ITeamDataProvider teamDataProvider) : IUserRoleService
+public class UserRoleService(
+    IUserRoleDataProvider userRoleDataProvider,
+    IScopedUserRoleDataProvider scopedUserRoleDataProvider,
+    ITeamDataProvider teamDataProvider,
+    IAuthorizationService authorizationService,
+    ICurrentUser currentUser) : IUserRoleService
 {
     public async Task<UserRoleDto> CreateAsync(CreateUserRoleCommand command, CancellationToken ct = default)
     {
@@ -96,6 +102,7 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
     public async Task<ScopedUserRoleDto> AssignRoleToTeamAsync(AssignRoleToTeamCommand command, CancellationToken ct = default)
     {
         await ValidateRoleScopeAsync(command.UserRoleId, command.SpaceId, ct).ConfigureAwait(false);
+        await EnsureCallerCanAssignRoleAsync(command.UserRoleId, ct).ConfigureAwait(false);
 
         var scopedRole = new ScopedUserRole { TeamId = command.TeamId, UserRoleId = command.UserRoleId, SpaceId = command.SpaceId };
 
@@ -114,6 +121,52 @@ public class UserRoleService(IUserRoleDataProvider userRoleDataProvider, IScoped
 
         if (spaceId == null && !canSystem)
             throw new InvalidOperationException("This role contains only space-level permissions and cannot be assigned at system level");
+    }
+
+    /// <summary>
+    /// P0-D.2 privilege-escalation guard. Pre-fix, a caller with <c>TeamEdit</c> could
+    /// attach a role containing <c>AdministerSystem</c> (or any other <c>SystemOnly</c>
+    /// permission) to their own team — transitively escalating themselves to full admin.
+    /// This check requires the caller to already hold <c>AdministerSystem</c> at system
+    /// level before they can hand out a role with system-level permissions.
+    ///
+    /// <para>Runs AFTER <see cref="ValidateRoleScopeAsync"/> so the scope-logic error
+    /// (assigning system-only role at space level) still surfaces first — better
+    /// developer feedback when the request is simply mal-formed.</para>
+    ///
+    /// <para>Fails closed on a null caller identity (null <see cref="ICurrentUser.Id"/>):
+    /// better to refuse the assignment than silently default to "system" / "internal"
+    /// user which would itself be a privesc.</para>
+    /// </summary>
+    private async Task EnsureCallerCanAssignRoleAsync(int userRoleId, CancellationToken ct)
+    {
+        var permissions = await userRoleDataProvider.GetPermissionsAsync(userRoleId, ct).ConfigureAwait(false);
+        var targetPermissions = ParsePermissions(permissions);
+
+        var containsSystemOnly = targetPermissions.Any(p => p.GetScope() == PermissionScope.SystemOnly);
+        if (!containsSystemOnly) return;
+
+        var callerId = currentUser.Id;
+        if (callerId == null)
+            throw new InvalidOperationException(
+                "Cannot assign a role with system-level permissions: no authenticated caller identified. " +
+                "This path must only be reached from an authenticated HTTP context.");
+
+        var request = new PermissionCheckRequest
+        {
+            UserId = callerId.Value,
+            Permission = Permission.AdministerSystem,
+            SpaceId = null,
+        };
+
+        var result = await authorizationService.CheckPermissionAsync(request, ct).ConfigureAwait(false);
+
+        if (!result.IsAuthorized)
+            throw new InvalidOperationException(
+                "Assigning a role that contains system-level permissions (UserView, UserEdit, UserRoleView, " +
+                "UserRoleEdit, SpaceView, SpaceCreate, SpaceEdit, SpaceDelete, AdministerSystem) requires " +
+                "the caller to hold AdministerSystem. This guard prevents a TeamEdit holder from bundling " +
+                "AdministerSystem into a role and handing it to their own team to escalate privileges.");
     }
 
     public async Task RemoveRoleFromTeamAsync(int scopedUserRoleId, CancellationToken ct = default)
