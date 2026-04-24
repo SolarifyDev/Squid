@@ -75,22 +75,36 @@ public class ScriptPodTemplateMergeTests
     }
 
     [Fact]
-    public void CreatePod_TemplateTagOnlyImage_Throws()
+    public void CreatePod_TemplateTagOnlyImage_StrictMode_Throws()
     {
-        // P0-C.1 defence-in-depth: the template.Image override must ALSO pass digest-pin
-        // validation. Otherwise an operator could comply with _settings.ScriptPodImage
-        // pinning but sidestep it via a template override and reopen the registry-compromise
-        // RCE vector.
-        var template = new ScriptPodTemplate { Image = "custom/image:v2" };
+        // P0-C.1 defence-in-depth: the template.Image override must ALSO flow
+        // through ScriptPodImageValidator under the resolved enforcement mode.
+        // We force Strict via env var so the wiring assertion is mode-independent
+        // (the validator's own mode matrix is in ScriptPodImageValidationTests).
+        var previous = System.Environment.GetEnvironmentVariable(
+            Squid.Tentacle.Kubernetes.ScriptPodImageValidator.EnforcementEnvVar);
+        System.Environment.SetEnvironmentVariable(
+            Squid.Tentacle.Kubernetes.ScriptPodImageValidator.EnforcementEnvVar, "strict");
 
-        var thrown = Should.Throw<InvalidOperationException>(
-            () => CaptureCreatedPod(template),
-            customMessage:
-                "template.Image override must be validated. If this test passes, the override " +
-                "path bypasses digest pinning and reopens the RCE vector.");
+        try
+        {
+            var template = new ScriptPodTemplate { Image = "custom/image:v2" };
 
-        thrown.Message.ShouldContain("@sha256:",
-            customMessage: "error must name the required digest format");
+            var thrown = Should.Throw<InvalidOperationException>(
+                () => CaptureCreatedPod(template),
+                customMessage:
+                    "with Strict env var set, template.Image override must be validated. " +
+                    "Regression here lets a tag-only template image bypass _settings pinning " +
+                    "and reopen the registry-compromise RCE vector.");
+
+            thrown.Message.ShouldContain("@sha256:",
+                customMessage: "error must name the required digest format");
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable(
+                Squid.Tentacle.Kubernetes.ScriptPodImageValidator.EnforcementEnvVar, previous);
+        }
     }
 
     // ========================================================================

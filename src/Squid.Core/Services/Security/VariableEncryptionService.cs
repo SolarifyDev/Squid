@@ -2,28 +2,28 @@ using System.Security.Cryptography;
 using System.Text;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Settings.Security;
+using Squid.Message.Hardening;
 
 namespace Squid.Core.Services.Security;
 
 public class VariableEncryptionService : IVariableEncryptionService
 {
     /// <summary>
-    /// Env-var escape hatch for dev / CI scenarios where the operator
-    /// knowingly uses a weak master key (tests, local dev containers,
-    /// ephemeral pipelines). When set to <c>1</c> / <c>true</c> /
-    /// <c>yes</c> (case-insensitive), constructor accepts an empty /
-    /// too-short / all-zero MasterKey instead of throwing.
+    /// Env var that selects the enforcement mode for MasterKey validation.
+    /// Follows the project-wide three-mode hardening pattern (CLAUDE.md
+    /// §"Hardening Three-Mode Enforcement").
     ///
-    /// <para>Default behaviour (env var unset) is fail-closed: service
-    /// refuses to start unless MasterKey is base64-decodable to ≥ 32
-    /// non-zero bytes. Prevents the P0 bug where <c>MasterKey=""</c>
-    /// silently yielded a 0-byte key and deterministic per-variable
-    /// encryption.</para>
+    /// <para>Recognised values: <c>off</c> / <c>warn</c> / <c>strict</c>.
+    /// Default (unset / blank) is <see cref="EnforcementMode.Warn"/> — preserves
+    /// backward compat for deploys that haven't set a real master key yet,
+    /// while logging structured warnings at startup so the insecure config is
+    /// visible in Seq.</para>
     ///
-    /// <para>Pinned literal — renaming breaks dev environments that set
-    /// the env var by its documented name.</para>
+    /// <para>Pinned literal — renaming breaks every operator who set the env
+    /// var by its documented name. See
+    /// <c>VariableEncryptionServiceMasterKeyTests.EnforcementEnvVar_ConstantNamePinned</c>.</para>
     /// </summary>
-    public const string AllowInsecureMasterKeyEnvVar = "SQUID_ALLOW_INSECURE_MASTER_KEY";
+    public const string EnforcementEnvVar = "SQUID_MASTER_KEY_ENFORCEMENT";
 
     private const int RequiredKeyLengthBytes = 32;
 
@@ -34,95 +34,152 @@ public class VariableEncryptionService : IVariableEncryptionService
     public VariableEncryptionService(SecuritySetting securitySetting)
     {
         _securitySetting = securitySetting;
-        _masterKey = ValidateMasterKey(_securitySetting.MasterKey, ReadAllowInsecure());
+        _masterKey = ValidateMasterKey(_securitySetting.MasterKey, ReadEnforcementMode());
     }
 
     /// <summary>
-    /// Validates a base64-encoded master key and returns the decoded
-    /// bytes. Called from the constructor and exposed <c>internal static</c>
-    /// so the unit suite can exercise every failure mode without a
-    /// full DI container. Throws <see cref="InvalidOperationException"/>
-    /// with an actionable message for each rejection case.
-    /// <list type="bullet">
-    ///   <item>null / empty / whitespace: "set Security:VariableEncryption:MasterKey"</item>
-    ///   <item>not valid base64: "MasterKey is not valid base64"</item>
-    ///   <item>decoded length &lt; 32 bytes: "MasterKey must be at least 32 bytes"</item>
-    ///   <item>all zero bytes: "MasterKey is all-zero — use openssl rand -base64 32"</item>
+    /// Validates a base64-encoded master key and returns the decoded bytes.
+    /// Called from the constructor and exposed <c>internal static</c> so the
+    /// unit suite can exercise every (input × mode) cell without a full DI
+    /// container.
+    ///
+    /// <para><b>Behaviour matrix</b>:</para>
+    /// <list type="table">
+    ///   <item><term>null / empty / whitespace</term>
+    ///         <description>Off → return <c>byte[0]</c>; Warn → <c>byte[0]</c> +
+    ///         warn; Strict → throw.</description></item>
+    ///   <item><term>not valid base64</term>
+    ///         <description>ALWAYS throw. No mode can save you — broken format
+    ///         means no decoded key bytes exist for the crypto path.</description></item>
+    ///   <item><term>decoded &lt; 32 bytes</term>
+    ///         <description>Off → return decoded; Warn → decoded + warn;
+    ///         Strict → throw.</description></item>
+    ///   <item><term>all-zero bytes</term>
+    ///         <description>Off → return decoded; Warn → decoded + warn;
+    ///         Strict → throw.</description></item>
+    ///   <item><term>valid (32+ random non-zero bytes)</term>
+    ///         <description>All modes return decoded bytes silently.</description></item>
     /// </list>
-    /// The <paramref name="allowInsecure"/> flag bypasses all entropy /
-    /// length checks (but NOT the base64-format check — a malformed key
-    /// can never produce working crypto).
     /// </summary>
-    internal static byte[] ValidateMasterKey(string? rawBase64, bool allowInsecure)
+    internal static byte[] ValidateMasterKey(string? rawBase64, EnforcementMode mode)
     {
         const string settingPath = "Security:VariableEncryption:MasterKey";
 
         if (string.IsNullOrWhiteSpace(rawBase64))
+            return EnforceEmpty(mode, settingPath);
+
+        var decoded = TryDecodeBase64OrThrow(rawBase64, settingPath);
+
+        if (decoded.Length < RequiredKeyLengthBytes)
+            return EnforceTooShort(mode, decoded, settingPath);
+
+        if (IsAllZero(decoded))
+            return EnforceAllZero(mode, decoded, settingPath);
+
+        return decoded;
+    }
+
+    private static byte[] EnforceEmpty(EnforcementMode mode, string settingPath)
+    {
+        switch (mode)
         {
-            if (allowInsecure)
-            {
-                Log.Warning(
-                    "MasterKey is empty but {EnvVar}=1 is set — proceeding with a 0-byte key. " +
-                    "This is catastrophically insecure; dev/CI use only.",
-                    AllowInsecureMasterKeyEnvVar);
+            case EnforcementMode.Off:
                 return Array.Empty<byte>();
-            }
 
-            throw new InvalidOperationException(
-                $"MasterKey is empty or missing. Set {settingPath} in appsettings.json " +
-                "to a base64-encoded 32-byte random value (e.g. `openssl rand -base64 32`). " +
-                $"For dev / CI, set {AllowInsecureMasterKeyEnvVar}=1 to bypass this check.");
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "MasterKey is empty (config path {SettingPath}). Proceeding with a 0-byte key — " +
+                    "every encrypted variable is recoverable from a DB dump without the key. " +
+                    "Backward-compat mode; set {EnvVar}=strict to refuse start, or fix MasterKey to " +
+                    "a base64-encoded 32-byte random value (`openssl rand -base64 32`).",
+                    settingPath, EnforcementEnvVar);
+                return Array.Empty<byte>();
+
+            case EnforcementMode.Strict:
+                throw new InvalidOperationException(
+                    $"MasterKey is empty or missing. Set {settingPath} in appsettings.json to a " +
+                    "base64-encoded 32-byte random value (e.g. `openssl rand -base64 32`). " +
+                    $"To suppress this rejection, set {EnforcementEnvVar}=warn (allow + log warning) " +
+                    $"or {EnforcementEnvVar}=off (silent).");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
         }
+    }
 
-        byte[] decoded;
+    private static byte[] TryDecodeBase64OrThrow(string rawBase64, string settingPath)
+    {
         try
         {
-            decoded = Convert.FromBase64String(rawBase64);
+            return Convert.FromBase64String(rawBase64);
         }
         catch (FormatException ex)
         {
+            // Always throw on malformed input — no enforcement mode can recover
+            // because there are no decoded key bytes to use. Mode only matters
+            // when there's a "valid-but-insecure" choice between accept and reject.
             throw new InvalidOperationException(
-                $"MasterKey is not valid base64. Set {settingPath} to a base64-encoded 32-byte " +
-                "value (e.g. `openssl rand -base64 32`). Current value could not be decoded.",
+                $"MasterKey at {settingPath} is not valid base64 — it could not be decoded. Use a " +
+                "base64-encoded 32-byte value (e.g. `openssl rand -base64 32`). This rejection is " +
+                "unconditional regardless of the enforcement mode.",
                 ex);
         }
+    }
 
-        if (decoded.Length < RequiredKeyLengthBytes)
+    private static byte[] EnforceTooShort(EnforcementMode mode, byte[] decoded, string settingPath)
+    {
+        switch (mode)
         {
-            if (allowInsecure)
-            {
-                Log.Warning(
-                    "MasterKey is {Actual} bytes (need ≥ {Required}) but {EnvVar}=1 is set — " +
-                    "proceeding with the undersized key. Dev/CI use only.",
-                    decoded.Length, RequiredKeyLengthBytes, AllowInsecureMasterKeyEnvVar);
+            case EnforcementMode.Off:
                 return decoded;
-            }
 
-            throw new InvalidOperationException(
-                $"MasterKey decodes to {decoded.Length} bytes; at least {RequiredKeyLengthBytes} bytes " +
-                $"are required for AES-256 key derivation. Regenerate with `openssl rand -base64 32`. " +
-                $"For dev / CI, set {AllowInsecureMasterKeyEnvVar}=1 to bypass this check.");
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "MasterKey at {SettingPath} decodes to {Actual} bytes (recommended ≥ {Required}). " +
+                    "Proceeding with the short key — KDF still derives a 32-byte working key but the " +
+                    "input entropy is reduced. Backward-compat mode; set {EnvVar}=strict to refuse " +
+                    "start, or regenerate with `openssl rand -base64 32`.",
+                    settingPath, decoded.Length, RequiredKeyLengthBytes, EnforcementEnvVar);
+                return decoded;
+
+            case EnforcementMode.Strict:
+                throw new InvalidOperationException(
+                    $"MasterKey at {settingPath} decodes to {decoded.Length} bytes; at least " +
+                    $"{RequiredKeyLengthBytes} bytes are required for AES-256 key derivation. " +
+                    $"Regenerate with `openssl rand -base64 32`. To suppress this rejection, set " +
+                    $"{EnforcementEnvVar}=warn (allow + log) or {EnforcementEnvVar}=off (silent).");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
         }
+    }
 
-        if (IsAllZero(decoded))
+    private static byte[] EnforceAllZero(EnforcementMode mode, byte[] decoded, string settingPath)
+    {
+        switch (mode)
         {
-            if (allowInsecure)
-            {
-                Log.Warning(
-                    "MasterKey is all-zero bytes but {EnvVar}=1 is set — proceeding with a " +
-                    "predictable key. Dev/CI use only.",
-                    AllowInsecureMasterKeyEnvVar);
+            case EnforcementMode.Off:
                 return decoded;
-            }
 
-            throw new InvalidOperationException(
-                $"MasterKey is all-zero bytes — this is the committed appsettings.json default and " +
-                "is identifiable by any attacker without knowing the key. Regenerate with " +
-                $"`openssl rand -base64 32` and set {settingPath} in your deployment config. " +
-                $"For dev / CI where all-zero keys are acceptable, set {AllowInsecureMasterKeyEnvVar}=1.");
+            case EnforcementMode.Warn:
+                Log.Warning(
+                    "MasterKey at {SettingPath} is all-zero bytes — recognisable to an attacker without " +
+                    "needing the key, making DB-dump offline recovery trivial. Backward-compat mode " +
+                    "(typically the committed appsettings default). Set {EnvVar}=strict to refuse start, " +
+                    "or regenerate with `openssl rand -base64 32`.",
+                    settingPath, EnforcementEnvVar);
+                return decoded;
+
+            case EnforcementMode.Strict:
+                throw new InvalidOperationException(
+                    $"MasterKey at {settingPath} is all-zero bytes — identifiable by any attacker " +
+                    "without knowing the key. Regenerate with `openssl rand -base64 32` and set " +
+                    $"{settingPath} in your deployment config. To suppress this rejection, set " +
+                    $"{EnforcementEnvVar}=warn (allow + log) or {EnforcementEnvVar}=off (silent).");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unrecognised EnforcementMode");
         }
-
-        return decoded;
     }
 
     private static bool IsAllZero(byte[] bytes)
@@ -133,21 +190,8 @@ public class VariableEncryptionService : IVariableEncryptionService
         return true;
     }
 
-    private static bool ReadAllowInsecure()
-    {
-        // Fully-qualified System.Environment — the Squid.Core namespace
-        // imports an `Environment` entity type (deployment target), and
-        // the unqualified reference is ambiguous in this file.
-        var raw = System.Environment.GetEnvironmentVariable(AllowInsecureMasterKeyEnvVar);
-
-        if (string.IsNullOrWhiteSpace(raw)) return false;
-
-        var normalized = raw.Trim().ToLowerInvariant();
-
-        return normalized.Equals("1", StringComparison.Ordinal)
-            || normalized.Equals("true", StringComparison.Ordinal)
-            || normalized.Equals("yes", StringComparison.Ordinal);
-    }
+    private static EnforcementMode ReadEnforcementMode()
+        => EnforcementModeReader.Read(EnforcementEnvVar);
 
     public string EncryptAsync(string plainText, int variableSetId)
     {

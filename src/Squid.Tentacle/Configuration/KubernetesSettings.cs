@@ -6,13 +6,15 @@ public class KubernetesSettings
     public string PvcClaimName { get; set; } = "squid-tentacle-workspace";
     public bool UseScriptPods { get; set; } = false;
 
-    // P0-C.1 (2026-04-24 audit): default is empty string, fail-closed at pod creation.
-    // Pre-fix default was "bitnami/kubectl:latest" — a registry compromise or tag repoint
-    // silently swapped a malicious image into every script pod in the cluster.
-    // Operators MUST set this to a '@sha256:<64-hex>' digest-pinned reference. For dev /
-    // CI scenarios where pinning is impractical, set SQUID_ALLOW_UNPINNED_SCRIPT_POD_IMAGE=1
-    // to accept tag-based references — see ScriptPodImageValidator for the full matrix.
-    public string ScriptPodImage { get; set; } = "";
+    // P0-C.1 (refactored Phase-3 to non-breaking three-mode pattern): default
+    // remains the historical "bitnami/kubectl:latest" so existing deploys keep
+    // working. ScriptPodImageValidator runs in Warn mode by default — emits a
+    // structured Serilog warning at every pod creation pointing at the
+    // SQUID_SCRIPT_POD_IMAGE_ENFORCEMENT env var. Production deploys should
+    // override with a digest-pinned reference (e.g. "image@sha256:<64-hex>") AND
+    // set SQUID_SCRIPT_POD_IMAGE_ENFORCEMENT=strict to refuse tag-only at startup.
+    // See ScriptPodImageValidator + CLAUDE.md §"Hardening Three-Mode Enforcement".
+    public string ScriptPodImage { get; set; } = "bitnami/kubectl:latest";
     public string ScriptPodServiceAccount { get; set; } = "squid-script-sa";
     public string TentacleNamespace { get; set; } = "default";
     public int ScriptPodTimeoutSeconds { get; set; } = 1800;

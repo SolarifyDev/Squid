@@ -45,6 +45,18 @@ kubernetes:
   namespace: "default"
 
 scriptPod:
+  # Image used by the ephemeral pod the K8s tentacle creates to execute deploy
+  # scripts (kubectl apply / helm upgrade / bash). NOT the application image.
+  #
+  # Default is intentionally tag-only for backward compat; ScriptPodImageValidator
+  # runs in Warn mode by default and emits a structured Serilog warning at every
+  # pod creation. For production hardening:
+  #   1. Pin a digest:    image: bitnami/kubectl@sha256:<64-hex>
+  #      (get with `docker inspect --format='{{index .RepoDigests 0}}' bitnami/kubectl:1.29`)
+  #   2. Set env var:     SQUID_SCRIPT_POD_IMAGE_ENFORCEMENT=strict
+  #      so the agent refuses to create pods with unpinned images at startup.
+  # See: src/Squid.Tentacle/Kubernetes/ScriptPodImageValidator.cs +
+  # ~/.claude/CLAUDE.md §"Hardening Three-Mode Enforcement".
   image: bitnami/kubectl:latest
   serviceAccount: ""
   isolateWorkspace: false

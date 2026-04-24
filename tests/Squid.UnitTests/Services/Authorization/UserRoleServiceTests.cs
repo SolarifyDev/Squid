@@ -339,10 +339,16 @@ public class UserRoleServiceTests
     // granting themselves full admin. The guard refuses unless the caller themselves
     // already holds AdministerSystem at system level.
     //
-    // These tests pin every branch of the guard — without coverage a silent removal of
-    // the check would re-open the full-admin privesc vector. Existing scope-validation
-    // tests (AssignRoleToTeam_SpaceOnlyRoleAtSystemLevel_Throws etc.) remain green
-    // because the guard runs AFTER scope validation.
+    // Phase-3 refactor: integrated under the project-wide three-mode hardening pattern
+    // (CLAUDE.md §"Hardening Three-Mode Enforcement"). UNLIKE the deployment-config
+    // validators (B.1, C.1, T.1, T.8), this guard defaults to STRICT — it closes a
+    // true privesc vector, not a deployment-configuration choice. Operators who
+    // genuinely need legacy-permissive behaviour during a migration window opt OUT
+    // explicitly via SQUID_ROLE_ASSIGNMENT_ENFORCEMENT=warn|off.
+    //
+    // The test mock framework defaults to Denied-for-everything (set up in the test
+    // class constructor), so all "caller is not admin" tests use that baseline. The
+    // env var is left unset — Strict default applies.
 
     [Fact]
     public async Task AssignRoleToTeam_RoleContainsAdministerSystem_CallerNotAdmin_Throws()
@@ -451,6 +457,112 @@ public class UserRoleServiceTests
         await Should.ThrowAsync<InvalidOperationException>(
             () => _sut.AssignRoleToTeamAsync(command),
             customMessage: "guard must fail closed when caller identity is absent");
+    }
+
+    // ── Phase-3 three-mode coverage ──────────────────────────────────────────
+
+    [Fact]
+    public void RoleAssignmentEnforcementEnvVar_ConstantNamePinned()
+    {
+        UserRoleService.RoleAssignmentEnforcementEnvVar.ShouldBe("SQUID_ROLE_ASSIGNMENT_ENFORCEMENT");
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleContainsAdministerSystem_CallerNotAdmin_WarnMode_AllowsButLogs()
+    {
+        // Operator opted out of Strict via env var (e.g. during a migration window
+        // where existing automation needs to keep running). Guard logs but allows.
+        // Note: the security default is Strict — Warn must be an explicit opt-out.
+        var previous = Environment.GetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar);
+        Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, "warn");
+
+        try
+        {
+            var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 60, SpaceId = null };
+
+            _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(60, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { nameof(Permission.AdministerSystem) });
+            _userRoleDataProvider.Setup(x => x.GetByIdAsync(60, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new UserRole { Id = 60, Name = "MigrationAdmin" });
+            _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+            _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+            _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+
+            await _sut.AssignRoleToTeamAsync(command);
+
+            _scopedUserRoleDataProvider.Verify(
+                x => x.AddAsync(It.Is<ScopedUserRole>(r => r.UserRoleId == 60), true, It.IsAny<CancellationToken>()),
+                Times.Once,
+                failMessage: "Warn mode must allow the assignment — operator explicitly opted out of Strict");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, previous);
+        }
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleContainsAdministerSystem_CallerNotAdmin_OffMode_SkipsCheckEntirely()
+    {
+        // Off mode: skip the check entirely. CheckPermissionAsync is never even called.
+        var previous = Environment.GetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar);
+        Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, "off");
+
+        try
+        {
+            var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 61, SpaceId = null };
+
+            _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(61, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { nameof(Permission.AdministerSystem) });
+            _userRoleDataProvider.Setup(x => x.GetByIdAsync(61, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new UserRole { Id = 61, Name = "OffAdmin" });
+            _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+            _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+            _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+
+            await _sut.AssignRoleToTeamAsync(command);
+
+            _authorizationService.Verify(
+                a => a.CheckPermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()),
+                Times.Never,
+                failMessage: "Off mode must short-circuit BEFORE the permission check — saves a DB round-trip");
+
+            _scopedUserRoleDataProvider.Verify(
+                x => x.AddAsync(It.Is<ScopedUserRole>(r => r.UserRoleId == 61), true, It.IsAny<CancellationToken>()),
+                Times.Once);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, previous);
+        }
+    }
+
+    [Fact]
+    public async Task AssignRoleToTeam_RoleContainsAdministerSystem_DefaultMode_IsStrict()
+    {
+        // Default behaviour (env var unset) MUST be Strict. This pin guards against
+        // an accidental switch to Warn-default that would silently reopen the privesc.
+        var previous = Environment.GetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar);
+        Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, null);
+
+        try
+        {
+            var command = new AssignRoleToTeamCommand { TeamId = 10, UserRoleId = 62, SpaceId = null };
+
+            _userRoleDataProvider.Setup(x => x.GetPermissionsAsync(62, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { nameof(Permission.AdministerSystem) });
+
+            await Should.ThrowAsync<InvalidOperationException>(
+                () => _sut.AssignRoleToTeamAsync(command),
+                customMessage:
+                    "default mode for the role-assignment guard MUST be Strict. If this throws " +
+                    "ShouldNotThrow, someone changed the default to Warn — silently reopening the " +
+                    "P0-D.2 privesc vector. The guard's whole point is to fail closed by default.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(UserRoleService.RoleAssignmentEnforcementEnvVar, previous);
+        }
     }
 
     [Fact]
