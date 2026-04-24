@@ -34,12 +34,14 @@ namespace Squid.IntegrationTests.Services.Machines.Upgrade;
 /// </summary>
 public sealed class UpgradeDispatchLockReconcilerIntegrationTests
 {
-    // Matches src/Squid.Api/appsettings.json RedisCacheConnectionString. If prod
-    // Redis moves off localhost, update here — integration tests assume a local
-    // Redis dev container (same convention as the Postgres connection string in
-    // appsettings.json for this project).
-    private const string RedisConnectionString =
-        "127.0.0.1:6379,password=,ssl=False,abortConnect=False,syncTimeout=5000,allowAdmin=true";
+    // Default matches src/Squid.Api/appsettings.json RedisCacheConnectionString,
+    // which is also what the GitHub Actions `redis` service container exposes
+    // at localhost:6379. An env var override lets operators run this test
+    // against a different Redis (remote staging, TLS-terminated, etc.)
+    // without editing code — conventional name is SQUID_TEST_REDIS_CONN_STRING.
+    private static readonly string RedisConnectionString =
+        Environment.GetEnvironmentVariable("SQUID_TEST_REDIS_CONN_STRING")
+        ?? "127.0.0.1:6379,password=,ssl=False,abortConnect=False,syncTimeout=5000,allowAdmin=true";
 
     // An ID far outside any range used by real machines or other integration
     // tests — prevents accidental collision if this test and another
