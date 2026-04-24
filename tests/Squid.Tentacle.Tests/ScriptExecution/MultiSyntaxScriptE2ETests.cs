@@ -157,27 +157,62 @@ public sealed class MultiSyntaxScriptE2ETests : IDisposable
     [Fact]
     public void CSharp_PrintHello_CapturedInLogs()
     {
+        // Same async-log-drain + interpreter-startup-race pattern as Python /
+        // F# — Console.WriteLine is line-buffered and `dotnet-script` startup
+        // is slow on a loaded CI runner. Use the polling helper rather than
+        // RunAndCollectOutput so the test doesn't race the OutputDataReceived
+        // drain. Console.Out.Flush() defeats the line-buffer vs exit race on
+        // top of that.
         if (!IsCommandAvailable("dotnet-script", "--version")) return;
 
-        var output = RunAndCollectOutput(
-            """Console.WriteLine("hello-from-csharp");""",
+        var command = MakeCommand(
+            """
+            Console.WriteLine("hello-from-csharp");
+            Console.Out.Flush();
+            """,
             ScriptType.CSharp);
+        _service.StartScript(command);
+        _createdTickets.Add(command.ScriptTicket);
 
-        output.allText.ShouldContain("hello-from-csharp");
-        output.exitCode.ShouldBe(0);
+        var logs = WaitForLogsContainingAll(command.ScriptTicket, new[] { "hello-from-csharp" }, TimeSpan.FromSeconds(60));
+        var allText = string.Join("\n", logs.Select(l => l.Text));
+
+        allText.ShouldContain("hello-from-csharp");
+
+        var finalStatus = _service.GetStatus(new ScriptStatusRequest(command.ScriptTicket, 0));
+        finalStatus.ExitCode.ShouldBe(0);
     }
 
     [Fact]
     public void FSharp_PrintHello_CapturedInLogs()
     {
+        // Same async-log-drain race as Python_PrintHello (see line 42-71 above) —
+        // `dotnet fsi` startup is slow and `printfn` is line-buffered, so on a
+        // loaded CI runner the process can exit before the OutputDataReceived
+        // handlers drain the final stdout line, leaving a clean Complete state
+        // with empty logs. Two-layer fix mirroring the Python case:
+        //   1. F# script flushes stdout explicitly — defeats `printfn`'s line
+        //      buffering vs process-exit race.
+        //   2. Poll GetStatus with a cursor until the expected substring lands
+        //      (or 60s timeout) — decouples from the process Exited timing.
         if (!IsCommandAvailable("dotnet", "fsi", "--version")) return;
 
-        var output = RunAndCollectOutput(
-            """printfn "hello-from-fsharp" """,
+        var command = MakeCommand(
+            """
+            printfn "hello-from-fsharp"
+            System.Console.Out.Flush()
+            """,
             ScriptType.FSharp);
+        _service.StartScript(command);
+        _createdTickets.Add(command.ScriptTicket);
 
-        output.allText.ShouldContain("hello-from-fsharp");
-        output.exitCode.ShouldBe(0);
+        var logs = WaitForLogsContainingAll(command.ScriptTicket, new[] { "hello-from-fsharp" }, TimeSpan.FromSeconds(60));
+        var allText = string.Join("\n", logs.Select(l => l.Text));
+
+        allText.ShouldContain("hello-from-fsharp");
+
+        var finalStatus = _service.GetStatus(new ScriptStatusRequest(command.ScriptTicket, 0));
+        finalStatus.ExitCode.ShouldBe(0);
     }
 
     // ========================================================================
