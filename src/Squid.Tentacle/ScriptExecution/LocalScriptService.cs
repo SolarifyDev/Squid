@@ -639,8 +639,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 if (file.EncryptionPassword != null)
                     File.WriteAllText(filePath + ".key", file.EncryptionPassword);
             }
-            catch
+            finally
             {
+                // P0-T.7 (2026-04-24 audit): cleanup must always run, but the exception
+                // must bubble up to the caller. Pre-fix this was `catch { cleanup; }` with
+                // no rethrow — write failures silently disappeared and the script ran
+                // against an incomplete workspace. Empty catch reopens that vector; use
+                // finally + implicit rethrow instead.
                 if (File.Exists(tempPath))
                     File.Delete(tempPath);
             }

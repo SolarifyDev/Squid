@@ -707,6 +707,116 @@ public class LocalScriptServiceTests : IDisposable
         }
     }
 
+    // P0-T.7 (2026-04-24 audit): WriteAdditionalFiles had an empty catch block that
+    // swallowed every write failure (DataStream transfer error, disk full, permission
+    // denied, target-path collision, …) and kept iterating. The script then executed
+    // against an incomplete workspace and produced silently-wrong results. The fix
+    // reroutes cleanup into a finally block and rethrows — the caller must know the
+    // workspace is not usable and fail the script start path-fast.
+
+    [Fact]
+    public void WriteAdditionalFiles_TargetPathIsDirectory_RethrowsInsteadOfSilentlySucceeding()
+    {
+        // File.Move can't overwrite a directory — this forces a real exception mid-loop.
+        // Pre-fix the empty catch swallowed it and the test's later assertion (no file
+        // at target.txt) would pass silently. Post-fix the call itself throws.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-dir-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "target.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("target.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1, 2, 3 }), null)
+            };
+
+            Should.Throw<Exception>(
+                () => LocalScriptService.WriteAdditionalFiles(workDir, files),
+                customMessage:
+                    "write failures must rethrow. A swallowed exception here lets the script " +
+                    "run with a missing input file — silently-wrong deploys. Empty catch is " +
+                    "the P0-T.7 vector; regressing reopens it.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteAdditionalFiles_FirstFileFails_SubsequentFilesNotWritten()
+    {
+        // Stronger variant: if the first file fails, we must NOT continue writing
+        // subsequent files — the caller needs a clean failure, not a partial workspace.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-order-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "a.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("a.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null),   // fails
+                new("b.txt", global::Halibut.DataStream.FromBytes(new byte[] { 2 }), null),   // would succeed if loop continued
+            };
+
+            Should.Throw<Exception>(() => LocalScriptService.WriteAdditionalFiles(workDir, files));
+
+            File.Exists(Path.Combine(workDir, "b.txt")).ShouldBeFalse(
+                customMessage:
+                    "after the first file write fails the loop must NOT continue — a partial " +
+                    "workspace is worse than a clean failure, and the caller sees only the first " +
+                    "exception anyway.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteAdditionalFiles_WriteFails_TempFileCleanedUp()
+    {
+        // Cleanup contract: even when we rethrow, the temp file from Path.GetTempFileName
+        // must be removed. Otherwise a torrent of failed writes leaks bytes under /tmp.
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-test-rethrow-cleanup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        var tempFilesBefore = Directory.GetFiles(Path.GetTempPath(), "tmp*")
+            .Select(Path.GetFileName)
+            .ToHashSet();
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(workDir, "target.txt"));
+
+            var files = new List<ScriptFile>
+            {
+                new("target.txt", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null)
+            };
+
+            Should.Throw<Exception>(() => LocalScriptService.WriteAdditionalFiles(workDir, files));
+
+            var tempFilesAfter = Directory.GetFiles(Path.GetTempPath(), "tmp*")
+                .Select(Path.GetFileName)
+                .ToHashSet();
+
+            var leaked = tempFilesAfter.Except(tempFilesBefore).ToList();
+
+            leaked.ShouldBeEmpty(
+                customMessage:
+                    $"temp file(s) leaked into {Path.GetTempPath()} after failed write: " +
+                    $"[{string.Join(", ", leaked)}]. Cleanup must happen in finally before rethrow.");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
     // ========================================================================
     // Drain / Graceful Shutdown
     // ========================================================================
