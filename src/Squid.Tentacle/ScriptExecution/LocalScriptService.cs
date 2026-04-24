@@ -74,51 +74,77 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
 
-        Directory.CreateDirectory(workDir);
-        SetDirectoryPermissions(workDir);
-
-        var stateStore = _stateStoreFactory.Create(workDir);
-        stateStore.Save(new ScriptState
+        // P0-T.5 (2026-04-24 audit): ownership of isolationHandle stays with the local
+        // until RunningScript is constructed. Every step between acquire and that
+        // construction can throw (Directory.CreateDirectory, state-store save, file
+        // writes, process start). Pre-fix, any such exception leaked the handle and
+        // the mutex stayed held forever — subsequent FullIsolation scripts with the
+        // same mutex name blocked until their configured timeout fired. The T.7 fix
+        // made this more reachable because WriteAdditionalFiles now rethrows.
+        //
+        // The try / catch transfers disposal responsibility in one place: if we get
+        // past RunningScript construction, ownership is RunningScript's (it disposes
+        // the handle on Complete / Cancel / error). We null out the local so the
+        // catch block doesn't double-dispose.
+        try
         {
-            TicketId = ticketId,
-            Progress = ScriptProgress.Starting,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+            Directory.CreateDirectory(workDir);
+            SetDirectoryPermissions(workDir);
 
-        var syntax = command.ScriptSyntax;
-        WriteScriptFile(workDir, command.ScriptBody, syntax);
-        WriteAdditionalFiles(workDir, command.Files);
+            var stateStore = _stateStoreFactory.Create(workDir);
+            stateStore.Save(new ScriptState
+            {
+                TicketId = ticketId,
+                Progress = ScriptProgress.Starting,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
 
-        var process = StartProcess(workDir, command);
-        var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
-        var traceId = ResolveParentTraceId(command);
-        var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
+            var syntax = command.ScriptSyntax;
+            WriteScriptFile(workDir, command.ScriptBody, syntax);
+            WriteAdditionalFiles(workDir, command.Files);
 
-        BeginReadOutput(process, running);
-        _scripts[ticketId] = running;
+            var process = StartProcess(workDir, command);
+            var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
+            var traceId = ResolveParentTraceId(command);
+            var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
 
-        stateStore.Save(new ScriptState
+            // Ownership transferred — RunningScript.Dispose now owns the mutex handle.
+            isolationHandle = null;
+
+            BeginReadOutput(process, running);
+            _scripts[ticketId] = running;
+
+            stateStore.Save(new ScriptState
+            {
+                TicketId = ticketId,
+                Progress = ScriptProgress.Running,
+                ProcessId = process.Id,
+                // OS-reported start time captured alongside the PID so orphan-state
+                // detection (TryBuildStatusFromPersistedLogs) can distinguish
+                // "same process still running" from "PID got recycled to an
+                // unrelated process". Without this, a long-running tentacle
+                // eventually hits PID wrap and reports a recycled PID's live
+                // status as the original script's — reintroducing the
+                // observer-hang bug's latent sequel.
+                ProcessStartedAt = TryGetProcessStartTime(process),
+                CreatedAt = DateTimeOffset.UtcNow,
+                StartedAt = DateTimeOffset.UtcNow
+            });
+
+            Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
+
+            WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
+
+            return BuildStatus(command.ScriptTicket, running);
+        }
+        catch
         {
-            TicketId = ticketId,
-            Progress = ScriptProgress.Running,
-            ProcessId = process.Id,
-            // OS-reported start time captured alongside the PID so orphan-state
-            // detection (TryBuildStatusFromPersistedLogs) can distinguish
-            // "same process still running" from "PID got recycled to an
-            // unrelated process". Without this, a long-running tentacle
-            // eventually hits PID wrap and reports a recycled PID's live
-            // status as the original script's — reintroducing the
-            // observer-hang bug's latent sequel.
-            ProcessStartedAt = TryGetProcessStartTime(process),
-            CreatedAt = DateTimeOffset.UtcNow,
-            StartedAt = DateTimeOffset.UtcNow
-        });
-
-        Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
-
-        WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
-
-        return BuildStatus(command.ScriptTicket, running);
+            // Dispose releases the mutex; LockRelease.Dispose is idempotent so re-entry
+            // during exception unwinding is safe. Null after the successful RunningScript
+            // transfer means this is a no-op on the happy path.
+            isolationHandle?.Dispose();
+            throw;
+        }
     }
 
     private static string? ResolveParentTraceId(StartScriptCommand command)

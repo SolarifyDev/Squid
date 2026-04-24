@@ -818,6 +818,74 @@ public class LocalScriptServiceTests : IDisposable
     }
 
     // ========================================================================
+    // P0-T.5: mutex-leak on mid-acquire exception
+    // ========================================================================
+    //
+    // Pre-fix, StartScript acquired the isolation mutex at the top then proceeded
+    // through several can-throw steps (directory creation, file writes, process
+    // start). Any exception between the acquire line and the RunningScript
+    // construction that transfers ownership left the mutex held forever —
+    // subsequent scripts needing the same FullIsolation lock hung indefinitely.
+    //
+    // With the T.7 rethrow fix landed, WriteAdditionalFiles now reliably throws
+    // on write failure, making this leak much more reachable in practice.
+
+    [Fact]
+    public void StartScript_WriteFailsAfterMutexAcquire_MutexReleased()
+    {
+        var mutexName = $"t5-leak-{Guid.NewGuid():N}";
+        var firstTicketId = Guid.NewGuid().ToString("N");
+        var firstWorkDir = Path.Combine(Path.GetTempPath(), $"squid-tentacle-{firstTicketId}");
+        Directory.CreateDirectory(firstWorkDir);
+
+        // Pre-create a directory where WriteAdditionalFiles will try to place a file.
+        // File.Move(tempfile, "blocker") then throws → T.7 rethrow propagates out of
+        // WriteAdditionalFiles → StartScript exits via the throw while the mutex is
+        // still held by the local isolationHandle. Post-fix, the fix guarantees the
+        // handle gets disposed on that path.
+        Directory.CreateDirectory(Path.Combine(firstWorkDir, "blocker"));
+
+        var failingCommand = new StartScriptCommand(
+            new ScriptTicket(firstTicketId),
+            "echo 'never runs'",
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromSeconds(30),
+            mutexName,
+            Array.Empty<string>(),
+            null,
+            TimeSpan.Zero,
+            new ScriptFile("blocker", global::Halibut.DataStream.FromBytes(new byte[] { 1 }), null));
+
+        _createdTickets.Add(firstTicketId);
+
+        Should.Throw<Exception>(() => _service.StartScript(failingCommand),
+            customMessage: "first script must fail to trigger the mutex-leak path we're guarding");
+
+        // Second script with SAME FullIsolation mutex name. If the mutex leaked, the
+        // acquire blocks for its own timeout and this call throws with "Failed to
+        // acquire isolation mutex". Post-fix it succeeds quickly.
+        var secondTicketId = Guid.NewGuid().ToString("N");
+        var secondCommand = new StartScriptCommand(
+            new ScriptTicket(secondTicketId),
+            "echo 'should start'",
+            ScriptIsolationLevel.FullIsolation,
+            TimeSpan.FromSeconds(5),
+            mutexName,
+            Array.Empty<string>(),
+            null,
+            TimeSpan.Zero);
+
+        _createdTickets.Add(secondTicketId);
+
+        Should.NotThrow(() => _service.StartScript(secondCommand),
+            customMessage:
+                "P0-T.5: isolation mutex was not released after the first script failed " +
+                "mid-setup. Subsequent scripts needing the same FullIsolation lock hang " +
+                "until their configured timeout fires. Regressing this leak brings back " +
+                "the 'stuck mutex after failed script' outage class.");
+    }
+
+    // ========================================================================
     // Drain / Graceful Shutdown
     // ========================================================================
 
