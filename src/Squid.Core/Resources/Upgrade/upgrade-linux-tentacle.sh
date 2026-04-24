@@ -197,13 +197,31 @@ emit_event() {
   local now
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Cap: don't allow a runaway loop to fill the disk.
-  local line_count=0
-  if [ -f "$EVENTS_FILE" ]; then
-    line_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
-  fi
-  if [ "$line_count" -ge "$EVENTS_MAX" ]; then
-    return 0
+  # Terminal-state events ALWAYS emit regardless of cap. These are the
+  # events operators MUST see for diagnosis — losing one because we hit
+  # the cap on the worst-case path (apt fail → yum fail → tarball fail
+  # → rollback fail) would strand the operator with no record of the
+  # critical final state. The list here must stay in sync with
+  # UPGRADE_EVENTS_TERMINAL_KINDS in SquidWeb (the FE uses the same
+  # set to stop polling once a terminal event arrives). Pinned by
+  # Script_EmitEvent_TerminalEventsBypassCap.
+  local is_terminal=0
+  case "$kind" in
+    success|rollback-ok|rollback-fail|rollback-critical-failed|method-exhausted|restart-fail|healthz-fail)
+      is_terminal=1
+      ;;
+  esac
+
+  # Cap: don't allow a runaway loop to fill the disk. Terminal events
+  # bypass so the operator-visible narrative always reaches a conclusion.
+  if [ "$is_terminal" -eq 0 ]; then
+    local line_count=0
+    if [ -f "$EVENTS_FILE" ]; then
+      line_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
+    fi
+    if [ "$line_count" -ge "$EVENTS_MAX" ]; then
+      return 0
+    fi
   fi
 
   # Minimal JSON-safe escaping: drop quotes and backslashes from msg. Not

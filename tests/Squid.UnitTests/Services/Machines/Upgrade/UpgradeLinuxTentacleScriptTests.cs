@@ -711,6 +711,83 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
+    public void Script_EmitEvent_TerminalEventsBypassCap()
+    {
+        // P0-F4 regression guard (2026-04-24 audit).
+        //
+        // Bug: EVENTS_MAX=50 is a blanket cap in emit_event — once 50
+        // events have been written, ALL subsequent emit_event calls
+        // become no-ops, INCLUDING the terminal-state events operators
+        // most need to see (success, rollback-*, *-fail, method-exhausted).
+        //
+        // Worst-case path that reaches the cap: apt-install fails (several
+        // method-try events) → fallback to yum-install fails (more events)
+        // → fallback to tarball succeeds-then-healthz-fail → rollback-start
+        // → rollback-fail → rollback-critical-failed. Easily 40-60 events
+        // across the dispatch path; in slow-network runs with extra retries
+        // the count crosses 50 exactly before the rollback-* terminal
+        // events land. UI timeline freezes at the worst possible moment —
+        // operator sees "restart-start" but never the critical "rollback-
+        // critical-failed" that tells them to manually intervene.
+        //
+        // Fix: the cap still applies to NORMAL events to bound disk use
+        // under runaway loops, but a small list of explicitly-terminal
+        // event kinds bypass it. These are the ones that MUST be emitted
+        // for operator diagnosis regardless of how many journey events
+        // preceded them.
+        //
+        // The terminal-kinds list here must stay in sync with
+        // UPGRADE_EVENTS_TERMINAL_KINDS in SquidWeb/src/pages/
+        // deploymentTargets/detail.tsx — FE uses the same set to stop
+        // polling once a terminal event arrives.
+        foreach (var terminalKind in new[]
+        {
+            "success",
+            "rollback-ok",
+            "rollback-fail",
+            "rollback-critical-failed",
+            "method-exhausted",
+            "restart-fail",
+            "healthz-fail"
+        })
+        {
+            RenderedScript.ShouldContain(terminalKind,
+                customMessage: $"terminal event kind '{terminalKind}' must appear in the script — " +
+                               "either as a literal in the bypass-cap list or as an emit_event call site. " +
+                               "The FE's UPGRADE_EVENTS_TERMINAL_KINDS set depends on these.");
+        }
+
+        // The bypass mechanism itself. We grep for a pattern that shows
+        // emit_event branches on $kind before checking the cap. Specific
+        // shape is flexible (case...esac or if [[ ]] or similar) — what
+        // matters is that at least ONE of the terminal kinds appears
+        // BEFORE the cap guard line, alongside the cap-applying logic.
+        var capIdx = RenderedScript.IndexOf("\"$line_count\" -ge \"$EVENTS_MAX\"", StringComparison.Ordinal);
+        capIdx.ShouldBeGreaterThan(-1,
+            "cap guard must still be present — runaway-loop protection should not be removed");
+
+        // Walk backward from the cap check to the top of emit_event and
+        // verify at least one terminal-kind literal appears before the
+        // cap. This is a soft check; exact shape is flexible.
+        var emitStart = RenderedScript.LastIndexOf("emit_event() {", capIdx, StringComparison.Ordinal);
+        emitStart.ShouldBeGreaterThan(-1, "emit_event function body not found");
+
+        var preCapBody = RenderedScript.Substring(emitStart, capIdx - emitStart);
+        var hasTerminalBypassBeforeCap = preCapBody.Contains("success")
+            || preCapBody.Contains("rollback-")
+            || preCapBody.Contains("method-exhausted")
+            || preCapBody.Contains("terminal");
+        hasTerminalBypassBeforeCap.ShouldBeTrue(
+            customMessage:
+                "emit_event must check for a terminal kind BEFORE the cap guard (so terminal " +
+                "events can bypass the cap). Current emit_event body between function-start and " +
+                "cap-check contains no terminal-event bypass — the fix from commit <this> has " +
+                "been reverted. Symptom if this regresses: once the cap fires on the worst-case " +
+                "path (apt fail → yum fail → tarball fail → rollback fail), operators never see " +
+                "the rollback-critical-failed event telling them to manually intervene.");
+    }
+
+    [Fact]
     public void Script_CapturesPreUpgradeBaseline_BeforeMethodDispatch()
     {
         // C5 (1.5.x): snapshot agent's current version + healthz BEFORE
