@@ -159,11 +159,22 @@ public sealed partial class ExecuteStepsPhase(
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)
     {
+        // Phase-6.5: route the per-target output-variable list through the
+        // collision-aware merger instead of a blind AddRange. Default mode
+        // (Warn) keeps the legacy add-all behaviour and only adds an
+        // operator-visible warning; Strict drops colliding incoming writes
+        // (first-writer-wins). Pinned by OutputVariableMergerTests.
+        var collisionMode = Squid.Message.Hardening.EnforcementModeReader.Read(
+            Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.EnforcementEnvVar);
+
         foreach (var result in results)
         {
             if (result.OutputVariables.Count > 0)
             {
-                _ctx.Variables.AddRange(result.OutputVariables);
+                var (mergedVariables, _) = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.Merge(
+                    _ctx.Variables, result.OutputVariables, collisionMode);
+                _ctx.Variables = mergedVariables;
+
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 
                 foreach (var v in result.OutputVariables)
