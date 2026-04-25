@@ -30,8 +30,16 @@ public static class TargetParallelExecutor
 
     private static readonly Lazy<SemaphoreSlim> _globalCap = new(BuildGlobalCap, isThreadSafe: true);
 
-    private static SemaphoreSlim _testOverrideCap;
-    private static bool _testOverrideActive;
+    // Test override carried in AsyncLocal so xUnit's parallel test classes
+    // don't see each other's overrides. Static-field overrides leaked across
+    // concurrent test runs and sporadically failed unrelated parallelism tests.
+    private static readonly AsyncLocal<TestCapOverride> _testOverride = new();
+
+    private sealed class TestCapOverride
+    {
+        public SemaphoreSlim Cap { get; init; }
+        public bool Active { get; init; }
+    }
 
     public static async Task<List<TResult>> ExecuteAsync<TItem, TResult>(
         List<TItem> items, int maxParallelism, Func<TItem, CancellationToken, Task<TResult>> executeAsync, CancellationToken ct)
@@ -55,7 +63,10 @@ public static class TargetParallelExecutor
     /// <see cref="ExecuteAsync"/>.
     /// </summary>
     private static SemaphoreSlim GetEffectiveGlobalCap()
-        => _testOverrideActive ? _testOverrideCap : _globalCap.Value;
+    {
+        var local = _testOverride.Value;
+        return (local != null && local.Active) ? local.Cap : _globalCap.Value;
+    }
 
     /// <summary>
     /// Pure parser exposed for unit testing. Returns null for disabled-mode
@@ -97,15 +108,24 @@ public static class TargetParallelExecutor
     /// </summary>
     internal static void SetGlobalCapForTesting(int? cap)
     {
-        _testOverrideCap = cap.HasValue ? new SemaphoreSlim(cap.Value, cap.Value) : null;
-        _testOverrideActive = true;
+        // Dispose any previously-installed override IN THIS ASYNC CONTEXT
+        // before installing the new one — paired with ResetGlobalCapForTesting
+        // in tests' finally blocks but defensive against double-set.
+        var prior = _testOverride.Value;
+        prior?.Cap?.Dispose();
+
+        _testOverride.Value = new TestCapOverride
+        {
+            Cap = cap.HasValue ? new SemaphoreSlim(cap.Value, cap.Value) : null,
+            Active = true
+        };
     }
 
     internal static void ResetGlobalCapForTesting()
     {
-        _testOverrideCap?.Dispose();
-        _testOverrideCap = null;
-        _testOverrideActive = false;
+        var prior = _testOverride.Value;
+        prior?.Cap?.Dispose();
+        _testOverride.Value = null;
     }
 
     public static int ParseMaxParallelism(DeploymentStepDto step)
