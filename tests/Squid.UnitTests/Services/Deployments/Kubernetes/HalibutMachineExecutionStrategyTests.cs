@@ -309,33 +309,43 @@ public class HalibutMachineExecutionStrategyTests
         capturedCommand.TaskId.Length.ShouldBe(32); // Guid without hyphens
     }
 
-    // === Deterministic Ticket ID ===
+    // === Ticket ID — fresh-per-attempt (ARCH.7) ===
+    //
+    // Pre-Phase-6 these tests pinned `GenerateTicketId` as a pure function of
+    // the (taskId, step, action, machineId) tuple — same input, same output.
+    // ARCH.7 deliberately broke that property: ticket is now Guid-per-attempt
+    // so retries don't trap on agent-side state from the previous attempt.
+    // The stable-derivation half (used as the IsolationMutexName so concurrent
+    // dispatches still serialise on the agent) lives in `GenerateMutexName`,
+    // which IS pinned by these tests instead.
 
     [Fact]
-    public void GenerateTicketId_SameInputs_ProducesSameResult()
+    public void GenerateMutexName_SameInputs_ProducesSameResult()
     {
-        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
-        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
+        // The mutex-name MUST stay deterministic — that's what makes
+        // concurrent same-action dispatches serialise on the agent.
+        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
+        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
 
-        id1.ShouldBe(id2);
+        n1.ShouldBe(n2);
     }
 
     [Fact]
-    public void GenerateTicketId_DifferentMachineId_ProducesDifferentResult()
+    public void GenerateMutexName_DifferentMachineId_ProducesDifferentResult()
     {
-        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
-        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 43);
+        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
+        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 43);
 
-        id1.ShouldNotBe(id2);
+        n1.ShouldNotBe(n2);
     }
 
     [Fact]
-    public void GenerateTicketId_DifferentStepName_ProducesDifferentResult()
+    public void GenerateMutexName_DifferentStepName_ProducesDifferentResult()
     {
-        var id1 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Deploy", "RunScript", 42);
-        var id2 = HalibutMachineExecutionStrategy.GenerateTicketId(1, "Rollback", "RunScript", 42);
+        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
+        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Rollback", "RunScript", 42);
 
-        id1.ShouldNotBe(id2);
+        n1.ShouldNotBe(n2);
     }
 
     // === Helpers ===
