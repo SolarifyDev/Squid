@@ -58,6 +58,17 @@ public sealed class SequencedLogWriter : IDisposable
 
         lock (_sync)
         {
+            // Late-OutputDataReceived race: .NET's AsyncStreamReader can dispatch
+            // callbacks AFTER WaitForExit returned true, so a final stdout line
+            // can land here AFTER CompleteScript / CancelScript / test teardown
+            // already disposed this writer. Pre-fix the StreamWriter.Write below
+            // would throw ObjectDisposedException, propagate to the threadpool
+            // worker as unhandled, and crash the test host (the actual CI
+            // failure on 2026-04-25). Silent no-op here loses the late line —
+            // the same outcome as if the callback had fired one millisecond
+            // later when the stream was fully closed — but keeps the host alive.
+            if (_disposed != 0) return -1;
+
             var seq = _nextSequence++;
             var entry = new SequencedLogEntry(seq, occurred ?? DateTimeOffset.UtcNow, source, masked);
             _writer.Write(SequencedLogFormat.Encode(entry));
@@ -70,8 +81,17 @@ public sealed class SequencedLogWriter : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        try { _writer.Dispose(); }
-        catch (IOException ex) { Log.Debug(ex, "Failed to close log writer"); }
+
+        // Take the same lock Append uses so any in-flight write completes
+        // before we close the stream — closes the inverse race (Append
+        // mid-write while Dispose closes the underlying StreamWriter from
+        // a different thread). Cheap because Append calls are short and
+        // serialised by this lock anyway.
+        lock (_sync)
+        {
+            try { _writer.Dispose(); }
+            catch (IOException ex) { Log.Debug(ex, "Failed to close log writer"); }
+        }
     }
 
     /// <summary>

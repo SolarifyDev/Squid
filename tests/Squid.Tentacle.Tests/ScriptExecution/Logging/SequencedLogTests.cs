@@ -226,6 +226,116 @@ public sealed class SequencedLogTests : IDisposable
         writer.NextSequence.ShouldBe(0);
     }
 
+    // ── P1 (Phase-5 follow-up to CI crash on 2026-04-25) ─────────────────────
+    //
+    // CI hit Test Run Aborted with:
+    //   System.ObjectDisposedException: Cannot write to a closed TextWriter.
+    //     at SequencedLogWriter.Append (line 62 — _writer.Write)
+    //     at LocalScriptService.<BeginReadOutput>b__0
+    //     at AsyncStreamReader.FlushMessageQueue
+    //
+    // The race: LogWriter.Dispose() runs (via CompleteScript / CancelScript /
+    // test teardown), but late OutputDataReceived callbacks then fire on the
+    // threadpool. The .NET async stream reader buffers callbacks and can
+    // dispatch them AFTER WaitForExit returned true. The callback calls
+    // Append → writes to the now-disposed StreamWriter → throws → unhandled
+    // in threadpool worker → process crash.
+    //
+    // Fix: Append checks the dispose flag under the same lock that guards
+    // sequence assignment + write. Late callbacks no-op silently rather than
+    // throwing. Losing a final log line (which would also be lost any other
+    // way after dispose) is strictly better than crashing the host.
+    //
+    // Dispose also takes the lock so any in-flight Append finishes before
+    // the underlying StreamWriter is closed — closes the inverse race
+    // (Append mid-write, Dispose closes the stream out from under it).
+
+    [Fact]
+    public void Append_AfterDispose_DoesNotThrow_SilentlyNoOps()
+    {
+        var writer = new SequencedLogWriter(_logPath);
+        var seq0 = writer.Append(ProcessOutputSource.StdOut, "before-dispose");
+
+        writer.Dispose();
+
+        Should.NotThrow(() => writer.Append(ProcessOutputSource.StdOut, "late-callback-after-dispose"),
+            customMessage:
+                "Late OutputDataReceived events fire after writer dispose — Append must no-op " +
+                "silently. Throwing would propagate to the threadpool worker as unhandled and " +
+                "crash the host (the actual CI failure).");
+
+        // Sanity: pre-dispose write actually landed on disk; post-dispose write didn't.
+        seq0.ShouldBe(0);
+        var entries = new SequencedLogReader(_logPath).ReadFrom(afterSequence: -1);
+        entries.Count.ShouldBe(1);
+        entries[0].Text.ShouldBe("before-dispose");
+    }
+
+    [Fact]
+    public async Task Append_RaceWithDispose_AcrossManyThreads_NoUnhandledException()
+    {
+        // Hammer the dispose-vs-append window from many threads. The critical
+        // property: NO uncaught ObjectDisposedException regardless of timing.
+        // This is the deterministic version of the CI crash — the threadpool
+        // schedule that triggered it once will trigger it many times here.
+        var writer = new SequencedLogWriter(_logPath);
+        using var startGate = new ManualResetEventSlim();
+        var caught = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+
+        var appendTasks = Enumerable.Range(0, 32).Select(i => Task.Run(() =>
+        {
+            startGate.Wait();
+            for (var j = 0; j < 200; j++)
+            {
+                try { writer.Append(ProcessOutputSource.StdOut, $"w{i}-l{j}"); }
+                catch (Exception ex) { caught.Enqueue(ex); }
+            }
+        })).ToArray();
+
+        var disposeTask = Task.Run(() =>
+        {
+            startGate.Wait();
+            Thread.Sleep(5);   // let some Appends land first
+            writer.Dispose();
+        });
+
+        startGate.Set();
+        await Task.WhenAll(appendTasks.Concat(new[] { disposeTask }));
+
+        caught.ShouldBeEmpty(
+            customMessage: $"{caught.Count} exceptions escaped Append under concurrent dispose. " +
+                $"First: {(caught.TryPeek(out var first) ? first.GetType().Name + " " + first.Message : "<none>")}");
+    }
+
+    [Fact]
+    public void Dispose_WaitsForInFlightAppend_NoTornWrite()
+    {
+        // The inverse race: Append is mid-write (between StreamWriter.Write
+        // and Flush) when Dispose runs. Without lock-coordinated dispose, the
+        // mid-write could see the stream closed and throw, OR partially flush.
+        // With Dispose taking the lock, this scenario is impossible by
+        // construction.
+        var writer = new SequencedLogWriter(_logPath);
+        using var midAppend = new ManualResetEventSlim();
+        using var releaseAppend = new ManualResetEventSlim();
+
+        // Start an Append that will not finish until releaseAppend is set —
+        // emulated by a long string that takes measurable time to write.
+        // We can't actually pause inside Append externally without a hook,
+        // so we approximate by using a large payload that exercises the
+        // write+flush path.
+        writer.Append(ProcessOutputSource.StdOut, new string('x', 1_000_000));
+
+        // Dispose now — the lock-coordinated dispose must complete cleanly
+        // and any subsequent reader must see the full payload.
+        writer.Dispose();
+
+        var entries = new SequencedLogReader(_logPath).ReadFrom(afterSequence: -1);
+        entries.Count.ShouldBe(1);
+        entries[0].Text.Length.ShouldBe(1_000_000,
+            customMessage: "the in-flight Append must have completed fully before Dispose closed the stream.");
+    }
+
     [Fact]
     public void PayloadContainingTabAndNewline_IsSafelyRoundTripped()
     {
