@@ -28,6 +28,17 @@ public static class TargetParallelExecutor
 
     private const int DefaultGlobalCapMultiplier = 4;
 
+    /// <summary>
+    /// Floor for the auto-derived global cap. On a 1-vCPU pod
+    /// <see cref="Environment.ProcessorCount"/> = 1 → cap of 4 is too tight
+    /// when a 50-target health check fans out: serialised execution would
+    /// take 50/4 ≈ 12 fan-out generations × per-target Halibut polling
+    /// (potentially minutes each). Floor of 32 ensures small-container
+    /// deploys aren't catastrophically throttled. Operators on big servers
+    /// still get ProcessorCount × 4 which scales above the floor.
+    /// </summary>
+    private const int MinAutoGlobalCap = 32;
+
     private static readonly Lazy<SemaphoreSlim> _globalCap = new(BuildGlobalCap, isThreadSafe: true);
 
     // Test override carried in AsyncLocal so xUnit's parallel test classes
@@ -75,23 +86,36 @@ public static class TargetParallelExecutor
     internal static int? ParseGlobalCap(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return Environment.ProcessorCount * DefaultGlobalCapMultiplier;
+            return AutoCap();
 
         var trimmed = raw.Trim();
 
         if (string.Equals(trimmed, "auto", StringComparison.OrdinalIgnoreCase))
-            return Environment.ProcessorCount * DefaultGlobalCapMultiplier;
+            return AutoCap();
 
         if (string.Equals(trimmed, "disabled", StringComparison.OrdinalIgnoreCase))
             return null;
 
         if (int.TryParse(trimmed, out var explicitCap))
         {
+            // Explicit operator-supplied integer is honoured EXACTLY — no
+            // floor applied. An operator who intentionally sets cap=2 for
+            // a constrained sandbox should get exactly 2.
             if (explicitCap <= 0) return null;
             return explicitCap;
         }
 
-        return Environment.ProcessorCount * DefaultGlobalCapMultiplier;
+        return AutoCap();
+    }
+
+    /// <summary>
+    /// Derives the auto-default cap with a floor that keeps small-container
+    /// deploys (1-2 vCPU pods) from being catastrophically throttled.
+    /// </summary>
+    private static int AutoCap()
+    {
+        var raw = Environment.ProcessorCount * DefaultGlobalCapMultiplier;
+        return raw < MinAutoGlobalCap ? MinAutoGlobalCap : raw;
     }
 
     private static SemaphoreSlim BuildGlobalCap()

@@ -478,4 +478,45 @@ public class TargetParallelExecutorTests
         else
             cap.ShouldBeNull(customMessage: $"env value '{envValue}' should produce NO cap (disabled mode).");
     }
+
+    // ── Phase-7 audit follow-up: floor on the auto-derived cap ────────────────
+    //
+    // Pre-fix Phase-6.3 used `ProcessorCount × 4` as the auto default. On a
+    // 1-vCPU pod that's 4 — so a 50-target health check serialises into 12+
+    // fan-out generations × per-target Halibut polling time → minutes of
+    // throttle for what should be parallel. Floor of 32 keeps small
+    // containers responsive while big servers (8+ vCPU) still scale up via
+    // the multiplier.
+    //
+    // Explicit operator-supplied integers are NOT floored — an operator
+    // who deliberately sets cap=2 should get exactly 2.
+
+    [Fact]
+    public void ParseGlobalCap_AutoOnSmallContainer_AppliesFloor()
+    {
+        // We can't actually change ProcessorCount mid-test, but the parser
+        // applies the floor unconditionally to the auto-derived value. On
+        // any host with ProcessorCount < 8, the floor (32) governs.
+        // On hosts with ProcessorCount >= 8, ProcessorCount × 4 >= 32 so
+        // the multiplier governs. Either way, the result must be ≥ 32.
+        var cap = TargetParallelExecutor.ParseGlobalCap(null);
+
+        cap.ShouldNotBeNull();
+        cap.Value.ShouldBeGreaterThanOrEqualTo(32,
+            customMessage:
+                "auto-derived cap floor must be ≥ 32 — small-container (1-2 vCPU) deploys " +
+                "shouldn't see catastrophic throughput drop. Operators who genuinely want a " +
+                "tighter cap can set SQUID_TARGET_PARALLELISM_GLOBAL_CAP=N explicitly.");
+    }
+
+    [Fact]
+    public void ParseGlobalCap_ExplicitInteger_HonouredExactly_NotFloored()
+    {
+        // Explicit operator config wins — even tiny values are honoured.
+        // The floor only applies to the auto path (unset / blank / "auto").
+        TargetParallelExecutor.ParseGlobalCap("4").ShouldBe(4,
+            customMessage: "explicit integer config must NOT be floored to 32 — operator chose 4 deliberately.");
+        TargetParallelExecutor.ParseGlobalCap("1").ShouldBe(1);
+        TargetParallelExecutor.ParseGlobalCap("100").ShouldBe(100);
+    }
 }

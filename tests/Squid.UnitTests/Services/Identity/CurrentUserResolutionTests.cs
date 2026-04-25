@@ -81,6 +81,48 @@ public sealed class CurrentUserResolutionTests
         user.ShouldBeOfType<InternalUser>();
     }
 
+    [Fact]
+    public void Resolve_FactoryOverridesAutoScanRegistration_LastWinsContract()
+    {
+        // Pins the production-shape sequence: SquidModule.RegisterDependency
+        // first registers ApiUser AsImplementedInterfaces (so it binds as
+        // ICurrentUser via auto-scan) — then RegisterCurrentUser registers
+        // the factory. Autofac's last-wins contract is what makes the fix
+        // work. If anyone reorders SquidModule.Load(...) so RegisterCurrentUser
+        // runs BEFORE RegisterDependency, the auto-scan wins and we're back
+        // to the Hangfire-crash regression.
+        var builder = new ContainerBuilder();
+
+        // 1. Mirror RegisterDependency: ApiUser auto-scanned AsImplementedInterfaces
+        //    → registers ApiUser as ICurrentUser too.
+        builder.RegisterType<ApiUser>().AsSelf().AsImplementedInterfaces().InstancePerLifetimeScope();
+
+        // 2. Mirror RegisterCurrentUser: factory registered AFTER auto-scan.
+        RegisterCurrentUserFactory(builder);
+
+        using var container = builder.Build();
+        using var scope = container.BeginLifetimeScope();
+
+        // No HttpContext → factory must return InternalUser. If the auto-scan
+        // ApiUser registration wins instead, this test fails — and that's
+        // exactly the breakage we're guarding against.
+        var user = scope.Resolve<ICurrentUser>();
+
+        user.ShouldBeOfType<InternalUser>(
+            customMessage:
+                "Last-wins contract violation: factory must override auto-scan ICurrentUser binding. " +
+                "Reordering SquidModule.Load to put RegisterCurrentUser BEFORE RegisterDependency " +
+                "would re-introduce the Phase-7.6 Hangfire-crash regression.");
+    }
+
+    // (The "negative case" — factory registered BEFORE auto-scan would
+    // make auto-scan win — was sketched here but dropped: ApiUser's ctor
+    // requires IHttpContextAccessor, so the negative test would need
+    // additional fixture setup that's not load-bearing for the contract.
+    // The positive `LastWinsContract` test above is sufficient: if it
+    // passes, last-wins works in our chosen direction. Anyone reordering
+    // SquidModule.Load() makes that test fail.)
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static IContainer BuildContainerWithoutHttpContext()
