@@ -205,7 +205,11 @@ public class VariableEncryptionService : IVariableEncryptionService
             
             var result = $"{_encryptionPrefix}{Convert.ToBase64String(encryptedData)}";
             
-            Log.Information("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
+            // P1-B.5 (Phase-7): per-call success at Debug, not Information.
+            // Information lands in default Seq pipelines and exposes per-
+            // VariableSet frequency / timing metadata to anyone with Seq read
+            // access — a metadata-only privacy leak.
+            Log.Debug("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
             return result;
         }
         catch (Exception ex)
@@ -227,7 +231,8 @@ public class VariableEncryptionService : IVariableEncryptionService
             var derivedKey = DeriveKey(_masterKey, variableSetId);
             var plainText = DecryptWithAesGcm(encryptedData, derivedKey);
             
-            Log.Information("Successfully decrypted variable for VariableSet {VariableSetId}", variableSetId);
+            // P1-B.5 (Phase-7): see Encrypt path above for rationale.
+            Log.Debug("Successfully decrypted variable for VariableSet {VariableSetId}", variableSetId);
             return plainText;
         }
         catch (Exception ex)
