@@ -139,6 +139,93 @@ public sealed class SequencedLogTests : IDisposable
         entries[1].Text.ShouldBe("clean-line-2");
     }
 
+    // ── T.12 (Phase-5, 2026-04-25 audit follow-up) — parse-fail-zero ──────────
+    //
+    // Pre-fix DetermineStartSequence used ReadLastLine to grab only the LAST
+    // non-empty line and decoded it. If that line was truncated/corrupt (mid-
+    // crash write left an incomplete tail), TryDecode failed → fallback to
+    // sequence 0 → next Append(seq=0) collides with the seq=0 entry that the
+    // reader would happily decode from disk → server sees duplicate sequence
+    // numbers, log lines mis-ordered, the cursor-tracking we just hardened in
+    // Phase 4 silently re-delivers entries.
+    //
+    // Fix: scan for the highest-decodable sequence (skip malformed lines),
+    // restart at that+1. Same forgiving logic the reader already uses.
+
+    [Fact]
+    public void NewWriterOnFileWithCorruptTail_ContinuesPastHighestDecodable_NotZero()
+    {
+        // 5 valid entries on disk + 1 garbage tail line (mid-crash truncation).
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            for (var i = 0; i < 5; i++)
+                writer.Append(ProcessOutputSource.StdOut, $"line-{i}");
+        }
+        File.AppendAllText(_logPath, "000000000005\tnot-a-date\tO\tnot-valid-base64-!");
+
+        // Simulate agent restart: open a fresh writer on the same path.
+        using var resumed = new SequencedLogWriter(_logPath);
+
+        // Pre-fix: ReadLastLine returns the garbage tail, TryDecode fails,
+        // DetermineStartSequence returns 0 → resumed.NextSequence == 0 → next
+        // Append re-uses sequence 0, colliding with the existing seq=0 entry
+        // and corrupting the server's cursor-tracked log delivery.
+        // Post-fix: scan past the garbage and resume at highest+1 = 5.
+        resumed.NextSequence.ShouldBe(5,
+            customMessage:
+                "T.12 — corrupt tail must NOT make the writer restart at 0. " +
+                "Restarting at 0 reuses sequences 0..N-1 and breaks cursor delivery.");
+
+        var nextSeq = resumed.Append(ProcessOutputSource.StdOut, "post-restart");
+        nextSeq.ShouldBe(5);
+    }
+
+    [Fact]
+    public void NewWriterOnFileWithMultipleGarbageLines_FindsHighestDecodableAcrossThem()
+    {
+        // Worst-case interleaved corruption: good, garbage, good, garbage, good.
+        // The forward-scan must look past EVERY garbage line, not just the last.
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            writer.Append(ProcessOutputSource.StdOut, "good-0");
+        }
+        File.AppendAllText(_logPath, "garbage-line-A\n");
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            // Pre-fix: would restart at 0 because of garbage tail. Post-fix:
+            // resumes at 1 (highest decodable + 1).
+            writer.NextSequence.ShouldBe(1);
+            writer.Append(ProcessOutputSource.StdOut, "good-1");
+        }
+        File.AppendAllText(_logPath, "garbage-line-B\n");
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            writer.NextSequence.ShouldBe(2);
+            writer.Append(ProcessOutputSource.StdOut, "good-2");
+        }
+        File.AppendAllText(_logPath, "garbage-tail-line-C");  // no newline — partial
+
+        using var final = new SequencedLogWriter(_logPath);
+
+        final.NextSequence.ShouldBe(3,
+            customMessage:
+                "highest decodable across mixed valid/invalid lines is seq=2; " +
+                "writer must resume at 3 regardless of where the corruption sits.");
+    }
+
+    [Fact]
+    public void NewWriterOnFileWithOnlyGarbage_StartsAtZero()
+    {
+        // No decodable entries at all → the writer treats the file as fresh
+        // and starts at 0. Same as the no-file case (the existing tests still
+        // pass — this is just the explicit edge case for "all garbage").
+        File.WriteAllText(_logPath, "garbage-1\ngarbage-2\nnot-a-real-entry\n");
+
+        using var writer = new SequencedLogWriter(_logPath);
+
+        writer.NextSequence.ShouldBe(0);
+    }
+
     [Fact]
     public void PayloadContainingTabAndNewline_IsSafelyRoundTripped()
     {
