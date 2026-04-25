@@ -83,10 +83,24 @@ public sealed partial class ExecuteStepsPhase
                             targetResult = await ExecuteSingleTargetAsync(step, eligibleActions, tc, stepSortOrder, targetCt).ConfigureAwait(false);
                             return targetResult;
                         }
-                        catch when (step.IsRequired)
+                        catch (Exception ex) when (step.IsRequired)
                         {
-                            MarkTargetCompleted(_currentBatchIndex, tc.Machine.Id, failed: true);
-                            failFastCts?.Cancel();
+                            // P1-A.4 (Phase-7): classify the catch instead of
+                            // unconditionally marking failed. Peer-aborted
+                            // targets (OCE from a peer's failFastCts.Cancel)
+                            // must NOT be checkpointed terminal — resume should
+                            // retry them. Real exceptions / user-cancel still
+                            // cascade through MarkTargetCompleted +
+                            // failFastCts.Cancel as before.
+                            var classification = TargetCatchClassifier.Classify(
+                                ex,
+                                failFastCancelled: failFastCts?.IsCancellationRequested ?? false,
+                                parentCtCancelled: ct.IsCancellationRequested);
+
+                            if (classification.MarkFailed)
+                                MarkTargetCompleted(_currentBatchIndex, tc.Machine.Id, failed: true);
+                            if (classification.TriggerFailFast)
+                                failFastCts?.Cancel();
                             throw;
                         }
                         finally
