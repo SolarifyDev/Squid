@@ -273,6 +273,92 @@ public class DeploymentLogWriterBufferingTests
         persisted.Name.ShouldBe("Test Node");
     }
 
+    // === Phase-6.4: bounded buffer (Agent B P1.1 + Agent D #2) =================
+    //
+    // Pre-fix: Channel.CreateUnbounded — under DB-stall + high producer rate
+    // (100 targets × kubectl-streaming = 30k+ entries/sec), the channel grew
+    // until the server pod OOM'd. No high-water mark, no drop policy.
+    //
+    // Fix: bounded channel with operator-tunable capacity. Default 50_000
+    // entries — well above normal deploy log volume but caps memory under
+    // sustained DB blips. TryWrite returns false on full; the writer counts
+    // drops and emits a structured Serilog warning periodically so operators
+    // see the pressure in their logs.
+    //
+    // Env var SQUID_DEPLOY_LOG_BUFFER_CAPACITY:
+    //   - unset / blank      → 50_000 (default)
+    //   - integer literal    → that exact capacity
+    //   - "unbounded"        → legacy behaviour (dev / test / explicit opt-out)
+    //   - unrecognised       → fall back to 50_000
+
+    [Fact]
+    public void BufferCapacityEnvVar_ConstantNamePinned()
+    {
+        DeploymentLogWriter.BufferCapacityEnvVar.ShouldBe("SQUID_DEPLOY_LOG_BUFFER_CAPACITY");
+    }
+
+    [Theory]
+    [InlineData(null, 50_000)]
+    [InlineData("", 50_000)]
+    [InlineData("unbounded", null)]
+    [InlineData("UNBOUNDED", null)]
+    [InlineData("100000", 100_000)]
+    [InlineData("0", 50_000)]            // 0 → fall back to default
+    [InlineData("-5", 50_000)]            // negative → fall back to default
+    [InlineData("garbage", 50_000)]       // unrecognised → fall back
+    public void ParseBufferCapacity_Matrix(string envValue, int? expected)
+    {
+        DeploymentLogWriter.ParseBufferCapacity(envValue).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task AddLogAsync_PastCapacity_DropsExcess_ReportsDropCount()
+    {
+        // Tiny capacity + many writes → producer hits the bound. With
+        // FullMode=Wait + TryWrite, excess writes return false. The writer
+        // tracks dropped count and exposes it for operator/monitoring use.
+        var options = CreateOptions();
+        await using var writer = new DeploymentLogWriter(options, capacity: 4);
+
+        for (var i = 0; i < 100; i++)
+            await writer.AddLogAsync(1, i, ServerTaskLogCategory.Info, $"line-{i}", "test");
+
+        // Capacity is 4; we wrote 100 → at least 96 dropped (the background
+        // flush may have drained some, freeing slots for later writes — so
+        // ≥ 96 - capacity worth of drops is the floor).
+        writer.DroppedLogCount.ShouldBeGreaterThan(0,
+            customMessage: "writes past the capacity must be reflected in the dropped-log counter; pre-fix unbounded channel would just OOM.");
+    }
+
+    [Fact]
+    public async Task AddLogAsync_UnboundedMode_NeverDrops()
+    {
+        // Legacy escape hatch — operator opts out of the bound by passing
+        // capacity=null. Same behaviour as the pre-Phase-6 unbounded channel.
+        var options = CreateOptions();
+        await using var writer = new DeploymentLogWriter(options, capacity: null);
+
+        for (var i = 0; i < 10_000; i++)
+            await writer.AddLogAsync(1, i, ServerTaskLogCategory.Info, $"line-{i}", "test");
+
+        writer.DroppedLogCount.ShouldBe(0,
+            customMessage: "unbounded mode must never drop, regardless of throughput.");
+    }
+
+    [Fact]
+    public async Task AddLogAsync_DefaultCapacity_HandlesNormalDeployLoadWithoutDrops()
+    {
+        // Sanity: a 'normal' load (~5k lines, well under default 50k) must
+        // never drop. Pins the default to a meaningful value, not 0/1.
+        var options = CreateOptions();
+        await using var writer = new DeploymentLogWriter(options);   // default capacity
+
+        for (var i = 0; i < 5_000; i++)
+            await writer.AddLogAsync(1, i, ServerTaskLogCategory.Info, $"line-{i}", "test");
+
+        writer.DroppedLogCount.ShouldBe(0);
+    }
+
     // === Helpers ===
 
     private static async Task<bool> PollUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
