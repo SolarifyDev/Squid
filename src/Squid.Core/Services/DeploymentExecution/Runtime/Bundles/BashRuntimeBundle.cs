@@ -53,9 +53,11 @@ public class BashRuntimeBundle : IRuntimeBundle
 
     private static void AppendSquidScopeExports(StringBuilder sb, RuntimeBundleWrapContext context)
     {
-        sb.AppendLine($"export {EnvSquidHome}=\"{EscapeBashValue(context.BaseDirectory)}\"");
-        sb.AppendLine($"export {EnvSquidWorkDir}=\"{EscapeBashValue(context.WorkDirectory)}\"");
-        sb.AppendLine($"export {EnvSquidTaskId}=\"{context.ServerTaskId}\"");
+        // EscapeBashValue now returns a fully single-quoted bash literal —
+        // do NOT wrap in additional quotes.
+        sb.AppendLine($"export {EnvSquidHome}={EscapeBashValue(context.BaseDirectory)}");
+        sb.AppendLine($"export {EnvSquidWorkDir}={EscapeBashValue(context.WorkDirectory)}");
+        sb.AppendLine($"export {EnvSquidTaskId}={EscapeBashValue(context.ServerTaskId.ToString(System.Globalization.CultureInfo.InvariantCulture))}");
     }
 
     private static void AppendDeploymentVariableExports(StringBuilder sb, IReadOnlyList<VariableDto> variables)
@@ -69,8 +71,8 @@ public class BashRuntimeBundle : IRuntimeBundle
             if (string.IsNullOrEmpty(variable.Name)) continue;
 
             var envName = SanitizeEnvVarName(variable.Name);
-            var escaped = EscapeBashValue(variable.Value ?? string.Empty);
-            sb.AppendLine($"export {envName}=\"{escaped}\"");
+            var quoted = EscapeBashValue(variable.Value ?? string.Empty);
+            sb.AppendLine($"export {envName}={quoted}");
         }
     }
 
@@ -106,14 +108,37 @@ public class BashRuntimeBundle : IRuntimeBundle
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Returns a fully single-quoted POSIX bash literal of <paramref name="value"/>.
+    /// Caller appends the result directly to the right-hand side of an assignment;
+    /// no further quoting is needed (or safe).
+    ///
+    /// <para><b>P1-B.6 (Phase-5 follow-up to 2026-04-24 audit)</b>: pre-fix the
+    /// escaper used double-quote wrapping with backslash escapes for <c>"</c>,
+    /// <c>$</c>, <c>`</c>, <c>!</c>, and <c>\</c> — but did NOT escape literal
+    /// newlines. A variable value containing <c>\n</c> terminated the
+    /// <c>export VAR="..."</c> statement, the rest of the value parsed as the
+    /// next bash command. Variable values come from operator config, output-
+    /// variable capture, and other operator-controlled paths (some of which
+    /// can include adversarial content) — confirmed shell-injection vector.</para>
+    ///
+    /// <para>Single-quote wrapping eliminates the entire class of escape-bypass
+    /// bugs by removing all metacharacter interpretation. Inside single
+    /// quotes, EVERY character is literal: <c>$</c>, <c>`</c>, <c>!</c>,
+    /// <c>\</c>, <c>"</c>, <c>#</c>, newlines, all preserved verbatim. The
+    /// only character that can't appear literally inside single quotes is
+    /// <c>'</c> itself — handled via the four-character POSIX idiom
+    /// <c>'\''</c> (close-quote, escaped-quote, reopen-quote): writing
+    /// <c>a'b</c> as <c>'a'\''b'</c>.</para>
+    ///
+    /// <para>Pinned by <c>BashRuntimeBundleTests.EscapeBashValue_*</c> +
+    /// <c>Wrap_VariableValueWithNewline_NoInjectionInExportLine</c>
+    /// (regression for the actual exploit).</para>
+    /// </summary>
     internal static string EscapeBashValue(string value)
     {
-        return (value ?? string.Empty)
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"")
-            .Replace("$", "\\$")
-            .Replace("`", "\\`")
-            .Replace("!", "\\!");
+        var inner = (value ?? string.Empty).Replace("'", "'\\''");
+        return "'" + inner + "'";
     }
 
     private static string LoadHelperSource()

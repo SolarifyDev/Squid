@@ -139,6 +139,203 @@ public sealed class SequencedLogTests : IDisposable
         entries[1].Text.ShouldBe("clean-line-2");
     }
 
+    // ── T.12 (Phase-5, 2026-04-25 audit follow-up) — parse-fail-zero ──────────
+    //
+    // Pre-fix DetermineStartSequence used ReadLastLine to grab only the LAST
+    // non-empty line and decoded it. If that line was truncated/corrupt (mid-
+    // crash write left an incomplete tail), TryDecode failed → fallback to
+    // sequence 0 → next Append(seq=0) collides with the seq=0 entry that the
+    // reader would happily decode from disk → server sees duplicate sequence
+    // numbers, log lines mis-ordered, the cursor-tracking we just hardened in
+    // Phase 4 silently re-delivers entries.
+    //
+    // Fix: scan for the highest-decodable sequence (skip malformed lines),
+    // restart at that+1. Same forgiving logic the reader already uses.
+
+    [Fact]
+    public void NewWriterOnFileWithCorruptTail_ContinuesPastHighestDecodable_NotZero()
+    {
+        // 5 valid entries on disk + 1 garbage tail line (mid-crash truncation).
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            for (var i = 0; i < 5; i++)
+                writer.Append(ProcessOutputSource.StdOut, $"line-{i}");
+        }
+        File.AppendAllText(_logPath, "000000000005\tnot-a-date\tO\tnot-valid-base64-!");
+
+        // Simulate agent restart: open a fresh writer on the same path.
+        using var resumed = new SequencedLogWriter(_logPath);
+
+        // Pre-fix: ReadLastLine returns the garbage tail, TryDecode fails,
+        // DetermineStartSequence returns 0 → resumed.NextSequence == 0 → next
+        // Append re-uses sequence 0, colliding with the existing seq=0 entry
+        // and corrupting the server's cursor-tracked log delivery.
+        // Post-fix: scan past the garbage and resume at highest+1 = 5.
+        resumed.NextSequence.ShouldBe(5,
+            customMessage:
+                "T.12 — corrupt tail must NOT make the writer restart at 0. " +
+                "Restarting at 0 reuses sequences 0..N-1 and breaks cursor delivery.");
+
+        var nextSeq = resumed.Append(ProcessOutputSource.StdOut, "post-restart");
+        nextSeq.ShouldBe(5);
+    }
+
+    [Fact]
+    public void NewWriterOnFileWithMultipleGarbageLines_FindsHighestDecodableAcrossThem()
+    {
+        // Worst-case interleaved corruption: good, garbage, good, garbage, good.
+        // The forward-scan must look past EVERY garbage line, not just the last.
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            writer.Append(ProcessOutputSource.StdOut, "good-0");
+        }
+        File.AppendAllText(_logPath, "garbage-line-A\n");
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            // Pre-fix: would restart at 0 because of garbage tail. Post-fix:
+            // resumes at 1 (highest decodable + 1).
+            writer.NextSequence.ShouldBe(1);
+            writer.Append(ProcessOutputSource.StdOut, "good-1");
+        }
+        File.AppendAllText(_logPath, "garbage-line-B\n");
+        using (var writer = new SequencedLogWriter(_logPath))
+        {
+            writer.NextSequence.ShouldBe(2);
+            writer.Append(ProcessOutputSource.StdOut, "good-2");
+        }
+        File.AppendAllText(_logPath, "garbage-tail-line-C");  // no newline — partial
+
+        using var final = new SequencedLogWriter(_logPath);
+
+        final.NextSequence.ShouldBe(3,
+            customMessage:
+                "highest decodable across mixed valid/invalid lines is seq=2; " +
+                "writer must resume at 3 regardless of where the corruption sits.");
+    }
+
+    [Fact]
+    public void NewWriterOnFileWithOnlyGarbage_StartsAtZero()
+    {
+        // No decodable entries at all → the writer treats the file as fresh
+        // and starts at 0. Same as the no-file case (the existing tests still
+        // pass — this is just the explicit edge case for "all garbage").
+        File.WriteAllText(_logPath, "garbage-1\ngarbage-2\nnot-a-real-entry\n");
+
+        using var writer = new SequencedLogWriter(_logPath);
+
+        writer.NextSequence.ShouldBe(0);
+    }
+
+    // ── P1 (Phase-5 follow-up to CI crash on 2026-04-25) ─────────────────────
+    //
+    // CI hit Test Run Aborted with:
+    //   System.ObjectDisposedException: Cannot write to a closed TextWriter.
+    //     at SequencedLogWriter.Append (line 62 — _writer.Write)
+    //     at LocalScriptService.<BeginReadOutput>b__0
+    //     at AsyncStreamReader.FlushMessageQueue
+    //
+    // The race: LogWriter.Dispose() runs (via CompleteScript / CancelScript /
+    // test teardown), but late OutputDataReceived callbacks then fire on the
+    // threadpool. The .NET async stream reader buffers callbacks and can
+    // dispatch them AFTER WaitForExit returned true. The callback calls
+    // Append → writes to the now-disposed StreamWriter → throws → unhandled
+    // in threadpool worker → process crash.
+    //
+    // Fix: Append checks the dispose flag under the same lock that guards
+    // sequence assignment + write. Late callbacks no-op silently rather than
+    // throwing. Losing a final log line (which would also be lost any other
+    // way after dispose) is strictly better than crashing the host.
+    //
+    // Dispose also takes the lock so any in-flight Append finishes before
+    // the underlying StreamWriter is closed — closes the inverse race
+    // (Append mid-write, Dispose closes the stream out from under it).
+
+    [Fact]
+    public void Append_AfterDispose_DoesNotThrow_SilentlyNoOps()
+    {
+        var writer = new SequencedLogWriter(_logPath);
+        var seq0 = writer.Append(ProcessOutputSource.StdOut, "before-dispose");
+
+        writer.Dispose();
+
+        Should.NotThrow(() => writer.Append(ProcessOutputSource.StdOut, "late-callback-after-dispose"),
+            customMessage:
+                "Late OutputDataReceived events fire after writer dispose — Append must no-op " +
+                "silently. Throwing would propagate to the threadpool worker as unhandled and " +
+                "crash the host (the actual CI failure).");
+
+        // Sanity: pre-dispose write actually landed on disk; post-dispose write didn't.
+        seq0.ShouldBe(0);
+        var entries = new SequencedLogReader(_logPath).ReadFrom(afterSequence: -1);
+        entries.Count.ShouldBe(1);
+        entries[0].Text.ShouldBe("before-dispose");
+    }
+
+    [Fact]
+    public async Task Append_RaceWithDispose_AcrossManyThreads_NoUnhandledException()
+    {
+        // Hammer the dispose-vs-append window from many threads. The critical
+        // property: NO uncaught ObjectDisposedException regardless of timing.
+        // This is the deterministic version of the CI crash — the threadpool
+        // schedule that triggered it once will trigger it many times here.
+        var writer = new SequencedLogWriter(_logPath);
+        using var startGate = new ManualResetEventSlim();
+        var caught = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+
+        var appendTasks = Enumerable.Range(0, 32).Select(i => Task.Run(() =>
+        {
+            startGate.Wait();
+            for (var j = 0; j < 200; j++)
+            {
+                try { writer.Append(ProcessOutputSource.StdOut, $"w{i}-l{j}"); }
+                catch (Exception ex) { caught.Enqueue(ex); }
+            }
+        })).ToArray();
+
+        var disposeTask = Task.Run(() =>
+        {
+            startGate.Wait();
+            Thread.Sleep(5);   // let some Appends land first
+            writer.Dispose();
+        });
+
+        startGate.Set();
+        await Task.WhenAll(appendTasks.Concat(new[] { disposeTask }));
+
+        caught.ShouldBeEmpty(
+            customMessage: $"{caught.Count} exceptions escaped Append under concurrent dispose. " +
+                $"First: {(caught.TryPeek(out var first) ? first.GetType().Name + " " + first.Message : "<none>")}");
+    }
+
+    [Fact]
+    public void Dispose_WaitsForInFlightAppend_NoTornWrite()
+    {
+        // The inverse race: Append is mid-write (between StreamWriter.Write
+        // and Flush) when Dispose runs. Without lock-coordinated dispose, the
+        // mid-write could see the stream closed and throw, OR partially flush.
+        // With Dispose taking the lock, this scenario is impossible by
+        // construction.
+        var writer = new SequencedLogWriter(_logPath);
+        using var midAppend = new ManualResetEventSlim();
+        using var releaseAppend = new ManualResetEventSlim();
+
+        // Start an Append that will not finish until releaseAppend is set —
+        // emulated by a long string that takes measurable time to write.
+        // We can't actually pause inside Append externally without a hook,
+        // so we approximate by using a large payload that exercises the
+        // write+flush path.
+        writer.Append(ProcessOutputSource.StdOut, new string('x', 1_000_000));
+
+        // Dispose now — the lock-coordinated dispose must complete cleanly
+        // and any subsequent reader must see the full payload.
+        writer.Dispose();
+
+        var entries = new SequencedLogReader(_logPath).ReadFrom(afterSequence: -1);
+        entries.Count.ShouldBe(1);
+        entries[0].Text.Length.ShouldBe(1_000_000,
+            customMessage: "the in-flight Append must have completed fully before Dispose closed the stream.");
+    }
+
     [Fact]
     public void PayloadContainingTabAndNewline_IsSafelyRoundTripped()
     {

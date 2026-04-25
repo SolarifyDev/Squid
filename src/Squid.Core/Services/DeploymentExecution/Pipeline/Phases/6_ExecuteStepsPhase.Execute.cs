@@ -13,6 +13,7 @@ using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Message.Constants;
+using Squid.Message.Hardening;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 
@@ -354,7 +355,12 @@ public sealed partial class ExecuteStepsPhase
 
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
-            var outputCapture = CaptureOutputVariables(execResult.LogLines);
+            // P1-B.7: cross-reference output-variable values against the
+            // sensitive values that flowed INTO this script, so an agent that
+            // wrongly emits sensitive='False' (compromised script or bug) can
+            // be caught by the three-mode guard.
+            var knownSensitiveValues = ExtractSensitiveValues(effectiveVariables);
+            var outputCapture = CaptureOutputVariables(execResult.LogLines, knownSensitiveValues);
 
             await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
 
@@ -464,20 +470,54 @@ public sealed partial class ExecuteStepsPhase
         public HashSet<string> SensitiveNames { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private OutputVariableCapture CaptureOutputVariables(List<string> logLines)
+    private OutputVariableCapture CaptureOutputVariables(List<string> logLines, IReadOnlyCollection<string> knownSensitiveValues)
     {
         var capture = new OutputVariableCapture();
         var outputVars = serviceMessageParser.ParseOutputVariables(logLines);
+
+        // P1-B.7: read the enforcement mode ONCE per capture pass — env-var
+        // reads are cheap but doing it inside the loop would still be wasteful
+        // for high-volume output-var emits.
+        var leakGuardMode = EnforcementModeReader.Read(SensitiveValueLeakGuard.EnforcementEnvVar);
 
         foreach (var kv in outputVars)
         {
             capture.Variables[kv.Key] = kv.Value.Value;
 
-            if (kv.Value.IsSensitive)
+            var isSensitive = SensitiveValueLeakGuard.ShouldForceSensitive(
+                kv.Key,
+                kv.Value.Value,
+                kv.Value.IsSensitive,
+                knownSensitiveValues,
+                leakGuardMode);
+
+            if (isSensitive)
                 capture.SensitiveNames.Add(kv.Key);
         }
 
         return capture;
+    }
+
+    /// <summary>
+    /// Pulls the values of every <see cref="VariableDto.IsSensitive"/>=true
+    /// variable that was passed to the script into a HashSet for O(1)
+    /// match-checking by <see cref="SensitiveValueLeakGuard"/>. Empty values
+    /// and short values are filtered upstream by the guard's length floor —
+    /// keeping the set small here is just a minor optimisation.
+    /// </summary>
+    private static HashSet<string> ExtractSensitiveValues(IReadOnlyList<VariableDto> effectiveVariables)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (effectiveVariables == null) return set;
+
+        foreach (var v in effectiveVariables)
+        {
+            if (v == null) continue;
+            if (!v.IsSensitive) continue;
+            if (string.IsNullOrEmpty(v.Value)) continue;
+            set.Add(v.Value);
+        }
+        return set;
     }
 
     private static readonly string[] ReservedPrefixes = { "Squid.", "System." };

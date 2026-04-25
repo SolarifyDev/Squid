@@ -58,6 +58,17 @@ public sealed class SequencedLogWriter : IDisposable
 
         lock (_sync)
         {
+            // Late-OutputDataReceived race: .NET's AsyncStreamReader can dispatch
+            // callbacks AFTER WaitForExit returned true, so a final stdout line
+            // can land here AFTER CompleteScript / CancelScript / test teardown
+            // already disposed this writer. Pre-fix the StreamWriter.Write below
+            // would throw ObjectDisposedException, propagate to the threadpool
+            // worker as unhandled, and crash the test host (the actual CI
+            // failure on 2026-04-25). Silent no-op here loses the late line —
+            // the same outcome as if the callback had fired one millisecond
+            // later when the stream was fully closed — but keeps the host alive.
+            if (_disposed != 0) return -1;
+
             var seq = _nextSequence++;
             var entry = new SequencedLogEntry(seq, occurred ?? DateTimeOffset.UtcNow, source, masked);
             _writer.Write(SequencedLogFormat.Encode(entry));
@@ -70,35 +81,59 @@ public sealed class SequencedLogWriter : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        try { _writer.Dispose(); }
-        catch (IOException ex) { Log.Debug(ex, "Failed to close log writer"); }
+
+        // Take the same lock Append uses so any in-flight write completes
+        // before we close the stream — closes the inverse race (Append
+        // mid-write while Dispose closes the underlying StreamWriter from
+        // a different thread). Cheap because Append calls are short and
+        // serialised by this lock anyway.
+        lock (_sync)
+        {
+            try { _writer.Dispose(); }
+            catch (IOException ex) { Log.Debug(ex, "Failed to close log writer"); }
+        }
     }
 
+    /// <summary>
+    /// Determines the next sequence number for an existing on-disk log so a
+    /// freshly-opened writer continues the existing stream instead of restarting
+    /// at 0.
+    ///
+    /// <para><b>P1-T.12 (Phase-5 follow-up to 2026-04-24 audit)</b>: pre-fix the
+    /// implementation read ONLY the last non-empty line and decoded it. If
+    /// that line was a truncated/corrupt mid-crash tail (the SequencedLogReader
+    /// already tolerates these via <c>Crash_TruncatedFinalLine_IgnoredByReader</c>),
+    /// <c>TryDecode</c> failed → fallback to sequence 0 → next <c>Append</c>
+    /// reused sequences 0..N-1 that the reader could still decode from disk.
+    /// Server's cursor-tracked log delivery (Phase-4 fix) then saw duplicate
+    /// sequence numbers, mis-ordered lines, and silent re-deliveries.</para>
+    ///
+    /// <para>Fix: scan the whole file for the highest decodable sequence —
+    /// same forgiving logic the reader already uses. Garbage lines anywhere
+    /// in the file are tolerated; restart point is exactly one past the
+    /// highest valid entry. If no entries decode at all, restart at 0
+    /// (treats the file as fresh, matching the no-file case).</para>
+    ///
+    /// <para>Pinned by <c>SequencedLogTests.NewWriterOnFileWithCorruptTail_*</c>.</para>
+    /// </summary>
     private static long DetermineStartSequence(string path)
     {
         if (!File.Exists(path)) return 0;
 
         try
         {
-            var lastLine = ReadLastLine(path);
-            if (string.IsNullOrEmpty(lastLine)) return 0;
-            if (!SequencedLogFormat.TryDecode(lastLine, out var lastEntry)) return 0;
-            return lastEntry.Sequence + 1;
+            var reader = new SequencedLogReader(path);
+            var highest = reader.GetHighestSequence();
+
+            // GetHighestSequence returns -1 when the file has no decodable
+            // entries (empty file or all garbage). -1 + 1 == 0, which is the
+            // "fresh stream" starting sequence — matches the no-file case.
+            return highest + 1;
         }
         catch (IOException ex)
         {
             Log.Warning(ex, "Failed to determine starting sequence for log at {Path}; restarting at 0", path);
             return 0;
         }
-    }
-
-    private static string ReadLastLine(string path)
-    {
-        using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
-        string? last = null;
-        string? line;
-        while ((line = reader.ReadLine()) != null)
-            if (line.Length > 0) last = line;
-        return last ?? string.Empty;
     }
 }
