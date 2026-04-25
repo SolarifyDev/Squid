@@ -221,8 +221,9 @@ public class MachineServiceTests
             .Callback(() => callOrder.Add("persist"))
             .Returns(Task.CompletedTask);
         _trustDistributor
-            .Setup(t => t.Reconfigure())
-            .Callback(() => callOrder.Add("reconfigure"));
+            .Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("reconfigure"))
+            .Returns(Task.CompletedTask);
 
         var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
 
@@ -236,12 +237,13 @@ public class MachineServiceTests
     {
         var machine = new Machine { Id = 1, Name = "api-target" };
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+        _trustDistributor.Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var command = new UpdateMachineCommand { MachineId = 1, Name = "renamed" };
 
         await _service.UpdateMachineAsync(command, CancellationToken.None);
 
-        _trustDistributor.Verify(t => t.Reconfigure(), Times.Once);
+        _trustDistributor.Verify(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -249,12 +251,13 @@ public class MachineServiceTests
     {
         var machine = new Machine { Id = 1, Name = "agent-1", IsDisabled = false };
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+        _trustDistributor.Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var command = new UpdateMachineCommand { MachineId = 1, IsDisabled = true };
 
         await _service.UpdateMachineAsync(command, CancellationToken.None);
 
-        _trustDistributor.Verify(t => t.Reconfigure(), Times.Once);
+        _trustDistributor.Verify(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========================================================================
@@ -669,8 +672,9 @@ public class MachineServiceTests
             .Callback(() => callOrder.Add("persist"))
             .Returns(Task.CompletedTask);
         _trustDistributor
-            .Setup(t => t.Reconfigure())
-            .Callback(() => callOrder.Add("reconfigure"));
+            .Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("reconfigure"))
+            .Returns(Task.CompletedTask);
 
         var command = new DeleteMachinesCommand { Ids = new List<int> { 1 } };
 

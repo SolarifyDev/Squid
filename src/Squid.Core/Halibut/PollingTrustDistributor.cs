@@ -7,8 +7,30 @@ public interface IPollingTrustDistributor
 {
     bool InitialLoadCompleted { get; }
 
+    /// <summary>
+    /// Async reload of the polling-trust list — preferred entry point for any
+    /// caller already inside an async method (controllers, mediator handlers).
+    /// </summary>
+    Task ReconfigureAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Async fast-path for the post-registration trust check. Short-circuits
+    /// when the thumbprint is already trusted; otherwise awaits a full
+    /// <see cref="ReconfigureAsync"/>.
+    /// </summary>
+    Task ReconfigureIfMissingAsync(string thumbprint, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sync wrapper kept for back-compat with the <see cref="IStartable"/>
+    /// startup hook. New call sites should use <see cref="ReconfigureAsync"/>.
+    /// </summary>
     void Reconfigure();
 
+    /// <summary>
+    /// Sync wrapper kept for back-compat. New call sites should use
+    /// <see cref="ReconfigureIfMissingAsync"/> — the sync overload here will
+    /// block the calling thread on the underlying DB query.
+    /// </summary>
     void ReconfigureIfMissing(string thumbprint);
 }
 
@@ -44,7 +66,7 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
             try
             {
                 await Task.Yield();
-                Reconfigure();
+                await ReconfigureAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -57,26 +79,38 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
         });
     }
 
-    public void Reconfigure()
+    public async Task ReconfigureAsync(CancellationToken cancellationToken = default)
     {
         if (!ResolveHalibutRuntime()) return;
 
         var dataProvider = _scope.Resolve<IMachineDataProvider>();
-        var thumbprints = dataProvider.GetPollingThumbprintsAsync().GetAwaiter().GetResult();
+        var thumbprints = await dataProvider.GetPollingThumbprintsAsync(cancellationToken).ConfigureAwait(false);
 
         _halibutRuntime.TrustOnly(thumbprints);
 
         Log.Information("Halibut trust reconfigured, {Count} polling agent(s) trusted", thumbprints.Count);
     }
 
-    public void ReconfigureIfMissing(string thumbprint)
+    public async Task ReconfigureIfMissingAsync(string thumbprint, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(thumbprint)) return;
         if (!ResolveHalibutRuntime()) return;
         if (_halibutRuntime.IsTrusted(thumbprint)) return;
 
-        Reconfigure();
+        await ReconfigureAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// P1 (Phase-6, post-Phase-5 deep audit): the original sync entry point
+    /// blocked Kestrel request threads via <c>.GetAwaiter().GetResult()</c>
+    /// on the DB query when invoked from registration controllers. Kept for
+    /// back-compat with non-async callers; new code paths must call
+    /// <see cref="ReconfigureAsync"/> directly.
+    /// </summary>
+    public void Reconfigure() => ReconfigureAsync().GetAwaiter().GetResult();
+
+    /// <summary>Same back-compat shim for <see cref="ReconfigureIfMissingAsync"/>.</summary>
+    public void ReconfigureIfMissing(string thumbprint) => ReconfigureIfMissingAsync(thumbprint).GetAwaiter().GetResult();
 
     private bool ResolveHalibutRuntime()
     {

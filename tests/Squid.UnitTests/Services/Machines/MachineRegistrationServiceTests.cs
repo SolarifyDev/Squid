@@ -459,8 +459,9 @@ public class MachineRegistrationServiceTests
             .Callback(() => callOrder.Add("persist"))
             .Returns(Task.CompletedTask);
         _trustDistributor
-            .Setup(t => t.Reconfigure())
-            .Callback(() => callOrder.Add("reconfigure"));
+            .Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("reconfigure"))
+            .Returns(Task.CompletedTask);
 
         await _service.RegisterKubernetesAgentAsync(CreateCommand(), CancellationToken.None);
 
@@ -490,8 +491,9 @@ public class MachineRegistrationServiceTests
             .Callback(() => callOrder.Add("persist"))
             .Returns(Task.CompletedTask);
         _trustDistributor
-            .Setup(t => t.Reconfigure())
-            .Callback(() => callOrder.Add("reconfigure"));
+            .Setup(t => t.ReconfigureAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("reconfigure"))
+            .Returns(Task.CompletedTask);
 
         await _service.RegisterKubernetesAgentAsync(CreateCommand(subscriptionId: "sub-123"), CancellationToken.None);
 
@@ -677,6 +679,7 @@ public class MachineRegistrationServiceTests
         _machineDataProvider.Verify(
             x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
+        _trustDistributor.Verify(x => x.ReconfigureAsync(It.IsAny<CancellationToken>()), Times.Never);
         _trustDistributor.Verify(x => x.Reconfigure(), Times.Never);
     }
 
