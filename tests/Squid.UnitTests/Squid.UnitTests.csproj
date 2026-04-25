@@ -34,6 +34,10 @@
          the silent-drift gap that hand-mirrored helpers in either side's own test project
          cannot catch. -->
     <ProjectReference Include="..\..\src\Squid.Calamari\Squid.Calamari.csproj" />
+    <!-- P1-D.5 (Phase-7): API-key authentication-handler tests live in
+         this project (no separate ApiTests project); add an Api ref so
+         the handler type is reachable. -->
+    <ProjectReference Include="..\..\src\Squid.Api\Squid.Api.csproj" />
   </ItemGroup>
 
 </Project>
