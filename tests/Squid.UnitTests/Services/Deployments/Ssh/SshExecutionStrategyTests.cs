@@ -227,8 +227,11 @@ public class SshExecutionStrategyTests
         var result = strategy.BootstrapIfBash(request, "/home/user/.squid/Work/42", "/home/user/.squid");
 
         result.ShouldStartWith("#!/bin/bash\n");
-        result.ShouldContain("export SquidHome=\"/home/user/.squid\"");
-        result.ShouldContain("export SquidWorkDirectory=\"/home/user/.squid/Work/42\"");
+        // P1-B.6: BashRuntimeBundle now wraps every value in single quotes — see
+        // EscapeBashValue. Test pins the new contract (double-quote form was
+        // injection-vulnerable for any value containing a literal newline).
+        result.ShouldContain("export SquidHome='/home/user/.squid'");
+        result.ShouldContain("export SquidWorkDirectory='/home/user/.squid/Work/42'");
         result.ShouldContain("set_squidvariable()");
         result.ShouldContain("echo hello");
     }
@@ -243,7 +246,7 @@ public class SshExecutionStrategyTests
 
         var result = strategy.BootstrapIfBash(request, "/work/1", "/base");
 
-        result.ShouldContain("export AppEnv=\"production\"");
+        result.ShouldContain("export AppEnv='production'");
         result.ShouldNotContain("DbPassword");
         result.ShouldNotContain("secret");
     }
