@@ -32,7 +32,52 @@ public class SquidModule : Module
         RegisterAutoMapper(builder);
         RegisterDependency(builder);
 
+        // MUST come AFTER RegisterDependency — overrides the auto-scanned
+        // `ApiUser : ICurrentUser, IScopedDependency` registration so non-HTTP
+        // scopes (Hangfire jobs, startup, scheduled tasks) get InternalUser.
+        // See P1-D.6 follow-up note.
+        RegisterCurrentUser(builder);
+
         RegisterDataSeeders(builder);
+    }
+
+    /// <summary>
+    /// P1-D.6 follow-up (Phase-7): the auto-registration in
+    /// <see cref="RegisterDependency"/> binds <c>ICurrentUser</c> to
+    /// <see cref="ApiUser"/> for every scope (because ApiUser implements
+    /// IScopedDependency). After D.6's fail-closed change, ApiUser in a
+    /// non-HTTP scope returns null Id → AuthorizationSpecification throws
+    /// PermissionDeniedException on any [RequiresPermission] command.
+    ///
+    /// <para>Hangfire jobs (e.g. <c>MachineHealthCheckRecurringJob</c>
+    /// every minute) dispatch <c>AutoMachineHealthCheckCommand</c>
+    /// — a permissioned command — through the mediator pipeline. With
+    /// auto-only registration this would 100%-of-the-time crash every
+    /// minute on production.</para>
+    ///
+    /// <para>Fix: a context-aware factory chooses ApiUser when HttpContext
+    /// exists, InternalUser when it doesn't. The bypass in
+    /// AuthorizationSpecification still keys off <c>IsInternal=true</c>
+    /// (NOT off Id == 8888), so an ApiUser-with-null-context (DI mishap
+    /// mid-request) STILL fails closed — only the type-level InternalUser
+    /// signal grants the bypass.</para>
+    /// </summary>
+    private void RegisterCurrentUser(ContainerBuilder builder)
+    {
+        builder.Register<ICurrentUser>(c =>
+        {
+            var accessor = c.ResolveOptional<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
+
+            // Real HTTP request → ApiUser (claim-derived identity).
+            if (accessor?.HttpContext != null)
+                return c.Resolve<ApiUser>();
+
+            // No HttpContext → background-job / startup / scheduled-task
+            // scope. InternalUser carries IsInternal=true so the
+            // authorization middleware permits the bypass for known
+            // internal contexts.
+            return new InternalUser();
+        }).InstancePerLifetimeScope();
     }
 
     private void RegisterLogging(ContainerBuilder builder)
