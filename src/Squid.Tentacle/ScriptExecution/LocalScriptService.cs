@@ -283,11 +283,14 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
     {
-        var logs = ReadLogs(running, afterSequence);
+        // Cursor MUST be derived from the same disk read as `logs` — see
+        // ReadLogsAndCursor's XML for the race that the previous two-source
+        // code (ReadLogs + LogWriter.NextSequence) opened.
+        var (logs, nextSequence) = ReadLogsAndCursor(running, afterSequence);
         var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
 
-        return new ScriptStatusResponse(ticket, state, exitCode, logs, running.LogWriter?.NextSequence ?? 0);
+        return new ScriptStatusResponse(ticket, state, exitCode, logs, nextSequence);
     }
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
@@ -314,9 +317,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         try { state = stateStore.Load(); }
         catch { return false; }
 
-        var logReader = new SequencedLogReader(Path.Combine(workDir, "output.log"));
-        var entries = logReader.ReadFrom(lastSeq - 1);
-        var logs = entries.Select(e => e.ToProcessOutput()).ToList();
+        // Single disk read: returns (logs, derivedNextSeq) consistent with each
+        // other. The previous code did `ReadFrom` here and a separate
+        // `GetHighestSequence` later — a concurrent writer between the two reads
+        // (e.g. while the orphan tentacle is still emitting output during a
+        // mid-restart poll) advanced the cursor past entries the first read
+        // didn't see, so the next poll skipped them. See ReadLogsAndCursor.
+        var (logs, derivedNextSeq) = ReadLogsAndCursor(Path.Combine(workDir, "output.log"), lastSeq - 1);
 
         // Orphan-state detection (1.6.x fix): if the state file says
         // Progress=Running but the recorded process is gone or has been
@@ -349,16 +356,24 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 "polling forever.",
                 ticket.TaskId, state.ProcessId.Value, state.ProcessStartedAt);
 
-            response = new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, logs,
-                state.NextLogSequence > 0 ? state.NextLogSequence : Math.Max(0, logReader.GetHighestSequence() + 1));
+            // Orphan: trust the disk-derived cursor over state.NextLogSequence —
+            // an orphaned writer may have appended past the last persisted save.
+            response = new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, logs, derivedNextSeq);
             return true;
         }
 
         var processState = state.IsComplete() ? ProcessState.Complete : ProcessState.Running;
         var exitCode = state.ExitCode ?? 0;
-        var nextSeq = state.NextLogSequence > 0
+
+        // For a Complete script, state.NextLogSequence was set atomically with
+        // PersistCompleteState — that snapshot is the canonical final cursor.
+        // For a Running script (still emitting output via the original agent
+        // process), state.NextLogSequence is 0 (never written during Running)
+        // and we MUST use derivedNextSeq from the SAME read as `logs` to keep
+        // the cursor consistent with what the caller is about to see.
+        var nextSeq = state.IsComplete() && state.NextLogSequence > 0
             ? state.NextLogSequence
-            : Math.Max(0, logReader.GetHighestSequence() + 1);
+            : derivedNextSeq;
 
         response = new ScriptStatusResponse(ticket, processState, exitCode, logs, nextSeq);
         return true;
@@ -988,14 +1003,53 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         process.BeginErrorReadLine();
     }
 
-    private static List<ProcessOutput> ReadLogs(RunningScript running, long afterSequence)
+    /// <summary>
+    /// Reads log entries from disk AND derives the response's <c>NextLogSequence</c>
+    /// cursor in a single place, so the cursor is always one past the highest
+    /// sequence in the entries actually returned (or <c>afterSequence + 1</c> when
+    /// nothing is returned).
+    ///
+    /// <para><b>Why this is a single-source helper</b>: the previous implementation
+    /// computed the cursor from a different source than the entries — either the
+    /// writer's in-memory <c>NextSequence</c> counter (live-script path in
+    /// <see cref="BuildStatus"/>) or a second <c>GetHighestSequence</c> call
+    /// against the same file (persisted-script path in
+    /// <see cref="TryBuildStatusFromPersistedLogs"/>). Both sources can race
+    /// ahead of the <c>ReadFrom</c> snapshot — between the disk read and the
+    /// counter / second-read, a concurrent writer can append more lines, so the
+    /// returned cursor jumps past entries that were never delivered. The next
+    /// poll then asks "give me from cursor onward" and silently misses the gap,
+    /// which broke <c>LogCursor_SurvivesAgentRestart_AllLinesDeliveredExactlyOnce</c>
+    /// in CI.</para>
+    ///
+    /// <para>Pinned by <c>LocalScriptServiceCursorTests</c> — every property of
+    /// the (logs, cursor) pair is verified there: empty file, mid-stream cursor,
+    /// past-end cursor, two-phase reads with no gap.</para>
+    /// </summary>
+    internal static (List<ProcessOutput> Logs, long NextSequence) ReadLogsAndCursor(string logFilePath, long afterSequence)
     {
-        if (running.LogWriter == null) return new List<ProcessOutput>();
-
-        var reader = new SequencedLogReader(running.LogFilePath);
+        var reader = new SequencedLogReader(logFilePath);
         var entries = reader.ReadFrom(afterSequence);
-        return entries.Select(e => e.ToProcessOutput()).ToList();
+        var logs = entries.Select(e => e.ToProcessOutput()).ToList();
+
+        // Cursor = max(returned sequence) + 1. If nothing was returned, cursor
+        // stays at afterSequence + 1 — preserves the caller's progress without
+        // either advancing past undelivered entries or rewinding.
+        var nextSequence = entries.Count > 0
+            ? entries[entries.Count - 1].Sequence + 1
+            : afterSequence + 1;
+
+        return (logs, nextSequence);
     }
+
+    private static (List<ProcessOutput> Logs, long NextSequence) ReadLogsAndCursor(RunningScript running, long afterSequence)
+    {
+        if (running.LogWriter == null) return (new List<ProcessOutput>(), afterSequence + 1);
+        return ReadLogsAndCursor(running.LogFilePath, afterSequence);
+    }
+
+    private static List<ProcessOutput> ReadLogs(RunningScript running, long afterSequence)
+        => ReadLogsAndCursor(running, afterSequence).Logs;
 
     // ========================================================================
     // Cleanup

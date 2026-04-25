@@ -122,6 +122,12 @@ public sealed class TentacleApp
         Log.Information("Squid Tentacle shutting down — entering drain phase");
         isReady = false;
 
+        // P0-T.4: stop picking up new Halibut RPCs BEFORE waiting for in-flight
+        // scripts to finish. Otherwise new work arrives during drain, starts, and
+        // either extends drain past the timeout or gets killed mid-execution when
+        // the runtime finally disposes.
+        halibutHost.CancelPolling();
+
         if (runtime.ScriptBackend is IGracefulShutdownAware drainable)
         {
             var drainTimeout = TimeSpan.FromSeconds(tentacleSettings.ShutdownDrainTimeoutSeconds);

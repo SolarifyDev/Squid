@@ -132,6 +132,11 @@ public class ListeningReadinessTests
             IsListening = true;
         }
 
+        public void CancelPolling()
+        {
+            // No-op — these tests don't exercise the T.4 drain path; just satisfy the interface.
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

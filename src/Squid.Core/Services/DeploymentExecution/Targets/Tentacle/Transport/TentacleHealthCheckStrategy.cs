@@ -94,7 +94,10 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     private void CacheCapabilitiesFor(Machine machine, CapabilitiesResponse response)
     {
         if (_capabilitiesCache == null || machine == null) return;
-        _capabilitiesCache.Store(machine.Id, response.Metadata, response.AgentVersion);
+
+        // P0-E.3: also cache the SupportedServices list so the execution strategy
+        // can pick the V1/V2 protocol without another capabilities RPC per script.
+        _capabilitiesCache.Store(machine.Id, response.Metadata, response.AgentVersion, response.SupportedServices);
     }
 
     /// <summary>
