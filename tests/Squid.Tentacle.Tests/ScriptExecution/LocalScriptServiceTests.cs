@@ -889,13 +889,93 @@ public class LocalScriptServiceTests : IDisposable
     // Drain / Graceful Shutdown
     // ========================================================================
 
+    // ── P1-T.11 (Phase-5, 2026-04-25 audit follow-up) ─────────────────────────
+    //
+    // Pre-fix: a draining tentacle threw InvalidOperationException for any
+    // StartScript that arrived after WaitForDrainAsync flipped the flag.
+    // Halibut wrapped the throw as a generic RPC exception; the server's
+    // HalibutScriptObserver then logged a cryptic message and marked the
+    // deployment as a hard failure.
+    //
+    // The new contract: StartScript while draining returns a structured
+    // ScriptStatusResponse with State=Complete, ExitCode=AgentDraining (-503),
+    // and an informative stderr ProcessOutput. Server still treats unknown
+    // exit codes as failures (no breaking change to deployment outcome) but:
+    //   - The Halibut RPC succeeds, so the operator sees the exit code and
+    //     the stderr message instead of a wrapped exception trace.
+    //   - A future server release can recognise AgentDraining and route it
+    //     to a retry path.
+    //
+    // The change at this layer is the agent's IScriptService contract:
+    //   - returns a response instead of throwing.
+    //   - Halibut serialises the response over the wire either way.
+
     [Fact]
-    public void StartScript_WhileDraining_Throws()
+    public void StartScript_WhileDraining_ReturnsCompleteWithAgentDrainingExitCode_NoThrow()
     {
         _service.WaitForDrainAsync(TimeSpan.FromMilliseconds(1)).GetAwaiter().GetResult();
 
-        Should.Throw<InvalidOperationException>(() =>
-            _service.StartScript(MakeCommand("echo 'should-fail'")));
+        var response = Should.NotThrow(() => _service.StartScript(MakeCommand("echo 'rejected-during-drain'")));
+
+        response.ShouldNotBeNull();
+        response.State.ShouldBe(ProcessState.Complete,
+            customMessage: "drained tentacle reports Complete so the server's polling observer can release immediately.");
+        response.ExitCode.ShouldBe(ScriptExitCodes.AgentDraining,
+            customMessage: "exit code must be the dedicated AgentDraining sentinel so server-side dispatch can recognise it.");
+    }
+
+    [Fact]
+    public void StartScript_WhileDraining_StderrExplainsRejection()
+    {
+        _service.WaitForDrainAsync(TimeSpan.FromMilliseconds(1)).GetAwaiter().GetResult();
+
+        var response = _service.StartScript(MakeCommand("echo 'rejected'"));
+
+        response.Logs.ShouldNotBeNull();
+        response.Logs.Count.ShouldBeGreaterThan(0,
+            customMessage: "stderr must carry the operator-visible explanation; an empty Logs list leaves the server with nothing to show.");
+
+        var firstLog = response.Logs[0];
+        firstLog.Source.ShouldBe(ProcessOutputSource.StdErr,
+            customMessage: "explanation goes to stderr so it shows up in error-stream views, not interleaved with normal output.");
+        firstLog.Text.ShouldContain("shutting down",
+            customMessage: "operator must be able to grep for the drain reason without knowing the AgentDraining exit code.");
+    }
+
+    [Fact]
+    public void StartScript_WhileDraining_PropagatesTicket()
+    {
+        _service.WaitForDrainAsync(TimeSpan.FromMilliseconds(1)).GetAwaiter().GetResult();
+        var command = MakeCommand("echo 'rejected'");
+
+        var response = _service.StartScript(command);
+
+        response.Ticket.ShouldBe(command.ScriptTicket,
+            customMessage: "response ticket must match the request ticket; the server correlates the response back to its dispatch.");
+    }
+
+    [Fact]
+    public void StartScript_WhileDraining_LogsStructuredWarning()
+    {
+        // Operator-visibility: the rejection should also surface in the agent's
+        // own Serilog so SREs can grep for drain-window dispatches.
+        var (sink, restore) = InstallCapturingLogger();
+        try
+        {
+            _service.WaitForDrainAsync(TimeSpan.FromMilliseconds(1)).GetAwaiter().GetResult();
+            var command = MakeCommand("echo 'rejected'");
+
+            _service.StartScript(command);
+
+            sink.Events.ShouldContain(
+                e => e.Level == Serilog.Events.LogEventLevel.Warning
+                    && (e.MessageTemplate.Text.Contains("drain") || e.MessageTemplate.Text.Contains("shutting down")),
+                customMessage: "drain-window rejection must be logged at Warning so it stands out in operator dashboards.");
+        }
+        finally
+        {
+            restore();
+        }
     }
 
     // ========================================================================
@@ -961,5 +1041,28 @@ public class LocalScriptServiceTests : IDisposable
             }
             catch { }
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ────────────────────────────────────────────────────────────────────────
+
+    private static (CapturingLogSink Sink, Action Restore) InstallCapturingLogger()
+    {
+        var original = Serilog.Log.Logger;
+        var sink = new CapturingLogSink();
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        return (sink, () => Serilog.Log.Logger = original);
+    }
+
+    /// <summary>Local in-test sink — kept private to this class because Serilog.Log.Logger
+    /// is process-global and changing it across tests requires explicit restore in finally.</summary>
+    private sealed class CapturingLogSink : Serilog.Core.ILogEventSink
+    {
+        public List<Serilog.Events.LogEvent> Events { get; } = new();
+        public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
     }
 }

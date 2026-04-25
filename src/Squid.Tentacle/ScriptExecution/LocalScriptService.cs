@@ -43,8 +43,14 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
-        if (_draining)
-            throw new InvalidOperationException("Tentacle is shutting down and cannot accept new scripts");
+        // P1-T.11 (Phase-5 follow-up to 2026-04-24 audit): the pre-fix path
+        // threw InvalidOperationException, which Halibut wrapped as a generic
+        // RPC failure → server logged a cryptic message and marked the
+        // deployment failed. The new contract: return a structured Complete
+        // response with the AgentDraining sentinel exit code. Halibut returns
+        // it normally, the operator gets an actionable error in stderr, and
+        // a future server release can recognise the exit code as retry-able.
+        if (_draining) return BuildDrainRejection(command);
 
         if (command.ScriptTicket == null)
             throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
@@ -563,6 +569,36 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         {
             Log.Debug(ex, "Failed to delete persisted state for {WorkDir}", workDir);
         }
+    }
+
+    /// <summary>
+    /// Build the structured rejection response for a StartScript call that
+    /// arrived after the drain flag flipped. Returns Complete + AgentDraining
+    /// + an operator-readable stderr explanation. See P1-T.11 comment in
+    /// <see cref="StartScript"/> for the rationale.
+    /// </summary>
+    private ScriptStatusResponse BuildDrainRejection(StartScriptCommand command)
+    {
+        var ticketId = command.ScriptTicket?.TaskId ?? "<no-ticket>";
+
+        // Surface the rejection in the agent's own logs at Warning so SREs
+        // can grep for drain-window dispatches alongside the operator-side
+        // signal that the deployment ran into the agent's drain.
+        Log.Warning(
+            "Rejecting StartScript for ticket {TicketId} — tentacle is shutting down (drain mode active). " +
+            "Returning AgentDraining ({ExitCode}); deployment should be retried.",
+            ticketId, ScriptExitCodes.AgentDraining);
+
+        var stderr = new ProcessOutput(
+            ProcessOutputSource.StdErr,
+            "Tentacle is shutting down and rejected this script for graceful drain. The script did not run; please retry.");
+
+        return new ScriptStatusResponse(
+            command.ScriptTicket,
+            ProcessState.Complete,
+            ScriptExitCodes.AgentDraining,
+            new List<ProcessOutput> { stderr },
+            nextLogSequence: 0);
     }
 
     public async Task WaitForDrainAsync(TimeSpan timeout)

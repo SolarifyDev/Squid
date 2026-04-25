@@ -13,8 +13,24 @@ public static class ScriptExitCodes
     public const int ContainerTerminated = -82;
     public const int PodStartupFailed = -83;
 
+    /// <summary>
+    /// P1-T.11 (Phase-5 follow-up to 2026-04-24 audit): the agent rejected
+    /// this dispatch because it was draining (graceful shutdown). The script
+    /// did not run; the deployment should be retried (manually or, in a
+    /// future server release, automatically). Distinct from
+    /// <see cref="ProcessTerminated"/> which means the script started and was
+    /// killed mid-run.
+    ///
+    /// <para>Numbered <c>-503</c> by analogy with HTTP 503 Service Unavailable
+    /// — the resource is temporarily refusing requests but expected to come
+    /// back. <see cref="IsInfrastructureFailure"/> includes this so existing
+    /// classification logic treats drain rejections as infrastructure (not
+    /// script-level) failures.</para>
+    /// </summary>
+    public const int AgentDraining = -503;
+
     public static bool IsInfrastructureFailure(int exitCode)
-        => exitCode is Fatal or Timeout or PodNotFound or ContainerTerminated or ProcessTerminated or PodStartupFailed;
+        => exitCode is Fatal or Timeout or PodNotFound or ContainerTerminated or ProcessTerminated or PodStartupFailed or AgentDraining;
 
     public static string Describe(int exitCode)
     {
@@ -36,6 +52,7 @@ public static class ScriptExitCodes
             PodNotFound => "Kubernetes pod not found",
             ContainerTerminated => "Kubernetes container terminated unexpectedly",
             PodStartupFailed => "Kubernetes pod startup failed",
+            AgentDraining => "Tentacle is shutting down and rejected this dispatch — retry expected",
             _ => $"Script exited with code {exitCode}"
         };
     }
