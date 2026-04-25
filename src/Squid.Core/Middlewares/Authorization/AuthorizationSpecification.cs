@@ -25,13 +25,29 @@ public class AuthorizationSpecification<TContext> : IPipeSpecification<TContext>
 
     public async Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
-        if (_currentUser.Id == null) return;
-        if (_currentUser.Id == CurrentUsers.InternalUser.Id) return;
-
         var messageType = context.Message.GetType();
         var attributes = messageType.GetCustomAttributes(typeof(RequiresPermissionAttribute), true);
 
         if (attributes.Length == 0) return;
+
+        // P1-D.6 (Phase-7): bypass keyed off IsInternal, NOT off
+        // Id == InternalUser.Id. Pre-fix any ApiUser stuck in a non-HTTP DI
+        // scope returned 8888 from its Id getter and the equality check
+        // silently bypassed every permission check on the command. The
+        // IsInternal boolean is set on the concrete implementation type so
+        // a stray Id collision can no longer impersonate internal context.
+        if (_currentUser.IsInternal) return;
+
+        // Pre-fix: `if (_currentUser.Id == null) return;` ALSO bypassed —
+        // any auth flow that produced a null Id (no token, malformed token,
+        // missing claim) would silently skip authorization on a permissioned
+        // command. Now we throw so the failure is loud and the request is
+        // rejected.
+        if (_currentUser.Id == null)
+            throw new PermissionDeniedException(
+                ((RequiresPermissionAttribute)attributes[0]).Permission,
+                "Authorization rejected: user identity not resolved. Either no valid auth token, " +
+                "or the request is in a non-HTTP scope without InternalUser. Fail-closed safety check (P1-D.6).");
 
         int? spaceId = null;
 

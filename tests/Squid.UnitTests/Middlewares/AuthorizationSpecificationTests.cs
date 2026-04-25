@@ -15,17 +15,52 @@ public class AuthorizationSpecificationTests
     private readonly Mock<IAuthorizationService> _authorizationService = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
 
+    // ── P1-D.6 (Phase-7): null-Id is now fail-closed for permissioned commands ─
+    //
+    // Pre-fix: `if (_currentUser.Id == null) return;` silently bypassed every
+    // permission check on a permissioned command. Any auth flow that produced
+    // a null Id (no token / malformed token / missing claim) skipped
+    // authorization. Combined with ApiUser fall-back to InternalUser.Id when
+    // HttpContext was null, this gave a "DI mishap → ApiUser sees null
+    // HttpContext → falls back to 8888 → middleware bypasses" path.
+    //
+    // Post-fix: bypass keys off `IsInternal` (concrete-type signal); null Id
+    // throws `PermissionDeniedException` for permissioned commands. Commands
+    // without `[RequiresPermission]` still pass through (no permission, no
+    // need for identity).
+
     [Fact]
-    public async Task NullCurrentUser_AllowsThrough()
+    public async Task NullCurrentUser_OnUnpermissionedCommand_AllowsThrough()
     {
         _currentUser.Setup(x => x.Id).Returns((int?)null);
+        _currentUser.Setup(x => x.IsInternal).Returns(false);
+
+        var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
+        var context = new Mock<IContext<IMessage>>();
+        context.Setup(c => c.Message).Returns(new TestCommandWithoutPermission());
+
+        await spec.BeforeExecute(context.Object, CancellationToken.None);
+
+        _authorizationService.Verify(x => x.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task NullCurrentUser_OnPermissionedCommand_ThrowsPermissionDenied()
+    {
+        // The actual D.6 regression: null Id on a permissioned command must
+        // be REJECTED, not bypassed.
+        _currentUser.Setup(x => x.Id).Returns((int?)null);
+        _currentUser.Setup(x => x.IsInternal).Returns(false);
 
         var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
         var context = new Mock<IContext<IMessage>>();
         context.Setup(c => c.Message).Returns(new TestSystemCommand());
 
-        await spec.BeforeExecute(context.Object, CancellationToken.None);
+        var ex = await Should.ThrowAsync<PermissionDeniedException>(
+            async () => await spec.BeforeExecute(context.Object, CancellationToken.None));
 
+        ex.Message.ShouldContain("Authorization rejected",
+            customMessage: "the rejection message must clearly identify it as authorization-driven, not a generic exception.");
         _authorizationService.Verify(x => x.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -194,9 +229,14 @@ public class AuthorizationSpecificationTests
     }
 
     [Fact]
-    public async Task InternalUser_SkipsAllChecks()
+    public async Task InternalUser_IsInternalTrue_SkipsAllChecks()
     {
+        // P1-D.6: bypass keyed off IsInternal, NOT off Id == 8888. A real
+        // InternalUser instance returns IsInternal=true; that's the safe
+        // signal. An ApiUser stuck in a non-HTTP scope never returns
+        // IsInternal=true so it can no longer impersonate this path.
         _currentUser.Setup(x => x.Id).Returns(Message.Constants.CurrentUsers.InternalUser.Id);
+        _currentUser.Setup(x => x.IsInternal).Returns(true);
 
         var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
         var context = new Mock<IContext<IMessage>>();
@@ -205,6 +245,26 @@ public class AuthorizationSpecificationTests
         await spec.BeforeExecute(context.Object, CancellationToken.None);
 
         _authorizationService.Verify(x => x.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApiUserWithInternalUserId_ButIsInternalFalse_DoesNotBypass()
+    {
+        // The actual D.6 regression: an ApiUser that happens to return Id=8888
+        // (because it sat in a non-HTTP scope and pre-fix fell back to that
+        // value) must NOT bypass authorization. The IsInternal=false signal
+        // closes that path.
+        _currentUser.Setup(x => x.Id).Returns(Message.Constants.CurrentUsers.InternalUser.Id);
+        _currentUser.Setup(x => x.IsInternal).Returns(false);
+
+        var spec = new AuthorizationSpecification<IContext<IMessage>>(_authorizationService.Object, _currentUser.Object);
+        var context = new Mock<IContext<IMessage>>();
+        context.Setup(c => c.Message).Returns(new TestSystemCommand());
+
+        await spec.BeforeExecute(context.Object, CancellationToken.None);
+
+        _authorizationService.Verify(x => x.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Once,
+            failMessage: "ApiUser-with-fallback-Id must NOT bypass authorization. The IsInternal=false signal must force a real permission check.");
     }
 
     [Fact]
