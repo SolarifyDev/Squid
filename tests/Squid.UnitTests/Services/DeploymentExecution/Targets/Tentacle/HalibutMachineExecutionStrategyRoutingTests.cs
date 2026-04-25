@@ -126,4 +126,79 @@ public class HalibutMachineExecutionStrategyRoutingTests
             HalibutMachineExecutionStrategy.MapSyntax((Squid.Message.Models.Deployments.Execution.ScriptSyntax)999))
                 .Message.ShouldContain("Unsupported script syntax");
     }
+
+    // ── ARCH.7 (Phase-6, post-Phase-5 deep audit) ─────────────────────────────
+    //
+    // Pre-fix: GenerateTicketId derived BOTH the ScriptTicket AND the
+    // IsolationMutexName from `SHA256(taskId|step|action|machineId)[..32]`.
+    // Two consecutive dispatches of the same logical action (e.g. retry after
+    // a network glitch on the original StartScript RPC) produced IDENTICAL
+    // tickets — so agent-side state from the first attempt (mutex, workspace)
+    // could trap the retry; the agent couldn't distinguish "redelivery" from
+    // "fresh attempt". Octopus matches this by using `Guid.NewGuid()` per
+    // dispatch.
+    //
+    // Post-fix:
+    //   - ScriptTicket: Guid.NewGuid() (32-char "N" form) per call → distinct
+    //     attempts get distinct tickets → no agent-side state trap.
+    //   - IsolationMutexName: stable SHA256 derivation kept → concurrent
+    //     dispatches of the same action still serialise on the agent (the
+    //     thing the original derivation was actually trying to do).
+
+    [Fact]
+    public void GenerateTicketId_TwoCalls_ProduceDifferentTickets()
+    {
+        // Pin Guid-per-attempt: even SAME (taskId, step, action, machineId)
+        // → DIFFERENT tickets across calls.
+        var t1 = HalibutMachineExecutionStrategy.GenerateTicketId(123, "Deploy", "Apply", 7);
+        var t2 = HalibutMachineExecutionStrategy.GenerateTicketId(123, "Deploy", "Apply", 7);
+
+        t1.ShouldNotBe(t2,
+            customMessage:
+                "ARCH.7 — same dispatch tuple must produce DIFFERENT tickets across calls. " +
+                "SHA256-derived tickets caused agent-side state from a previous attempt to trap retries.");
+    }
+
+    [Fact]
+    public void GenerateTicketId_ProducesStableLengthAndFormat()
+    {
+        // Format pin: 32 chars hex/Guid-N — keeps the ticket compact in logs
+        // and the workspace dir name (`squid-tentacle-{ticketId}`).
+        var ticket = HalibutMachineExecutionStrategy.GenerateTicketId(1, "step", "action", 1);
+
+        ticket.Length.ShouldBe(32);
+        ticket.ShouldMatch("^[a-f0-9]{32}$",
+            customMessage: "ticket must be lowercase hex (Guid 'N' format) — agent's TicketIdWhitelist regex pins this.");
+    }
+
+    [Fact]
+    public void GenerateMutexName_StableForSameActionTuple()
+    {
+        // The IsolationMutexName MUST stay deterministic so two concurrent
+        // dispatches of the same logical action (e.g. server-side double-send
+        // bug, or genuine retry overlapping with original) serialise on the
+        // agent. Different tickets, same mutex name = correct agent behaviour.
+        var m1 = HalibutMachineExecutionStrategy.GenerateMutexName(123, "Deploy", "Apply", 7);
+        var m2 = HalibutMachineExecutionStrategy.GenerateMutexName(123, "Deploy", "Apply", 7);
+
+        m1.ShouldBe(m2);
+        m1.Length.ShouldBe(32);
+        m1.ShouldMatch("^[a-f0-9]{32}$");
+    }
+
+    [Theory]
+    [InlineData(1, "step", "action", 1, 2, "step", "action", 1)]    // taskId differs
+    [InlineData(1, "step", "action", 1, 1, "STEP", "action", 1)]    // step differs
+    [InlineData(1, "step", "action", 1, 1, "step", "ACTION", 1)]    // action differs
+    [InlineData(1, "step", "action", 1, 1, "step", "action", 2)]    // machineId differs
+    public void GenerateMutexName_DifferentTuple_DifferentMutex(
+        int t1, string s1, string a1, int m1,
+        int t2, string s2, string a2, int m2)
+    {
+        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(t1, s1, a1, m1);
+        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(t2, s2, a2, m2);
+
+        n1.ShouldNotBe(n2,
+            customMessage: "different (taskId, step, action, machineId) tuples must hash to different mutex names so unrelated dispatches don't serialise.");
+    }
 }

@@ -43,7 +43,8 @@ public partial class MachineRegistrationService
             Log.Information("Registered new machine {MachineName} ({SubscriptionId})", machine.Name, command.SubscriptionId);
         }
 
-        _trustDistributor.Reconfigure();
+        // P1 (Phase-6): async to free the Kestrel request thread during registration burst.
+        await _trustDistributor.ReconfigureAsync(cancellationToken).ConfigureAwait(false);
 
         return new RegisterMachineResponseData
         {

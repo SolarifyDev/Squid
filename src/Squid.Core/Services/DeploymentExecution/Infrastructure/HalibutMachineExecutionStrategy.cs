@@ -102,7 +102,11 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
+        // ARCH.7: ticket is fresh-per-attempt (Guid); mutex name is stable
+        // hash of the dispatch tuple so concurrent dispatches of the same
+        // action still serialise on the agent.
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var mutexName = GenerateMutexName(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
         var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
@@ -112,7 +116,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            ticketId,
+            mutexName,
             TimeSpan.Zero,
             scriptFiles)
         {
@@ -137,7 +141,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
+        // ARCH.7: see ExecuteCalamariViaHalibutAsync above for the ticket-vs-mutex split rationale.
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
+        var mutexName = GenerateMutexName(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
         var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
@@ -147,7 +153,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptTimeout,
             null,
             Array.Empty<string>(),
-            ticketId,
+            mutexName,
             TimeSpan.Zero,
             scriptFiles)
         {
@@ -202,7 +208,39 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
     }
 
+    /// <summary>
+    /// ARCH.7 (Phase-6, post-Phase-5 deep audit): produces a fresh
+    /// <see cref="ScriptTicket"/> id per dispatch attempt. The
+    /// <paramref name="serverTaskId"/> / <paramref name="stepName"/> /
+    /// <paramref name="actionName"/> / <paramref name="machineId"/> tuple is
+    /// IGNORED for the ticket itself — kept on the signature for symmetry
+    /// with <see cref="GenerateMutexName"/>, which is the value that DOES
+    /// need stability across attempts.
+    ///
+    /// <para>Pre-fix this method derived the ticket from the tuple via SHA256.
+    /// Same-tuple retries (server-side double-dispatch, network-glitch
+    /// resend) reused the same ticket — agent-side state from the previous
+    /// attempt (workspace, mutex) could trap the retry. Octopus matches this
+    /// fix with <c>Guid.NewGuid()</c> per dispatch.</para>
+    ///
+    /// <para>Pinned by <c>HalibutMachineExecutionStrategyRoutingTests.GenerateTicketId_*</c>.</para>
+    /// </summary>
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
+        => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// Stable hash of the dispatch tuple — used as the agent-side
+    /// <c>ScriptIsolationMutexName</c> so two concurrent dispatches of the
+    /// SAME logical action (e.g. genuine retry overlapping with original)
+    /// serialise on the agent, even though they carry distinct tickets.
+    ///
+    /// <para>This is the part of the pre-fix <c>GenerateTicketId</c> that was
+    /// actually load-bearing; it survives unchanged after we split ticket
+    /// (Guid-per-attempt) from mutex name (deterministic).</para>
+    ///
+    /// <para>Pinned by <c>HalibutMachineExecutionStrategyRoutingTests.GenerateMutexName_*</c>.</para>
+    /// </summary>
+    internal static string GenerateMutexName(int serverTaskId, string stepName, string actionName, int machineId)
     {
         var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
         var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));

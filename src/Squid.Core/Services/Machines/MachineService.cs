@@ -101,7 +101,8 @@ public class MachineService : IMachineService
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        _trustDistributor.Reconfigure();
+        // P1 (Phase-6): async to keep the Kestrel request thread off the DB-bound sync-over-async path.
+        await _trustDistributor.ReconfigureAsync(cancellationToken).ConfigureAwait(false);
 
         Log.Information("Updated machine {MachineName} (Id={MachineId})", machine.Name, machine.Id);
 
@@ -310,7 +311,8 @@ public class MachineService : IMachineService
 
         await _machineDataProvider.DeleteMachinesAsync(machines, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        _trustDistributor.Reconfigure();
+        // P1 (Phase-6): async to keep the Kestrel request thread off the DB-bound sync-over-async path.
+        await _trustDistributor.ReconfigureAsync(cancellationToken).ConfigureAwait(false);
 
         var deletedIds = machines.Select(m => m.Id).ToList();
         var failIds = command.Ids.Except(deletedIds).ToList();

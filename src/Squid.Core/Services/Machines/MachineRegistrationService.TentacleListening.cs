@@ -47,7 +47,9 @@ public partial class MachineRegistrationService
         // the return traffic. Polling registration already calls this; before this change
         // the listening path silently omitted it, so a newly-registered listening agent
         // could not complete a deployment until the next server restart.
-        _trustDistributor.ReconfigureIfMissing(command.Thumbprint);
+        // P1 (Phase-6): switched to async to keep the Kestrel request thread
+        // off the DB-bound sync-over-async path.
+        await _trustDistributor.ReconfigureIfMissingAsync(command.Thumbprint, cancellationToken).ConfigureAwait(false);
 
         return new RegisterMachineResponseData
         {

@@ -316,4 +316,166 @@ public class TargetParallelExecutorTests
 
         results.ShouldBe(new List<int> { 10, 20, 30, 40 });
     }
+
+    // ── Phase-6.3: global parallelism cap ─────────────────────────────────────
+    //
+    // Pre-fix: per-step `SemaphoreSlim(maxParallelism)` was created fresh inside
+    // ExecuteThrottledAsync. With MaxParallelism=50 per step × parallel batch
+    // steps × per-target HalibutScriptObserver opening main + liveness Halibut
+    // connections, a 100-target deploy spawned 200+ concurrent Halibut
+    // connections + 100+ DB contexts. No back-pressure across the whole fan-out.
+    //
+    // Fix: a process-wide SemaphoreSlim acquired by every parallel task,
+    // configured by SQUID_TARGET_PARALLELISM_GLOBAL_CAP env var:
+    //   - unset / blank / "auto" → ProcessorCount × 4 (sensible default)
+    //   - integer literal       → that exact cap
+    //   - "disabled" / "0"      → no cap (legacy behaviour, dev/test escape)
+
+    [Fact]
+    public void GlobalParallelismCapEnvVar_ConstantNamePinned()
+    {
+        TargetParallelExecutor.GlobalParallelismCapEnvVar
+            .ShouldBe("SQUID_TARGET_PARALLELISM_GLOBAL_CAP");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GlobalCap_RestrictsConcurrencyAcrossInvocations()
+    {
+        // Two simultaneous ExecuteAsync calls (simulating two parallel steps in
+        // a batch) must SHARE the global cap — pre-fix each call would create
+        // its own per-step semaphore and the total concurrency could exceed
+        // the global cap.
+        try
+        {
+            TargetParallelExecutor.SetGlobalCapForTesting(3);
+
+            var concurrency = 0;
+            var maxObserved = 0;
+            var observeLock = new object();
+
+            async Task<int> Worker(int item, CancellationToken ct)
+            {
+                lock (observeLock)
+                {
+                    concurrency++;
+                    if (concurrency > maxObserved) maxObserved = concurrency;
+                }
+                await Task.Delay(80, ct);
+                lock (observeLock)
+                {
+                    concurrency--;
+                }
+                return item;
+            }
+
+            var items1 = Enumerable.Range(1, 8).ToList();
+            var items2 = Enumerable.Range(101, 8).ToList();
+
+            // Two concurrent calls, each with maxParallelism=8 — without a
+            // global cap, total concurrency would be up to 16. With the global
+            // cap of 3, total observed concurrency must stay ≤ 3.
+            var t1 = TargetParallelExecutor.ExecuteAsync(items1, 8, Worker, CancellationToken.None);
+            var t2 = TargetParallelExecutor.ExecuteAsync(items2, 8, Worker, CancellationToken.None);
+
+            await Task.WhenAll(t1, t2);
+
+            maxObserved.ShouldBeLessThanOrEqualTo(3,
+                customMessage: $"global cap=3 must restrict cross-invocation concurrency; observed {maxObserved}.");
+        }
+        finally
+        {
+            TargetParallelExecutor.ResetGlobalCapForTesting();
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GlobalCap_DisabledMode_NoCapApplied()
+    {
+        // "disabled" mode = legacy behaviour; per-step cap still applies but
+        // there's no global ceiling. Useful for dev/test or for operators
+        // who genuinely want the old fan-out behaviour back.
+        try
+        {
+            TargetParallelExecutor.SetGlobalCapForTesting(null);
+
+            var concurrency = 0;
+            var maxObserved = 0;
+            var observeLock = new object();
+
+            var items = Enumerable.Range(1, 12).ToList();
+
+            await TargetParallelExecutor.ExecuteAsync<int, int>(items, maxParallelism: 0, async (item, ct) =>
+            {
+                lock (observeLock)
+                {
+                    concurrency++;
+                    if (concurrency > maxObserved) maxObserved = concurrency;
+                }
+                await Task.Delay(20, ct);
+                lock (observeLock) { concurrency--; }
+                return item;
+            }, CancellationToken.None);
+
+            maxObserved.ShouldBeGreaterThan(3,
+                customMessage: "with global cap disabled, per-step fan-out should NOT be globally clamped.");
+        }
+        finally
+        {
+            TargetParallelExecutor.ResetGlobalCapForTesting();
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GlobalCap_StillReleasesOnException()
+    {
+        // Resource-leak guard: if a worker throws, the global slot must still
+        // be released so subsequent invocations don't deadlock.
+        try
+        {
+            TargetParallelExecutor.SetGlobalCapForTesting(2);
+
+            // 3 throwing tasks → AggregateException (A.2 multi-failure behaviour).
+            // Either type is fine for this test; the point is that the call
+            // PROPAGATES the failure, then the global slot must be free.
+            await Should.ThrowAsync<Exception>(async () =>
+            {
+                await TargetParallelExecutor.ExecuteAsync<int, int>(
+                    new List<int> { 1, 2, 3 }, maxParallelism: 0,
+                    (_, _) => throw new InvalidOperationException("boom"),
+                    CancellationToken.None);
+            });
+
+            // After the failed call, the cap must NOT be permanently exhausted.
+            // Run a second call that needs the full cap; it must complete promptly.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var results = await TargetParallelExecutor.ExecuteAsync<int, int>(
+                new List<int> { 10, 20 }, maxParallelism: 0,
+                (i, ct) => Task.FromResult(i),
+                cts.Token);
+
+            results.Count.ShouldBe(2);
+        }
+        finally
+        {
+            TargetParallelExecutor.ResetGlobalCapForTesting();
+        }
+    }
+
+    [Theory]
+    [InlineData(null, true)]            // unset → auto default → cap exists
+    [InlineData("", true)]              // blank → auto default
+    [InlineData("auto", true)]          // explicit auto
+    [InlineData("8", true)]             // explicit int
+    [InlineData("disabled", false)]     // explicit disable
+    [InlineData("0", false)]            // 0 = disable
+    [InlineData("garbage", true)]       // unrecognised → fall through to auto
+    public void ParseGlobalCap_Matrix(string envValue, bool capExpected)
+    {
+        var cap = TargetParallelExecutor.ParseGlobalCap(envValue);
+
+        if (capExpected)
+            cap.ShouldNotBeNull(customMessage: $"env value '{envValue}' should produce a cap.");
+        else
+            cap.ShouldBeNull(customMessage: $"env value '{envValue}' should produce NO cap (disabled mode).");
+    }
 }

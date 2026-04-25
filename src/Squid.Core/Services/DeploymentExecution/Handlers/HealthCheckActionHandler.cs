@@ -78,7 +78,15 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
         var healthyCount = 0;
         var unhealthyCount = 0;
 
-        var results = await Task.WhenAll(targets.Select(tc => CheckTargetAsync(tc, settings, ct))).ConfigureAwait(false);
+        // Phase-6.3: route through TargetParallelExecutor so the process-wide
+        // global parallelism cap applies. Pre-fix this was a raw uncapped
+        // Task.WhenAll → 100-target health check spawned 100 simultaneous
+        // Halibut connections + 100 cluster TLS handshakes. maxParallelism=0
+        // (= as-many-as-items) preserves the existing per-step behaviour;
+        // only the cross-process cap is new.
+        var results = await TargetParallelExecutor.ExecuteAsync(
+            targets, maxParallelism: 0,
+            (tc, taskCt) => CheckTargetAsync(tc, settings, taskCt), ct).ConfigureAwait(false);
 
         foreach (var (tc, result) in targets.Zip(results))
         {
