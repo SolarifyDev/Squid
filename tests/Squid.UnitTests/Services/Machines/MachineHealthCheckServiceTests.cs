@@ -468,7 +468,9 @@ public class MachineHealthCheckServiceTests
 
     private void SetupMachineList(params Machine[] machines)
     {
-        _machineDataProvider.Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+        // P1-D.8 (Phase-8): health-check sweep now uses the explicit
+        // cross-space method instead of the obsolete nullable-spaceId entry.
+        _machineDataProvider.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((machines.Length, machines.ToList()));
     }
 

@@ -38,8 +38,22 @@ public class MachineService : IMachineService
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
     {
-        var (count, data) = await _machineDataProvider.GetMachinePagingAsync(
-            request.SpaceId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
+        // P1-D.8 (Phase-8): explicit per-space vs cross-space split. Pre-fix
+        // a null SpaceId silently triggered a cross-space scan — any
+        // MachineView holder without an X-Space-Id header could enumerate
+        // every space's machines. The MachineView permission is space-
+        // scoped (see RequiresPermission attribute on GetMachinesRequest);
+        // SpaceId-injection middleware (D.4) auto-fills from header.
+        // Here we ensure that if SpaceId IS supplied, we use the explicit
+        // single-space query path. Cross-space scan path is reserved for
+        // truly system-level callers (AdministerSystem flow / health-
+        // check sweep) — those go through GetMachinesAllSpacesPagingAsync
+        // directly, NOT through this endpoint.
+        var (count, data) = request.SpaceId.HasValue
+            ? await _machineDataProvider.GetMachinesInSpacePagingAsync(
+                request.SpaceId.Value, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false)
+            : await _machineDataProvider.GetMachinesAllSpacesPagingAsync(
+                request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
         var machines = _mapper.Map<List<MachineDto>>(data);
 

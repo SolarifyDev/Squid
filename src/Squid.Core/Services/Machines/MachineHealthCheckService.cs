@@ -62,7 +62,12 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
     public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
     {
-        var (_, machines) = await _machineDataProvider.GetMachinePagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        // P1-D.8 (Phase-8): the health-check sweep is system-internal (runs
+        // under InternalUser / Hangfire) and legitimately scans every space.
+        // Use the explicitly-named cross-space method instead of the
+        // (now obsolete) nullable-spaceId entry — makes the cross-space
+        // intent visible at the call site.
+        var (_, machines) = await _machineDataProvider.GetMachinesAllSpacesPagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var activeMachines = machines.Where(m => !m.IsDisabled).ToList();
 
