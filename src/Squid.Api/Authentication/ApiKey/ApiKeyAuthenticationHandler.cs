@@ -31,18 +31,31 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             return AuthenticateResult.NoResult();
 
         var apiKey = values.ToString();
-        
+
         if (string.IsNullOrWhiteSpace(apiKey))
             return AuthenticateResult.NoResult();
 
         var cacheKey = $"auth:apikey:user:{apiKey}";
-        
+        var cacheSetting = new RedisCachingSetting(expiry: TimeSpan.FromHours(1));
+
         var matchedUser = await _cacheManager.GetOrAddAsync(cacheKey,
             async _ => await _accountService.GetByApiKeyAsync(apiKey).ConfigureAwait(false),
-            new RedisCachingSetting(expiry: TimeSpan.FromHours(1)), Context.RequestAborted).ConfigureAwait(false);
+            cacheSetting, Context.RequestAborted).ConfigureAwait(false);
 
         if (matchedUser == null)
             return AuthenticateResult.NoResult();
+
+        // P1-D.5 (Phase-7): re-check IsDisabled at cache HIT time. Pre-fix
+        // the 1-hour TTL kept disabled users authenticated for up to an hour
+        // after out-of-band disable (direct SQL UPDATE, mutation paths that
+        // don't call the cache-invalidating UpdateUserStatusAsync, etc.).
+        // If the cached entry says disabled, return NoResult AND invalidate
+        // the cache so the next request re-fetches fresh state.
+        if (matchedUser.IsDisabled)
+        {
+            await _cacheManager.RemoveAsync(cacheKey, cacheSetting, Context.RequestAborted).ConfigureAwait(false);
+            return AuthenticateResult.NoResult();
+        }
 
         var identity = new ClaimsIdentity(new[]
         {

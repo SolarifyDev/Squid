@@ -32,6 +32,14 @@ public class AssignRoleToTeamPrivescGuardIntegrationTests : TestBase
     {
         public int? Id { get; init; }
         public string Name => "integration-test-user";
+        // P1-D.6 (Phase-7): ICurrentUser gained an IsInternal member. This
+        // integration test simulates a real HTTP-derived user, NOT a
+        // Hangfire / startup context, so IsInternal must be false — that
+        // forces AuthorizationSpecification to run the real permission
+        // check (which is what the privesc-guard test is actually
+        // verifying). Returning true here would silently bypass the
+        // guard and the test would pass for the wrong reason.
+        public bool IsInternal => false;
     }
 
     [Fact]

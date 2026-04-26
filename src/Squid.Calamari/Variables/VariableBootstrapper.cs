@@ -45,17 +45,27 @@ public static class VariableBootstrapper
     private static string SanitizeName(string name)
         => name.Replace('.', '_').Replace('-', '_').Replace('/', '_');
 
-    private static string EscapeValue(string value)
+    /// <summary>
+    /// Returns a fully-quoted POSIX bash literal of <paramref name="value"/>.
+    /// Caller appends directly with no surrounding quotes — the function
+    /// wraps with single quotes itself.
+    ///
+    /// <para><b>P1-Phase-7 audit follow-up to B.6</b>: pre-fix this used
+    /// double-quote wrapping with backslash escapes for <c>"</c>, <c>$</c>,
+    /// <c>`</c>, <c>\</c>, and replaced <c>\n</c> / <c>\r</c> / <c>\t</c>
+    /// with their literal-text two-char forms. The literal-text forms made
+    /// embedded-newline injection harmless BUT lossy — the operator's
+    /// actual newline value got mangled. The server-side
+    /// <c>BashRuntimeBundle.EscapeBashValue</c> was migrated in B.6 to
+    /// single-quote wrapping; this file (the agent-side bootstrapper used
+    /// by Calamari for every Run-Script-style execution) was missed.
+    /// Phase-7 audit caught it. Both sides now use the same single-quote
+    /// strategy: every metacharacter inside the quote is literal; only
+    /// <c>'</c> itself needs the four-character POSIX idiom <c>'\''</c>.</para>
+    /// </summary>
+    internal static string EscapeValue(string value)
     {
-        var escaped = value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\"", "\\\"", StringComparison.Ordinal)
-            .Replace("$", "\\$", StringComparison.Ordinal)
-            .Replace("`", "\\`", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Replace("\r", "\\r", StringComparison.Ordinal)
-            .Replace("\t", "\\t", StringComparison.Ordinal);
-
-        return $"\"{escaped}\"";
+        var inner = (value ?? string.Empty).Replace("'", "'\\''", StringComparison.Ordinal);
+        return "'" + inner + "'";
     }
 }
