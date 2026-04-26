@@ -74,6 +74,41 @@ public sealed partial class ServiceMessageParser : IServiceMessageParser
         return new ParsedServiceMessage(MapKind(verb), verb, attributes);
     }
 
+    /// <summary>
+    /// P1-A.6 (Phase-8): env var that selects how the parser treats output
+    /// variable names with reserved prefixes (<c>Squid.*</c> / <c>System.*</c>).
+    /// A user script emitting <c>##squid[setVariable name='Squid.Deployment.Id'
+    /// value='evil']</c> can spoof system variables — qualified clones
+    /// (<c>Squid.Action.{step}.Squid.Deployment.Id</c>) bypass the
+    /// <c>IsReservedName</c> guard in <c>CollectOutputVariables</c>, and
+    /// downstream consumers reading the qualified form get the spoofed value.
+    ///
+    /// <para>Default mode is <see cref="EnforcementMode.Warn"/>: accept +
+    /// log warning naming the offending name + env var. Backward compat
+    /// preserved; operators see the abuse in logs and can flip to Strict
+    /// for full rejection.</para>
+    ///
+    /// <para>Pinned literal — renaming breaks operators who set this in
+    /// their deployment manifest.</para>
+    /// </summary>
+    public const string ReservedNameEnforcementEnvVar = "SQUID_OUTPUT_VAR_NAME_ENFORCEMENT";
+
+    private static readonly string[] ReservedNamePrefixes = { "Squid.", "System." };
+
+    /// <summary>
+    /// True if <paramref name="name"/> starts with a reserved prefix
+    /// (<c>Squid.*</c> / <c>System.*</c>) — case-insensitive. Exposed
+    /// internal for unit testing without spinning up a full parser.
+    /// </summary>
+    internal static bool IsReservedOutputVariableName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        foreach (var prefix in ReservedNamePrefixes)
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
     public OutputVariable TryParseOutputVariable(string line)
     {
         var message = TryParseMessage(line);
@@ -83,6 +118,34 @@ public sealed partial class ServiceMessageParser : IServiceMessageParser
         var name = message.GetAttribute("name");
         if (string.IsNullOrEmpty(name))
             return null;
+
+        // P1-A.6: reserved-prefix gate. The mode is read once per call —
+        // env-var lookup is cheap and lets operators flip live without restart.
+        if (IsReservedOutputVariableName(name))
+        {
+            var mode = Squid.Message.Hardening.EnforcementModeReader.Read(ReservedNameEnforcementEnvVar);
+
+            switch (mode)
+            {
+                case Squid.Message.Hardening.EnforcementMode.Off:
+                    break;   // legacy: accept silently
+
+                case Squid.Message.Hardening.EnforcementMode.Warn:
+                    Serilog.Log.Warning(
+                        "Output variable {Name} uses a reserved system prefix (Squid.* / System.*). " +
+                        "User scripts MUST NOT emit names in this namespace; doing so can spoof system " +
+                        "variables in qualified-clone form. Set {EnvVar}=strict to reject these emits " +
+                        "outright (default Warn preserves backward compat with existing scripts).",
+                        name, ReservedNameEnforcementEnvVar);
+                    break;
+
+                case Squid.Message.Hardening.EnforcementMode.Strict:
+                    Serilog.Log.Warning(
+                        "Output variable {Name} REJECTED (reserved system prefix; {EnvVar}=strict).",
+                        name, ReservedNameEnforcementEnvVar);
+                    return null;
+            }
+        }
 
         var value = message.GetAttribute("value") ?? string.Empty;
         var sensitive = string.Equals(message.GetAttribute("sensitive"), "True", StringComparison.OrdinalIgnoreCase);
