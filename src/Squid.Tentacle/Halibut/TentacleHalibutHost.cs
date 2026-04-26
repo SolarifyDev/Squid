@@ -10,6 +10,21 @@ namespace Squid.Tentacle.Halibut;
 
 public class TentacleHalibutHost : ITentacleHalibutHost
 {
+    /// <summary>
+    /// P1-T.10 (Phase-8): env var that selects the IP address the listening
+    /// Halibut runtime binds to. Default (unset / blank / "any") is
+    /// <c>IPAddress.Any</c> (0.0.0.0) — listen on all interfaces, matching
+    /// pre-fix behaviour. Operators on multi-NIC hosts or strict-firewall
+    /// environments can pin to <c>127.0.0.1</c> (loopback-only) or a
+    /// specific interface IP. Unrecognised / unparseable values fall back
+    /// to <c>IPAddress.Any</c> with a warning so a typo never silently
+    /// makes the agent invisible on the network.
+    ///
+    /// <para>Pinned literal — renaming breaks operators who set this in
+    /// their deployment manifest / systemd unit.</para>
+    /// </summary>
+    public const string ListenIpAddressEnvVar = "SQUID_TENTACLE_LISTEN_IP_ADDRESS";
+
     private readonly HalibutRuntime _runtime;
     private readonly TentacleSettings _settings;
 
@@ -149,15 +164,49 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", thumbprint);
         }
 
-        // HalibutRuntime.Listen returns the actual bound port — important when port=0
-        // (kernel-assigned ephemeral) and useful even when explicit, because it confirms
-        // the bind succeeded. The returned int is what we expose to /health/readyz.
-        var boundPort = _runtime.Listen(port);
+        // P1-T.10 (Phase-8): bind IP resolved from env var. Default IPAddress.Any
+        // preserves pre-fix behaviour. HalibutRuntime.Listen(IPEndPoint) returns
+        // the actual bound port — important when port=0 (kernel-assigned
+        // ephemeral) and useful even when explicit, because it confirms the
+        // bind succeeded. The returned int is what we expose to /health/readyz.
+        var bindAddress = ResolveListenIpAddress();
+        var endpoint = new System.Net.IPEndPoint(bindAddress, port);
+        var boundPort = _runtime.Listen(endpoint);
 
         ListeningPort = boundPort;
         IsListening = true;
 
-        Log.Information("Halibut listening on port {Port} (trusted {Count} server thumbprint(s))", boundPort, trusted.Count);
+        Log.Information("Halibut listening on {BindAddress}:{Port} (trusted {Count} server thumbprint(s))",
+            bindAddress, boundPort, trusted.Count);
+    }
+
+    /// <summary>
+    /// Resolves the listen-IP from <see cref="ListenIpAddressEnvVar"/>.
+    /// Default / blank / "any" → <see cref="System.Net.IPAddress.Any"/>.
+    /// Unparseable values log a warning and fall back to Any.
+    /// </summary>
+    internal static System.Net.IPAddress ResolveListenIpAddress()
+        => ParseListenIpAddress(System.Environment.GetEnvironmentVariable(ListenIpAddressEnvVar));
+
+    /// <summary>Pure parser for unit testing without env state.</summary>
+    internal static System.Net.IPAddress ParseListenIpAddress(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return System.Net.IPAddress.Any;
+
+        var trimmed = raw.Trim();
+        if (string.Equals(trimmed, "any", StringComparison.OrdinalIgnoreCase))
+            return System.Net.IPAddress.Any;
+
+        if (System.Net.IPAddress.TryParse(trimmed, out var parsed))
+            return parsed;
+
+        // Don't crash startup on a typo — log + fall back to Any so the
+        // agent is reachable. Operator sees the warning and corrects.
+        Log.Warning(
+            "Could not parse {EnvVar}={RawValue} as an IP address; falling back to IPAddress.Any " +
+            "(0.0.0.0). Set the value to 'any', a valid IPv4/IPv6 literal, or leave unset.",
+            ListenIpAddressEnvVar, raw);
+        return System.Net.IPAddress.Any;
     }
 
     /// <summary>
