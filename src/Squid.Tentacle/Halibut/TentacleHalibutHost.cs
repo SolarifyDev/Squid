@@ -160,11 +160,39 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         Log.Information("Halibut listening on port {Port} (trusted {Count} server thumbprint(s))", boundPort, trusted.Count);
     }
 
+    /// <summary>
+    /// Resolves the polling URI for the agent. Server-returned
+    /// <paramref name="subscriptionUri"/> is preferred when present, else
+    /// falls back to the deterministic <c>poll://{subscriptionId}/</c>.
+    ///
+    /// <para><b>P1-T.14 (Phase-8)</b>: a malformed server-returned URI used
+    /// to throw <see cref="UriFormatException"/> from <c>new Uri(...)</c>,
+    /// crashing tentacle startup with no clean recovery. A buggy server
+    /// release would brick every fresh-registering agent. Now we catch
+    /// malformed input, log a structured warning naming the offending
+    /// value (operator can chase the server bug), and fall back to the
+    /// deterministic local form so polling still starts.</para>
+    ///
+    /// <para>"Malformed" includes BOTH constructor-throwing inputs AND
+    /// relative URIs — Halibut requires an absolute URI to know where to
+    /// poll, so a relative <c>/just/a/path</c> from a buggy server is
+    /// equally useless.</para>
+    /// </summary>
     public static Uri ResolvePollUri(string subscriptionId, string subscriptionUri)
     {
-        return string.IsNullOrWhiteSpace(subscriptionUri)
-            ? new Uri($"poll://{subscriptionId}/")
-            : new Uri(subscriptionUri);
+        if (string.IsNullOrWhiteSpace(subscriptionUri))
+            return new Uri($"poll://{subscriptionId}/");
+
+        if (Uri.TryCreate(subscriptionUri, UriKind.Absolute, out var serverUri))
+            return serverUri;
+
+        Log.Warning(
+            "Malformed server-returned subscriptionUri {SubscriptionUri} for subscription {SubscriptionId}; " +
+            "falling back to deterministic poll://{SubscriptionId}/. The server release likely has a bug; " +
+            "agent will still start polling using its own subscription id.",
+            subscriptionUri, subscriptionId, subscriptionId);
+
+        return new Uri($"poll://{subscriptionId}/");
     }
 
 
