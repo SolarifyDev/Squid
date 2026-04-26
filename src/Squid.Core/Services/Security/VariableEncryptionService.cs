@@ -31,6 +31,24 @@ public class VariableEncryptionService : IVariableEncryptionService
     private readonly SecuritySetting _securitySetting;
     private readonly string _encryptionPrefix = "SQUID_ENCRYPTED:";
 
+    /// <summary>
+    /// P1-B.10 (Phase-8) V2 envelope prefix. Encrypts emitted by post-Phase-8
+    /// servers carry this prefix; decrypts on either prefix work.
+    /// <para>Layout (after the prefix): <c>salt(16) || nonce(12) || tag(16)
+    /// || ciphertext(var)</c>, base64-encoded as a whole.</para>
+    /// </summary>
+    internal const string EncryptionPrefixV2 = "SQUID_ENCRYPTED_V2:";
+
+    /// <summary>
+    /// PBKDF2-SHA256 iteration count for V2. OWASP 2023 recommendation.
+    /// 60× the V1 baseline (10_000) — encrypt latency rises ~ms → ~tens-of-ms,
+    /// acceptable for the deploy-step throughput where this runs.
+    /// </summary>
+    internal const int Pbkdf2IterationsV2 = 600_000;
+
+    /// <summary>Per-payload random salt size (V2). 16 bytes is the standard.</summary>
+    internal const int SaltSizeBytesV2 = 16;
+
     public VariableEncryptionService(SecuritySetting securitySetting)
     {
         _securitySetting = securitySetting;
@@ -200,15 +218,23 @@ public class VariableEncryptionService : IVariableEncryptionService
 
         try
         {
-            var derivedKey = DeriveKey(_masterKey, variableSetId);
-            var encryptedData = EncryptWithAesGcm(plainText, derivedKey);
-            
-            var result = $"{_encryptionPrefix}{Convert.ToBase64String(encryptedData)}";
-            
-            // P1-B.5 (Phase-7): per-call success at Debug, not Information.
-            // Information lands in default Seq pipelines and exposes per-
-            // VariableSet frequency / timing metadata to anyone with Seq read
-            // access — a metadata-only privacy leak.
+            // P1-B.10 (Phase-8): always emit V2. Random per-payload salt +
+            // 600k PBKDF2 iters = OWASP-aligned. Existing V1 ciphertexts
+            // remain readable via the dual-format decrypt path; new writes
+            // upgrade naturally as variables are saved.
+            var salt = RandomNumberGenerator.GetBytes(SaltSizeBytesV2);
+            var derivedKey = DeriveKeyV2(_masterKey, salt);
+            var (nonce, tag, ciphertext) = EncryptWithAesGcmRaw(plainText, derivedKey);
+
+            var envelope = new byte[salt.Length + nonce.Length + tag.Length + ciphertext.Length];
+            Buffer.BlockCopy(salt, 0, envelope, 0, salt.Length);
+            Buffer.BlockCopy(nonce, 0, envelope, salt.Length, nonce.Length);
+            Buffer.BlockCopy(tag, 0, envelope, salt.Length + nonce.Length, tag.Length);
+            Buffer.BlockCopy(ciphertext, 0, envelope, salt.Length + nonce.Length + tag.Length, ciphertext.Length);
+
+            var result = $"{EncryptionPrefixV2}{Convert.ToBase64String(envelope)}";
+
+            // P1-B.5 (Phase-7): Debug not Information.
             Log.Debug("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
             return result;
         }
@@ -225,13 +251,25 @@ public class VariableEncryptionService : IVariableEncryptionService
 
         try
         {
-            var base64Data = encryptedText.Substring(_encryptionPrefix.Length);
-            var encryptedData = Convert.FromBase64String(base64Data);
-            
-            var derivedKey = DeriveKey(_masterKey, variableSetId);
-            var plainText = DecryptWithAesGcm(encryptedData, derivedKey);
-            
-            // P1-B.5 (Phase-7): see Encrypt path above for rationale.
+            // P1-B.10 (Phase-8): dual-format decrypt. V2 prefix gets the
+            // V2 path (random salt from envelope, 600k iters); V1 prefix
+            // gets the legacy path (deterministic salt from variableSetId,
+            // 10k iters). Existing pre-Phase-8 ciphertexts remain readable.
+            string plainText;
+
+            if (encryptedText.StartsWith(EncryptionPrefixV2, StringComparison.Ordinal))
+            {
+                plainText = DecryptV2(encryptedText);
+            }
+            else
+            {
+                // V1 legacy path.
+                var base64Data = encryptedText.Substring(_encryptionPrefix.Length);
+                var encryptedData = Convert.FromBase64String(base64Data);
+                var derivedKey = DeriveKey(_masterKey, variableSetId);
+                plainText = DecryptWithAesGcm(encryptedData, derivedKey);
+            }
+
             Log.Debug("Successfully decrypted variable for VariableSet {VariableSetId}", variableSetId);
             return plainText;
         }
@@ -239,6 +277,46 @@ public class VariableEncryptionService : IVariableEncryptionService
         {
             throw new InvalidOperationException($"Failed to decrypt variable for VariableSet {variableSetId}", ex);
         }
+    }
+
+    private string DecryptV2(string encryptedText)
+    {
+        var base64Data = encryptedText.Substring(EncryptionPrefixV2.Length);
+        var envelope = Convert.FromBase64String(base64Data);
+
+        // V2 layout: salt(16) || nonce(12) || tag(16) || ciphertext(var)
+        const int minSize = SaltSizeBytesV2 + 12 + 16;
+        if (envelope.Length < minSize)
+            throw new ArgumentException($"V2 envelope too short ({envelope.Length} bytes); expected ≥ {minSize}.");
+
+        var salt = new byte[SaltSizeBytesV2];
+        var nonce = new byte[12];
+        var tag = new byte[16];
+        var ciphertext = new byte[envelope.Length - minSize];
+
+        Buffer.BlockCopy(envelope, 0, salt, 0, SaltSizeBytesV2);
+        Buffer.BlockCopy(envelope, SaltSizeBytesV2, nonce, 0, 12);
+        Buffer.BlockCopy(envelope, SaltSizeBytesV2 + 12, tag, 0, 16);
+        Buffer.BlockCopy(envelope, minSize, ciphertext, 0, ciphertext.Length);
+
+        var derivedKey = DeriveKeyV2(_masterKey, salt);
+
+        var plainBytes = new byte[ciphertext.Length];
+        using var aes = new AesGcm(derivedKey, 16);
+        aes.Decrypt(nonce, ciphertext, tag, plainBytes);
+        return Encoding.UTF8.GetString(plainBytes);
+    }
+
+    private static (byte[] Nonce, byte[] Tag, byte[] Ciphertext) EncryptWithAesGcmRaw(string plainText, byte[] key)
+    {
+        var plainBytes = Encoding.UTF8.GetBytes(plainText);
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var tag = new byte[16];
+        var ciphertext = new byte[plainBytes.Length];
+
+        using var aes = new AesGcm(key, 16);
+        aes.Encrypt(nonce, plainBytes, ciphertext, tag);
+        return (nonce, tag, ciphertext);
     }
 
     public async Task<List<Variable>> EncryptSensitiveVariablesAsync(
@@ -303,15 +381,35 @@ public class VariableEncryptionService : IVariableEncryptionService
 
     public bool IsValidEncryptedValue(string encryptedText)
     {
-        return !string.IsNullOrEmpty(encryptedText) && encryptedText.StartsWith(_encryptionPrefix);
+        if (string.IsNullOrEmpty(encryptedText)) return false;
+        // V2 must be checked FIRST since "SQUID_ENCRYPTED:" is a prefix of
+        // "SQUID_ENCRYPTED_V2:" — wait, no, it's ":" vs "_V2:" so neither is
+        // a prefix of the other. Order doesn't matter for correctness here.
+        return encryptedText.StartsWith(EncryptionPrefixV2, StringComparison.Ordinal)
+            || encryptedText.StartsWith(_encryptionPrefix, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Legacy V1 KDF — deterministic salt from variableSetId, 10k iters.
+    /// Kept ONLY to read pre-Phase-8 ciphertexts. Never used for new writes.
+    /// </summary>
     private static byte[] DeriveKey(byte[] masterKey, int variableSetId)
     {
         var salt = BitConverter.GetBytes(variableSetId);
         Array.Resize(ref salt, 16);
-        
+
         using var pbkdf2 = new Rfc2898DeriveBytes(masterKey, salt, 10000, HashAlgorithmName.SHA256);
+        return pbkdf2.GetBytes(32);
+    }
+
+    /// <summary>
+    /// P1-B.10 (Phase-8) V2 KDF: random per-payload salt (caller-supplied,
+    /// drawn from <see cref="RandomNumberGenerator"/>), 600k PBKDF2-SHA256
+    /// iters (OWASP 2023). 32-byte output for AES-256.
+    /// </summary>
+    internal static byte[] DeriveKeyV2(byte[] masterKey, byte[] salt)
+    {
+        using var pbkdf2 = new Rfc2898DeriveBytes(masterKey, salt, Pbkdf2IterationsV2, HashAlgorithmName.SHA256);
         return pbkdf2.GetBytes(32);
     }
 
