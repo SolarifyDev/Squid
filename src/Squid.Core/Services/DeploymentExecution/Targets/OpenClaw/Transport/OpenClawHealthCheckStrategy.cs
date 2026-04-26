@@ -1,6 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
-using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.Http;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;

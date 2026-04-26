@@ -1,4 +1,3 @@
-using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Constants;

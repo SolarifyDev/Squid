@@ -1,7 +1,7 @@
-using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Enums;
 
-namespace Squid.UnitTests.Services.Deployments.Kubernetes;
+namespace Squid.UnitTests.Services.Deployments.Execution;
 
 public class EndpointVariableFactoryTests
 {
