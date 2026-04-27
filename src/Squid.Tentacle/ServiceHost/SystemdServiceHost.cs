@@ -128,6 +128,16 @@ public sealed class SystemdServiceHost : IServiceHost
         // = 40-60s of grace gives typical "infrastructure warming" plenty
         // of headroom, and operators can `systemctl reset-failed` +
         // `systemctl start` to resume.
+        // ── TimeoutStopSec coordination with ShutdownDrainTimeoutSeconds ──
+        // P1-Phase9.5 raised TentacleSettings.DefaultShutdownDrainTimeoutSeconds
+        // from 30 → 300. systemd's TimeoutStopSec MUST exceed the in-process
+        // drain timeout, otherwise systemd SIGKILLs the Tentacle BEFORE drain
+        // completes, abruptly terminating in-flight scripts WITHOUT
+        // cancellation cleanup. We use 330 = 300 (drain) + 30 (grace for the
+        // post-drain shutdown bookkeeping). Operators who lower
+        // ShutdownDrainTimeoutSeconds via env var should also lower this in
+        // their unit overlay if they want a tight kill window. Pinned by
+        // ServiceCommandTests.GenerateUnitFile_PinsTimeoutStopSec330.
         return $"""
             [Unit]
             Description={description}
@@ -142,7 +152,7 @@ public sealed class SystemdServiceHost : IServiceHost
             {userLines}Restart=on-failure
             RestartSec=10
             KillSignal=SIGINT
-            TimeoutStopSec=60
+            TimeoutStopSec=330
             StartLimitAction=none
 
             [Install]

@@ -155,7 +155,18 @@ public class SshExecutionStrategy : IExecutionStrategy
             // <c>true</c> tail makes the overall exit code 0 even if pkill
             // found nothing (which is normal for the success path's defensive
             // call) — we don't want the cleanup helper to log a spurious warn.
-            var killCmd = $"pkill -TERM -f \"{workDir}\" 2>/dev/null; sleep 5; pkill -KILL -f \"{workDir}\" 2>/dev/null; true";
+            //
+            // <b>Boundary anchor</b> [(([^0-9]|$)]: prevents a false-positive
+            // kill of CONCURRENT tasks whose ServerTaskId begins with the
+            // cancelled task's ID as a prefix. Example: cancelling task 123
+            // must NOT kill task 1234. Workspace path is
+            // <c>~/.squid/Work/{TaskId}</c> followed by a non-digit (space,
+            // slash, quote, or end-of-line) in any real argv. Anchoring
+            // against a non-digit character class is POSIX-ERE-portable
+            // (GNU pkill / procps-ng / busybox all accept it) — no need for
+            // \b which has spotty cross-Unix support.
+            var pattern = $"{workDir}([^0-9]|$)";
+            var killCmd = $"pkill -TERM -f \"{pattern}\" 2>/dev/null; sleep 5; pkill -KILL -f \"{pattern}\" 2>/dev/null; true";
             SshRemoteShellExecutor.Execute(ssh, killCmd, TimeSpan.FromSeconds(15));
         }
         catch (Exception ex)
