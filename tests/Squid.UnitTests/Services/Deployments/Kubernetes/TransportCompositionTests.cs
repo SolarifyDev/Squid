@@ -2,6 +2,7 @@ using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Http;

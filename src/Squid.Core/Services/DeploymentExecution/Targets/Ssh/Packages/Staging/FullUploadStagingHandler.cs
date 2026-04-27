@@ -1,13 +1,15 @@
-using Squid.Core.Services.DeploymentExecution.Ssh;
+using Squid.Core.Services.DeploymentExecution.Packages.Staging;
 using Squid.Core.Services.DeploymentExecution.Ssh.Packages;
 
-namespace Squid.Core.Services.DeploymentExecution.Packages.Staging.Handlers;
+namespace Squid.Core.Services.DeploymentExecution.Ssh.Packages.Staging;
 
 /// <summary>
 /// Terminal SSH staging handler: always uploads the package bytes to the
 /// target and produces a <see cref="PackageStagingStrategy.FullUpload"/>
 /// plan. Runs last in the priority chain after <see cref="CacheHitStagingHandler"/>
 /// and any future delta/remote-download handlers.
+///
+/// <para><b>P1-Phase9.6 namespace move</b>: see <see cref="CacheHitStagingHandler"/>.</para>
 /// </summary>
 public class FullUploadStagingHandler : IPackageStagingHandler
 {

@@ -1,5 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;

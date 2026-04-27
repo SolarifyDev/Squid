@@ -1,15 +1,30 @@
 using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Halibut.Resilience;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
-using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Halibut;
 using Squid.Message.Contracts.Tentacle;
 
-namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
+namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 
+/// <summary>
+/// Halibut-based <see cref="IExecutionStrategy"/> for both Tentacle Listening
+/// (server initiates outbound TCP+mTLS) and polling-style transports
+/// (KubernetesAgent pod, Linux/Windows polling tentacle calling home over
+/// <c>poll://</c>).
+///
+/// <para><b>P1-Phase9.6 namespace move</b>: previously lived under
+/// <c>Squid.Core.Services.DeploymentExecution.Infrastructure</c>, which made
+/// it look like a generic infrastructure helper. It's actually the canonical
+/// Tentacle-protocol execution strategy — Halibut IS the Tentacle wire
+/// protocol. Moved into <c>Targets/Tentacle/Transport/</c> alongside the other
+/// Tentacle composition pieces so a new transport contributor doesn't try to
+/// extend it from the wrong place. Same structural-genericity fix as
+/// Phase-8.7 (<c>EndpointVariableFactory</c>).</para>
+/// </summary>
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
     private readonly IHalibutClientFactory _halibutClientFactory;
