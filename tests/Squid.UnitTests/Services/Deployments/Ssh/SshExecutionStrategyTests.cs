@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using Renci.SshNet;
 using Squid.Core.Services.DeploymentExecution.Packages.Staging;
@@ -34,6 +35,29 @@ public class SshExecutionStrategyTests
     }
 
     private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
+
+    /// <summary>
+    /// P0-Phase9.2 test seam: subclass that counts cleanup invocations.
+    /// Pre-Phase-9.2 behaviour: cleanup ran ONLY on success. Post-fix:
+    /// cleanup runs on every exit — success, exception, cancellation.
+    /// </summary>
+    private class CleanupCountingStrategy : SshExecutionStrategy
+    {
+        public int CleanupCallCount;
+        public string LastWorkDir;
+
+        public CleanupCountingStrategy(ISshConnectionFactory cf, ISshExecutionMutex em, IPackageStagingPlanner sp, IRuntimeBundleProvider rbp)
+            : base(cf, em, sp, rbp) { }
+
+        protected internal override void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
+        {
+            CleanupCallCount++;
+            LastWorkDir = workDir;
+            // intentionally do not call base — we don't want SshRemoteShellExecutor to fire on a mock
+        }
+    }
+
+    private CleanupCountingStrategy CreateCountingStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
 
     private static ScriptExecutionRequest MakeRequest(string scriptBody = "echo hello", int serverTaskId = 42, ScriptSyntax syntax = ScriptSyntax.Bash)
     {
@@ -293,5 +317,76 @@ public class SshExecutionStrategyTests
     public void RetentionKeepCount_IsReasonable()
     {
         SshExecutionStrategy.RetentionKeepCount.ShouldBe(10);
+    }
+
+    // ========== P0-Phase9.2 cleanup-finally guarantee ==========
+    //
+    // Pre-Phase-9.2 bug: CleanupRemoteWorkDirectory sat AFTER the success
+    // return statement. If staging or script-execution threw, the workDir
+    // (containing decrypted sensitiveVariables.json) was orphaned indefinitely
+    // on the remote host. This block pins cleanup-runs-on-every-exit-path.
+
+    [Fact]
+    public async Task Cleanup_RunsOnSuccessPath()
+    {
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Success path must invoke cleanup once.");
+    }
+
+    [Fact]
+    public async Task Cleanup_RunsWhenStagingPlannerThrowsMidExecution()
+    {
+        // Simulate the exact bug case: PrepareRemoteWorkDirectoryAsync throws
+        // AFTER the workDir has been created on the remote host (because the
+        // staging planner ran a partial transfer then died).
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated staging failure mid-transfer"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        // Strategy returns a failure result — that's OK, the cleanup still ran
+        result.Success.ShouldBeFalse();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup MUST run when staging throws — workDir already exists on the " +
+            "remote host with decrypted sensitiveVariables.json. This is the P0 leak.");
+    }
+
+    [Fact]
+    public async Task Cleanup_RunsWhenScriptExecutionThrows()
+    {
+        // Simulate the second exact-bug case: ExecuteScriptAsync throws AFTER
+        // sensitiveVariables.json has already been written to the remote workDir.
+        // This is the more dangerous variant — decrypted credential file is on
+        // the remote, must be cleaned regardless of how execution failed.
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("simulated mid-execution timeout — workDir already populated"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup MUST run when script execution throws AFTER workDir is " +
+            "populated — pre-Phase-9.2 the finally block didn't exist and the " +
+            "decrypted sensitiveVariables.json stayed on the remote forever.");
     }
 }

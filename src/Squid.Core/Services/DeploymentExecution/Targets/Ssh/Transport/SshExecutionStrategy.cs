@@ -41,17 +41,7 @@ public class SshExecutionStrategy : IExecutionStrategy
             using var executionLock = await _executionMutex.AcquireAsync(connectionInfo.Host, connectionInfo.Port, SshExecutionMutex.DefaultTimeout, ct).ConfigureAwait(false);
             using var scope = _connectionFactory.CreateScope(connectionInfo);
 
-            var remoteWorkDir = ResolveVariable(request.Variables, SpecialVariables.Ssh.RemoteWorkingDirectory);
-            var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
-            var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
-
-            await PrepareRemoteWorkDirectoryAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
-
-            var result = await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
-
-            CleanupRemoteWorkDirectory(scope, workDir, resolvedBase);
-
-            return result;
+            return await ExecuteWithScopeAsync(scope, request, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -80,6 +70,42 @@ public class SshExecutionStrategy : IExecutionStrategy
                 LogLines = new List<string> { $"SSH execution error: {ex.Message}" },
                 StderrLines = new List<string> { ex.Message }
             };
+        }
+    }
+
+    /// <summary>
+    /// P0-Phase9.2 — cleanup-finally guarantee: workDir cleanup runs on EVERY
+    /// exit path (success, exception, cancellation), not just success.
+    ///
+    /// <para><b>The bug pre-Phase-9.2</b>: <c>CleanupRemoteWorkDirectory</c> sat
+    /// on the success path. If <c>PrepareRemoteWorkDirectoryAsync</c> threw
+    /// after creating the work dir on remote, OR if <c>ExecuteScriptAsync</c>
+    /// threw after dropping <c>sensitiveVariables.json</c> to disk, the work
+    /// dir was orphaned forever. Result: <c>/tmp</c> filled with stale dirs
+    /// AND decrypted password files remained world-readable on the remote.</para>
+    ///
+    /// <para>The cleanup helper is itself wrapped in try/catch (see
+    /// <see cref="CleanupRemoteWorkDirectory"/>) — it cannot itself bubble an
+    /// exception out of the finally block, so wrapping in finally is safe.</para>
+    /// </summary>
+    private async Task<ScriptExecutionResult> ExecuteWithScopeAsync(ISshConnectionScope scope, ScriptExecutionRequest request, CancellationToken ct)
+    {
+        var remoteWorkDir = ResolveVariable(request.Variables, SpecialVariables.Ssh.RemoteWorkingDirectory);
+        var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
+        var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
+
+        try
+        {
+            await PrepareRemoteWorkDirectoryAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
+
+            return await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Best-effort cleanup; CleanupRemoteWorkDirectory swallows its own
+            // exceptions to log + continue. Runs on success, exception, AND
+            // cancellation — the entire reason this finally block exists.
+            CleanupRemoteWorkDirectory(scope, workDir, resolvedBase);
         }
     }
 
@@ -187,7 +213,13 @@ public class SshExecutionStrategy : IExecutionStrategy
         };
     }
 
-    private static void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
+    /// <summary>
+    /// <c>protected internal virtual</c> so unit tests can observe / count calls
+    /// via a test subclass override. Production behaviour: best-effort
+    /// <c>rm -rf</c> of the workDir + retention sweep over older sibling dirs.
+    /// Swallows all exceptions to keep finally-block invocations safe.
+    /// </summary>
+    protected internal virtual void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
     {
         try
         {
