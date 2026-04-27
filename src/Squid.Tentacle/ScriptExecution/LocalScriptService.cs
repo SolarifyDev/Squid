@@ -27,7 +27,54 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private volatile bool _draining;
     private DateTimeOffset _lastCleanupTime = DateTimeOffset.MinValue;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan OrphanMaxAge = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// P1-Phase9.11 — env-var override for the orphan-workspace TTL.
+    /// Default 24h was hardcoded pre-Phase-9.11; operators with high deploy
+    /// throughput (100 scripts/h × 100 MB workdir = ~240 GB/day stale
+    /// accumulation) need to tighten this aggressively. Operators with rare
+    /// deploys may want to LOOSEN it (so a workspace stays around long enough
+    /// for post-mortem inspection).
+    ///
+    /// <para>Value is hours (integer). Out-of-range / unparseable input falls
+    /// back to <see cref="DefaultOrphanMaxAgeHours"/> with a Serilog warning.
+    /// Pinned literal: <c>SQUID_TENTACLE_ORPHAN_WORKSPACE_TTL_HOURS</c>.</para>
+    /// </summary>
+    public const string OrphanMaxAgeEnvVar = "SQUID_TENTACLE_ORPHAN_WORKSPACE_TTL_HOURS";
+
+    public const int DefaultOrphanMaxAgeHours = 24;
+    public const int MinOrphanMaxAgeHours = 1;
+    public const int MaxOrphanMaxAgeHours = 24 * 30;  // 30 days
+
+    /// <summary>
+    /// Read once at first access, cached for process lifetime. Reading at every
+    /// cleanup tick would let an operator unset / re-set the env var mid-run,
+    /// but that's not a documented use case and would be confusing.
+    /// </summary>
+    internal static readonly TimeSpan OrphanMaxAge = ResolveOrphanMaxAge();
+
+    private static TimeSpan ResolveOrphanMaxAge()
+    {
+        var raw = Environment.GetEnvironmentVariable(OrphanMaxAgeEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return TimeSpan.FromHours(DefaultOrphanMaxAgeHours);
+
+        if (!int.TryParse(raw, out var hours) || hours < MinOrphanMaxAgeHours || hours > MaxOrphanMaxAgeHours)
+        {
+            Log.Warning(
+                "{EnvVar}='{RawValue}' is not a valid integer in [{Min}..{Max}] hours; " +
+                "falling back to default {Default}h. Set to a positive integer to override.",
+                OrphanMaxAgeEnvVar, raw, MinOrphanMaxAgeHours, MaxOrphanMaxAgeHours, DefaultOrphanMaxAgeHours);
+            return TimeSpan.FromHours(DefaultOrphanMaxAgeHours);
+        }
+
+        Log.Information(
+            "Orphan workspace TTL configured to {Hours} hours via {EnvVar}",
+            hours, OrphanMaxAgeEnvVar);
+
+        return TimeSpan.FromHours(hours);
+    }
     // Canonicalised version (strips trailing .0 Revision) — keeps deployment
     // audit logs aligned with /upgrade-info.currentVersion and the upgrade
     // target version format.
@@ -1133,6 +1180,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                     {
                         Directory.Delete(dir, recursive: true);
                         cleaned++;
+                        // P1-Phase9.11: per-deletion counter for Prometheus.
+                        // Only fires when delete actually succeeded (skipped /
+                        // failed dirs do NOT count).
+                        Squid.Tentacle.Health.TentacleMetrics.OrphanedWorkspaceCleaned();
                     }
                     catch
                     {
