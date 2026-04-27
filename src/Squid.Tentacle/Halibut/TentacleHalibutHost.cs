@@ -64,8 +64,37 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             .Build();
     }
 
+    /// <summary>
+    /// P1-Phase9.15 — startup-jitter env var for thundering-herd mitigation.
+    ///
+    /// <para><b>Problem</b>: when the server restarts, all N polling Tentacles
+    /// detect the connection drop simultaneously and try to reconnect at the
+    /// same instant. Halibut's accept queue saturates; first wave of agents
+    /// gets connection-refused or timeout; deployments fail with "server
+    /// unreachable" even though server is healthy.</para>
+    ///
+    /// <para><b>Fix</b>: each Tentacle waits a uniformly-random
+    /// [0, JitterMaxMs] ms before invoking its first Poll(). Operators tune
+    /// the upper bound to match their fleet size — for 1000 agents, set
+    /// 30000ms (30s) so the reconnect storm is spread over ~30s instead of
+    /// arriving in a single second.</para>
+    ///
+    /// <para>Default 0ms preserves pre-Phase-9.15 behaviour (no jitter) for
+    /// small fleets where the storm wouldn't matter. Operators with bigger
+    /// fleets opt-in by setting the env var.</para>
+    /// </summary>
+    public const string PollingStartupJitterEnvVar = "SQUID_TENTACLE_POLLING_STARTUP_JITTER_MS";
+
+    public const int DefaultPollingStartupJitterMs = 0;
+    public const int MaxPollingStartupJitterMs = 5 * 60 * 1000;  // 5 min — sanity cap
+
     public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
     {
+        // P1-Phase9.15: jitter the start of polling so reconnect storms after
+        // server restart don't arrive in a single instant. Read env var on
+        // every call (cheap, allows operators to flip without restart).
+        ApplyStartupJitter();
+
         // ServerCertificate may be a comma-separated list (Octopus-aligned multi-server trust).
         // Every listed thumbprint is Trust()ed so cert-rotation windows where old+new coexist
         // don't break running Tentacles.
@@ -187,6 +216,60 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     /// </summary>
     internal static System.Net.IPAddress ResolveListenIpAddress()
         => ParseListenIpAddress(System.Environment.GetEnvironmentVariable(ListenIpAddressEnvVar));
+
+    /// <summary>
+    /// P1-Phase9.15 — sleep 0..jitterMs (uniformly random) before polling
+    /// startup. Reads <see cref="PollingStartupJitterEnvVar"/> at every
+    /// invocation so operators can flip it without service restart.
+    ///
+    /// <para>Out-of-range / unparseable input falls back silently to 0
+    /// (no jitter, identical to pre-Phase-9.15 behaviour) — we don't WANT
+    /// to crash an operator's Tentacle on a typo.</para>
+    /// </summary>
+    private static void ApplyStartupJitter()
+    {
+        var jitterMs = ResolveStartupJitterMs();
+        if (jitterMs <= 0) return;
+
+        var randomDelay = System.Random.Shared.Next(0, jitterMs + 1);
+        Log.Information(
+            "Polling startup jitter: sleeping {DelayMs}ms (max {MaxMs}ms via {EnvVar}) " +
+            "to spread reconnect storm across the fleet.",
+            randomDelay, jitterMs, PollingStartupJitterEnvVar);
+        System.Threading.Thread.Sleep(randomDelay);
+    }
+
+    /// <summary>
+    /// Pure parser exposed for unit testing without process-level env state.
+    /// Returns the resolved upper-bound in ms, clamped to
+    /// <c>[0, MaxPollingStartupJitterMs]</c>.
+    /// </summary>
+    internal static int ParseStartupJitterMs(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultPollingStartupJitterMs;
+
+        if (!int.TryParse(raw.Trim(), out var ms) || ms < 0)
+        {
+            Log.Warning(
+                "{EnvVar}='{RawValue}' is not a valid non-negative integer (ms); falling back to default {Default}.",
+                PollingStartupJitterEnvVar, raw, DefaultPollingStartupJitterMs);
+            return DefaultPollingStartupJitterMs;
+        }
+
+        if (ms > MaxPollingStartupJitterMs)
+        {
+            Log.Warning(
+                "{EnvVar}={RawValue}ms exceeds sanity cap {MaxMs}ms; clamping. " +
+                "If you really want a longer jitter window, raise the cap.",
+                PollingStartupJitterEnvVar, ms, MaxPollingStartupJitterMs);
+            return MaxPollingStartupJitterMs;
+        }
+
+        return ms;
+    }
+
+    private static int ResolveStartupJitterMs()
+        => ParseStartupJitterMs(System.Environment.GetEnvironmentVariable(PollingStartupJitterEnvVar));
 
     /// <summary>Pure parser for unit testing without env state.</summary>
     internal static System.Net.IPAddress ParseListenIpAddress(string raw)
