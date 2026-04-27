@@ -37,14 +37,15 @@ public class SshExecutionStrategyTests
     private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
 
     /// <summary>
-    /// P0-Phase9.2 test seam: subclass that counts cleanup invocations.
-    /// Pre-Phase-9.2 behaviour: cleanup ran ONLY on success. Post-fix:
-    /// cleanup runs on every exit — success, exception, cancellation.
+    /// P0-Phase9.2 + P1-Phase9.4 test seam: subclass that counts cleanup AND
+    /// kill invocations. Tests assert both behaviours via this class.
     /// </summary>
     private class CleanupCountingStrategy : SshExecutionStrategy
     {
         public int CleanupCallCount;
+        public int KillCallCount;
         public string LastWorkDir;
+        public string LastKilledWorkDir;
 
         public CleanupCountingStrategy(ISshConnectionFactory cf, ISshExecutionMutex em, IPackageStagingPlanner sp, IRuntimeBundleProvider rbp)
             : base(cf, em, sp, rbp) { }
@@ -54,6 +55,12 @@ public class SshExecutionStrategyTests
             CleanupCallCount++;
             LastWorkDir = workDir;
             // intentionally do not call base — we don't want SshRemoteShellExecutor to fire on a mock
+        }
+
+        protected internal override void KillRemoteProcessesForWorkDir(ISshConnectionScope scope, string workDir)
+        {
+            KillCallCount++;
+            LastKilledWorkDir = workDir;
         }
     }
 
@@ -361,6 +368,71 @@ public class SshExecutionStrategyTests
         strategy.CleanupCallCount.ShouldBe(1, customMessage:
             "Cleanup MUST run when staging throws — workDir already exists on the " +
             "remote host with decrypted sensitiveVariables.json. This is the P0 leak.");
+    }
+
+    // ========== P1-Phase9.4 cancel-kill propagation ==========
+    //
+    // When user cancels mid-deploy, the local polling loop exits via OCE,
+    // but the remote bash process keeps running unless explicitly killed.
+    // The finally block now issues pkill -f <workDir> on cancellation paths.
+
+    [Fact]
+    public async Task Kill_DoesNotRun_OnSuccessPath()
+    {
+        // Success: no cancellation → no need to kill anything.
+        var strategy = CreateCountingStrategy();
+        await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
+
+        strategy.KillCallCount.ShouldBe(0, customMessage:
+            "Kill must NOT run on success — script already completed naturally.");
+    }
+
+    [Fact]
+    public async Task Kill_DoesNotRun_OnNonCancelException()
+    {
+        // Non-cancel exception (e.g. staging IO error) — process never started
+        // OR completed quickly. No need to fire pkill (could match unrelated PIDs).
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("staging failed"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        strategy.KillCallCount.ShouldBe(0, customMessage:
+            "Non-cancel exception path: kill should be skipped (script wasn't running).");
+    }
+
+    [Fact]
+    public async Task Kill_RunsOnCancellation_BeforeCleanup()
+    {
+        // The exact scenario the fix targets: user cancels during script run.
+        // Kill must run (and run BEFORE cleanup, so rm -rf doesn't race a
+        // still-running script).
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();  // pre-cancel — staging will throw OCE on first await
+
+        var strategy = CreateCountingStrategy();
+
+        try
+        {
+            await strategy.ExecuteScriptAsync(MakeRequest(), cts.Token);
+        }
+        catch (OperationCanceledException) { /* expected */ }
+
+        strategy.KillCallCount.ShouldBe(1, customMessage:
+            "Kill MUST run on cancellation — pre-Phase-9.4 the remote bash kept " +
+            "running after local polling loop exited via OCE.");
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup must still run after kill (existing Phase-9.2 invariant).");
+        strategy.LastKilledWorkDir.ShouldBe(strategy.LastWorkDir, customMessage:
+            "Kill and cleanup must target the same workDir.");
     }
 
     [Fact]
