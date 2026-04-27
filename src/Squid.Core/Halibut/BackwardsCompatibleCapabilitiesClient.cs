@@ -58,12 +58,31 @@ public sealed class BackwardsCompatibleCapabilitiesClient : IAsyncCapabilitiesSe
 
     internal static bool IsNoSuchServiceError(Exception ex)
     {
-        // Halibut's error messages for missing services/methods vary by version; match
-        // on the substrings that have remained stable across Halibut 7.x/8.x:
-        //   "No service found ..."
-        //   "NoMatchingService..."
-        //   "Method ... not found"
-        //   "The service contract ... does not contain a method ..."
+        // P1-Phase9b.2: Halibut 8.1.x ships SPECIFIC subclasses of
+        // HalibutClientException for missing-service-or-method scenarios.
+        // Type-based detection is the resilient primary path — robust
+        // against future i18n / message wording changes that would
+        // silently break substring matching.
+        //
+        // <b>Hierarchy from Halibut 8.1.1943</b>:
+        //   NoMatchingServiceOrMethodHalibutClientException (base)
+        //     ├─ ServiceNotFoundHalibutClientException
+        //     ├─ MethodNotFoundHalibutClientException
+        //     └─ AmbiguousMethodMatchHalibutClientException
+        //
+        // <b>Exclude Ambiguous</b> EXPLICITLY: it's a server-side wiring bug
+        // (multiple method overloads registered with the same name), NOT an
+        // "old agent" scenario. Must rethrow rather than silently mask the
+        // server defect as a back-compat fallback. The explicit-exclude
+        // pattern (rather than re-ordering checks) makes the intent obvious
+        // even if Halibut adds more derived types later.
+        if (ex is global::Halibut.Exceptions.AmbiguousMethodMatchHalibutClientException) return false;
+        if (ex is global::Halibut.Exceptions.NoMatchingServiceOrMethodHalibutClientException) return true;
+
+        // Substring fallback — for older Halibut versions or wrapped exceptions
+        // where the typed subclass doesn't reach us. Same set of stable tokens
+        // as before; keeps mixed-version interop working during the upgrade
+        // window when older clients still talk to newer servers.
         if (ex is HalibutClientException hce)
         {
             var msg = hce.Message ?? string.Empty;

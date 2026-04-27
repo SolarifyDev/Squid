@@ -70,4 +70,80 @@ public sealed class BackwardsCompatibleCapabilitiesClientTests
         await Should.ThrowAsync<InvalidOperationException>(async () =>
             await decorator.GetCapabilitiesAsync(new CapabilitiesRequest()));
     }
+
+    // ── P1-Phase9b.2: typed-exception detection (Halibut 8.1.1943) ──────────
+    //
+    // Halibut 8.1.x ships SPECIFIC subclasses of HalibutClientException for
+    // missing-service-or-method scenarios. Our prior Phase-implementation
+    // matched only on substring text, which would silently FAIL THE FALLBACK
+    // if Halibut ever changed the message format (e.g. for localisation, or
+    // a future "{ServiceName} not registered" rewrite). Type-based matching
+    // is the resilient primary path; substring stays as the fallback for
+    // older Halibut versions or wrapped exceptions.
+
+    [Fact]
+    public async Task GetCapabilities_ServiceNotFoundTypedException_ReturnsMinimumSet()
+    {
+        // ServiceNotFoundHalibutClientException is what Halibut 8.1.1943
+        // throws when the agent doesn't register ICapabilitiesService at all.
+        // Detected by TYPE, not message text — robust against future i18n /
+        // wording changes.
+        var inner = new Mock<IAsyncCapabilitiesService>();
+        inner.Setup(i => i.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+             .ThrowsAsync(new global::Halibut.Exceptions.ServiceNotFoundHalibutClientException(
+                 "Service ICapabilitiesService is not registered"));
+
+        var decorator = new BackwardsCompatibleCapabilitiesClient(inner.Object);
+        var response = await decorator.GetCapabilitiesAsync(new CapabilitiesRequest());
+
+        response.ShouldNotBeNull();
+        response.SupportedServices.ShouldContain("IScriptService/v1");
+    }
+
+    [Fact]
+    public async Task GetCapabilities_MethodNotFoundTypedException_ReturnsMinimumSet()
+    {
+        // MethodNotFoundHalibutClientException — agent has the service registered
+        // but a method our newer client expects is missing.
+        var inner = new Mock<IAsyncCapabilitiesService>();
+        inner.Setup(i => i.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+             .ThrowsAsync(new global::Halibut.Exceptions.MethodNotFoundHalibutClientException(
+                 "Method GetCapabilitiesAsync not found"));
+
+        var decorator = new BackwardsCompatibleCapabilitiesClient(inner.Object);
+        var response = await decorator.GetCapabilitiesAsync(new CapabilitiesRequest());
+
+        response.SupportedServices.ShouldContain("IScriptService/v1");
+    }
+
+    [Fact]
+    public async Task GetCapabilities_NoMatchingServiceOrMethodTypedException_ReturnsMinimumSet()
+    {
+        // NoMatchingServiceOrMethodHalibutClientException — generic catch-all.
+        var inner = new Mock<IAsyncCapabilitiesService>();
+        inner.Setup(i => i.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+             .ThrowsAsync(new global::Halibut.Exceptions.NoMatchingServiceOrMethodHalibutClientException(
+                 "No matching service or method"));
+
+        var decorator = new BackwardsCompatibleCapabilitiesClient(inner.Object);
+        var response = await decorator.GetCapabilitiesAsync(new CapabilitiesRequest());
+
+        response.SupportedServices.ShouldContain("IScriptService/v1");
+    }
+
+    [Fact]
+    public async Task GetCapabilities_AmbiguousMethod_NotFallback_Rethrows()
+    {
+        // Negative case: AmbiguousMethodMatchHalibutClientException is a SERVER
+        // BUG, not "agent too old" → must rethrow rather than silently mask.
+        var inner = new Mock<IAsyncCapabilitiesService>();
+        inner.Setup(i => i.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+             .ThrowsAsync(new global::Halibut.Exceptions.AmbiguousMethodMatchHalibutClientException(
+                 "Multiple GetCapabilities overloads found"));
+
+        var decorator = new BackwardsCompatibleCapabilitiesClient(inner.Object);
+
+        await Should.ThrowAsync<global::Halibut.Exceptions.AmbiguousMethodMatchHalibutClientException>(
+            () => decorator.GetCapabilitiesAsync(new CapabilitiesRequest()));
+    }
 }
