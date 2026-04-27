@@ -1,5 +1,6 @@
 using Halibut;
 using Squid.Core.Halibut;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Transport;
 
@@ -8,6 +9,13 @@ public interface IHalibutClientFactory : IScopedDependency
     IAsyncScriptService CreateClient(ServiceEndPoint endpoint);
 
     IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint);
+
+    /// <summary>
+    /// P1-Phase9b.3 — separate file-transfer client for out-of-band file
+    /// upload/download to a polling tentacle. Returned client routes through
+    /// the agent's <see cref="IFileTransferService"/> registration.
+    /// </summary>
+    IAsyncClientFileTransferService CreateFileTransferClient(ServiceEndPoint endpoint);
 }
 
 public class HalibutClientFactory : IHalibutClientFactory
@@ -29,4 +37,7 @@ public class HalibutClientFactory : IHalibutClientFactory
         var raw = _halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
         return new BackwardsCompatibleCapabilitiesClient(raw);
     }
+
+    public IAsyncClientFileTransferService CreateFileTransferClient(ServiceEndPoint endpoint)
+        => _halibutRuntime.CreateAsyncClient<IFileTransferService, IAsyncClientFileTransferService>(endpoint);
 }

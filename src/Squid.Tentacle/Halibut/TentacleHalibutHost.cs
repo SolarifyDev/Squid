@@ -46,16 +46,24 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         X509Certificate2 tentacleCert,
         IScriptService scriptService,
         TentacleSettings settings,
-        ICapabilitiesService capabilitiesService = null)
+        ICapabilitiesService capabilitiesService = null,
+        IFileTransferService fileTransferService = null)
     {
         _settings = settings;
 
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
         var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService());
 
+        // P1-Phase9b.3: register the file-transfer service. Default impl writes
+        // under ~/.squid/uploads with workspace-boundary path rewriting (rooted
+        // / traversal paths are sanitised to a hash-derived filename).
+        var fileTransfer = fileTransferService ?? new FileTransfer.LocalFileTransferService();
+        var fileTransferAdapter = new AsyncFileTransferServiceAdapter(fileTransfer);
+
         var serviceFactory = new DelegateServiceFactory();
         serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
         serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => capsAdapter);
+        serviceFactory.Register<IFileTransferService, IFileTransferServiceAsync>(() => fileTransferAdapter);
 
         _runtime = new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
