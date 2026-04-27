@@ -40,6 +40,23 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
     private HalibutRuntime _halibutRuntime;
     private volatile bool _initialLoadCompleted;
 
+    /// <summary>
+    /// P0-Phase9.3 — serializes (read-thumbprints + TrustOnly) pairs.
+    ///
+    /// <para><b>The race pre-Phase-9.3</b>: Start() schedules the initial DB
+    /// load on a background Task.Run. A concurrent registration arriving
+    /// during that window calls ReconfigureIfMissingAsync → ReconfigureAsync,
+    /// which races. If both calls reach <c>TrustOnly</c> in different orders
+    /// than they read the DB, the older list can overwrite the newer list,
+    /// dropping a freshly-registered thumbprint.</para>
+    ///
+    /// <para>The fast-path <c>IsTrusted</c> check in
+    /// <see cref="ReconfigureIfMissingAsync"/> stays OUTSIDE this lock — read
+    /// is cheap and racy-safe-by-construction (worst case: redundant DB read
+    /// inside the lock, no incorrectness).</para>
+    /// </summary>
+    private readonly SemaphoreSlim _reconfigureLock = new(initialCount: 1, maxCount: 1);
+
     public PollingTrustDistributor(ILifetimeScope scope)
     {
         _scope = scope;
@@ -83,12 +100,25 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
     {
         if (!ResolveHalibutRuntime()) return;
 
-        var dataProvider = _scope.Resolve<IMachineDataProvider>();
-        var thumbprints = await dataProvider.GetPollingThumbprintsAsync(cancellationToken).ConfigureAwait(false);
+        // P0-Phase9.3: serialize the (DB-read + TrustOnly) pair so concurrent
+        // calls cannot interleave their reads such that the older list
+        // overwrites a newer registration's TrustOnly. WaitAsync honours the
+        // CT so a cancelled controller call doesn't pile up waiters.
+        await _reconfigureLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        _halibutRuntime.TrustOnly(thumbprints);
+        try
+        {
+            var dataProvider = _scope.Resolve<IMachineDataProvider>();
+            var thumbprints = await dataProvider.GetPollingThumbprintsAsync(cancellationToken).ConfigureAwait(false);
 
-        Log.Information("Halibut trust reconfigured, {Count} polling agent(s) trusted", thumbprints.Count);
+            _halibutRuntime.TrustOnly(thumbprints);
+
+            Log.Information("Halibut trust reconfigured, {Count} polling agent(s) trusted", thumbprints.Count);
+        }
+        finally
+        {
+            _reconfigureLock.Release();
+        }
     }
 
     public async Task ReconfigureIfMissingAsync(string thumbprint, CancellationToken cancellationToken = default)
