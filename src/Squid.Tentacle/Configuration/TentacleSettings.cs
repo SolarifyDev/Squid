@@ -59,7 +59,34 @@ public class TentacleSettings
     public string ChartRef { get; set; } = DefaultKubernetesAgentChartRef;
     public int PollingConnectionCount { get; set; } = 5;
     public string ServerCommsAddresses { get; set; } = string.Empty;
-    public int ShutdownDrainTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// P1-Phase9.5 — bumped 30 → 300 (5 min).
+    ///
+    /// <para><b>Old default rationale (30s)</b>: matched Halibut's polling
+    /// reconnect cadence. Worked for K8s-agent flavour where pods are
+    /// short-lived and any in-flight script will be re-dispatched on the
+    /// next pod startup.</para>
+    ///
+    /// <para><b>Why 30s was wrong for non-K8s Tentacles</b>: when systemd
+    /// sends SIGTERM to a long-running Linux/Windows tentacle deploy script
+    /// (typical: 5-30 min infra rollout), the agent enters drain, blocks
+    /// new RPCs, and waits up to <c>ShutdownDrainTimeoutSeconds</c> for
+    /// in-flight to complete. At 30s, a 10-minute deploy gets <b>killed</b>
+    /// at the 30s mark — partial state on the target, no rollback signal,
+    /// operator sees "shutdown timeout" with no explanation of which scripts
+    /// were truncated.</para>
+    ///
+    /// <para><b>New default (300s = 5 min)</b>: covers the median deploy
+    /// time. Operators with longer deploys can override via
+    /// <c>Tentacle:ShutdownDrainTimeoutSeconds</c> appsettings or env var.
+    /// systemd unit MUST set <c>TimeoutStopSec &gt;=
+    /// ShutdownDrainTimeoutSeconds + 30s</c> grace, otherwise systemd kills
+    /// the process before drain completes.</para>
+    /// </summary>
+    public const int DefaultShutdownDrainTimeoutSeconds = 300;
+
+    public int ShutdownDrainTimeoutSeconds { get; set; } = DefaultShutdownDrainTimeoutSeconds;
 
     /// <summary>
     /// Explicit flag set to <c>"true"</c> by the <c>register</c> command after a

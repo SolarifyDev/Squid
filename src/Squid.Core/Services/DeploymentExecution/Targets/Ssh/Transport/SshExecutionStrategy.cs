@@ -41,17 +41,7 @@ public class SshExecutionStrategy : IExecutionStrategy
             using var executionLock = await _executionMutex.AcquireAsync(connectionInfo.Host, connectionInfo.Port, SshExecutionMutex.DefaultTimeout, ct).ConfigureAwait(false);
             using var scope = _connectionFactory.CreateScope(connectionInfo);
 
-            var remoteWorkDir = ResolveVariable(request.Variables, SpecialVariables.Ssh.RemoteWorkingDirectory);
-            var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
-            var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
-
-            await PrepareRemoteWorkDirectoryAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
-
-            var result = await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
-
-            CleanupRemoteWorkDirectory(scope, workDir, resolvedBase);
-
-            return result;
+            return await ExecuteWithScopeAsync(scope, request, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -80,6 +70,108 @@ public class SshExecutionStrategy : IExecutionStrategy
                 LogLines = new List<string> { $"SSH execution error: {ex.Message}" },
                 StderrLines = new List<string> { ex.Message }
             };
+        }
+    }
+
+    /// <summary>
+    /// P0-Phase9.2 — cleanup-finally guarantee: workDir cleanup runs on EVERY
+    /// exit path (success, exception, cancellation), not just success.
+    ///
+    /// <para><b>The bug pre-Phase-9.2</b>: <c>CleanupRemoteWorkDirectory</c> sat
+    /// on the success path. If <c>PrepareRemoteWorkDirectoryAsync</c> threw
+    /// after creating the work dir on remote, OR if <c>ExecuteScriptAsync</c>
+    /// threw after dropping <c>sensitiveVariables.json</c> to disk, the work
+    /// dir was orphaned forever. Result: <c>/tmp</c> filled with stale dirs
+    /// AND decrypted password files remained world-readable on the remote.</para>
+    ///
+    /// <para><b>P1-Phase9.4 addition</b>: when cancellation fires (user clicked
+    /// "cancel deployment" in the UI), the local polling loop in
+    /// <c>SshRemoteShellExecutor.ExecuteAsync</c> exits via OCE — but the
+    /// REMOTE bash process keeps running. The finally block now also issues a
+    /// best-effort <c>pkill -f &lt;workDir&gt;</c> to terminate any processes
+    /// whose argv contains the unique workDir marker. This kills the script
+    /// before <c>rm -rf</c> would race with it.</para>
+    ///
+    /// <para>The cleanup helper is itself wrapped in try/catch (see
+    /// <see cref="CleanupRemoteWorkDirectory"/>) — it cannot itself bubble an
+    /// exception out of the finally block, so wrapping in finally is safe.</para>
+    /// </summary>
+    private async Task<ScriptExecutionResult> ExecuteWithScopeAsync(ISshConnectionScope scope, ScriptExecutionRequest request, CancellationToken ct)
+    {
+        var remoteWorkDir = ResolveVariable(request.Variables, SpecialVariables.Ssh.RemoteWorkingDirectory);
+        var resolvedBase = SshPaths.ResolveBaseDirectory(scope.GetSshClient(), remoteWorkDir);
+        var workDir = SshPaths.WorkDirectory(request.ServerTaskId, resolvedBase);
+
+        try
+        {
+            await PrepareRemoteWorkDirectoryAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
+
+            return await ExecuteScriptAsync(scope, workDir, resolvedBase, request, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // P1-Phase9.4: kill straggler processes BEFORE rm -rf so the
+            // cleanup doesn't race a still-running script that's writing files
+            // back into workDir. Only fires when CT is cancelled — success and
+            // non-cancel exception paths skip the kill (process already done).
+            if (ct.IsCancellationRequested)
+                KillRemoteProcessesForWorkDir(scope, workDir);
+
+            // Best-effort cleanup; CleanupRemoteWorkDirectory swallows its own
+            // exceptions to log + continue. Runs on success, exception, AND
+            // cancellation — the entire reason this finally block exists.
+            CleanupRemoteWorkDirectory(scope, workDir, resolvedBase);
+        }
+    }
+
+    /// <summary>
+    /// P1-Phase9.4 — best-effort SIGTERM/SIGKILL of remote processes whose argv
+    /// contains the per-task workDir marker.
+    ///
+    /// <para><b>Why this exists</b>: <c>SshRemoteShellExecutor.ExecuteAsync</c>
+    /// polls a local async-result loop. When CT cancels, the loop exits via
+    /// OCE — but Renci.SshNet's underlying SSH channel does NOT automatically
+    /// signal the remote process. The remote bash keeps running until natural
+    /// completion (or until the SSH session is torn down on scope.Dispose).
+    /// In the worst case (script forks via <c>nohup</c> / <c>setsid</c>), the
+    /// process survives session teardown entirely.</para>
+    ///
+    /// <para>Strategy: send a fresh, short-lived <c>pkill -f workDir</c> over
+    /// the same SshClient. workDir is generated per-ServerTaskId
+    /// (<c>~/.squid/Work/{ServerTaskId}</c>) so it's unique enough to avoid
+    /// false positives across tasks. We send SIGTERM first, then SIGKILL after
+    /// 5s grace.</para>
+    ///
+    /// <para><c>protected internal virtual</c> for the same reason as
+    /// <see cref="CleanupRemoteWorkDirectory"/> — test subclass override.</para>
+    /// </summary>
+    protected internal virtual void KillRemoteProcessesForWorkDir(ISshConnectionScope scope, string workDir)
+    {
+        try
+        {
+            var ssh = scope.GetSshClient();
+
+            // Compose into a single shell line: SIGTERM, sleep 5, SIGKILL.
+            // <c>true</c> tail makes the overall exit code 0 even if pkill
+            // found nothing (which is normal for the success path's defensive
+            // call) — we don't want the cleanup helper to log a spurious warn.
+            //
+            // <b>Boundary anchor</b> [(([^0-9]|$)]: prevents a false-positive
+            // kill of CONCURRENT tasks whose ServerTaskId begins with the
+            // cancelled task's ID as a prefix. Example: cancelling task 123
+            // must NOT kill task 1234. Workspace path is
+            // <c>~/.squid/Work/{TaskId}</c> followed by a non-digit (space,
+            // slash, quote, or end-of-line) in any real argv. Anchoring
+            // against a non-digit character class is POSIX-ERE-portable
+            // (GNU pkill / procps-ng / busybox all accept it) — no need for
+            // \b which has spotty cross-Unix support.
+            var pattern = $"{workDir}([^0-9]|$)";
+            var killCmd = $"pkill -TERM -f \"{pattern}\" 2>/dev/null; sleep 5; pkill -KILL -f \"{pattern}\" 2>/dev/null; true";
+            SshRemoteShellExecutor.Execute(ssh, killCmd, TimeSpan.FromSeconds(15));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[SSH] Best-effort kill of remote processes for {WorkDir} failed", workDir);
         }
     }
 
@@ -187,7 +279,13 @@ public class SshExecutionStrategy : IExecutionStrategy
         };
     }
 
-    private static void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
+    /// <summary>
+    /// <c>protected internal virtual</c> so unit tests can observe / count calls
+    /// via a test subclass override. Production behaviour: best-effort
+    /// <c>rm -rf</c> of the workDir + retention sweep over older sibling dirs.
+    /// Swallows all exceptions to keep finally-block invocations safe.
+    /// </summary>
+    protected internal virtual void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
     {
         try
         {

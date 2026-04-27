@@ -10,7 +10,7 @@
     <PackageReference Include="Cronos" Version="0.8.4" />
     <PackageReference Include="AutoMapper" Version="13.0.1" />
     <PackageReference Include="FluentValidation" Version="11.11.0" />
-    <PackageReference Include="Halibut" Version="8.1.1052" />
+    <PackageReference Include="Halibut" Version="8.1.1943" />
     <PackageReference Include="Hangfire" Version="1.8.3" />
     <PackageReference Include="Hangfire.MemoryStorage" Version="1.8.0" />
     <PackageReference Include="Hangfire.Pro.Redis" Version="3.0.0" />
@@ -39,7 +39,7 @@
     <PackageReference Include="AutoMapper.Contrib.Autofac.DependencyInjection" Version="8.1.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
-    <PackageReference Include="StackExchange.Redis" Version="2.6.122" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.58" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 

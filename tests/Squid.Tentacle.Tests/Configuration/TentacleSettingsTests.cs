@@ -102,4 +102,26 @@ public class TentacleSettingsTests
 
         urls.Count.ShouldBe(2);
     }
+
+    // ── P1-Phase9.5 drain timeout default ────────────────────────────────────
+
+    [Fact]
+    public void ShutdownDrainTimeoutSeconds_Default_Is300_For30MinDeploys()
+    {
+        // Pre-Phase-9.5 default was 30s — would kill a 10-minute deploy at
+        // SIGTERM. New default is 300s (5 min), covers the median Linux
+        // tentacle deploy window. Operators with longer deploys override via
+        // Tentacle:ShutdownDrainTimeoutSeconds in appsettings.
+        new TentacleSettings().ShutdownDrainTimeoutSeconds.ShouldBe(300);
+    }
+
+    [Fact]
+    public void DefaultShutdownDrainTimeoutSeconds_ConstantValuePinned()
+    {
+        // Rule 8 — pin the literal so a "harmless" cleanup rename can't
+        // silently regress the Phase-9.5 default. Operators may have set
+        // systemd TimeoutStopSec to match this value; a regression would
+        // mismatch the unit's grace window.
+        TentacleSettings.DefaultShutdownDrainTimeoutSeconds.ShouldBe(300);
+    }
 }

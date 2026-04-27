@@ -1,4 +1,4 @@
-using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;

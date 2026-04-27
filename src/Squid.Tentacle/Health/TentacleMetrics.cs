@@ -15,6 +15,7 @@ public static class TentacleMetrics
     private static long _scriptsCanceledTotal;
     private static long _managedPods;
     private static long _orphanedPodsCleanedTotal;
+    private static long _orphanedWorkspacesCleanedTotal;
     private static long _nfsForceKillsTotal;
     private static long _scriptsQueuedTotal;
     private static long _scriptsRejectedTotal;
@@ -28,6 +29,16 @@ public static class TentacleMetrics
     public static long ScriptsCanceledTotal => Interlocked.Read(ref _scriptsCanceledTotal);
     public static long ManagedPods => Interlocked.Read(ref _managedPods);
     public static long OrphanedPodsCleanedTotal => Interlocked.Read(ref _orphanedPodsCleanedTotal);
+
+    /// <summary>
+    /// P1-Phase9.11 — total Tentacle workspace directories swept by the
+    /// background cleanup loop (default every 10 min, TTL configurable via
+    /// <c>SQUID_TENTACLE_ORPHAN_WORKSPACE_TTL_HOURS</c>). Operators alert
+    /// when this rate spikes (script crashes leaving workspaces behind) or
+    /// when it stays at 0 over many hours despite active deploys (cleanup
+    /// loop deadlocked).
+    /// </summary>
+    public static long OrphanedWorkspacesCleanedTotal => Interlocked.Read(ref _orphanedWorkspacesCleanedTotal);
     public static long NfsForceKillsTotal => Interlocked.Read(ref _nfsForceKillsTotal);
     public static long ScriptsQueuedTotal => Interlocked.Read(ref _scriptsQueuedTotal);
     public static long ScriptsRejectedTotal => Interlocked.Read(ref _scriptsRejectedTotal);
@@ -75,6 +86,16 @@ public static class TentacleMetrics
     public static void OrphanedPodCleaned()
     {
         Interlocked.Increment(ref _orphanedPodsCleanedTotal);
+    }
+
+    /// <summary>
+    /// P1-Phase9.11 — call once per orphaned workspace dir actually deleted
+    /// by <c>LocalScriptService.CleanupOrphanedWorkspaces</c>. Skipped dirs
+    /// (still in TTL, or in-flight) do NOT count.
+    /// </summary>
+    public static void OrphanedWorkspaceCleaned()
+    {
+        Interlocked.Increment(ref _orphanedWorkspacesCleanedTotal);
     }
 
     public static void NfsForceKill()

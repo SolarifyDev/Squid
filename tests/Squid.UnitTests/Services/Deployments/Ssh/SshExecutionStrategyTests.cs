@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using Renci.SshNet;
 using Squid.Core.Services.DeploymentExecution.Packages.Staging;
@@ -34,6 +35,36 @@ public class SshExecutionStrategyTests
     }
 
     private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
+
+    /// <summary>
+    /// P0-Phase9.2 + P1-Phase9.4 test seam: subclass that counts cleanup AND
+    /// kill invocations. Tests assert both behaviours via this class.
+    /// </summary>
+    private class CleanupCountingStrategy : SshExecutionStrategy
+    {
+        public int CleanupCallCount;
+        public int KillCallCount;
+        public string LastWorkDir;
+        public string LastKilledWorkDir;
+
+        public CleanupCountingStrategy(ISshConnectionFactory cf, ISshExecutionMutex em, IPackageStagingPlanner sp, IRuntimeBundleProvider rbp)
+            : base(cf, em, sp, rbp) { }
+
+        protected internal override void CleanupRemoteWorkDirectory(ISshConnectionScope scope, string workDir, string baseDir)
+        {
+            CleanupCallCount++;
+            LastWorkDir = workDir;
+            // intentionally do not call base — we don't want SshRemoteShellExecutor to fire on a mock
+        }
+
+        protected internal override void KillRemoteProcessesForWorkDir(ISshConnectionScope scope, string workDir)
+        {
+            KillCallCount++;
+            LastKilledWorkDir = workDir;
+        }
+    }
+
+    private CleanupCountingStrategy CreateCountingStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
 
     private static ScriptExecutionRequest MakeRequest(string scriptBody = "echo hello", int serverTaskId = 42, ScriptSyntax syntax = ScriptSyntax.Bash)
     {
@@ -293,5 +324,141 @@ public class SshExecutionStrategyTests
     public void RetentionKeepCount_IsReasonable()
     {
         SshExecutionStrategy.RetentionKeepCount.ShouldBe(10);
+    }
+
+    // ========== P0-Phase9.2 cleanup-finally guarantee ==========
+    //
+    // Pre-Phase-9.2 bug: CleanupRemoteWorkDirectory sat AFTER the success
+    // return statement. If staging or script-execution threw, the workDir
+    // (containing decrypted sensitiveVariables.json) was orphaned indefinitely
+    // on the remote host. This block pins cleanup-runs-on-every-exit-path.
+
+    [Fact]
+    public async Task Cleanup_RunsOnSuccessPath()
+    {
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Success path must invoke cleanup once.");
+    }
+
+    [Fact]
+    public async Task Cleanup_RunsWhenStagingPlannerThrowsMidExecution()
+    {
+        // Simulate the exact bug case: PrepareRemoteWorkDirectoryAsync throws
+        // AFTER the workDir has been created on the remote host (because the
+        // staging planner ran a partial transfer then died).
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated staging failure mid-transfer"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        // Strategy returns a failure result — that's OK, the cleanup still ran
+        result.Success.ShouldBeFalse();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup MUST run when staging throws — workDir already exists on the " +
+            "remote host with decrypted sensitiveVariables.json. This is the P0 leak.");
+    }
+
+    // ========== P1-Phase9.4 cancel-kill propagation ==========
+    //
+    // When user cancels mid-deploy, the local polling loop exits via OCE,
+    // but the remote bash process keeps running unless explicitly killed.
+    // The finally block now issues pkill -f <workDir> on cancellation paths.
+
+    [Fact]
+    public async Task Kill_DoesNotRun_OnSuccessPath()
+    {
+        // Success: no cancellation → no need to kill anything.
+        var strategy = CreateCountingStrategy();
+        await strategy.ExecuteScriptAsync(MakeRequest(), CancellationToken.None);
+
+        strategy.KillCallCount.ShouldBe(0, customMessage:
+            "Kill must NOT run on success — script already completed naturally.");
+    }
+
+    [Fact]
+    public async Task Kill_DoesNotRun_OnNonCancelException()
+    {
+        // Non-cancel exception (e.g. staging IO error) — process never started
+        // OR completed quickly. No need to fire pkill (could match unrelated PIDs).
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("staging failed"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        strategy.KillCallCount.ShouldBe(0, customMessage:
+            "Non-cancel exception path: kill should be skipped (script wasn't running).");
+    }
+
+    [Fact]
+    public async Task Kill_RunsOnCancellation_BeforeCleanup()
+    {
+        // The exact scenario the fix targets: user cancels during script run.
+        // Kill must run (and run BEFORE cleanup, so rm -rf doesn't race a
+        // still-running script).
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();  // pre-cancel — staging will throw OCE on first await
+
+        var strategy = CreateCountingStrategy();
+
+        try
+        {
+            await strategy.ExecuteScriptAsync(MakeRequest(), cts.Token);
+        }
+        catch (OperationCanceledException) { /* expected */ }
+
+        strategy.KillCallCount.ShouldBe(1, customMessage:
+            "Kill MUST run on cancellation — pre-Phase-9.4 the remote bash kept " +
+            "running after local polling loop exited via OCE.");
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup must still run after kill (existing Phase-9.2 invariant).");
+        strategy.LastKilledWorkDir.ShouldBe(strategy.LastWorkDir, customMessage:
+            "Kill and cleanup must target the same workDir.");
+    }
+
+    [Fact]
+    public async Task Cleanup_RunsWhenScriptExecutionThrows()
+    {
+        // Simulate the second exact-bug case: ExecuteScriptAsync throws AFTER
+        // sensitiveVariables.json has already been written to the remote workDir.
+        // This is the more dangerous variant — decrypted credential file is on
+        // the remote, must be cleaned regardless of how execution failed.
+        _stagingPlanner
+            .Setup(p => p.PlanAsync(It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageRequirement>(), It.IsAny<Squid.Core.Services.DeploymentExecution.Packages.Staging.PackageStagingContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("simulated mid-execution timeout — workDir already populated"));
+
+        var request = MakeRequest();
+        request.PackageReferences = new List<Squid.Core.Services.DeploymentExecution.Packages.PackageAcquisitionResult>
+        {
+            new("/tmp/squid-pkg/pkg-a-1.0.0.zip", "pkg-a", "1.0.0", 1024, "sha256:abc")
+        };
+
+        var strategy = CreateCountingStrategy();
+        var result = await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        strategy.CleanupCallCount.ShouldBe(1, customMessage:
+            "Cleanup MUST run when script execution throws AFTER workDir is " +
+            "populated — pre-Phase-9.2 the finally block didn't exist and the " +
+            "decrypted sensitiveVariables.json stayed on the remote forever.");
     }
 }

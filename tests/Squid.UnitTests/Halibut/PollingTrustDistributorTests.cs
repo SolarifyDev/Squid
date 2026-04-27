@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Autofac;
@@ -286,6 +287,169 @@ public class PollingTrustDistributorTests : IDisposable
 
         await Should.ThrowAsync<OperationCanceledException>(
             async () => await _distributor.ReconfigureAsync(cts.Token));
+    }
+
+    // ── P0-Phase9.2 startup-race serialization ──────────────────────────────
+    //
+    // The bug pre-Phase-9.3:
+    //   1. Start() schedules the initial DB load on a background Task.Run.
+    //   2. Concurrent registration arrives before the initial load finishes.
+    //   3. Registration calls ReconfigureIfMissingAsync → ReconfigureAsync → reads
+    //      thumbprints {A, B, C} → calls TrustOnly({A, B, C}).
+    //   4. Initial load finishes its DB read with the OLDER set {A, B} → calls
+    //      TrustOnly({A, B}) → C drops out of trust.
+    //   5. C's polling agent is rejected on next attempt until the next reconfigure.
+    //
+    // Fix: serialize all (read-thumbprints + TrustOnly) pairs via a SemaphoreSlim
+    // so the two operations are atomic relative to each other. The fast-path
+    // IsTrusted check stays outside the lock for performance.
+
+    [Fact]
+    public async Task ReconfigureAsync_ConcurrentCalls_LastWriterPreservesAllThumbprints()
+    {
+        // Reproduce the exact race: two concurrent reconfigure calls, the FIRST
+        // returns the OLDER list (A, B) but completes LATER; the SECOND returns
+        // the NEWER list (A, B, C). Without serialization, last-TrustOnly wins
+        // by wall-clock ordering and C may drop. With serialization, the two
+        // (read+trust) pairs run sequentially and the final state always
+        // reflects whichever provider call ran SECOND through the lock.
+        var firstCallReady = new TaskCompletionSource();
+        var firstCallRelease = new TaskCompletionSource();
+        var firstCallStarted = false;
+        var callIndex = 0;
+
+        _machineDataProvider
+            .Setup(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken _) =>
+            {
+                var idx = Interlocked.Increment(ref callIndex);
+
+                if (idx == 1)
+                {
+                    firstCallStarted = true;
+                    firstCallReady.SetResult();
+                    await firstCallRelease.Task;  // hold first call
+                    return (IReadOnlyList<string>)new List<string> { "A", "B" };  // older list
+                }
+
+                // Second caller: returns newer list with C added
+                return new List<string> { "A", "B", "C" };
+            });
+
+        // Start first call (will hold inside provider)
+        var firstTask = _distributor.ReconfigureAsync();
+        await firstCallReady.Task;
+        firstCallStarted.ShouldBeTrue();
+
+        // Start second call concurrently — without the serializing lock this
+        // would race ahead and call TrustOnly({A,B,C}) before first call's
+        // TrustOnly({A,B}) overwrites it.
+        var secondTask = _distributor.ReconfigureAsync();
+
+        // Release first call so it can complete TrustOnly({A,B})
+        firstCallRelease.SetResult();
+
+        await Task.WhenAll(firstTask, secondTask);
+
+        // With serialization: second call ran AFTER first finished, so final
+        // state has {A, B, C} regardless of provider-call ordering.
+        // Without serialization: race could leave C un-trusted.
+        _halibutRuntime.IsTrusted("A").ShouldBeTrue();
+        _halibutRuntime.IsTrusted("B").ShouldBeTrue();
+        _halibutRuntime.IsTrusted("C").ShouldBeTrue(customMessage:
+            "C must remain trusted after concurrent reconfigure — pre-Phase-9.3 race could drop it.");
+    }
+
+    [Fact]
+    public async Task ReconfigureAsync_HighConcurrency_NoLostUpdates()
+    {
+        // 50 concurrent calls each return a slightly different list. After
+        // serialization, the final TrustOnly() output reflects ONE of those
+        // call's lists exactly (whichever ran last through the lock) — we
+        // never get a torn write or a "merged" set.
+        var callCount = 0;
+
+        _machineDataProvider
+            .Setup(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                var n = Interlocked.Increment(ref callCount);
+                return Task.FromResult<IReadOnlyList<string>>(new List<string> { $"thumb-{n}" });
+            });
+
+        var tasks = Enumerable.Range(0, 50)
+            .Select(_ => _distributor.ReconfigureAsync())
+            .ToList();
+
+        await Task.WhenAll(tasks);
+
+        // Exactly one thumbprint should be trusted at end (last writer wins)
+        var trustedCount = Enumerable.Range(1, 50)
+            .Count(n => _halibutRuntime.IsTrusted($"thumb-{n}"));
+
+        trustedCount.ShouldBe(1, customMessage:
+            "Exactly one thumbprint should remain trusted (last call's list) — " +
+            "more than one means TrustOnly was called with merged data (impossible " +
+            "without lock corruption); zero means concurrent calls clobbered each other.");
+    }
+
+    [Fact]
+    public async Task Start_BlocksOnInitialLoadCompletion_BeforeServingConcurrentRegistration()
+    {
+        // Start fires the initial load on background. A concurrent
+        // ReconfigureIfMissingAsync arriving DURING that load must wait for
+        // the initial load's lock to release rather than racing past it. This
+        // test pins: initial load is the FIRST to call TrustOnly, and any
+        // concurrent registration's TrustOnly comes strictly after.
+        var initialLoadTrustOnlyCalled = new TaskCompletionSource();
+        var initialLoadRelease = new TaskCompletionSource();
+        var callOrder = new List<string>();
+
+        _machineDataProvider
+            .SetupSequence(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                lock (callOrder) callOrder.Add("initial-load-read");
+                await initialLoadRelease.Task;
+                return (IReadOnlyList<string>)new List<string> { "INITIAL-A" };
+            })
+            .Returns(async () =>
+            {
+                lock (callOrder) callOrder.Add("registration-read");
+                await Task.Yield();
+                return (IReadOnlyList<string>)new List<string> { "INITIAL-A", "REGISTERED-B" };
+            });
+
+        _distributor.Start();
+
+        // Wait until initial load has started reading
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            lock (callOrder) if (callOrder.Count > 0) break;
+            if (DateTimeOffset.UtcNow > deadline) throw new TimeoutException();
+            await Task.Delay(10);
+        }
+
+        // Concurrent registration starts while initial load is still holding the lock
+        var regTask = _distributor.ReconfigureIfMissingAsync("REGISTERED-B");
+
+        // Registration must NOT be able to read the DB until initial load
+        // finishes its (read + TrustOnly). With the serializing lock, the
+        // second 'registration-read' entry should NOT yet appear.
+        await Task.Delay(50);  // give the registration task a chance to race
+        lock (callOrder) callOrder.Count.ShouldBe(1, customMessage:
+            "Registration must not read DB while initial load holds the lock.");
+
+        // Release initial load → it finishes → registration takes the lock
+        initialLoadRelease.SetResult();
+
+        await WaitForInitialLoadAsync();
+        await regTask;
+
+        lock (callOrder) callOrder.ShouldBe(new[] { "initial-load-read", "registration-read" });
+        _halibutRuntime.IsTrusted("INITIAL-A").ShouldBeTrue();
+        _halibutRuntime.IsTrusted("REGISTERED-B").ShouldBeTrue();
     }
 
     private static (byte[] pfxBytes, string password) GenerateSelfSignedPfx()

@@ -3,6 +3,7 @@ using Halibut;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.Upgrade.Methods;
 using Squid.Message.Commands.Machine;
