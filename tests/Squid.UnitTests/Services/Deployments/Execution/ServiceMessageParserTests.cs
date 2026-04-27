@@ -311,4 +311,128 @@ public class ServiceMessageParserTests
         message.Verb.ShouldBe("somethingElse");
         message.GetAttribute("foo").ShouldBe("bar");
     }
+
+    // ── P1-A.6 (Phase-8): reserved-prefix rejection ───────────────────────────
+
+    [Fact]
+    public void ReservedNameEnforcementEnvVar_ConstantNamePinned()
+    {
+        ServiceMessageParser.ReservedNameEnforcementEnvVar
+            .ShouldBe("SQUID_OUTPUT_VAR_NAME_ENFORCEMENT");
+    }
+
+    [Theory]
+    [InlineData("Squid.Deployment.Id")]
+    [InlineData("Squid.Action.X")]
+    [InlineData("System.AnyName")]
+    [InlineData("squid.lower.case")]
+    [InlineData("SYSTEM.UPPER.CASE")]
+    public void IsReservedOutputVariableName_KnownReservedPrefixes_ReturnsTrue(string name)
+    {
+        ServiceMessageParser.IsReservedOutputVariableName(name).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("MyVar")]
+    [InlineData("user.var")]
+    [InlineData("squidlike.but.not.reserved")]
+    [InlineData("Squid")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsReservedOutputVariableName_NonReserved_ReturnsFalse(string name)
+    {
+        ServiceMessageParser.IsReservedOutputVariableName(name).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryParseOutputVariable_StrictMode_RejectsReservedPrefix()
+    {
+        var prevMode = Environment.GetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, "strict");
+
+            var line = "##squid[setVariable name='Squid.Deployment.Id' value='evil']";
+            var result = _parser.TryParseOutputVariable(line);
+
+            result.ShouldBeNull(
+                customMessage:
+                    "Strict mode rejects reserved-prefix names. The script's attempt to spoof a " +
+                    "system variable is dropped at parse time — never enters _ctx.Variables, never " +
+                    "shows up in a qualified-clone form to confuse downstream consumers.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, prevMode);
+        }
+    }
+
+    [Fact]
+    public void TryParseOutputVariable_OffMode_AcceptsReservedPrefix_LegacyBackCompat()
+    {
+        var prevMode = Environment.GetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, "off");
+
+            var line = "##squid[setVariable name='Squid.Deployment.Id' value='legacy']";
+            var result = _parser.TryParseOutputVariable(line);
+
+            result.ShouldNotBeNull();
+            result.Name.ShouldBe("Squid.Deployment.Id");
+            result.Value.ShouldBe("legacy");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, prevMode);
+        }
+    }
+
+    [Fact]
+    public void TryParseOutputVariable_WarnDefault_AcceptsButLogs()
+    {
+        // Warn = default = backward-compat. The reserved-prefix attempt is
+        // accepted but the parser logs a warning so operators see the
+        // abuse pattern in their logs.
+        var prevMode = Environment.GetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, null);
+
+            var line = "##squid[setVariable name='System.MyVar' value='warn']";
+            var result = _parser.TryParseOutputVariable(line);
+
+            result.ShouldNotBeNull(customMessage: "Warn (default) preserves backward compat — accepts but logs.");
+            result.Name.ShouldBe("System.MyVar");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, prevMode);
+        }
+    }
+
+    [Fact]
+    public void TryParseOutputVariable_NonReservedName_AlwaysAccepted()
+    {
+        // Sanity: in any mode, a normal user-namespace name passes through
+        // unchanged. The reserved-prefix gate doesn't accidentally over-reject.
+        foreach (var mode in new[] { "off", "warn", "strict" })
+        {
+            var prevMode = Environment.GetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar);
+            try
+            {
+                Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, mode);
+
+                var line = "##squid[setVariable name='MyAppVersion' value='1.2.3']";
+                var result = _parser.TryParseOutputVariable(line);
+
+                result.ShouldNotBeNull(customMessage: $"non-reserved name must pass in mode={mode}");
+                result.Name.ShouldBe("MyAppVersion");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(ServiceMessageParser.ReservedNameEnforcementEnvVar, prevMode);
+            }
+        }
+    }
 }

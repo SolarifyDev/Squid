@@ -1,6 +1,7 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
 using Squid.Message.Models.Deployments.Machine;

@@ -46,7 +46,7 @@ public class MachineServiceTests
             new() { Id = 2, Name = "cached-2" }
         };
         _machineDataProvider
-            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((2, machines));
 
         _runtimeCache.Store(1, new Dictionary<string, string>(), agentVersion: "1.4.0");
@@ -66,7 +66,7 @@ public class MachineServiceTests
         // badge rather than guessing.
         var machines = new List<Machine> { new() { Id = 1, Name = "never-checked" } };
         _machineDataProvider
-            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((1, machines));
         // Note: no runtimeCache.Store → cache miss
 
@@ -87,7 +87,7 @@ public class MachineServiceTests
             new() { Id = 12, Name = "also-warm" }
         };
         _machineDataProvider
-            .Setup(p => p.GetMachinePagingAsync(It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((3, machines));
 
         _runtimeCache.Store(10, new Dictionary<string, string>(), agentVersion: "1.4.0");
