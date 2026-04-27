@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using Halibut;
 using Halibut.Diagnostics;
@@ -46,16 +47,24 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         X509Certificate2 tentacleCert,
         IScriptService scriptService,
         TentacleSettings settings,
-        ICapabilitiesService capabilitiesService = null)
+        ICapabilitiesService capabilitiesService = null,
+        IFileTransferService fileTransferService = null)
     {
         _settings = settings;
 
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
         var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService());
 
+        // P1-Phase9b.3: register the file-transfer service. Default impl writes
+        // under ~/.squid/uploads with workspace-boundary path rewriting (rooted
+        // / traversal paths are sanitised to a hash-derived filename).
+        var fileTransfer = fileTransferService ?? new FileTransfer.LocalFileTransferService();
+        var fileTransferAdapter = new AsyncFileTransferServiceAdapter(fileTransfer);
+
         var serviceFactory = new DelegateServiceFactory();
         serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
         serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => capsAdapter);
+        serviceFactory.Register<IFileTransferService, IFileTransferServiceAsync>(() => fileTransferAdapter);
 
         _runtime = new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
@@ -181,6 +190,115 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         {
             // ServerUrl is invalid, skip comparison
         }
+    }
+
+    /// <summary>
+    /// P1-Phase9b.4 — hot-reloads the server-certificate trust list without
+    /// restarting the agent.
+    ///
+    /// <para><b>Why this exists</b>: pre-Phase-9b.4, when the operator
+    /// rotated the server's TLS certificate, every running Tentacle
+    /// continued trusting only the OLD thumbprint. Even though the agent's
+    /// config file had been updated with the new thumbprint, the in-process
+    /// <see cref="HalibutRuntime"/>'s trust list was loaded ONCE at startup.
+    /// New TLS handshakes failed; operators were forced to restart every
+    /// Tentacle in the fleet — a maintenance window with downtime.</para>
+    ///
+    /// <para><b>Contract</b>: <see cref="ReloadTrustList"/> calls
+    /// <see cref="HalibutRuntime.TrustOnly"/> with the resolved thumbprint
+    /// list — this REPLACES the trust list atomically (in-flight handshakes
+    /// continue but new ones use the new list). Empty / null input is a
+    /// no-op (we never want to silently un-trust everything).</para>
+    ///
+    /// <para>SIGHUP wiring is in <see cref="HookConfigReloadOnSighup"/>.</para>
+    /// </summary>
+    public void ReloadTrustList(string serverCertificate)
+    {
+        if (string.IsNullOrWhiteSpace(serverCertificate))
+        {
+            Log.Warning(
+                "[CONFIG-RELOAD] Empty serverCertificate — refusing to wipe the trust list. " +
+                "If you really want to clear trust, restart the agent without ServerCertificate set.");
+            return;
+        }
+
+        var newThumbprints = Squid.Tentacle.Certificate.ServerCertificateValidator.ParseThumbprints(serverCertificate);
+
+        if (newThumbprints.Count == 0)
+        {
+            Log.Warning(
+                "[CONFIG-RELOAD] ParseThumbprints returned empty — input '{Input}' was malformed. Trust list unchanged.",
+                serverCertificate);
+            return;
+        }
+
+        _runtime.TrustOnly(newThumbprints);
+
+        Log.Information(
+            "[CONFIG-RELOAD] Trust list updated to {Count} thumbprint(s): [{First}...]",
+            newThumbprints.Count, newThumbprints[0]);
+    }
+
+    /// <summary>
+    /// P1-Phase9b.4 — registers a SIGHUP handler that reloads the
+    /// <c>ServerCertificate</c> setting from the live config file and applies
+    /// it via <see cref="ReloadTrustList"/>.
+    ///
+    /// <para><b>Operator workflow</b>:
+    /// <list type="number">
+    ///   <item>Edit the agent's config: update <c>Tentacle:ServerCertificate</c>
+    ///         (or <c>TENTACLE__SERVERCERTIFICATE</c> env var) with the new
+    ///         server thumbprint(s).</item>
+    ///   <item><c>kill -HUP $(pgrep squid-tentacle)</c> — or
+    ///         <c>systemctl reload squid-tentacle</c>.</item>
+    ///   <item>Agent re-reads config, calls <c>HalibutRuntime.TrustOnly</c>
+    ///         with the new thumbprints. No restart, no dropped polls.</item>
+    /// </list></para>
+    ///
+    /// <para><b>Platform note</b>: <see cref="PosixSignalRegistration"/>
+    /// supports <c>SIGHUP</c> only on Linux + macOS. On Windows the call
+    /// throws <see cref="PlatformNotSupportedException"/> — we catch that
+    /// silently. Windows operators have no native SIGHUP equivalent; the
+    /// agent's <c>service reload</c> CLI command (Phase-9b.5) is the
+    /// platform-portable alternative.</para>
+    ///
+    /// <para>Returns the registration so the caller can dispose it on
+    /// shutdown — never call this from outside the host's lifecycle path.</para>
+    /// </summary>
+    public IDisposable HookConfigReloadOnSighup(Func<string> readServerCertificate)
+    {
+        if (readServerCertificate == null) throw new ArgumentNullException(nameof(readServerCertificate));
+
+        try
+        {
+            return PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx =>
+            {
+                Log.Information("[CONFIG-RELOAD] SIGHUP received — reloading config.");
+                ctx.Cancel = true;  // we handled it; don't terminate the process
+
+                try
+                {
+                    var newCert = readServerCertificate();
+                    ReloadTrustList(newCert);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "[CONFIG-RELOAD] Reload failed; trust list unchanged from previous state.");
+                }
+            });
+        }
+        catch (PlatformNotSupportedException)
+        {
+            Log.Information(
+                "[CONFIG-RELOAD] SIGHUP handler not registered (platform doesn't support PosixSignal.SIGHUP — likely Windows). " +
+                "Operators on this platform must use 'tentacle service reload' or a service restart.");
+            return new NoOpDisposable();
+        }
+    }
+
+    private sealed class NoOpDisposable : IDisposable
+    {
+        public void Dispose() { }
     }
 
     public void StartListening(int port, string serverThumbprint = null)

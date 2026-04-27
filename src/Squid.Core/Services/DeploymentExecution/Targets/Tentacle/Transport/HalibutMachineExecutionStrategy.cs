@@ -65,36 +65,65 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var breaker = _breakerRegistry?.GetOrCreate(request.Machine.Id);
         breaker?.ThrowIfOpen();
 
-        // P0-E.3: log the protocol dispatch decision from the capabilities cache.
-        // Observability today; the branch site is already wired for E.2's V2 rollout.
-        LogProtocolDispatchDecision(request.Machine.Id, request.Machine.Name);
+        // P1-Phase9b.1 (audit B.2): bounded polling-work admission gate.
+        // Pre-fix, an offline polling Tentacle could absorb 1000+ queued
+        // dispatches — Halibut's pending-request queue grew unbounded → OOM.
+        // We pre-check before CreateClient, reject fast above the cap so the
+        // Hangfire worker is freed immediately and the queue stays bounded.
+        var maxPending = HalibutPollingWorkAdmission.ResolveMaxPendingWorkPerAgent();
 
-        var scriptClient = _halibutClientFactory.CreateClient(endpoint);
+        if (!HalibutPollingWorkAdmission.TryAdmit(request.Machine.Id, maxPending, out var currentInFlight))
+        {
+            Log.Warning(
+                "[HALIBUT] Polling work admission REJECTED for machine {MachineId} ({MachineName}): " +
+                "{Current} in-flight ≥ cap {Max}. Either the agent is offline or the cap is too low " +
+                "for legit burst (override via {EnvVar}).",
+                request.Machine.Id, request.Machine.Name, currentInFlight, maxPending,
+                HalibutPollingWorkAdmission.MaxPendingWorkPerAgentEnvVar);
+            throw new Exceptions.PollingWorkAdmissionExceededException(request.Machine.Id, currentInFlight, maxPending);
+        }
 
         try
         {
-            ScriptExecutionResult result;
-            if (plan is PackagedPayloadExecutionPlan packagedPlan)
-                result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, endpoint, ct).ConfigureAwait(false);
-            else
-                result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, endpoint, ct).ConfigureAwait(false);
+            // P0-E.3: log the protocol dispatch decision from the capabilities cache.
+            // Observability today; the branch site is already wired for E.2's V2 rollout.
+            LogProtocolDispatchDecision(request.Machine.Id, request.Machine.Name);
 
-            breaker?.RecordSuccess();
-            return result;
+            var scriptClient = _halibutClientFactory.CreateClient(endpoint);
+
+            try
+            {
+                ScriptExecutionResult result;
+                if (plan is PackagedPayloadExecutionPlan packagedPlan)
+                    result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, endpoint, ct).ConfigureAwait(false);
+                else
+                    result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, endpoint, ct).ConfigureAwait(false);
+
+                breaker?.RecordSuccess();
+                return result;
+            }
+            catch (HalibutClientException)
+            {
+                breaker?.RecordFailure();
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                breaker?.RecordFailure();
+                throw;
+            }
         }
-        catch (HalibutClientException)
+        finally
         {
-            breaker?.RecordFailure();
-            throw;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            breaker?.RecordFailure();
-            throw;
+            // P1-Phase9b.1: release the admission slot on every exit path
+            // (success, exception, cancellation). Without finally, an
+            // exception-throwing dispatch would leak admission counts and
+            // the per-machine cap would slowly drift to 0 effective slots.
+            HalibutPollingWorkAdmission.Release(request.Machine.Id);
         }
     }
 

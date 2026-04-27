@@ -14,6 +14,7 @@ var commands = new ITentacleCommand[]
     new RunCommand(),
     new ShowThumbprintCommand(),
     new ShowConfigCommand(),
+    new CheckServicesCommand(),
     new NewCertificateCommand(),
     new RegisterCommand(),
     new ServiceCommand(),

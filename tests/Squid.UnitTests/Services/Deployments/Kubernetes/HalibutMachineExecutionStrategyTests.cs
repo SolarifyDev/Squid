@@ -17,6 +17,11 @@ using Squid.Core.Settings.Halibut;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
+// Shares the static HalibutPollingWorkAdmission counters with
+// HalibutPollingWorkAdmissionTests — must run in the same xUnit collection so
+// they serialize. Otherwise concurrent ResetForTests() in one test class can
+// wipe pre-saturated state from the integration test in this class.
+[Collection("HalibutPollingWorkAdmissionStaticState")]
 public class HalibutMachineExecutionStrategyTests
 {
     private readonly Mock<IHalibutClientFactory> _halibutClientFactory = new();
@@ -377,6 +382,49 @@ public class HalibutMachineExecutionStrategyTests
             .Returns(scriptClient.Object);
 
         return scriptClient;
+    }
+
+    // ── P1-Phase9b.1 admission gate — wired into ExecuteScriptAsync ──────────
+
+    [Fact]
+    public async Task ExecuteScriptAsync_AdmissionGateAtCap_RejectsWithStructuredException()
+    {
+        // Saturate machine 1234's admission slots up to default cap (100), then
+        // dispatch one more — must be rejected with PollingWorkAdmissionExceededException.
+        // This is the integration-level pin that Phase-9b.1's gate is wired into
+        // the strategy's ExecuteScriptAsync entry point. Pre-fix, the gate was
+        // a separate utility but the strategy never called it; tests at the
+        // utility level alone wouldn't have caught a wiring regression.
+        try
+        {
+            HalibutPollingWorkAdmission.ResetForTests();
+            var machine = new Machine
+            {
+                Id = 1234,
+                Name = "saturated-machine",
+                Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-1234","Thumbprint":"THUMB-1234"}"""
+            };
+
+            // Pre-saturate: 100 admits (the default cap)
+            for (var i = 0; i < HalibutPollingWorkAdmission.DefaultMaxPendingWorkPerAgent; i++)
+                HalibutPollingWorkAdmission.TryAdmit(machine.Id, HalibutPollingWorkAdmission.DefaultMaxPendingWorkPerAgent, out _);
+
+            // 101st dispatch attempt — strategy must reject before touching Halibut
+            var ex = await Should.ThrowAsync<PollingWorkAdmissionExceededException>(
+                () => _strategy.ExecuteScriptAsync(CreateRequest(machine), CancellationToken.None));
+
+            ex.MachineId.ShouldBe(machine.Id);
+            ex.MaxPending.ShouldBe(HalibutPollingWorkAdmission.DefaultMaxPendingWorkPerAgent);
+
+            // Halibut client factory MUST NOT have been called — the gate cuts before dispatch.
+            _halibutClientFactory.Verify(f => f.CreateClient(It.IsAny<ServiceEndPoint>()), Times.Never,
+                failMessage: "Admission gate must short-circuit BEFORE Halibut client creation, " +
+                             "otherwise the queue-bounded invariant is broken.");
+        }
+        finally
+        {
+            HalibutPollingWorkAdmission.ResetForTests();
+        }
     }
 
     private static ScriptExecutionRequest CreateRequest(
