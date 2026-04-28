@@ -22,6 +22,17 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
+    /// <summary>
+    /// P1-Phase11 (audit ARCH.9 Plan A) — per-ticket soft-cancellation registry.
+    /// Bridges the wire-level "no CT" limitation with internal async work
+    /// (file save, mutex acquire) so a CancelScript RPC can actually
+    /// short-circuit in-flight operations rather than letting them run to
+    /// completion. <see cref="StartScript"/> calls
+    /// <see cref="ScriptCancellationRegistry.GetOrCreate"/>;
+    /// <see cref="CancelScript"/> calls <see cref="ScriptCancellationRegistry.Cancel"/>;
+    /// <see cref="CompleteScript"/> calls <see cref="ScriptCancellationRegistry.Cleanup"/>.
+    /// </summary>
+    private readonly ScriptCancellationRegistry _cancellationRegistry = new();
     private readonly IScriptStateStoreFactory _stateStoreFactory;
     private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;
@@ -122,7 +133,20 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(Path.GetTempPath());
         CleanupOrphanedWorkspacesIfDue();
 
-        var isolationHandle = _isolationMutex.AcquireAsync(command).GetAwaiter().GetResult();
+        // P1-Phase11.2 (audit ARCH.9 F1.1) — pure-sync mutex acquire.
+        // Pre-Phase-11.2 this was AcquireAsync(...).GetAwaiter().GetResult():
+        // sync-over-async pattern that burned a Halibut RPC thread on a
+        // Task.Delay-based async polling loop (allocation churn, threadpool
+        // pressure under contention). The new TryAcquireBlocking uses
+        // synchronous Thread.Sleep / WaitHandle.WaitOne polling — same
+        // observable behaviour, no Task allocation, no async state machine.
+        //
+        // The CancellationToken plumbed in is the per-ticket soft-cancel
+        // token from the registry — a CancelScript RPC arriving mid-acquire
+        // short-circuits the polling loop instead of waiting for the full
+        // configured timeout.
+        var softCancelToken = _cancellationRegistry.GetOrCreate(command.ScriptTicket);
+        var isolationHandle = _isolationMutex.TryAcquireBlocking(command, softCancelToken);
 
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
@@ -154,7 +178,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
             var syntax = command.ScriptSyntax;
             WriteScriptFile(workDir, command.ScriptBody, syntax);
-            WriteAdditionalFiles(workDir, command.Files);
+            // P1-Phase11.3: thread the per-ticket soft-cancel token so a
+            // CancelScript RPC arriving mid-write actually aborts.
+            WriteAdditionalFiles(workDir, command.Files, softCancelToken);
 
             var process = StartProcess(workDir, command);
             var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
@@ -529,6 +555,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
+        // P1-Phase11.2: release the per-ticket soft-cancel CTS now the
+        // script has reached a terminal state. Without this, the registry
+        // accumulates one CTS per script ever run — small leak but
+        // unbounded over agent lifetime.
+        _cancellationRegistry.Cleanup(command.Ticket);
+
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
     }
 
@@ -557,10 +589,21 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
+        // P1-Phase11.2 (audit ARCH.9 F2.x soft-cancel): flip the registry's
+        // CTS BEFORE attempting to remove from _scripts. This signals any
+        // in-flight async work (mutex acquire, file save) that's NOT yet
+        // tracked in _scripts — a CancelScript that races a slow StartScript
+        // can short-circuit it via the soft-cancel token. The early-cancel
+        // sentinel pattern (see ScriptCancellationRegistry.Cancel) handles
+        // the out-of-order case where Cancel arrives BEFORE the matching
+        // GetOrCreate.
+        _cancellationRegistry.Cancel(command.Ticket);
+
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
         {
             var workDir = ResolveWorkDir(command.Ticket.TaskId);
             DeletePersistedStateIfAny(workDir);
+            _cancellationRegistry.Cleanup(command.Ticket);
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
         }
 
@@ -582,6 +625,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         running.IsolationHandle?.Dispose();
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
+
+        // P1-Phase11.2: dispose the per-ticket CTS now the script has been
+        // cancelled. Idempotent — safe even if Cancel was a no-op above.
+        _cancellationRegistry.Cleanup(command.Ticket);
 
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
     }
@@ -727,7 +774,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         _ => new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
     };
 
-    internal static void WriteAdditionalFiles(string workDir, List<ScriptFile> files)
+    internal static void WriteAdditionalFiles(string workDir, List<ScriptFile> files, CancellationToken cancellationToken = default)
     {
         if (files == null) return;
 
@@ -735,6 +782,14 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         foreach (var file in files)
         {
+            // P1-Phase11.3 (audit ARCH.9 F1.2): observe soft-cancel BETWEEN
+            // files. CancelScript arriving mid-write of a 1GB sensitiveVars
+            // payload now short-circuits the loop instead of proceeding to
+            // the next file. The per-file SaveToAsync ALSO threads the CT
+            // (line below) so a cancel mid-stream aborts even one large
+            // file's transfer.
+            cancellationToken.ThrowIfCancellationRequested();
+
             var filePath = Path.GetFullPath(Path.Combine(workDir, file.Name));
 
             if (!filePath.StartsWith(resolvedWorkDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)
@@ -750,8 +805,15 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
             try
             {
+                // P1-Phase11.3 (audit ARCH.9 F1.2): pass the per-ticket
+                // soft-cancel token through to the DataStream receiver.
+                // Pre-Phase-11.3 this was hardcoded CancellationToken.None
+                // — a 1GB sensitiveVariables.json payload would write to
+                // completion regardless of CancelScript. Now mid-stream
+                // cancel aborts the SaveToAsync via the underlying
+                // CopyToAsync's CT plumbing.
                 file.Contents.Receiver()
-                    .SaveToAsync(tempPath, CancellationToken.None)
+                    .SaveToAsync(tempPath, cancellationToken)
                     .GetAwaiter().GetResult();
 
                 File.Move(tempPath, filePath, overwrite: true);
