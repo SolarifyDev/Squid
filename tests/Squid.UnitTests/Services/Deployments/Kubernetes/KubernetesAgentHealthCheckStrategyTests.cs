@@ -143,4 +143,154 @@ public class KubernetesAgentHealthCheckStrategyTests
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("Connection refused");
     }
+
+    // ========================================================================
+    // P0-Phase10.1 (audit C.3): RBAC dry-run via Capabilities metadata
+    //
+    // The pre-Phase-10.1 silent-failure scenario:
+    //   1. Agent's K8s ServiceAccount RBAC was revoked / namespace deleted
+    //   2. Halibut polling still works fine (cert still trusted, network ok)
+    //   3. server-side health check just calls GetCapabilities → returns ok
+    //   4. operator sees green status; first deploy fails with cryptic
+    //      kubectl Forbidden error
+    //
+    // Fix: agent surfaces RBAC probe results in Capabilities metadata.
+    // Server's health check reads "kubernetes.canCreatePods" etc., fails with
+    // actionable detail when ANY of the deploy-critical permissions is missing.
+    // ========================================================================
+
+    [Fact]
+    public async Task CheckHealth_RbacCanCreatePodsFalse_ReportsUnhealthyWithActionableDetail()
+    {
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "1.0.0",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["kubernetes.canCreatePods"] = "no"
+                }
+            });
+        _halibutClientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(capsClient.Object);
+
+        var machine = new Machine
+        {
+            Id = 1, Name = "agent",
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
+        };
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeFalse(customMessage:
+            "Agent reachable via Halibut but lacking RBAC to create pods MUST report unhealthy " +
+            "— pre-Phase-10.1 this was a silent-success that turned into a cryptic deploy fail.");
+        result.Detail.ShouldContain("RBAC", customMessage:
+            "Failure detail must name the RBAC subsystem so operators know to check ServiceAccount.");
+        result.Detail.ShouldContain("create pods", customMessage:
+            "Failure detail must name the missing permission so the operator can grant it directly.");
+    }
+
+    [Fact]
+    public async Task CheckHealth_RbacCanCreatePodsYes_RecordsHealthy()
+    {
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "1.0.0",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["kubernetes.canCreatePods"] = "yes",
+                    ["kubernetes.canCreateConfigMaps"] = "yes",
+                    ["kubernetes.canCreateSecrets"] = "yes"
+                }
+            });
+        _halibutClientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(capsClient.Object);
+
+        var machine = new Machine
+        {
+            Id = 1, Name = "agent",
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
+        };
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task CheckHealth_RbacMetadataMissing_TolerantOfOlderAgent()
+    {
+        // Old agents (pre-Phase-10.1) don't surface RBAC metadata at all.
+        // Server must not break health-check for them — falls back to the
+        // pre-fix behaviour (Halibut reachable = healthy). Operators get the
+        // strict-RBAC check only AFTER all agents in the fleet are upgraded.
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "0.9.0-pre-rbac",
+                SupportedServices = new List<string> { "IScriptService/v1" }
+                // No Metadata — old agent doesn't know about RBAC keys
+            });
+        _halibutClientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(capsClient.Object);
+
+        var machine = new Machine
+        {
+            Id = 1, Name = "agent",
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
+        };
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeTrue(customMessage:
+            "Missing RBAC metadata MUST be tolerated for backward-compat with pre-Phase-10.1 agents.");
+    }
+
+    [Theory]
+    [InlineData("kubernetes.canCreatePods")]
+    [InlineData("kubernetes.canCreateConfigMaps")]
+    [InlineData("kubernetes.canCreateSecrets")]
+    public async Task CheckHealth_AnyDeployCriticalRbacFalse_ReportsUnhealthy(string failingKey)
+    {
+        // Each of these permissions is critical for at least one of Squid's
+        // deploy paths (RunScript / DeployYaml / DeployContainers / Helm).
+        // Failing ANY of them → unhealthy.
+        var allPerms = new Dictionary<string, string>
+        {
+            ["kubernetes.canCreatePods"] = "yes",
+            ["kubernetes.canCreateConfigMaps"] = "yes",
+            ["kubernetes.canCreateSecrets"] = "yes",
+        };
+        allPerms[failingKey] = "no";
+
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "1.0.0",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = allPerms
+            });
+        _halibutClientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>()))
+            .Returns(capsClient.Object);
+
+        var machine = new Machine
+        {
+            Id = 1, Name = "agent",
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-123","Thumbprint":"AABB"}"""
+        };
+
+        var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        result.Healthy.ShouldBeFalse();
+        result.Detail.ShouldContain(failingKey.Replace("kubernetes.canCreate", "").ToLowerInvariant(),
+            customMessage: $"Failure detail must name the missing resource ({failingKey}) for actionable diagnostic.");
+    }
 }

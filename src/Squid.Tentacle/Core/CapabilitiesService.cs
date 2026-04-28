@@ -225,6 +225,14 @@ public class CapabilitiesService : ICapabilitiesService
     {
         var merged = RuntimeCapabilitiesInspector.Inspect();
 
+        // P0-Phase10.1 (audit C.3): merge K8s RBAC dry-run results so the
+        // server-side KubernetesAgentHealthCheckStrategy can fail-fast on
+        // a permission-revoked agent BEFORE the first deploy fails with a
+        // cryptic kubectl Forbidden error. No-op outside K8s pods (detected
+        // via KUBERNETES_SERVICE_HOST env var inside the inspector).
+        foreach (var (key, value) in KubernetesRbacInspector.Inspect())
+            merged[key] = value;
+
         if (overrides == null) return merged;
 
         foreach (var (key, value) in overrides)
