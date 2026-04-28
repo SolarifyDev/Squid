@@ -46,6 +46,29 @@ public sealed class WindowsServiceHost : IServiceHost
     /// via PATH.</summary>
     public const string ScExeFileName = "sc.exe";
 
+    /// <summary>P1-Phase12.D — default number of restart-on-failure attempts.
+    /// Mirrors <see cref="SystemdServiceHost"/>'s <c>StartLimitBurst=3</c>:
+    /// after 3 consecutive failures within the reset window the SCM stops
+    /// trying (Windows leaves the service in stopped state — there is no
+    /// "reboot host on failure" default). Pinned per Rule 8.</summary>
+    public const int DefaultRestartCount = 3;
+
+    /// <summary>P1-Phase12.D — default delay between restart attempts, in
+    /// milliseconds. 10_000 ms = 10s; mirrors <see cref="SystemdServiceHost"/>'s
+    /// <c>RestartSec=10</c>. Operators on mixed Linux/Windows fleets see the
+    /// SAME restart cadence on either platform. Pinned per Rule 8.</summary>
+    public const int DefaultRestartDelayMs = 10_000;
+
+    /// <summary>P1-Phase12.D — default seconds of stable runtime after which
+    /// the SCM resets the failure counter. 86_400 s = 24h. Windows's
+    /// <c>sc failure</c> only supports "reset after stable runtime" (NOT
+    /// systemd's rolling-window <c>StartLimitIntervalSec</c>); 24h is the
+    /// common Windows convention — short enough for the policy to recover
+    /// after a transient bad day, long enough that a flaky service can't
+    /// silently chew through a fresh 3-attempt budget every 2 minutes.
+    /// Pinned per Rule 8.</summary>
+    public const int DefaultResetSeconds = 86_400;
+
     public string DisplayName => "Windows Service Manager";
 
     public bool IsSupported => OperatingSystem.IsWindows();
@@ -82,6 +105,27 @@ public sealed class WindowsServiceHost : IServiceHost
         }
 
         Console.WriteLine($"Created Windows service '{request.ServiceName}'.");
+
+        // P1-Phase12.D — apply restart-on-failure policy BEFORE first start so
+        // the SCM has the policy active from boot 1. Mirrors systemd's
+        // "Restart=on-failure / RestartSec=10 / StartLimitBurst=3" trio.
+        //
+        // Soft-fail rationale: the service is already created. If `sc failure`
+        // somehow fails (e.g. stripped Windows Server Core variant where the
+        // verb is restricted, locked-down SCM ACL on a domain-joined host),
+        // aborting the install would leave a half-configured service. A
+        // warning + continue is better — operator sees the warning, can run
+        // `sc failure squid-tentacle reset= 86400 actions= restart/10000/restart/10000/restart/10000`
+        // manually post-install. The service still runs without restart
+        // policy, matching pre-Phase-12.D behaviour.
+        var failureExit = Sc(BuildScFailureArgs(request.ServiceName));
+
+        if (failureExit != 0)
+        {
+            Console.Error.WriteLine($"Warning: failed to configure restart-on-failure policy for '{request.ServiceName}' (sc.exe failure exit {failureExit}).");
+            Console.Error.WriteLine("  Service was created and will start, but it WILL NOT auto-restart on crash until you run:");
+            Console.Error.WriteLine($"  sc failure {request.ServiceName} reset= {DefaultResetSeconds} actions= restart/{DefaultRestartDelayMs}/restart/{DefaultRestartDelayMs}/restart/{DefaultRestartDelayMs}");
+        }
 
         // sc create doesn't auto-start; mirror systemd's "create + enable + start"
         // by running sc start so 'service install' is one-shot.
@@ -201,6 +245,60 @@ public sealed class WindowsServiceHost : IServiceHost
             $"DisplayName= {displayName}",
             "start= auto",
             $"obj= {runAsUser}"
+        };
+    }
+
+    /// <summary>
+    /// P1-Phase12.D — builds the argv for <c>sc.exe failure</c> with default
+    /// restart policy. Mirrors <see cref="SystemdServiceHost"/>'s
+    /// <c>Restart=on-failure</c> + <c>RestartSec=10</c> + <c>StartLimitBurst=3</c>
+    /// trio, using the Phase-12.D defaults pinned by Rule 8.
+    /// </summary>
+    internal static string[] BuildScFailureArgs(string serviceName)
+        => BuildScFailureArgs(serviceName, DefaultRestartCount, DefaultRestartDelayMs, DefaultResetSeconds);
+
+    /// <summary>
+    /// P1-Phase12.D — builds the argv for <c>sc.exe failure</c> with explicit
+    /// restart policy values. Pure function, deterministic; pinned by tests.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>sc failure argv shape</b>: <c>failure &lt;name&gt; reset= &lt;seconds&gt; actions= restart/&lt;ms&gt;/restart/&lt;ms&gt;/...</c>.
+    /// Each <c>actions=</c> entry consumes ONE failure; after the list is
+    /// exhausted, additional failures are ignored until <c>reset=</c> seconds
+    /// of stable runtime have elapsed. Same mandatory single space after
+    /// <c>=</c> as <c>sc create</c> — drop it and sc.exe parses the option
+    /// as a positional arg → confusing usage error at runtime.</para>
+    ///
+    /// <para><b>Why not per-action delays</b>: sc failure doesn't support
+    /// distinct delays per attempt (no equivalent of systemd's
+    /// <c>RestartSteps</c> backoff). Phase-12.D ships a fixed delay matching
+    /// systemd's <c>RestartSec=10</c>; if a future operator needs backoff,
+    /// they can override the per-call args via a Phase-12.D-followup env-var
+    /// gate (Rule 8 escape hatch).</para>
+    /// </remarks>
+    internal static string[] BuildScFailureArgs(string serviceName, int restartCount, int restartDelayMs, int resetSeconds)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
+        ArgumentOutOfRangeException.ThrowIfLessThan(restartCount, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(restartDelayMs);
+        ArgumentOutOfRangeException.ThrowIfNegative(resetSeconds);
+
+        var actionTokens = new string[restartCount * 2];
+
+        for (var i = 0; i < restartCount; i++)
+        {
+            actionTokens[i * 2] = "restart";
+            actionTokens[i * 2 + 1] = restartDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        var actionsValue = string.Join('/', actionTokens);
+
+        return new[]
+        {
+            "failure",
+            serviceName,
+            $"reset= {resetSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            $"actions= {actionsValue}"
         };
     }
 

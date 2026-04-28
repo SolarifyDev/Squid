@@ -212,6 +212,149 @@ public sealed class WindowsServiceHostTests
         args.ShouldBe(new[] { "query", "squid-tentacle" });
     }
 
+    // ── BuildScFailureArgs — Phase-12.D restart-on-failure policy ──────────────
+
+    [Fact]
+    public void BuildScFailureArgs_DefaultValues_ProducesPinnedArgv()
+    {
+        // The canonical Phase-12.D default: 3 restart actions, 10s between
+        // restarts, 24h stable-runtime reset window. Mirrors systemd's
+        // Restart=on-failure + RestartSec=10 + StartLimitBurst=3 trio.
+        //
+        // sc failure argv shape:
+        //   sc failure <name> reset= <seconds> actions= restart/<ms>/restart/<ms>/...
+        //
+        // The mandatory single space after `reset=` and `actions=` is the
+        // SAME sc.exe quirk as BuildScCreateArgs — drop the space and sc
+        // parses the option as a positional arg → confusing usage error.
+        var args = WindowsServiceHost.BuildScFailureArgs("squid-tentacle");
+
+        args.ShouldBe(new[]
+        {
+            "failure",
+            "squid-tentacle",
+            "reset= 86400",
+            "actions= restart/10000/restart/10000/restart/10000"
+        });
+    }
+
+    [Fact]
+    public void BuildScFailureArgs_NoArgOverload_RoutesThroughDefaultsViaConstants()
+    {
+        // The no-arg overload must derive its values from the public-const
+        // defaults so renaming a constant doesn't silently drift the no-arg
+        // path away from the explicit-args path.
+        var defaults = WindowsServiceHost.BuildScFailureArgs("svc");
+
+        var explicitArgs = WindowsServiceHost.BuildScFailureArgs(
+            "svc",
+            WindowsServiceHost.DefaultRestartCount,
+            WindowsServiceHost.DefaultRestartDelayMs,
+            WindowsServiceHost.DefaultResetSeconds);
+
+        defaults.ShouldBe(explicitArgs);
+    }
+
+    [Theory]
+    [InlineData(1, "restart/10000")]
+    [InlineData(2, "restart/10000/restart/10000")]
+    [InlineData(3, "restart/10000/restart/10000/restart/10000")]
+    [InlineData(5, "restart/10000/restart/10000/restart/10000/restart/10000/restart/10000")]
+    public void BuildScFailureArgs_RestartCount_BuildsActionsListWithCorrectLength(int restartCount, string expectedActionsTail)
+    {
+        // sc failure semantics: each entry in `actions=` consumes ONE failure.
+        // After all entries are exhausted, additional failures are ignored
+        // until `reset=` seconds of stable runtime. So restartCount=3 means
+        // the SCM will try to restart 3 times then give up — matching
+        // systemd's StartLimitBurst=3 + StartLimitAction=none semantics.
+        var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount, 10_000, 86_400);
+
+        args[3].ShouldBe($"actions= {expectedActionsTail}");
+    }
+
+    [Fact]
+    public void BuildScFailureArgs_CustomDelay_AppearsInEveryAction()
+    {
+        // The same delay is applied to every restart in the actions list — sc
+        // failure doesn't support per-action delays (a real limitation vs
+        // systemd's `RestartSteps`/`RestartMaxDelaySec` for backoff). For
+        // Phase-12.D scope, fixed delay matches systemd's `RestartSec=10`.
+        var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount: 3, restartDelayMs: 30_000, resetSeconds: 86_400);
+
+        args[3].ShouldBe("actions= restart/30000/restart/30000/restart/30000");
+    }
+
+    [Fact]
+    public void BuildScFailureArgs_CustomReset_PinsResetValue()
+    {
+        var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount: 3, restartDelayMs: 10_000, resetSeconds: 600);
+
+        args[2].ShouldBe("reset= 600");
+    }
+
+    [Fact]
+    public void BuildScFailureArgs_PreservesMandatorySpaceAfterEquals()
+    {
+        // Reverse-verify guard: if a future refactor accidentally normalises
+        // "key= value" to "key=value", sc.exe would silently parse it as a
+        // positional arg and `sc failure` would emit a usage error at runtime
+        // — the install would then succeed (sc create + sc start both OK)
+        // but the failure policy would be silently absent. Pinned by exact
+        // string match here so the drift is compile/test-time visible.
+        var args = WindowsServiceHost.BuildScFailureArgs("svc");
+
+        args[2].ShouldStartWith("reset= ");
+        args[3].ShouldStartWith("actions= ");
+        args[2].ShouldNotContain("reset=8");
+        args[3].ShouldNotContain("actions=r");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildScFailureArgs_EmptyServiceName_Throws(string serviceName)
+    {
+        Should.Throw<ArgumentException>(() =>
+            WindowsServiceHost.BuildScFailureArgs(serviceName));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public void BuildScFailureArgs_NonPositiveRestartCount_Throws(int restartCount)
+    {
+        // restartCount < 1 means "no restart policy" — caller should skip the
+        // sc failure invocation entirely rather than emit an empty actions
+        // list. Throw to surface the misuse.
+        Should.Throw<ArgumentOutOfRangeException>(() =>
+            WindowsServiceHost.BuildScFailureArgs("svc", restartCount, 10_000, 86_400));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-1000)]
+    public void BuildScFailureArgs_NegativeRestartDelay_Throws(int restartDelayMs)
+    {
+        // Zero is allowed (instant-restart, useful for tests / specific
+        // operator policies), negative is nonsense.
+        Should.Throw<ArgumentOutOfRangeException>(() =>
+            WindowsServiceHost.BuildScFailureArgs("svc", 3, restartDelayMs, 86_400));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public void BuildScFailureArgs_NegativeResetSeconds_Throws(int resetSeconds)
+    {
+        // Zero is allowed (sc.exe interprets reset=0 as "always reset", i.e.
+        // every failure starts with a fresh restart budget), negative is
+        // nonsense.
+        Should.Throw<ArgumentOutOfRangeException>(() =>
+            WindowsServiceHost.BuildScFailureArgs("svc", 3, 10_000, resetSeconds));
+    }
+
     // ── Public API surface (constants + IsSupported) ───────────────────────────
 
     [Fact]
@@ -229,6 +372,38 @@ public sealed class WindowsServiceHostTests
         // PATH-resolved bare "sc.exe". Renaming would break operators on
         // stripped images that PATH-prepend a custom Windows directory.
         WindowsServiceHost.ScExeFileName.ShouldBe("sc.exe");
+    }
+
+    [Fact]
+    public void DefaultRestartCount_ConstantPinned()
+    {
+        // Mirrors systemd's StartLimitBurst=3 (3 restart attempts then give
+        // up). Operators may rely on this literal in monitoring runbooks
+        // ("if you see 3 restart events in a row, escalate"). Pin per Rule 8.
+        WindowsServiceHost.DefaultRestartCount.ShouldBe(3);
+    }
+
+    [Fact]
+    public void DefaultRestartDelayMs_ConstantPinned()
+    {
+        // 10_000 ms = 10s. Mirrors systemd's RestartSec=10 in
+        // SystemdServiceHost.BuildUnitFile. Pin per Rule 8 — drift between
+        // Linux/Windows means operators see different restart cadences on
+        // mixed-fleet deployments.
+        WindowsServiceHost.DefaultRestartDelayMs.ShouldBe(10_000);
+    }
+
+    [Fact]
+    public void DefaultResetSeconds_ConstantPinned()
+    {
+        // 86_400 s = 24h. Common Windows convention for "reset failure
+        // counter after a full day of stable runtime". NOT directly
+        // equivalent to systemd's StartLimitIntervalSec=120 (rolling-window
+        // burst detection); chosen because Windows has no rolling-window
+        // option in sc failure — only "stable for X seconds" reset.
+        // 24h gives the SCM enough time to forget transient issues without
+        // permanently disarming the policy.
+        WindowsServiceHost.DefaultResetSeconds.ShouldBe(86_400);
     }
 
     [Fact]
