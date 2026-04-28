@@ -54,47 +54,39 @@ public class CapabilitiesService : ICapabilitiesService
     internal const int MaxUpgradeLogBytes = 50_000;
 
     /// <summary>
-    /// Canonical location of the on-disk upgrade status file written by
-    /// <c>upgrade-linux-tentacle.sh</c>'s <c>write_status</c> helper.
+    /// P1-Phase12.A.2 — public-internal exposure for
+    /// <see cref="Squid.Tentacle.Platform.IUpgradeStatusStorage"/> impls
+    /// that share the same byte cap as this service's metadata response.
+    /// Drift between cap values would mean storage truncates differently
+    /// than the service expects; centralised constant prevents that.
     /// </summary>
-    private const string UpgradeStatusFilePath = "/var/lib/squid-tentacle/last-upgrade.json";
-
-    /// <summary>
-    /// JSONL event log written by <c>upgrade-linux-tentacle.sh</c>'s
-    /// <c>emit_event</c> helper — append-only for the duration of one
-    /// upgrade attempt, truncated at Phase A start of the next attempt.
-    /// </summary>
-    private const string UpgradeEventsFilePath = "/var/lib/squid-tentacle/upgrade-events.jsonl";
-
-    /// <summary>
-    /// Phase B bash log. Truncated at Phase B entry so this only carries
-    /// the CURRENT run's output.
-    /// </summary>
-    private const string UpgradeLogFilePath = "/var/log/squid-tentacle-upgrade.log";
+    public static int MaxUpgradeLogBytesValue => MaxUpgradeLogBytes;
 
     private readonly Dictionary<string, string> _metadata;
-    private readonly Func<string> _upgradeStatusReader;
-    private readonly Func<string> _upgradeEventsReader;
-    private readonly Func<string> _upgradeLogReader;
+    private readonly Squid.Tentacle.Platform.IUpgradeStatusStorage _upgradeStorage;
 
     public CapabilitiesService() : this(metadata: null) { }
 
     public CapabilitiesService(Dictionary<string, string> metadata)
-        : this(metadata, DefaultUpgradeStatusReader, DefaultUpgradeEventsReader, DefaultUpgradeLogReader) { }
+        : this(metadata, Squid.Tentacle.Platform.UpgradeStatusStorageFactory.Resolve()) { }
 
     /// <summary>
-    /// Test-friendly ctor: caller can inject all three upgrade-file
-    /// readers to avoid touching the real filesystem in unit tests.
+    /// P1-Phase12.A.2 — test-friendly ctor accepting a custom
+    /// <see cref="Squid.Tentacle.Platform.IUpgradeStatusStorage"/>.
+    /// Replaces the pre-Phase-12 three-Func injection point with a
+    /// single typed contract — same testability, cleaner surface.
+    /// Default implementations live at:
+    ///   <list type="bullet">
+    ///     <item><see cref="Squid.Tentacle.Platform.LinuxUpgradeStatusStorage"/></item>
+    ///     <item><see cref="Squid.Tentacle.Platform.WindowsUpgradeStatusStorage"/></item>
+    ///     <item><see cref="Squid.Tentacle.Platform.NullUpgradeStatusStorage"/> (fallback)</item>
+    ///   </list>
     /// </summary>
-    internal CapabilitiesService(Dictionary<string, string> metadata,
-        Func<string> upgradeStatusReader,
-        Func<string> upgradeEventsReader = null,
-        Func<string> upgradeLogReader = null)
+    public CapabilitiesService(Dictionary<string, string> metadata,
+        Squid.Tentacle.Platform.IUpgradeStatusStorage upgradeStorage)
     {
         _metadata = MergeWithRuntimeCapabilities(metadata);
-        _upgradeStatusReader = upgradeStatusReader ?? DefaultUpgradeStatusReader;
-        _upgradeEventsReader = upgradeEventsReader ?? DefaultUpgradeEventsReader;
-        _upgradeLogReader = upgradeLogReader ?? DefaultUpgradeLogReader;
+        _upgradeStorage = upgradeStorage ?? new Squid.Tentacle.Platform.NullUpgradeStatusStorage();
     }
 
     public CapabilitiesResponse GetCapabilities(CapabilitiesRequest request)
@@ -103,15 +95,15 @@ public class CapabilitiesService : ICapabilitiesService
         // must not pollute the instance-level cached metadata.
         var metadataForThisCall = new Dictionary<string, string>(_metadata);
 
-        var upgradeStatus = _upgradeStatusReader();
+        var upgradeStatus = _upgradeStorage.ReadStatus();
         if (!string.IsNullOrEmpty(upgradeStatus))
             metadataForThisCall[UpgradeStatusMetadataKey] = upgradeStatus;
 
-        var upgradeEvents = _upgradeEventsReader();
+        var upgradeEvents = _upgradeStorage.ReadEvents();
         if (!string.IsNullOrEmpty(upgradeEvents))
             metadataForThisCall[UpgradeEventsMetadataKey] = upgradeEvents;
 
-        var upgradeLog = _upgradeLogReader();
+        var upgradeLog = _upgradeStorage.ReadLog();
         if (!string.IsNullOrEmpty(upgradeLog))
             metadataForThisCall[UpgradeLogMetadataKey] = upgradeLog;
 
@@ -124,75 +116,11 @@ public class CapabilitiesService : ICapabilitiesService
     }
 
     /// <summary>
-    /// Read the on-disk upgrade status file. Returns an empty string if the
-    /// file doesn't exist (no upgrade ever attempted) OR any IO error
-    /// occurs (permission, mid-write race, etc.). The server treats empty
-    /// as "no status available" and falls back to inferring outcome from
-    /// the reported agent version.
-    /// </summary>
-    private static string DefaultUpgradeStatusReader()
-    {
-        try
-        {
-            return File.Exists(UpgradeStatusFilePath)
-                ? File.ReadAllText(UpgradeStatusFilePath)
-                : string.Empty;
-        }
-        catch
-        {
-            // Intentional: status file is advisory, not critical. Swallow
-            // any error so a broken filesystem can't degrade the whole
-            // Capabilities RPC (which also carries os/shells/version info
-            // needed for deployment script selection).
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
-    /// Read the JSONL events file for the current/last upgrade. Returns
-    /// empty string if no file (no upgrade ever run) or any IO error.
-    /// Same swallow-errors principle as the status reader.
-    /// </summary>
-    private static string DefaultUpgradeEventsReader()
-    {
-        try
-        {
-            return File.Exists(UpgradeEventsFilePath)
-                ? File.ReadAllText(UpgradeEventsFilePath)
-                : string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
-    /// Read the Phase B log file for the current/last upgrade. Returns
-    /// empty on missing / IO error. Tail-truncates the content to
-    /// <see cref="MaxUpgradeLogBytes"/> — keeps the most recent output
-    /// visible to operators (the end of a log is where
-    /// rollback/failure details live).
-    /// </summary>
-    private static string DefaultUpgradeLogReader()
-    {
-        try
-        {
-            if (!File.Exists(UpgradeLogFilePath)) return string.Empty;
-
-            var bytes = File.ReadAllBytes(UpgradeLogFilePath);
-            return TailTruncateForMetadata(bytes, MaxUpgradeLogBytes);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
     /// Pure byte-to-string tail-truncation with UTF-8 boundary safety.
     /// Extracted for direct unit testing; the file-reading wrapper above
-    /// handles IO concerns.
+    /// handles IO concerns. <c>public</c> so platform-specific
+    /// <see cref="Squid.Tentacle.Platform.IUpgradeStatusStorage"/> impls
+    /// can share the same truncation policy.
     ///
     /// <para><b>UTF-8 boundary safety (audit D.3):</b> the raw byte-
     /// offset cut could land mid-character. A UTF-8 continuation byte has
@@ -204,7 +132,7 @@ public class CapabilitiesService : ICapabilitiesService
     /// decode cleanly; worst case we drop up to 3 extra bytes at the
     /// head (max UTF-8 sequence length minus 1).</para>
     /// </summary>
-    internal static string TailTruncateForMetadata(byte[] bytes, int maxBytes)
+    public static string TailTruncateForMetadata(byte[] bytes, int maxBytes)
     {
         if (bytes == null || bytes.Length == 0) return string.Empty;
 

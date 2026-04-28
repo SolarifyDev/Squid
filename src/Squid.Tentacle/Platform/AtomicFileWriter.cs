@@ -57,15 +57,12 @@ public static class AtomicFileWriter
 
     private static void TryRestrictPermissions(string path)
     {
-        if (OperatingSystem.IsWindows()) return;
-
-        try
-        {
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
-        catch
-        {
-            // Non-fatal hardening
-        }
+        // P1-Phase12.A.1 (Windows Tentacle foundations): pre-fix this was
+        // a Windows-skip + raw File.SetUnixFileMode. The new abstraction
+        // ALSO hardens on Windows — break ACL inheritance so a sibling
+        // user can't read the secret-bearing file. Linux behaviour is
+        // bit-for-bit preserved (UnixFilePermissionManager wraps the
+        // same File.SetUnixFileMode call with the same 0600 mode).
+        FilePermissionManagerFactory.Resolve().RestrictToOwner(path, isDirectory: false);
     }
 }

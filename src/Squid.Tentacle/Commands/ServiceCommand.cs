@@ -179,34 +179,25 @@ public sealed class ServiceCommand : ITentacleCommand
     }
 
     /// <summary>
-    /// Returns <see cref="DefaultServiceUser"/> if the OS has that user and
-    /// we're on Linux; otherwise null (service host interprets null as "run
-    /// as the caller / root"). Windows and macOS ignore this for now.
+    /// P1-Phase12.A.3 — delegates to the platform-resolved
+    /// <see cref="Platform.IServiceUserProvider"/>. Pre-Phase-12 this
+    /// shelled directly to <c>getent passwd squid-tentacle</c> with a
+    /// hardcoded <c>OperatingSystem.IsLinux()</c> guard. Now the
+    /// platform-specific impl chooses (Linux: getent + "squid-tentacle";
+    /// Windows: empty = LocalSystem; macOS: null fallback). Returns null
+    /// when no usable service user is found, matching the pre-Phase-12
+    /// "service host interprets null as 'run as the caller / root'"
+    /// contract.
     /// </summary>
     private static string DetectServiceUser()
     {
-        if (!OperatingSystem.IsLinux()) return null;
+        var provider = Platform.ServiceUserProviderFactory.Resolve();
+        var defaultUser = provider.DefaultServiceUser;
 
-        try
-        {
-            // `getent passwd USER` exits 0 and prints a line when the user exists, non-zero otherwise.
-            var psi = new System.Diagnostics.ProcessStartInfo("getent", $"passwd {DefaultServiceUser}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
+        if (string.IsNullOrEmpty(defaultUser)) return null;
+        if (!provider.ServiceUserExists(defaultUser)) return null;
 
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null) return null;
-
-            proc.WaitForExit(TimeSpan.FromSeconds(5));
-            return proc.ExitCode == 0 ? DefaultServiceUser : null;
-        }
-        catch
-        {
-            return null;
-        }
+        return defaultUser;
     }
 
     /// <summary>

@@ -44,9 +44,28 @@ public sealed class InstanceOwnershipHandover
     private readonly Func<string> _detectServiceUser;
     private readonly Func<string, string, bool> _chown;
 
-    /// <summary>Production default — checks euid, shells out to <c>getent</c> / <c>chown</c>.</summary>
+    /// <summary>Production default — delegates to the platform-resolved
+    /// <see cref="Platform.IServiceUserProvider"/> (Phase-12.A.3) so the
+    /// same call site works on Linux + Windows + macOS without OS branches.</summary>
     public InstanceOwnershipHandover()
-        : this(DefaultIsRoot, DefaultDetectServiceUser, DefaultChownRecursive)
+        : this(Platform.ServiceUserProviderFactory.Resolve())
+    {
+    }
+
+    /// <summary>
+    /// P1-Phase12.A.3 — provider-based ctor. Internally adapts to the
+    /// existing 3-Func seam so the test ctor (and all 10+ existing tests
+    /// that use it) continues to work without modification.
+    /// </summary>
+    public InstanceOwnershipHandover(Platform.IServiceUserProvider serviceUserProvider)
+        : this(
+            isRoot: serviceUserProvider.IsRunningElevated,
+            detectServiceUser: () =>
+            {
+                var u = serviceUserProvider.DefaultServiceUser;
+                return string.IsNullOrEmpty(u) || !serviceUserProvider.ServiceUserExists(u) ? null : u;
+            },
+            chown: serviceUserProvider.TrySetOwnership)
     {
     }
 
