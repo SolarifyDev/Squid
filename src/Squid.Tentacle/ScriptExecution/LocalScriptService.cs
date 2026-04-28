@@ -8,6 +8,7 @@ using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Observability;
+using Squid.Tentacle.Platform;
 using Squid.Tentacle.ScriptExecution.Logging;
 using Squid.Tentacle.ScriptExecution.State;
 using Squid.Tentacle.Security.Admission;
@@ -924,12 +925,34 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         return command.ScriptSyntax switch
         {
-            ScriptType.PowerShell => StartPwshProcess(workDir, command.Arguments),
+            ScriptType.PowerShell => StartViaLauncher(workDir, ScriptType.PowerShell, command.Arguments),
             ScriptType.Python => StartPythonProcess(workDir, command.Arguments),
             ScriptType.CSharp => StartCSharpProcess(workDir, command.Arguments),
             ScriptType.FSharp => StartFSharpProcess(workDir, command.Arguments),
-            _ => StartBashProcess(workDir, command.Arguments)
+            // Default arm matches Bash AND any future ScriptType not in the
+            // explicit list — preserves pre-Phase-12.B behaviour where unknown
+            // syntaxes silently fell through to bash. Kept verbatim for Rule 1.
+            _ => StartViaLauncher(workDir, ScriptType.Bash, command.Arguments)
         };
+    }
+
+    /// <summary>
+    /// P1-Phase12.B.3 — dispatches to the platform-resolved
+    /// <see cref="IProcessLauncher"/>. Pre-Phase-12.B this method's body
+    /// was duplicated across <c>StartBashProcess</c> + <c>StartPwshProcess</c>
+    /// (both bit-for-bit identical PSI shapes minus FileName + ArgumentList).
+    /// Now the per-syntax PSI shape lives in
+    /// <see cref="Platform.IProcessLauncher.BuildStartInfo"/>; this method
+    /// owns only the lifecycle (Start, EnableRaisingEvents) which is the same
+    /// across all syntaxes.
+    /// </summary>
+    private static Process StartViaLauncher(string workDir, ScriptType syntax, string[] arguments)
+    {
+        var psi = ProcessLauncherFactory.Resolve(syntax).BuildStartInfo(workDir, arguments);
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.Start();
+        return process;
     }
 
     private static Process StartCalamariProcess(
@@ -996,59 +1019,6 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         }
 
         return psi;
-    }
-
-    private static Process StartBashProcess(string workDir, string[] arguments)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "bash",
-            WorkingDirectory = workDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        psi.ArgumentList.Add("script.sh");
-
-        if (arguments != null)
-            foreach (var arg in arguments)
-                psi.ArgumentList.Add(arg);
-
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
-        return process;
-    }
-
-    private static Process StartPwshProcess(string workDir, string[] arguments)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "pwsh",
-            WorkingDirectory = workDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // Force UTF-8 so non-ASCII output (Chinese, emoji, etc.) round-trips
-            // correctly instead of going through the Windows OEM codepage.
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add("script.ps1");
-
-        if (arguments != null)
-            foreach (var arg in arguments)
-                psi.ArgumentList.Add(arg);
-
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
-        return process;
     }
 
     /// <summary>
