@@ -165,6 +165,94 @@ public class ScriptIsolationMutexTests
         Should.NotThrow(() => handle.Dispose());
     }
 
+    // ── P1-Phase11.2 (audit ARCH.9 F1.1) — pure-sync TryAcquireBlocking ─────
+
+    [Fact]
+    public void TryAcquireBlocking_FreeMutex_SucceedsImmediately()
+    {
+        var command = MakeCommand(ScriptIsolationLevel.FullIsolation);
+
+        var handle = _mutex.TryAcquireBlocking(command);
+
+        handle.ShouldNotBeNull(customMessage:
+            "Acquire on a free mutex must succeed on first try without polling.");
+        handle?.Dispose();
+    }
+
+    [Fact]
+    public void TryAcquireBlocking_ContendedMutex_TimesOutReturnsNull()
+    {
+        // First writer holds the slot; second TryAcquireBlocking with a tiny
+        // timeout must return null when the timeout fires (NOT throw).
+        var first = MakeCommand(ScriptIsolationLevel.FullIsolation, mutexName: "shared");
+        var second = MakeCommand(ScriptIsolationLevel.FullIsolation, mutexName: "shared", timeout: TimeSpan.FromMilliseconds(200));
+
+        _mutex.TryAcquire(first, out var firstHandle);
+        firstHandle.ShouldNotBeNull();
+
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var contended = _mutex.TryAcquireBlocking(second);
+            sw.Stop();
+
+            contended.ShouldBeNull(customMessage:
+                "Contended acquire must time out and return null (not throw).");
+            sw.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(150,
+                customMessage: "Acquire must actually poll for the timeout window, not return immediately.");
+            sw.ElapsedMilliseconds.ShouldBeLessThan(800,
+                customMessage: "Acquire must NOT poll well past the timeout.");
+        }
+        finally
+        {
+            firstHandle?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void TryAcquireBlocking_CtCancelled_ShortCircuitsBeforeTimeout()
+    {
+        // Soft-cancel scenario: CancelScript RPC arrives mid-acquire. The
+        // CTS flips, the polling loop short-circuits via OperationCanceledException
+        // INSTEAD of waiting for the configured isolation timeout.
+        var first = MakeCommand(ScriptIsolationLevel.FullIsolation, mutexName: "shared");
+        var second = MakeCommand(ScriptIsolationLevel.FullIsolation, mutexName: "shared", timeout: TimeSpan.FromSeconds(30));
+
+        _mutex.TryAcquire(first, out var firstHandle);
+
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            cts.CancelAfter(TimeSpan.FromMilliseconds(150));
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Should.Throw<OperationCanceledException>(
+                () => _mutex.TryAcquireBlocking(second, cts.Token));
+            sw.Stop();
+
+            sw.ElapsedMilliseconds.ShouldBeLessThan(2000, customMessage:
+                "CT cancel must short-circuit polling — must NOT wait for the 30s isolation timeout.");
+        }
+        finally
+        {
+            firstHandle?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void TryAcquireBlocking_PreCancelledCt_ThrowsImmediately()
+    {
+        // Out-of-order: ScriptCancellationRegistry returns an already-cancelled
+        // token (Cancel arrived before GetOrCreate). TryAcquireBlocking must
+        // throw immediately rather than even try one acquire.
+        var command = MakeCommand(ScriptIsolationLevel.FullIsolation);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Should.Throw<OperationCanceledException>(
+            () => _mutex.TryAcquireBlocking(command, cts.Token));
+    }
+
     private static StartScriptCommand MakeCommand(ScriptIsolationLevel isolation, string? mutexName = null, TimeSpan? timeout = null)
     {
         return new StartScriptCommand(
