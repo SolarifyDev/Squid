@@ -3,6 +3,7 @@ using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Platform;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Tentacle.Tests.Support;
+using Squid.Tentacle.Tests.Support.Collections;
 using Xunit;
 
 namespace Squid.Tentacle.Tests.ScriptExecution;
@@ -18,6 +19,7 @@ namespace Squid.Tentacle.Tests.ScriptExecution;
 /// coverage was zero, leaving the Windows tentacle path untested despite
 /// having all the code.
 /// </summary>
+[Collection(TentacleEnvVarMutatorsCollection.Name)]
 [Trait("Category", TentacleTestCategories.WindowsTentacleE2E)]
 public sealed class WindowsPowerShellE2ETests : IDisposable
 {

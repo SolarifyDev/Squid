@@ -69,15 +69,17 @@ public static class ProcessLauncherFactory
 
     /// <summary>
     /// Reads <see cref="UseWindowsPowerShellEnvVar"/> as a permissive boolean —
-    /// case-insensitive accept of <c>"1" / "true" / "yes" / "on"</c>; everything
-    /// else (including unset / empty) is treated as false. Internal so the
-    /// test suite can spy on the env-var name without exposing parsing logic.
+    /// case-insensitive accept of <c>"1" / "true" / "yes" / "on"</c> with
+    /// surrounding whitespace trimmed (cmd.exe's <c>set FOO= true</c> is a
+    /// common operator typo); everything else (including unset / empty /
+    /// whitespace-only) is treated as false. Internal so the test suite can
+    /// spy on the env-var name without exposing parsing logic.
     /// </summary>
     internal static bool IsWindowsPowerShellPreferred()
     {
-        var raw = Environment.GetEnvironmentVariable(UseWindowsPowerShellEnvVar);
+        var raw = Environment.GetEnvironmentVariable(UseWindowsPowerShellEnvVar)?.Trim();
 
-        if (string.IsNullOrWhiteSpace(raw)) return false;
+        if (string.IsNullOrEmpty(raw)) return false;
 
         return raw.Equals("1", StringComparison.Ordinal)
             || raw.Equals("true", StringComparison.OrdinalIgnoreCase)

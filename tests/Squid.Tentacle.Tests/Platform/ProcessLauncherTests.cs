@@ -4,6 +4,7 @@ using Shouldly;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Platform;
 using Squid.Tentacle.Tests.Support;
+using Squid.Tentacle.Tests.Support.Collections;
 using Xunit;
 
 namespace Squid.Tentacle.Tests.Platform;
@@ -27,6 +28,7 @@ namespace Squid.Tentacle.Tests.Platform;
 /// reorders ArgumentList, or flips encoding to OEM, these unit tests catch it
 /// without a full E2E run.</para>
 /// </summary>
+[Collection(TentacleEnvVarMutatorsCollection.Name)]
 [Trait("Category", TentacleTestCategories.Core)]
 public sealed class ProcessLauncherTests
 {
@@ -378,6 +380,11 @@ public sealed class ProcessLauncherTests
     [InlineData("yes", true)]
     [InlineData("on", true)]
     [InlineData("YES", true)]
+    // Audit-fix A2: tolerate operator typos like `set FOO= true` (cmd.exe leaks
+    // the leading space into the env var value). Trim before compare.
+    [InlineData("  true  ", true)]
+    [InlineData("\ttrue\t", true)]
+    [InlineData("  yes  ", true)]
     [InlineData("0", false)]
     [InlineData("false", false)]
     [InlineData("", false)]
