@@ -19,6 +19,16 @@ namespace Squid.Tentacle.Tests.Core;
 /// (kubectl invocation is integration-level and validated via the K8s
 /// E2E suite, not here).</para>
 /// </summary>
+/// <para>P0-Phase10.3-audit pre-push fix: tests mutate KUBERNETES_SERVICE_HOST
+/// process-wide. xUnit runs methods within a class sequentially but classes
+/// in parallel. CapabilitiesServiceTests instantiates CapabilitiesService
+/// which calls KubernetesRbacInspector.Inspect() → reads this env var. A
+/// parallel mutation could (a) trigger spurious kubectl probes with up to
+/// 15s timeout in CI, or (b) leave keys in the metadata response that the
+/// other test author didn't expect. The Collection attribute serializes
+/// against any test class with the same name → eliminates the race window
+/// at the cost of slightly slower test runs for this small set.</para>
+[Collection("KubernetesEnvVarMutators")]
 [Trait("Category", TentacleTestCategories.Core)]
 public sealed class KubernetesRbacInspectorTests
 {

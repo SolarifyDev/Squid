@@ -39,23 +39,30 @@ public sealed class SpaceMembershipResolver : ISpaceMembershipResolver
         _repository = repository;
     }
 
-    public Task<bool> IsMemberAsync(int userId, int spaceId, CancellationToken ct = default)
+    public async Task<bool> IsMemberAsync(int userId, int spaceId, CancellationToken ct = default)
     {
-        // Two-step query (intentionally simple — operator-readable in profiler):
+        // Two-step async query (intentionally simple — operator-readable in profiler):
         //   1. team IDs the user is a member of
         //   2. ANY of those teams in the requested space
         // The single-query variant via join works too but the materialised
         // intermediate set keeps the predicate filter simple and matches
         // the existing GetByTeamIdsAsync pattern in ScopedUserRoleDataProvider.
-        var userTeamIds = _repository.Query<TeamMember>(tm => tm.UserId == userId)
+        //
+        // CRITICAL: must use ToListAsync / AnyAsync — sync ToList()/Any() on EF
+        // blocks the Mediator pipeline thread, which on a hot HTTP path can
+        // exhaust the threadpool under bursty load. Same async-discipline as
+        // every other resolver in Squid.Core.
+        var userTeamIds = await _repository.Query<TeamMember>(tm => tm.UserId == userId)
             .Select(tm => tm.TeamId)
-            .ToList();
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
 
-        if (userTeamIds.Count == 0) return Task.FromResult(false);
+        if (userTeamIds.Count == 0) return false;
 
-        var hasMatch = _repository.Query<Team>(t => t.SpaceId == spaceId)
-            .Any(t => userTeamIds.Contains(t.Id));
+        var hasMatch = await _repository.Query<Team>(t => t.SpaceId == spaceId)
+            .AnyAsync(t => userTeamIds.Contains(t.Id), ct)
+            .ConfigureAwait(false);
 
-        return Task.FromResult(hasMatch);
+        return hasMatch;
     }
 }

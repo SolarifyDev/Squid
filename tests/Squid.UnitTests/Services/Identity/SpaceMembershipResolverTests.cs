@@ -36,10 +36,10 @@ public sealed class SpaceMembershipResolverTests
 
         _repository.Setup(r => r.Query<TeamMember>(It.IsAny<System.Linq.Expressions.Expression<System.Func<TeamMember, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<TeamMember, bool>> pred) =>
-                teamMembers.Where(pred));
+                teamMembers.Where(pred).BuildMock());
         _repository.Setup(r => r.Query<Team>(It.IsAny<System.Linq.Expressions.Expression<System.Func<Team, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<Team, bool>> pred) =>
-                teams.Where(pred));
+                teams.Where(pred).BuildMock());
 
         var resolver = new SpaceMembershipResolver(_repository.Object);
 
@@ -56,10 +56,10 @@ public sealed class SpaceMembershipResolverTests
 
         _repository.Setup(r => r.Query<TeamMember>(It.IsAny<System.Linq.Expressions.Expression<System.Func<TeamMember, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<TeamMember, bool>> pred) =>
-                teamMembers.Where(pred));
+                teamMembers.Where(pred).BuildMock());
         _repository.Setup(r => r.Query<Team>(It.IsAny<System.Linq.Expressions.Expression<System.Func<Team, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<Team, bool>> pred) =>
-                teams.Where(pred));
+                teams.Where(pred).BuildMock());
 
         var resolver = new SpaceMembershipResolver(_repository.Object);
 
@@ -76,10 +76,10 @@ public sealed class SpaceMembershipResolverTests
 
         _repository.Setup(r => r.Query<TeamMember>(It.IsAny<System.Linq.Expressions.Expression<System.Func<TeamMember, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<TeamMember, bool>> pred) =>
-                teamMembers.Where(pred));
+                teamMembers.Where(pred).BuildMock());
         _repository.Setup(r => r.Query<Team>(It.IsAny<System.Linq.Expressions.Expression<System.Func<Team, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<Team, bool>> pred) =>
-                teams.Where(pred));
+                teams.Where(pred).BuildMock());
 
         var resolver = new SpaceMembershipResolver(_repository.Object);
 
@@ -105,10 +105,10 @@ public sealed class SpaceMembershipResolverTests
 
         _repository.Setup(r => r.Query<TeamMember>(It.IsAny<System.Linq.Expressions.Expression<System.Func<TeamMember, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<TeamMember, bool>> pred) =>
-                teamMembers.Where(pred));
+                teamMembers.Where(pred).BuildMock());
         _repository.Setup(r => r.Query<Team>(It.IsAny<System.Linq.Expressions.Expression<System.Func<Team, bool>>>()))
             .Returns((System.Linq.Expressions.Expression<System.Func<Team, bool>> pred) =>
-                teams.Where(pred));
+                teams.Where(pred).BuildMock());
 
         var resolver = new SpaceMembershipResolver(_repository.Object);
 

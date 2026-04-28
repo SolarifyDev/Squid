@@ -23,6 +23,13 @@ namespace Squid.UnitTests.Middlewares;
 /// a Space the user isn't a member of. Internal users (Hangfire, system
 /// tasks) bypass via <c>IsInternal=true</c> — same pattern as Phase-7 D.6.</para>
 /// </summary>
+// Tests in this class mutate SQUID_SPACE_MEMBERSHIP_ENFORCEMENT process-wide
+// for mode-specific assertions. xUnit serializes methods within a class but
+// runs classes in parallel — collection attribute ensures any other test class
+// that ALSO mutates this env var queues behind us. None currently exists; the
+// attribute is defensive future-proofing against the same issue Phase-9a
+// uncovered with Serilog Log.Logger pollution.
+[Collection("SpaceMembershipEnforcementEnvVarMutators")]
 public sealed class SpaceMembershipSpecificationTests
 {
     [Fact]
@@ -120,6 +127,125 @@ public sealed class SpaceMembershipSpecificationTests
         var context = CreateContext(message);
 
         await Should.NotThrowAsync(() => spec.BeforeExecute(context.Object, CancellationToken.None));
+    }
+
+    // ── Three-mode enforcement (Rule 11 — pre-push audit defence) ───────────
+
+    [Fact]
+    public void EnforcementEnvVar_ConstantNamePinned()
+    {
+        // Operators reference this name in emergency-rollback runbooks.
+        // Renaming breaks every documented mitigation procedure.
+        Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar
+            .ShouldBe("SQUID_SPACE_MEMBERSHIP_ENFORCEMENT");
+    }
+
+    [Fact]
+    public async Task DefaultMode_NoEnvVar_IsStrict_RejectsPrivesc()
+    {
+        // Per CLAUDE.md Rule 11: privesc guards default to STRICT, NOT Warn.
+        // Default-Warn would silently leave the vulnerability open. Pin this
+        // contract — a regression to default-Warn would re-open D.3.
+        var previous = Environment.GetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, null);
+
+        try
+        {
+            var spec = CreateSpec(headerValue: "99", currentUserId: 1, isInternal: false, isMemberOfRequestedSpace: false);
+            var message = new TestSpaceScopedRequest();
+            var context = CreateContext(message);
+
+            await Should.ThrowAsync<CrossSpaceAccessDeniedException>(
+                () => spec.BeforeExecute(context.Object, CancellationToken.None));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, previous);
+        }
+    }
+
+    [Fact]
+    public async Task WarnMode_PrivescAttempt_AllowsButWouldLog()
+    {
+        // Warn mode is the rolling-upgrade migration knob. Operators with
+        // historical API-key users lacking TeamMember rows flip to warn for
+        // one window to identify violations without breaking deploys, fix
+        // the integrations, then flip back to strict.
+        var previous = Environment.GetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, "warn");
+
+        try
+        {
+            var spec = CreateSpec(headerValue: "99", currentUserId: 1, isInternal: false, isMemberOfRequestedSpace: false);
+            var message = new TestSpaceScopedRequest();
+            var context = CreateContext(message);
+
+            await Should.NotThrowAsync(() => spec.BeforeExecute(context.Object, CancellationToken.None));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, previous);
+        }
+    }
+
+    [Fact]
+    public async Task OffMode_PrivescAttempt_SilentlyAllows()
+    {
+        // Off mode is the emergency-rollback knob. No log, no throw —
+        // identical to pre-Phase-10.3 behaviour. Operators use this ONLY
+        // during incident response when the membership data store has a
+        // bug and no users would pass the check.
+        var previous = Environment.GetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, "off");
+
+        try
+        {
+            var spec = CreateSpec(headerValue: "99", currentUserId: 1, isInternal: false, isMemberOfRequestedSpace: false);
+            var message = new TestSpaceScopedRequest();
+            var context = CreateContext(message);
+
+            await Should.NotThrowAsync(() => spec.BeforeExecute(context.Object, CancellationToken.None));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, previous);
+        }
+    }
+
+    [Fact]
+    public async Task NullUserId_RejectsRegardlessOfMode()
+    {
+        // Defence-in-depth: null UserId means identity isn't resolved — that's
+        // unambiguously a bug, not a permission decision. Even Warn mode
+        // throws here (per the comment in production code).
+        var previous = Environment.GetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar);
+        Environment.SetEnvironmentVariable(
+            Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, "warn");
+
+        try
+        {
+            var spec = CreateSpec(headerValue: "5", currentUserId: null, isInternal: false, isMemberOfRequestedSpace: false);
+            var message = new TestSpaceScopedRequest();
+            var context = CreateContext(message);
+
+            await Should.ThrowAsync<CrossSpaceAccessDeniedException>(
+                () => spec.BeforeExecute(context.Object, CancellationToken.None));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                Squid.Core.Middlewares.SpaceScope.SpaceMembershipSpecification<IContext<IMessage>>.EnforcementEnvVar, previous);
+        }
     }
 
     // ========== Helpers ==========

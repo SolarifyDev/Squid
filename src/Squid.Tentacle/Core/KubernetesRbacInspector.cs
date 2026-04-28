@@ -25,6 +25,18 @@ namespace Squid.Tentacle.Core;
 /// K8s pod (detected via <c>KUBERNETES_SERVICE_HOST</c>). Non-K8s tentacles
 /// don't have RBAC, so probing them would just produce kubectl-not-found
 /// noise.</para>
+///
+/// <para><b>Namespace scope (limitation)</b>: <c>kubectl auth can-i</c> with
+/// no <c>--namespace</c> flag checks permissions in the pod's CURRENT
+/// namespace (the one the ServiceAccount lives in, bound at pod runtime).
+/// If the agent pod is in <c>kube-system</c> but operators deploy targets
+/// to <c>default</c> namespace, the probe result is a <i>health-check
+/// approximation</i>, not a per-deploy-target authorization decision.
+/// Operators should either (a) put the agent in the target namespace, or
+/// (b) grant the ServiceAccount equivalent permissions in BOTH namespaces.
+/// True per-deploy-namespace verification needs the deploy target's
+/// namespace as input — that's a per-request check, not a per-startup
+/// probe, and is tracked as a future ARCH item.</para>
 /// </summary>
 public static class KubernetesRbacInspector
 {
