@@ -165,6 +165,17 @@ public sealed class WindowsServiceHost : IServiceHost
     /// double quotes (<c>"\"…\""</c>) so paths with spaces (<c>C:\Program Files\…</c>)
     /// survive sc.exe's value parser. Args are appended unquoted — they're
     /// already split by space when the SCM launches the process.</para>
+    ///
+    /// <para><b>WorkingDirectory intentionally ignored on Windows</b>: sc.exe
+    /// has NO <c>WorkingDirectory=</c> option — a Windows service's cwd
+    /// defaults to <c>%SystemRoot%\System32</c> and can only be customised via
+    /// registry poke at <c>HKLM\System\CurrentControlSet\Services\&lt;name&gt;</c>
+    /// (not exposed via <c>sc create</c>). The Squid Tentacle binary uses
+    /// <c>Environment.ProcessPath</c> + absolute paths internally so a
+    /// non-bin-relative cwd is functionally fine; the silent divergence from
+    /// the systemd path's <c>WorkingDirectory=</c> directive is therefore
+    /// non-functional. Phase-12.C-followup may add a registry step if a future
+    /// Tentacle code path ever needs a relative-path lookup.</para>
     /// </remarks>
     internal static string[] BuildScCreateArgs(ServiceInstallRequest request)
     {
