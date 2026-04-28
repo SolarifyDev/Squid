@@ -1,5 +1,6 @@
 using Shouldly;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Tentacle.Platform;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Tentacle.Tests.Support;
 using Xunit;
@@ -108,6 +109,45 @@ public sealed class WindowsPowerShellE2ETests : IDisposable
         // is being honoured for stdout.
         output.ShouldContain("你好");
         output.ShouldContain("deployment");
+    }
+
+    [Fact]
+    public void Pwsh_OptInWindowsPowerShellExe_ViaEnvVar_RunsSuccessfully()
+    {
+        // P1-Phase12.B.3 — the operator opt-in path: setting
+        // SQUID_TENTACLE_USE_WINDOWS_POWERSHELL=true routes Phase-12.B's
+        // factory dispatch to WindowsPowerShellProcessLauncher (which targets
+        // the OS-bundled PowerShell.exe). This E2E proves the env var →
+        // factory → launcher → Process.Start chain actually works on real
+        // Windows. ASCII-only assertion: cross-locale Unicode via OEM is
+        // locale-dependent (Pwsh_UnicodeOutput_EncodedCorrectly above proves
+        // the default pwsh-Core path with UTF-8); this test only exercises
+        // the wiring + exit-code propagation through PowerShell.exe.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var prior = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, "true");
+
+            var command = MakeCommand("Write-Output 'hello-from-windows-powershell-exe'", ScriptType.PowerShell);
+
+            var startResp = _service.StartScript(command);
+            _createdTickets.Add(command.ScriptTicket);
+
+            WaitForCompletion(command.ScriptTicket, TimeSpan.FromSeconds(30));
+
+            var status = _service.GetStatus(new ScriptStatusRequest(command.ScriptTicket, startResp.NextLogSequence));
+            var output = string.Join("\n", startResp.Logs.Concat(status.Logs).Select(l => l.Text));
+
+            output.ShouldContain("hello-from-windows-powershell-exe");
+            status.ExitCode.ShouldBe(0);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, prior);
+        }
     }
 
     private static StartScriptCommand MakeCommand(string scriptBody, ScriptType syntax)

@@ -319,15 +319,98 @@ public sealed class ProcessLauncherTests
     }
 
     [Fact]
-    public void Factory_PowerShell_OnWindows_ResolvesToWindowsImpl()
+    public void Factory_PowerShell_OnWindows_DefaultRoutesToPwshCore_NoBreakingChange()
     {
-        // The B.2-specific routing: Windows hosts get the OEM-decoding,
-        // PowerShell.exe-targeted launcher. Non-Windows hosts continue to
-        // get PwshCoreProcessLauncher (covered by the B.1 baseline test
-        // Factory_PowerShell_ResolvesToPwshCoreLauncher_OnNonWindows above).
+        // Phase-12.B.3 — preserve pre-Phase-12 behaviour: PowerShell on Windows
+        // routes to PwshCoreProcessLauncher by default. Switching to
+        // WindowsPowerShellProcessLauncher requires the operator to set
+        // SQUID_TENTACLE_USE_WINDOWS_POWERSHELL=true (see env-var-gate test
+        // below). Default-off is essential because Windows PowerShell 5.1's
+        // OEM stdout would silently mangle cross-locale Unicode (e.g. 你好
+        // on en-US runners), which would break the existing
+        // Pwsh_UnicodeOutput_EncodedCorrectly E2E test.
         if (!OperatingSystem.IsWindows()) return;
 
-        ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
-            .ShouldBeOfType<WindowsPowerShellProcessLauncher>();
+        var prior = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, null);
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<PwshCoreProcessLauncher>();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, prior);
+        }
+    }
+
+    [Fact]
+    public void Factory_PowerShell_OnWindows_OptInRoutesToWindowsImpl()
+    {
+        // With the env var set, factory routes to the OEM-decoding,
+        // PowerShell.exe-targeted launcher. Non-Windows hosts ignore the
+        // env var (PowerShell.exe doesn't exist there) — covered by
+        // Factory_PowerShell_ResolvesToPwshCoreLauncher_OnNonWindows.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var prior = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, "true");
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<WindowsPowerShellProcessLauncher>();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, prior);
+        }
+    }
+
+    [Theory]
+    [InlineData("1", true)]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("yes", true)]
+    [InlineData("on", true)]
+    [InlineData("YES", true)]
+    [InlineData("0", false)]
+    [InlineData("false", false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("anything-else", false)]
+    public void IsWindowsPowerShellPreferred_AcceptsPermissiveTruthyValues(string raw, bool expected)
+    {
+        // Permissive parsing — operators may set the env var to any common
+        // truthy form (1 / true / yes / on, case-insensitive). Anything else
+        // — including unset, empty, whitespace, or unrecognised strings —
+        // is treated as false. Pinning the contract here makes any future
+        // tightening of the parser surface in tests.
+        var prior = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, raw);
+
+            ProcessLauncherFactory.IsWindowsPowerShellPreferred().ShouldBe(expected);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, prior);
+        }
+    }
+
+    [Fact]
+    public void UseWindowsPowerShellEnvVar_ConstantNamePinned()
+    {
+        // Renaming this constant breaks every air-gapped operator who has
+        // baked the literal env var name into their systemd unit drop-in /
+        // sc.exe start config. Hard-pin per Rule 8 so a rename becomes a
+        // compile-time-visible decision rather than an invisible refactor.
+        ProcessLauncherFactory.UseWindowsPowerShellEnvVar.ShouldBe("SQUID_TENTACLE_USE_WINDOWS_POWERSHELL");
     }
 }
