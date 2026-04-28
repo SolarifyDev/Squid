@@ -96,6 +96,13 @@ public sealed class ScriptCancellationRegistry
     }
 
     /// <summary>
+    /// Test-only observability hook — current count of live entries.
+    /// Used by tests to verify that <see cref="Cleanup"/> properly removes
+    /// entries (no leak) on every exit path of LocalScriptService.
+    /// </summary>
+    internal int CountForTests => _entries.Count;
+
+    /// <summary>
     /// Disposes the per-ticket CTS and removes the entry. Called from
     /// <see cref="LocalScriptService.CompleteScript"/> when the script
     /// reaches a terminal state. No-op if the ticket was never registered

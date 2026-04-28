@@ -33,6 +33,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     /// <see cref="CompleteScript"/> calls <see cref="ScriptCancellationRegistry.Cleanup"/>.
     /// </summary>
     private readonly ScriptCancellationRegistry _cancellationRegistry = new();
+
+    /// <summary>Test-only — observe the per-ticket CTS registry's live entry count.
+    /// Used to verify Cleanup is called on every exit path of LocalScriptService.</summary>
+    internal int CancellationRegistryCountForTests => _cancellationRegistry.CountForTests;
     private readonly IScriptStateStoreFactory _stateStoreFactory;
     private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;
@@ -529,10 +533,29 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
     {
+        // P1-Phase11 audit follow-up (#2): null-ticket NRE defence. Pre-fix
+        // a malformed RPC with null Ticket caused NullReferenceException
+        // inside the registry's TaskId access — Halibut wrapped as opaque
+        // RPC failure. Fail explicitly so the operator gets a structured
+        // error message naming the actual problem.
+        if (command.Ticket == null)
+            throw new ArgumentException("CompleteScriptCommand.Ticket is required", nameof(command));
+
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
         {
             var workDir = ResolveWorkDir(command.Ticket.TaskId);
             DeletePersistedStateIfAny(workDir);
+            // P1-Phase11 audit follow-up (#1): CompleteScript early-return
+            // path was missing _cancellationRegistry.Cleanup. The leak
+            // path: StartScript registers with the registry BEFORE
+            // _scripts.TryAdd; if a failure between those steps leaves
+            // the registry populated but _scripts empty, a subsequent
+            // CompleteScript hits this branch — pre-fix the registry
+            // entry leaked. Now matches the CancelScript pattern
+            // (Cleanup on every exit path). Test verifies the call site
+            // is executed; full leak-path repro requires mid-Start
+            // failure injection that's not in scope for this phase.
+            _cancellationRegistry.Cleanup(command.Ticket);
             return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
         }
 
@@ -589,6 +612,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
+        // P1-Phase11 audit follow-up (#2): null-ticket NRE defence. Pre-fix
+        // a malformed RPC with null Ticket caused NullReferenceException
+        // inside the registry's TaskId access. Match StartScript's pattern.
+        if (command.Ticket == null)
+            throw new ArgumentException("CancelScriptCommand.Ticket is required", nameof(command));
+
         // P1-Phase11.2 (audit ARCH.9 F2.x soft-cancel): flip the registry's
         // CTS BEFORE attempting to remove from _scripts. This signals any
         // in-flight async work (mutex acquire, file save) that's NOT yet

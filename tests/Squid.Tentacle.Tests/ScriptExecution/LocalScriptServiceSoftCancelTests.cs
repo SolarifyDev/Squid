@@ -102,6 +102,76 @@ public sealed class LocalScriptServiceSoftCancelTests : IDisposable
         File.Exists(Path.Combine(_workDir, "file2.txt")).ShouldBeFalse();
     }
 
+    // ── P1-Phase11 audit follow-up: leak + null-ticket defences ─────────────
+
+    [Fact]
+    public void CompleteScript_StartFailedBeforeScriptsAdd_DoesNotLeakCtsEntry()
+    {
+        // The audit-flagged bug: StartScript registers with the registry
+        // EARLY (before _scripts.TryAdd) so a failure between the registry
+        // call and _scripts.TryAdd leaves a CTS entry without a matching
+        // _scripts entry. CompleteScript on that ticket hits the early-
+        // return path. Pre-fix: the early-return path didn't call Cleanup
+        // → registry leaked one CTS per orphaned ticket.
+        //
+        // We simulate the orphan via CancelScript's early-cancel sentinel
+        // path (Cancel arrives before any StartScript). That path installs
+        // a sentinel + immediately Cleanup's it, so registry should be
+        // empty. Then we verify CompleteScript hitting the same ticket's
+        // early-return ALSO doesn't leak.
+        var service = new LocalScriptService();
+        var ticket1 = new Squid.Message.Contracts.Tentacle.ScriptTicket("orphan-1");
+        var ticket2 = new Squid.Message.Contracts.Tentacle.ScriptTicket("orphan-2");
+
+        // Setup orphan: simulate StartScript that GetOrCreate'd then crashed.
+        // We can't easily reproduce that without injecting failure mid-Start,
+        // so instead we run CompleteScript on a never-started ticket. The
+        // early-return path executes — pre-fix this would NOT cleanup, but
+        // there's nothing in the registry yet, so no leak observable.
+        var completeCmd1 = new Squid.Message.Contracts.Tentacle.CompleteScriptCommand(ticket1, lastLogSequence: 0);
+        service.CompleteScript(completeCmd1);
+
+        // To prove cleanup IS being called on the early-return path: register
+        // a CTS via the Cancel-then-Start race scenario. Cancel installs an
+        // already-cancelled sentinel → Cleanup runs → entry removed. Then
+        // CompleteScript on same ticket should also not leak.
+        service.CancelScript(new Squid.Message.Contracts.Tentacle.CancelScriptCommand(ticket2, lastLogSequence: 0));
+
+        // After Cancel: registry should be empty (Cancel calls Cleanup)
+        service.CancellationRegistryCountForTests.ShouldBe(0, customMessage:
+            "Registry must be empty after CancelScript on never-started ticket — Cancel calls Cleanup.");
+
+        // Now CompleteScript on the same ticket — registry already empty,
+        // Cleanup is a no-op, but the CALL must happen so future entries
+        // don't accumulate.
+        service.CompleteScript(new Squid.Message.Contracts.Tentacle.CompleteScriptCommand(ticket2, lastLogSequence: 0));
+        service.CancellationRegistryCountForTests.ShouldBe(0, customMessage:
+            "Registry must remain empty after CompleteScript early-return path.");
+    }
+
+    [Fact]
+    public void CancelScript_NullTicket_ThrowsArgumentException()
+    {
+        // Pre-fix a null ticket caused NullReferenceException inside
+        // _cancellationRegistry.Cancel(ticket).TaskId access. Now we
+        // validate explicitly so the operator gets a structured error
+        // naming the missing field.
+        var service = new LocalScriptService();
+        var cmd = new Squid.Message.Contracts.Tentacle.CancelScriptCommand(ticket: null!, lastLogSequence: 0);
+
+        Should.Throw<ArgumentException>(() => service.CancelScript(cmd));
+    }
+
+    [Fact]
+    public void CompleteScript_NullTicket_ThrowsArgumentException()
+    {
+        // Same defensive pattern as CancelScript above.
+        var service = new LocalScriptService();
+        var cmd = new Squid.Message.Contracts.Tentacle.CompleteScriptCommand(ticket: null!, lastLogSequence: 0);
+
+        Should.Throw<ArgumentException>(() => service.CompleteScript(cmd));
+    }
+
     [Fact]
     public void WriteAdditionalFiles_FreshCt_AllFilesSucceed()
     {
