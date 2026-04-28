@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Shouldly;
 using Squid.Message.Contracts.Tentacle;
@@ -174,5 +175,159 @@ public sealed class ProcessLauncherTests
         // visible failure.
         Should.Throw<NotSupportedException>(() => ProcessLauncherFactory.Resolve(syntax))
             .Message.ShouldContain(syntax.ToString());
+    }
+
+    // ── WindowsPowerShellProcessLauncher PSI shape (Phase 12.B.2) ──────────────
+    //
+    // The actual point of Phase B: PowerShell.exe + OEM stdout decoding so
+    // non-ASCII script output (中文 / emoji / accented chars) round-trips
+    // through the captured-log layer instead of being mangled by Windows
+    // PowerShell 5.1's OEM-codepage default vs .NET's UTF-8 default mismatch.
+
+    [Fact]
+    public void WindowsPowerShell_BuildStartInfo_ArgvLiteralPin()
+    {
+        // The EXACT argv shape that PowerShell.exe sees. Drift here changes
+        // semantics in subtle ways: dropping -NonInteractive lets the script
+        // hang on a hidden prompt forever; flipping -ExecutionPolicy to
+        // Restricted blocks every fresh deploy; using -Command instead of
+        // -File would change exit-code propagation. Pin the literal.
+        if (OperatingSystem.IsWindows())
+        {
+#pragma warning disable CA1416  // platform-gated above
+            var psi = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", new[] { "alpha", "beta" });
+#pragma warning restore CA1416
+
+            psi.ArgumentList.Count.ShouldBe(9);
+            psi.ArgumentList[0].ShouldBe("-NoProfile");
+            psi.ArgumentList[1].ShouldBe("-NoLogo");
+            psi.ArgumentList[2].ShouldBe("-NonInteractive");
+            psi.ArgumentList[3].ShouldBe("-ExecutionPolicy");
+            psi.ArgumentList[4].ShouldBe("Unrestricted");
+            psi.ArgumentList[5].ShouldBe("-File");
+            psi.ArgumentList[6].ShouldBe("script.ps1");
+            psi.ArgumentList[7].ShouldBe("alpha");
+            psi.ArgumentList[8].ShouldBe("beta");
+            return;
+        }
+
+        // On non-Windows test runners we still want to verify the PSI shape
+        // (the launcher's BuildStartInfo doesn't actually call any Windows
+        // APIs that throw on Linux — it just does Encoding.GetEncoding which
+        // falls back to UTF-8). [SupportedOSPlatform("windows")] is a hint to
+        // the analyzer, not a runtime gate.
+#pragma warning disable CA1416
+        var psiNonWin = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", new[] { "alpha", "beta" });
+#pragma warning restore CA1416
+
+        psiNonWin.ArgumentList.Count.ShouldBe(9);
+        psiNonWin.ArgumentList[0].ShouldBe("-NoProfile");
+        psiNonWin.ArgumentList[1].ShouldBe("-NoLogo");
+        psiNonWin.ArgumentList[2].ShouldBe("-NonInteractive");
+        psiNonWin.ArgumentList[3].ShouldBe("-ExecutionPolicy");
+        psiNonWin.ArgumentList[4].ShouldBe("Unrestricted");
+        psiNonWin.ArgumentList[5].ShouldBe("-File");
+        psiNonWin.ArgumentList[6].ShouldBe("script.ps1");
+        psiNonWin.ArgumentList[7].ShouldBe("alpha");
+        psiNonWin.ArgumentList[8].ShouldBe("beta");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_BuildStartInfo_FileNameEndsWithPowerShellExe()
+    {
+        // Two valid resolutions: full canonical path on real Windows, bare
+        // "PowerShell.exe" on PATH-fallback or non-Windows hosts. Both end
+        // with "PowerShell.exe" (case-sensitive — matches what we emit).
+#pragma warning disable CA1416
+        var psi = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", Array.Empty<string>());
+#pragma warning restore CA1416
+
+        psi.FileName.ShouldEndWith("PowerShell.exe");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_BuildStartInfo_RedirectFlagsAndCreateNoWindow()
+    {
+#pragma warning disable CA1416
+        var psi = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", Array.Empty<string>());
+#pragma warning restore CA1416
+
+        psi.RedirectStandardOutput.ShouldBeTrue();
+        psi.RedirectStandardError.ShouldBeTrue();
+        psi.UseShellExecute.ShouldBeFalse();
+        psi.CreateNoWindow.ShouldBeTrue();
+        psi.WorkingDirectory.ShouldBe("/tmp/x");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_BuildStartInfo_NullUserArgs_StillJustBaseFlags()
+    {
+        // Caller passes null when StartScriptCommand.Arguments is null —
+        // null-safe defensive path.
+#pragma warning disable CA1416
+        var psi = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", null!);
+#pragma warning restore CA1416
+
+        psi.ArgumentList.Count.ShouldBe(7);
+        psi.ArgumentList[6].ShouldBe("script.ps1");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_StdoutEncoding_IsOemOnWindows_NotUtf8()
+    {
+        // The whole point of having a separate Windows launcher: PowerShell.exe
+        // writes OEM bytes, not UTF-8. Setting StandardOutputEncoding to OEM
+        // lets the StreamReader decode non-ASCII output correctly. Without
+        // this, every 中文 / emoji / accented char would be mangled by .NET's
+        // default UTF-8 decoder reading OEM bytes. Windows-only because OEM
+        // codepage discovery is locale-dependent on Windows; falls back to
+        // UTF-8 on non-Windows test runners (which is fine — prod is Windows).
+        if (!OperatingSystem.IsWindows()) return;
+
+#pragma warning disable CA1416
+        var psi = new WindowsPowerShellProcessLauncher().BuildStartInfo("/tmp/x", Array.Empty<string>());
+#pragma warning restore CA1416
+
+        var expectedOemCodePage = CultureInfo.CurrentCulture.TextInfo.OEMCodePage;
+
+        psi.StandardOutputEncoding.ShouldNotBeNull();
+        psi.StandardOutputEncoding!.CodePage.ShouldBe(expectedOemCodePage);
+        psi.StandardErrorEncoding.ShouldNotBeNull();
+        psi.StandardErrorEncoding!.CodePage.ShouldBe(expectedOemCodePage);
+
+        // Defence-in-depth: explicitly assert NOT UTF-8 (codepage 65001).
+        psi.StandardOutputEncoding.CodePage.ShouldNotBe(Encoding.UTF8.CodePage);
+    }
+
+    [Fact]
+    public void WindowsPowerShell_ScriptFileName_ConstantPinned()
+    {
+        // The bundle authoring layer writes "script.ps1" into workDir.
+        // Renaming this constant would silently desync the launcher from
+        // the bundle author and PowerShell.exe would fail to find the file.
+        WindowsPowerShellProcessLauncher.ScriptFileName.ShouldBe("script.ps1");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_FallbackFileName_ConstantPinned()
+    {
+        // PATH-fallback used when canonical System32 path doesn't exist
+        // (Nano Server, custom install). Pinning the literal makes any
+        // accidental rename like "powershell.exe" (lowercase, broken on
+        // case-sensitive filesystems) a compile/test visible failure.
+        WindowsPowerShellProcessLauncher.FallbackFileName.ShouldBe("PowerShell.exe");
+    }
+
+    [Fact]
+    public void Factory_PowerShell_OnWindows_ResolvesToWindowsImpl()
+    {
+        // The B.2-specific routing: Windows hosts get the OEM-decoding,
+        // PowerShell.exe-targeted launcher. Non-Windows hosts continue to
+        // get PwshCoreProcessLauncher (covered by the B.1 baseline test
+        // Factory_PowerShell_ResolvesToPwshCoreLauncher_OnNonWindows above).
+        if (!OperatingSystem.IsWindows()) return;
+
+        ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+            .ShouldBeOfType<WindowsPowerShellProcessLauncher>();
     }
 }

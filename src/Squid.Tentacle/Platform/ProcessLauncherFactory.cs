@@ -9,13 +9,13 @@ namespace Squid.Tentacle.Platform;
 /// + <see cref="ServiceUserProviderFactory"/> convention.
 /// </summary>
 /// <remarks>
-/// <para><b>Routing</b> (Phase 12.B.1 = Bash + pwsh-Core only; Phase 12.B.2 will
-/// add the Windows PowerShell branch):</para>
+/// <para><b>Routing</b>:</para>
 /// <list type="bullet">
 /// <item><c>ScriptType.Bash</c> → <see cref="BashProcessLauncher"/> on every OS.</item>
-/// <item><c>ScriptType.PowerShell</c> → <see cref="PwshCoreProcessLauncher"/>
-/// (Phase 12.B.2 will route Windows hosts to <c>WindowsPowerShellProcessLauncher</c>
-/// here).</item>
+/// <item><c>ScriptType.PowerShell</c> on Windows → <see cref="WindowsPowerShellProcessLauncher"/>
+/// (PowerShell.exe + OEM stdout decoding for non-ASCII round-trip).</item>
+/// <item><c>ScriptType.PowerShell</c> on Linux / macOS → <see cref="PwshCoreProcessLauncher"/>
+/// (pwsh on PATH + UTF-8 stdout).</item>
 /// </list>
 ///
 /// <para><b>Out of scope</b>: <c>ScriptType.Python</c> / <c>CSharp</c> / <c>FSharp</c>
@@ -35,6 +35,7 @@ public static class ProcessLauncherFactory
     {
         return syntax switch
         {
+            ScriptType.PowerShell when OperatingSystem.IsWindows() => new WindowsPowerShellProcessLauncher(),
             ScriptType.PowerShell => new PwshCoreProcessLauncher(),
             ScriptType.Bash => new BashProcessLauncher(),
             _ => throw new NotSupportedException(
