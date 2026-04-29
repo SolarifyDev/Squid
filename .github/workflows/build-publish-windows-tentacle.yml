@@ -1,0 +1,226 @@
+name: Build & Publish Windows Tentacle
+
+# P1-Phase12.E.0 — companion to build-publish-linux-tentacle.yml. Produces
+# self-contained .zip archives for win-x64 + win-arm64 and uploads them to
+# GitHub Releases on tag pushes. Mirrors the Linux pipeline shape (GitVersion
+# → matrix publish → release upload) but drops Docker (Windows base images are
+# 6+ GB and there's no demand for "Tentacle in Windows container" today —
+# defer to a follow-up if that ever changes).
+#
+# Why .zip and not .msi: per Phase 12.E analysis, Octopus's MSI is essentially
+# a thin file-extract wrapper + Add/Remove Programs entry; the real work is
+# done post-install via `Tentacle.exe service --install`. Squid already has
+# the equivalent via Phase-12.C (`squid-tentacle service install` → sc.exe).
+# A self-contained .zip + install-tentacle.ps1 covers the same operator
+# scenarios (manual install, scripted bootstrap, in-UI upgrade dispatch) at a
+# fraction of the build complexity (no WiX toolset, no windows-latest runner,
+# no Authenticode signing prerequisite). MSI is deferred to Phase 12.E.4 if a
+# real operator asks for SCCM/GPO mass-deploy.
+#
+# Why ubuntu-latest cross-compile instead of windows-latest: Windows GHA
+# runners are billed at 2× the Linux rate. Cross-compiling .NET 9 self-contained
+# from Linux → win-x64/win-arm64 is officially supported and produces
+# bit-identical output to a native Windows publish. The Windows-specific work
+# (sc.exe / WindowsServiceHost / WindowsPowerShell) lives in the agent runtime
+# and is exercised by the existing tentacle-windows-e2e.yml workflow on
+# windows-latest — not by the build pipeline.
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for the zip archives (overrides auto-generated tag)'
+        required: false
+
+permissions:
+  contents: write
+
+# Serialize per-ref so a "push main" + "push tag" race on the same commit
+# can't double-upload to the same Release. Same defence as the Linux workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SHA: ${{ github.sha }}
+
+jobs:
+  # ── Step 1: Resolve version tag via GitVersion ─────────────────────────
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
+          echo "Checkout SHA verified: $ACTUAL"
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: '6.x'
+
+      - name: Run GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+
+      - name: Generate version tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GITVERSION_FULL: ${{ steps.gitversion.outputs.fullSemVer }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            RAW="$INPUT_VERSION"
+          else
+            RAW="$GITVERSION_FULL"
+          fi
+          # `+` is valid in semver build metadata but breaks Windows zip
+          # filenames on some Explorer / archive tools. Same `+ → -` rewrite
+          # the Linux pipeline does for Docker tag compatibility.
+          TAG="${RAW//+/-}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  # ── Step 2: Build self-contained binaries → .zip ───────────────────────
+  build-binary:
+    runs-on: ubuntu-latest
+    needs: resolve-tag
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            arch_label: x64
+          # Phase-12.E.0 ships ARM64 from day 1 even though Octopus has no
+          # Windows ARM build. Linux side already supports arm64; Windows on
+          # ARM (Surface Pro X, Azure Dpsv5/Eps ARM VMs, AWS Graviton with
+          # Windows preview) is small but growing, and self-contained .NET 9
+          # cross-compile costs zero extra CI time vs x64 alone.
+          - rid: win-arm64
+            arch_label: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      # Self-contained PublishSingleFile=true produces a single Squid.Tentacle.exe
+      # that bundles the .NET 9 runtime + all dependencies. No prerequisite on
+      # the operator's machine — matches the Linux self-contained discipline.
+      - name: Publish Squid.Tentacle (self-contained)
+        run: |
+          dotnet publish src/Squid.Tentacle/Squid.Tentacle.csproj \
+            -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:Version="${{ needs.resolve-tag.outputs.image_tag }}" \
+            -o dist/${{ matrix.rid }}
+
+      # Calamari ships in the same archive as Tentacle (the agent spawns it
+      # for "Run a Script" steps). Same dual-binary layout as the Linux tarball.
+      - name: Publish Squid.Calamari (self-contained)
+        run: |
+          dotnet publish src/Squid.Calamari/Squid.Calamari.csproj \
+            -c Release -r ${{ matrix.rid }} --self-contained true \
+            -o dist/${{ matrix.rid }}
+
+      # Use `zip -r -q` (ubuntu pre-installs zip). The archive's interior
+      # layout is FLAT — install-tentacle.ps1 unzips with Expand-Archive
+      # directly into the target install dir without unwrapping a top-level
+      # folder. Matches install-tentacle.sh's `tar xzf ... -C $INSTALL_DIR`.
+      - name: Create .zip archive
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
+        run: |
+          cd dist/${{ matrix.rid }}
+          zip -r -q "../squid-tentacle-${IMAGE_TAG}-${{ matrix.rid }}.zip" .
+          cd ..
+          # Also produce an unversioned filename so the install-tentacle.ps1
+          # `latest` path can resolve via GitHub's /releases/latest/download.
+          cp "squid-tentacle-${IMAGE_TAG}-${{ matrix.rid }}.zip" \
+             "squid-tentacle-${{ matrix.rid }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: squid-tentacle-${{ matrix.rid }}
+          path: dist/squid-tentacle-*${{ matrix.rid }}.zip
+
+  # ── Step 3: Upload .zip to GitHub Releases (tag-only) ─────────────────
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, build-binary]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: squid-tentacle-*
+          merge-multiple: true
+
+      # Re-uses the same Release object the Linux workflow creates for the
+      # SAME tag. softprops/action-gh-release with append behaviour: if the
+      # Release exists, the new files are added; if not, it's created. So
+      # operators end up with one Release per version containing BOTH
+      # Linux tar.gz AND Windows zip files — the canonical "this is what
+      # ships" listing.
+      - name: Create / Amend GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Squid Tentacle v${{ needs.resolve-tag.outputs.image_tag }}
+          prerelease: ${{ contains(needs.resolve-tag.outputs.image_tag, '-') }}
+          files: artifacts/squid-tentacle-*.zip
+          generate_release_notes: false
+          append_body: true
+          body: |
+
+            ### Windows Tentacle v${{ needs.resolve-tag.outputs.image_tag }}
+
+            Self-contained Windows deployment agent binaries (x64 + arm64).
+            No .NET runtime prerequisite — the .NET 9 runtime is bundled.
+
+            **One-liner (latest):**
+            ```powershell
+            irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.ps1 | iex
+            ```
+
+            **Specific version:**
+            ```powershell
+            & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.ps1))) -Version ${{ needs.resolve-tag.outputs.image_tag }}
+            ```
+
+            | Platform | Architecture | Archive |
+            |----------|-------------|---------|
+            | Windows | x64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-win-x64.zip` |
+            | Windows | arm64 | `squid-tentacle-${{ needs.resolve-tag.outputs.image_tag }}-win-arm64.zip` |
