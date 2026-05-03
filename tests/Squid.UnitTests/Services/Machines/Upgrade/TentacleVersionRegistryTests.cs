@@ -26,6 +26,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
 {
     private readonly string _previousLinuxOverride;
     private readonly string _previousK8sOverride;
+    private readonly string _previousWindowsOverride;
 
     public TentacleVersionRegistryTests()
     {
@@ -33,15 +34,18 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         // sibling tests that may share the env. Restored in Dispose().
         _previousLinuxOverride = Environment.GetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar);
         _previousK8sOverride = Environment.GetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar);
+        _previousWindowsOverride = Environment.GetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar);
 
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, null);
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar, null);
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, null);
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, _previousLinuxOverride);
         Environment.SetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar, _previousK8sOverride);
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, _previousWindowsOverride);
     }
 
     [Fact]
@@ -608,5 +612,202 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var secondResult = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
         secondResult.ShouldBe("1.4.0", "second attempt must perform a fresh query, not return cached failure");
         attemptCount.ShouldBe(2);
+    }
+
+    // ========================================================================
+    // P1-Phase12.E.1 — Windows version source (separate from Linux/K8s).
+    //
+    // Why a separate method instead of a new CommunicationStyle case in
+    // GetLatestVersionAsync(style):
+    //   - Windows tentacles use the SAME CommunicationStyle values as Linux
+    //     (TentaclePolling / TentacleListening) because they speak the same
+    //     Halibut wire protocol. So `style` alone can't differentiate.
+    //   - Phase 12.E.3 will add OS-aware strategy resolution; until then,
+    //     keeping the Windows version source as a separate explicit method
+    //     side-steps the multi-strategy "exactly one owner" invariant in
+    //     MachineUpgradeService.ResolveStrategy.
+    //
+    // GitHub Releases is the source-of-truth (not Docker Hub) because Phase
+    // 12.E.0 ships .zip artefacts via GitHub Releases, with no Windows Docker
+    // image planned (operator demand currently zero — Windows base images
+    // are 6+ GB and the agent doesn't ship in a container).
+    // ========================================================================
+
+    [Fact]
+    public void OverrideEnvVar_WindowsConstantNamePinned()
+    {
+        // Renaming this constant breaks every air-gapped / canary deployment
+        // that pinned a Windows tentacle version via env. Hard-pin in test —
+        // mirrors the LinuxOverrideEnvVar / K8sOverrideEnvVar discipline.
+        TentacleVersionRegistry.WindowsOverrideEnvVar.ShouldBe("SQUID_TARGET_WINDOWS_TENTACLE_VERSION");
+    }
+
+    [Fact]
+    public void GitHubReleasesUrl_ConstantPinned()
+    {
+        // The GitHub Releases REST URL pattern is hard-pinned because it
+        // determines which repo's "latest" release is used as the Windows
+        // version source-of-truth. Drift here would silently retarget
+        // operators to the wrong repo's releases (e.g. a fork) without any
+        // test failure on the implementation side.
+        //
+        // The /releases/latest endpoint returns the highest non-prerelease
+        // tag — exactly what we want for Windows automatic version
+        // resolution. To get prereleases too, operators set the env var
+        // override (WindowsOverrideEnvVar) and pin a specific version.
+        TentacleVersionRegistry.WindowsLatestReleaseUrl.ShouldBe(
+            "https://api.github.com/repos/SolarifyDev/Squid/releases/latest");
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_WithEnvOverride_ReturnsOverrideValueWithoutHttp()
+    {
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, "1.6.0");
+
+        // Pass null HTTP factory — proves the override short-circuits BEFORE
+        // any network IO (otherwise the registry would NPE on the HTTP path).
+        // Same defence as the Linux/K8s override tests.
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBe("1.6.0");
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_OverrideTrimmed_StripsWhitespace()
+    {
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, "  1.6.0  ");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBe("1.6.0");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetLatestWindowsVersionAsync_BlankOverride_FallsThroughToHttp(string blankValue)
+    {
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, blankValue);
+
+        // No HTTP factory + blank override → registry's live-query path is
+        // disabled → method falls through to empty (graceful degrade).
+        //
+        // The behaviour pinned by this Theory: ResolveOverride uses
+        // IsNullOrWhiteSpace as the "skip override" predicate, so both ""
+        // and "   " fall through to the next resolution step rather than
+        // being returned verbatim as a "version" of the empty/whitespace
+        // value. The Linux side already handles this for the style-keyed
+        // path; Windows must too. With no HTTP factory + override skipped,
+        // the only remaining step is the empty-string fallback.
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        // For whitespace ("   "): empty != "   " so this also implicitly
+        // asserts the override didn't return the whitespace verbatim.
+        // For empty (""): empty == "" — but the SAME pass is reached, so
+        // the relevant invariant (empty fallback, no crash) holds either way.
+        version.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_GitHubApi_ReturnsTagNameFromLatestRelease()
+    {
+        // Real /releases/latest response shape (trimmed):
+        //   {"url":"...","tag_name":"v1.6.0","name":"Squid Tentacle v1.6.0",...}
+        // The `tag_name` field is what we extract. Leading "v" is stripped
+        // because Squid GitHub Releases use both "v1.6.0" and "1.6.0" tag
+        // styles depending on tagger (and the install-tentacle.sh fallback
+        // chain in Phase 12.E.0 normalises both forms).
+        var responses = new Dictionary<string, string>
+        {
+            [TentacleVersionRegistry.WindowsLatestReleaseUrl] =
+                """{"tag_name":"v1.6.0","name":"Squid Tentacle v1.6.0","prerelease":false}"""
+        };
+        var (factory, handler) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBe("1.6.0", "leading 'v' must be stripped to match install-tentacle.ps1's URL pattern");
+        handler.RequestedUrls.Count.ShouldBe(1);
+        handler.RequestedUrls[0].ShouldBe(TentacleVersionRegistry.WindowsLatestReleaseUrl);
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_GitHubApi_TagWithoutVPrefix_PassedThrough()
+    {
+        // GitHub allows arbitrary tag names; not all of them are v-prefixed.
+        // Squid's actual Linux tag history uses both forms; the install
+        // script handles both. Registry must too.
+        var responses = new Dictionary<string, string>
+        {
+            [TentacleVersionRegistry.WindowsLatestReleaseUrl] =
+                """{"tag_name":"1.6.0","name":"v1.6.0","prerelease":false}"""
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBe("1.6.0");
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_GitHubApi_NotFound_ReturnsEmpty()
+    {
+        // Response 404 — no scripted entry → handler returns NotFound. Empty
+        // GitHub release history is treated as "no version available" rather
+        // than a hard error; the orchestrator surfaces an actionable
+        // "could not resolve version" message to the operator.
+        var (factory, _) = BuildScriptedFactory(new Dictionary<string, string>());
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_GitHubApi_MalformedJson_ReturnsEmptyWithoutThrow()
+    {
+        // Malformed payload — registry must catch and degrade gracefully.
+        // Mirrors the Linux side's "Docker Hub returned junk → log + empty"
+        // pattern so the upgrade pipeline never crashes on a transient
+        // upstream content-type / body issue.
+        var responses = new Dictionary<string, string>
+        {
+            [TentacleVersionRegistry.WindowsLatestReleaseUrl] = "<!DOCTYPE html><html>not json</html>"
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetLatestWindowsVersionAsync_GitHubApi_MissingTagNameField_ReturnsEmpty()
+    {
+        // Defensive: a bug or schema drift on GitHub's side could remove the
+        // tag_name field from the payload. Registry must NOT throw — must
+        // degrade to empty and let the orchestrator render the "could not
+        // resolve" message.
+        var responses = new Dictionary<string, string>
+        {
+            [TentacleVersionRegistry.WindowsLatestReleaseUrl] =
+                """{"name":"Squid Tentacle v1.6.0","prerelease":false}"""
+        };
+        var (factory, _) = BuildScriptedFactory(responses);
+        var registry = new TentacleVersionRegistry(factory.Object);
+
+        var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
+
+        version.ShouldBeEmpty();
     }
 }
