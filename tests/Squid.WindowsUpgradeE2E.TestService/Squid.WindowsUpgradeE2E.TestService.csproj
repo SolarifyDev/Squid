@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    P1-Phase12.E.7.A-1.a — minimal Windows service binary used as the target
+    of the A-1 fixture + A-2 upgrade E2E. Exists ONLY because the upgrade
+    pipeline's Phase B (Stop-Service / Move-Item / Start-Service / healthz)
+    needs a REAL Windows service that responds to SCM commands — `cmd.exe`
+    or `pwsh.exe` registered via sc.exe doesn't speak the service protocol
+    and would fail at start with SCM timeout, blocking the swap test.
+
+    Single concern: be a proper Windows service. Reads `version.txt` from
+    its own directory on Start, writes that version into a marker file at
+    a known path so tests can prove "the service that's running NOW reads
+    its version from the on-disk file at INSTALL_DIR" — which is the core
+    invariant the upgrade pipeline depends on.
+
+    Built into a separate exe project (not bundled into Squid.WindowsUpgradeE2ETests)
+    because:
+      • Test projects produce DLLs; service binaries must be EXEs.
+      • The fixture needs the exe path; project-reference + ReferenceOutputAssembly=false
+        forces the build but lets the fixture discover the path via the
+        published location (see WindowsServiceFixture.cs).
+      • Keeps the test-only service binary OUT of any production assembly
+        path so it can't accidentally ship.
+
+    Windows-only: ServiceBase + System.ServiceProcess.ServiceController are
+    [SupportedOSPlatform("windows")] APIs. Building on non-Windows produces
+    the binary fine (cross-compile via -r win-x64); RUNNING it requires
+    Windows. Tests that need the running service no-op-skip on non-Windows
+    via the fixture's IsWindows guard, mirroring the
+    Squid.WindowsUpgradeE2ETests pattern.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Pin the assembly name so the fixture finds the exe by a predictable
+         filename rather than the csproj name (which a future rename of
+         this csproj would break). -->
+    <AssemblyName>SquidUpgradeE2ETestService</AssemblyName>
+    <RootNamespace>Squid.WindowsUpgradeE2E.TestService</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

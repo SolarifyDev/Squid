@@ -19,4 +19,15 @@ public static class WindowsUpgradeE2ECategories
     /// in a SYSTEM-identity process tree separate from the wrapper's own.
     /// </summary>
     public const string Wrapper = "WindowsUpgradeWrapperE2E";
+
+    /// <summary>
+    /// P1-Phase12.E.7 — E2E coverage for the Phase B physical mechanics
+    /// (Stop-Service / Move-Item swap / Start-Service / version verify)
+    /// against a real <c>sc.exe</c>-installed Windows service. Uses
+    /// <c>WindowsServiceFixture</c> to install + start + cleanup the
+    /// minimal <c>SquidUpgradeE2ETestService</c> binary so the upgrade
+    /// pipeline's filesystem-swap logic runs against a real running
+    /// service, not a mock.
+    /// </summary>
+    public const string Service = "WindowsUpgradeServiceE2E";
 }

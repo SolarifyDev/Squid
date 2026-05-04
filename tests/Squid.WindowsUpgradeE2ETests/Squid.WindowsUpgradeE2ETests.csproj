@@ -50,6 +50,17 @@
     <ProjectReference Include="..\..\src\Squid.Tentacle\Squid.Tentacle.csproj" />
     <!-- Cross-process contracts: AgentOperatingSystems const class -->
     <ProjectReference Include="..\..\src\Squid.Message\Squid.Message.csproj" />
+    <!--
+      P1-Phase12.E.7.A-1.b — test-service binary used by the
+      WindowsServiceFixture for full upgrade E2E. ReferenceOutputAssembly=false
+      because we don't want to LINK the test-service exe into our test dll
+      (it's a separate runtime artifact, not a library). Project-reference
+      still forces the build, ensuring the exe is up-to-date by the time
+      tests run.
+    -->
+    <ProjectReference Include="..\Squid.WindowsUpgradeE2E.TestService\Squid.WindowsUpgradeE2E.TestService.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>
