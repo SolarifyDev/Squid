@@ -57,14 +57,31 @@
 #   2   — download failure (zip method only)
 #   3   — missing binary in extracted archive
 #   5   — insufficient disk space
-#   7   — SHA256 mismatch
+#   7   — SHA256 mismatch (only when EXPECTED_SHA256 is non-empty)
 #   12  — Windows version too old (PowerShell 5.0+ required, Server 2016+)
 #   13  — failed to acquire upgrade lock (concurrent upgrade in progress)
 #   14  — no install method succeeded (zip + future chocolatey/MSI all skipped or failed)
+#   15  — insufficient privileges (must run as Administrator or LocalSystem)
 # ==============================================================================
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# ── Identity gate (Phase 12.E.4) ──────────────────────────────────────────────
+# The Phase 12.E.4 WindowsTentacleUpgradeStrategy wraps invocation in a
+# Task Scheduler one-shot task with `/RU SYSTEM` — equivalent to Linux's
+# `systemd-run --scope` running as root. If we see a non-elevated identity
+# here, the wrapper failed silently and Phase B's `Stop-Service` /
+# `Move-Item` will fail at a confusing layer. Fail fast with a clear message.
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+$isElevated = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+$isSystem = $identity.IsSystem
+
+if (-not $isElevated -and -not $isSystem) {
+    Write-Host "::error:: Upgrade script must run as Administrator or LocalSystem (current identity: $($identity.Name), elevated=$isElevated, system=$isSystem). The Phase 12.E.4 strategy schedules this script via Task Scheduler with /RU SYSTEM; if you see this error the wrapper did not detach correctly."
+    exit 15
+}
 
 # ── Arch detection MUST run before DOWNLOAD_URL is consumed ───────────────────
 # $env:PROCESSOR_ARCHITECTURE on a 64-bit OS is "AMD64" (x64) or "ARM64".
@@ -202,15 +219,27 @@ try {
                 exit 2
             }
 
-            Append-UpgradeLog "[upgrade-method:zip] Verifying SHA256"
+            # SHA256 verification is skipped when EXPECTED_SHA256 is empty —
+            # mirrors the Linux template's "Phase 1 default: release pipeline
+            # does not yet publish per-archive hashes" stance. Without this
+            # guard, the strategy substituting an empty placeholder would
+            # produce $expectedSha="" and `$actualSha -ne ""` is always true,
+            # so EVERY upgrade would exit 7. When the build pipeline starts
+            # publishing hashes, the strategy's substitution will populate a
+            # non-empty value and verification activates with no template change.
+            if ([string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
+                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — skipping verification (release pipeline does not yet publish per-archive hashes)"
+            } else {
+                Append-UpgradeLog "[upgrade-method:zip] Verifying SHA256"
 
-            $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
-            $expectedSha = $EXPECTED_SHA256.ToLower()
+                $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+                $expectedSha = $EXPECTED_SHA256.ToLower()
 
-            if ($actualSha -ne $expectedSha) {
-                Append-UpgradeLog "[upgrade-method:zip] SHA256 mismatch: expected $expectedSha, got $actualSha"
-                Write-UpgradeStatus -Status 'FAILED' -InstallMethod 'zip' -Detail "SHA256 mismatch (expected $expectedSha, got $actualSha)" -ExitCode 7
-                exit 7
+                if ($actualSha -ne $expectedSha) {
+                    Append-UpgradeLog "[upgrade-method:zip] SHA256 mismatch: expected $expectedSha, got $actualSha"
+                    Write-UpgradeStatus -Status 'FAILED' -InstallMethod 'zip' -Detail "SHA256 mismatch (expected $expectedSha, got $actualSha)" -ExitCode 7
+                    exit 7
+                }
             }
 
             $extractDir = Join-Path $stagingDir 'extract'
@@ -276,7 +305,15 @@ try {
 
     # Backup current install (zip method requires explicit swap)
     if ($INSTALL_METHOD -eq 'zip') {
-        $bakDir = "$INSTALL_DIR.bak"
+        # Robust .bak sibling path: Split-Path normalises trailing separators
+        # so a future operator setting INSTALL_DIR with a trailing backslash
+        # ("C:\Squid\") doesn't produce a hidden ".bak" leaf inside the dir.
+        # Linux side doesn't have this concern (no spaces, no trailing-slash
+        # convention drift) — Windows ProgramFiles paths often round-trip
+        # through clipboards/CLIs that re-add separators, so guard for it.
+        $installParent = Split-Path -Parent $INSTALL_DIR
+        $installLeaf = Split-Path -Leaf $INSTALL_DIR
+        $bakDir = Join-Path $installParent "$installLeaf.bak"
 
         if (Test-Path $bakDir) {
             Remove-Item -Path $bakDir -Recurse -Force
@@ -287,19 +324,22 @@ try {
             Move-Item -Path $INSTALL_DIR -Destination $bakDir -Force
         }
 
-        $extractedDir = Get-ChildItem -Path (Join-Path $env:TEMP 'squid-tentacle-staging-*') -Directory |
-                        Sort-Object LastWriteTimeUtc -Descending |
-                        Select-Object -First 1
-
-        if ($null -eq $extractedDir) {
-            Append-UpgradeLog "::error:: Phase B can't find the Phase A staging dir"
-            Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod 'zip' -Detail "Staging dir lost between phases" -ExitCode 14
+        # $extractDir was set in Phase A's zip block at the same scope.
+        # Using the variable directly (vs. a Get-ChildItem LastWriteTime
+        # search) avoids a race when two operators dispatch concurrent
+        # upgrades to different versions: the earlier dispatch's staging
+        # dir lingers in %TEMP% until Phase B cleanup, and a LastWriteTime
+        # winner could be the wrong version. Phase A's per-host lock at
+        # line ~145 already prevents the truly concurrent case, but reading
+        # the in-scope variable removes any remaining ambiguity.
+        if (-not (Test-Path $extractDir)) {
+            Append-UpgradeLog "::error:: Phase B can't find Phase A staging dir at expected path: $extractDir"
+            Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod 'zip' -Detail "Staging dir disappeared between phases: $extractDir" -ExitCode 14
             exit 14
         }
 
-        $extractRoot = Join-Path $extractedDir.FullName 'extract'
-        Append-UpgradeLog "[upgrade] Moving $extractRoot → $INSTALL_DIR"
-        Move-Item -Path $extractRoot -Destination $INSTALL_DIR -Force
+        Append-UpgradeLog "[upgrade] Moving $extractDir → $INSTALL_DIR"
+        Move-Item -Path $extractDir -Destination $INSTALL_DIR -Force
 
         Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Binary swapped — restarting service"
     }

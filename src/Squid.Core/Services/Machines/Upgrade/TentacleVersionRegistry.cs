@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Http;
 using Squid.Message.Enums;
 
@@ -65,8 +66,20 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<string> GetLatestVersionAsync(string communicationStyle, CancellationToken ct)
+    public async Task<string> GetLatestVersionAsync(string communicationStyle, MachineRuntimeCapabilities capabilities, CancellationToken ct)
     {
+        // P1-Phase12.E.4 — OS-aware routing for Windows tentacles. Halibut
+        // wire-protocol styles (TentaclePolling / TentacleListening) are
+        // shared between Linux + Windows; the agent-reported OS in
+        // capabilities is what differentiates the version SOURCE: Linux
+        // Docker Hub for Linux tentacles, GitHub Releases for Windows.
+        // Cold cache (empty Os) → Linux source as historical default,
+        // matching the strategy resolver's same default in
+        // LinuxTentacleUpgradeStrategy.CanHandle. K8s tentacles ignore the
+        // OS axis (pods are always Linux from the agent's perspective).
+        if (IsWindowsTentacle(communicationStyle, capabilities))
+            return await GetLatestWindowsVersionAsync(ct).ConfigureAwait(false);
+
         var source = ResolveSource(communicationStyle);
 
         if (source == null) return WarnUnknownStyle(communicationStyle);
@@ -78,30 +91,38 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
             ?? WarnExhausted(communicationStyle);
     }
 
+    private static bool IsWindowsTentacle(string communicationStyle, MachineRuntimeCapabilities capabilities)
+    {
+        var isTentacleStyle = communicationStyle == nameof(CommunicationStyle.TentaclePolling)
+                           || communicationStyle == nameof(CommunicationStyle.TentacleListening);
+
+        if (!isTentacleStyle) return false;
+
+        if (capabilities == null) return false;
+
+        return capabilities.Os.Equals("Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
-    /// P1-Phase12.E.1 — Windows tentacle version source. Separate from
-    /// <see cref="GetLatestVersionAsync"/> because Windows tentacles use
-    /// the SAME <c>CommunicationStyle</c> values as Linux (<c>TentaclePolling</c> /
-    /// <c>TentacleListening</c>) — so the style alone can't differentiate.
-    /// Phase 12.E.3 will add OS-aware strategy resolution; until then, this
-    /// dedicated method side-steps the multi-strategy "exactly one owner"
-    /// invariant in <c>MachineUpgradeService.ResolveStrategy</c>.
+    /// Windows-specific resolution path: env override → live GitHub Releases →
+    /// empty + warning. <c>internal</c> so the existing Phase-12.E.1
+    /// behavioural unit tests can keep calling it directly without losing
+    /// coverage; the production OS-aware dispatch lives in
+    /// <see cref="GetLatestVersionAsync"/> above.
     ///
-    /// <para>Resolution chain (first non-empty wins):</para>
-    /// <list type="number">
-    ///   <item>Env var override (<see cref="WindowsOverrideEnvVar"/>) — operator escape hatch.</item>
-    ///   <item>Live GitHub Releases query of <see cref="WindowsLatestReleaseUrl"/>.</item>
-    ///   <item>Empty + warning. Caller surfaces the gap to the operator.</item>
-    /// </list>
+    /// <para><b>Why GitHub Releases not Docker Hub:</b> Phase 12.E.0 ships
+    /// the Windows tentacle as a <c>.zip</c> attached to GitHub Releases
+    /// (no Windows Docker image planned — Windows base images are 6+ GB,
+    /// container deploys aren't a Windows-tentacle target audience). The
+    /// <c>/releases/latest</c> endpoint excludes prereleases by design;
+    /// operators wanting prerelease channels set
+    /// <see cref="WindowsOverrideEnvVar"/> to a specific version.</para>
     ///
-    /// <para>No TTL cache yet (deferred to Phase 12.E.3 when the
-    /// <c>WindowsTentacleUpgradeStrategy</c> call site exists). Adding a
-    /// cache without a caller is over-engineering: the GitHub /releases/latest
-    /// endpoint serves a CDN-cached body and 60-req/hr unauthenticated
-    /// rate limit is plenty for Phase 12.E.1's "interface only, not yet
-    /// dispatched" scope.</para>
+    /// <para><b>No TTL cache (yet):</b> GitHub serves a CDN-cached body
+    /// and 60-req/hr unauthenticated rate limit is plenty until usage
+    /// climbs. Adding a cache without sustained pressure would be premature.</para>
     /// </summary>
-    public async Task<string> GetLatestWindowsVersionAsync(CancellationToken ct)
+    internal async Task<string> GetLatestWindowsVersionAsync(CancellationToken ct)
     {
         var overrideValue = ResolveOverride(WindowsOverrideEnvVar);
 

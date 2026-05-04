@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using Moq.Protected;
 using Squid.Core.DependencyInjection;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Http;
 using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Enums;
@@ -73,7 +74,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         // any network IO (otherwise the registry would NPE on the HTTP path).
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
-        var version = await registry.GetLatestVersionAsync(style, CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(style, MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe(expected);
     }
@@ -85,7 +86,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
 
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.KubernetesAgent), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.KubernetesAgent), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("2.0.0-canary.1");
     }
@@ -97,7 +98,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
 
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.4.2");
     }
@@ -110,7 +111,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         // response with style name in the detail.
         var registry = new TentacleVersionRegistry(httpClientFactory: null);
 
-        var version = await registry.GetLatestVersionAsync("Ssh", CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync("Ssh", MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBeEmpty();
     }
@@ -204,7 +205,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, handler) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.4.1");
         handler.RequestedUrls.Count.ShouldBe(1, "no `next` link → single HTTP call");
@@ -229,7 +230,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, handler) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.5.0", "must scan all pages, not stop at page 1");
         handler.RequestedUrls.Count.ShouldBe(3);
@@ -255,7 +256,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, handler) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         handler.RequestedUrls.Count.ShouldBe(TentacleVersionRegistry.MaxPagesScanned,
             $"must cap at {TentacleVersionRegistry.MaxPagesScanned} pages even if `next` keeps pointing further");
@@ -278,7 +279,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, handler) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.KubernetesAgent), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.KubernetesAgent), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("2.1.0");
         handler.RequestedUrls.ShouldAllBe(u => u.Contains("/squidcd/squid-tentacle/"),
@@ -299,7 +300,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, handler) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.4.0");
         handler.RequestedUrls.ShouldAllBe(u => u.Contains("squid-tentacle-linux"));
@@ -318,7 +319,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        (await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None))
+        (await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None))
             .ShouldBe("1.4.0");
     }
 
@@ -341,7 +342,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var registry = new TentacleVersionRegistry(factory.Object);
 
         // Must not throw; empty return is fine.
-        var result = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var result = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
         result.ShouldBeEmpty();
     }
 
@@ -354,7 +355,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(new Dictionary<string, string>());  // every URL → 404
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        (await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None))
+        (await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None))
             .ShouldBeEmpty();
     }
 
@@ -392,7 +393,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.3.5",
             "auto-pick must skip pre-release — even though 1.4.0-21 sorts higher by semver, its tarball doesn't exist on GitHub Releases");
@@ -412,7 +413,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBeEmpty(
             "no stable tags available → return empty, not a pre-release pick. Orchestrator surfaces this as Failed with operator guidance to set the version env.");
@@ -433,7 +434,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.4.0",
             "1.5.0-alpha.1 sorts higher by semver but is pre-release → skipped. 1.4.0 is the highest stable.");
@@ -455,7 +456,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var (factory, _) = BuildScriptedFactory(responses);
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var version = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.4.0+sha.deadbeef",
             "build metadata does NOT make a version pre-release per semver §10 — must still be eligible for auto-pick");
@@ -511,7 +512,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
 
         // Fire 50 concurrent calls; await all.
         var tasks = Enumerable.Range(0, 50).Select(_ =>
-            registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None)).ToArray();
+            registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None)).ToArray();
 
         var results = await Task.WhenAll(tasks);
 
@@ -537,8 +538,8 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var registry = new TentacleVersionRegistry(factory.Object);
 
         using var cts = new CancellationTokenSource();
-        var cancellable = registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), cts.Token);
-        var sibling = registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var cancellable = registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, cts.Token);
+        var sibling = registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         cts.Cancel();   // kill caller A while task is still inflight
 
@@ -563,9 +564,9 @@ public sealed class TentacleVersionRegistryTests : IDisposable
             .Returns(() => new HttpClient(handler, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(30) });
         var registry = new TentacleVersionRegistry(factory.Object);
 
-        await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
         TentacleVersionRegistry.ResetCacheForTests();   // simulate TTL expiry / restart between
-        await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         handler.CallCount.ShouldBe(2,
             "second cold-cache request after in-flight slot release must perform a fresh query, not see a stale completed Task");
@@ -605,11 +606,11 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var registry = new TentacleVersionRegistry(factory.Object);
 
         // First call: failure → registry catches and returns empty (graceful degrade)
-        var firstResult = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var firstResult = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
         firstResult.ShouldBeEmpty("first attempt failed → registry returned empty");
 
         // Second call: must NOT be stuck on the faulted Task; should re-query and succeed
-        var secondResult = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), CancellationToken.None);
+        var secondResult = await registry.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
         secondResult.ShouldBe("1.4.0", "second attempt must perform a fresh query, not return cached failure");
         attemptCount.ShouldBe(2);
     }
@@ -809,5 +810,114 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         var version = await registry.GetLatestWindowsVersionAsync(CancellationToken.None);
 
         version.ShouldBeEmpty();
+    }
+
+    // ========================================================================
+    // P1-Phase12.E.4 — OS-aware routing through the unified public API.
+    // The widened GetLatestVersionAsync(style, capabilities, ct) must route
+    // Tentacle-style + Windows-OS callers to the GitHub Releases path,
+    // and all other (style, OS) tuples to the legacy Docker Hub path.
+    // Without this routing, a Windows agent's auto-version-resolution would
+    // hit Docker Hub's `squidcd/squid-tentacle-linux` repo and either return
+    // a Linux version (URL would 404 against GitHub Releases zip) or empty
+    // (silent operator confusion).
+    // ========================================================================
+
+    [Fact]
+    public async Task GetLatestVersionAsync_TentacleStyleWithWindowsOs_RoutesToGitHubReleases_NotDockerHub()
+    {
+        // The unified public method must dispatch by (style, OS) tuple. With
+        // capabilities.Os = "Windows", the style isn't enough to pick the
+        // version source — we have to hit GitHub Releases (where the .zip
+        // ships), not Docker Hub (where only the Linux binary tags live).
+        // Override env var pre-empts the live GitHub call so this test
+        // doesn't actually need the network.
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, "1.6.0-windows");
+        // Set the LINUX env var to a different value to PROVE the routing
+        // didn't fall through to the Linux path.
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, "1.6.0-linux");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+        var windowsCaps = new MachineRuntimeCapabilities { Os = "Windows" };
+
+        var version = await registry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.TentaclePolling), windowsCaps, CancellationToken.None);
+
+        version.ShouldBe("1.6.0-windows",
+            "Windows-OS Tentacle must route to GitHub Releases / WindowsOverrideEnvVar — NOT to Linux Docker Hub");
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_TentacleStyleWithLinuxOs_RoutesToDockerHub_NotGitHub()
+    {
+        // Symmetry: explicit Linux OS must STAY on the Docker Hub path.
+        // Without this, Windows-routing would over-fire and break Linux
+        // upgrades that previously worked.
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, "1.6.0-linux");
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, "1.6.0-windows");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+        var linuxCaps = new MachineRuntimeCapabilities { Os = "Linux" };
+
+        var version = await registry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.TentaclePolling), linuxCaps, CancellationToken.None);
+
+        version.ShouldBe("1.6.0-linux",
+            "Linux-OS Tentacle must continue routing to Docker Hub / LinuxOverrideEnvVar");
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_TentacleStyleWithEmptyOs_RoutesToLinuxAsHistoricalDefault()
+    {
+        // Cold cache (capabilities.Os empty) preserves pre-Phase-12 behaviour:
+        // Linux strategy claims, Linux Docker Hub is the version source. This
+        // mirrors the OS-aware strategy resolver's same default and keeps
+        // existing Linux deployments working when the runtime cache hasn't
+        // populated yet.
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, "1.6.0-linux");
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.WindowsOverrideEnvVar, "1.6.0-windows");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+
+        var version = await registry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
+
+        version.ShouldBe("1.6.0-linux",
+            "cold-cache (empty Os) defaults to Linux Docker Hub — preserves pre-Phase-12 behaviour for the existing operator base");
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_KubernetesAgent_IgnoresOsCapability()
+    {
+        // K8s tentacles always run Linux from the agent's perspective; the
+        // OS axis is irrelevant. Mirror the strategy resolver's same
+        // capabilities-ignored shape (KubernetesAgentUpgradeStrategy.CanHandle
+        // doesn't read capabilities.Os).
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.K8sOverrideEnvVar, "1.6.0-k8s");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+        var windowsCaps = new MachineRuntimeCapabilities { Os = "Windows" };   // bogus from K8s POV
+
+        var version = await registry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.KubernetesAgent), windowsCaps, CancellationToken.None);
+
+        version.ShouldBe("1.6.0-k8s",
+            "K8s style must ignore OS capability — pods always run Linux from agent's perspective");
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_NullCapabilities_TreatedAsEmpty_NoNullRefException()
+    {
+        // Defensive: a future caller passing null capabilities (instead of
+        // MachineRuntimeCapabilities.Empty) must not NPE. Same fallback as
+        // empty Os → Linux Docker Hub.
+        Environment.SetEnvironmentVariable(TentacleVersionRegistry.LinuxOverrideEnvVar, "1.6.0-linux");
+
+        var registry = new TentacleVersionRegistry(httpClientFactory: null);
+
+        var version = await registry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.TentaclePolling), capabilities: null, CancellationToken.None);
+
+        version.ShouldBe("1.6.0-linux");
     }
 }
