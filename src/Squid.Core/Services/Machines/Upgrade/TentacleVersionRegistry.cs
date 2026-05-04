@@ -100,7 +100,12 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
 
         if (capabilities == null) return false;
 
-        return capabilities.Os.Equals("Windows", StringComparison.OrdinalIgnoreCase);
+        // P1-Phase12.E.5 — read via the centralized IsWindows property
+        // instead of an inline string comparison. Mirrors
+        // WindowsTentacleUpgradeStrategy.CanHandle so a constant rename
+        // can't desync routing across the strategy resolver and the
+        // version-source resolver.
+        return capabilities.IsWindows;
     }
 
     /// <summary>

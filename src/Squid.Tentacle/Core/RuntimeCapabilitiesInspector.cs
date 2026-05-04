@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Serilog;
+using Squid.Message.Constants;
 
 namespace Squid.Tentacle.Core;
 
@@ -38,10 +39,18 @@ public static class RuntimeCapabilitiesInspector
 
     private static string DetectOs()
     {
-        if (OperatingSystem.IsWindows()) return "Windows";
-        if (OperatingSystem.IsMacOS()) return "macOS";
-        if (OperatingSystem.IsLinux()) return "Linux";
-        return "Unknown";
+        // P1-Phase12.E.5 — these strings are the agent half of the
+        // cross-process OS-aware routing contract. The server side
+        // (MachineRuntimeCapabilities.IsWindows / IsLinux / IsMacOS /
+        // IsUnknown) reads them via Capabilities RPC. Use the centralized
+        // AgentOperatingSystems constants so a rename here surfaces as a
+        // build-time symbol-not-found on every consumer (server's strategy
+        // resolvers, version registry, scoped variable contributor) —
+        // rather than a runtime "no strategy registered" silent breakage.
+        if (OperatingSystem.IsWindows()) return AgentOperatingSystems.Windows;
+        if (OperatingSystem.IsMacOS()) return AgentOperatingSystems.MacOS;
+        if (OperatingSystem.IsLinux()) return AgentOperatingSystems.Linux;
+        return AgentOperatingSystems.Unknown;
     }
 
     private static List<string> DetectInstalledShells()
