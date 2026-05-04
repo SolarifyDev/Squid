@@ -185,22 +185,33 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Linux", true)]
-    [InlineData("linux", true)]    // case-insensitive match
+    [InlineData("Linux", true)]    // explicit Linux — claims
+    [InlineData("linux", true)]    // case-insensitive
     [InlineData("LINUX", true)]
-    [InlineData("macOS", true)]    // any non-Windows OS still claims (Linux strategy is the historical default)
-    [InlineData("", true)]         // cold cache (no health check yet) — preserves pre-Phase-12 default
-    [InlineData("Windows", false)] // P1-Phase12.E.3 — explicit Windows skip so WindowsTentacleUpgradeStrategy can claim
-    [InlineData("windows", false)] // case-insensitive
+    [InlineData("", true)]         // cold cache → IsUnknown=true → historical default (preserves pre-Phase-12 behaviour)
+    [InlineData("Unknown", true)]  // P1-Phase12.E.5 — agent's "Unknown" fallback (when IsWindows()/IsLinux()/IsMacOS() all false) routes to Linux historical default
+    [InlineData("Windows", false)] // explicit Windows skip — WindowsTentacleUpgradeStrategy claims
+    [InlineData("windows", false)]
     [InlineData("WINDOWS", false)]
-    public void CanHandle_RoutesByOs_SkipsWindowsAgents(string os, bool expected)
+    [InlineData("macOS", false)]   // P1-Phase12.E.5 — explicit-claim refactor: Linux NO LONGER claims macOS (was true under "non-Windows" predicate). A future MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS METHOD.
+    [InlineData("MACOS", false)]   // case-insensitive
+    [InlineData("FreeBSD", false)] // any unknown OS string (not in AgentOperatingSystems) → no Linux claim → resolver says "no strategy registered"; clear operator error vs silent install-tarball-on-FreeBSD attempt
+    public void CanHandle_RoutesByOs_ClaimsLinuxOrUnknownOnly(string os, bool expected)
     {
-        // P1-Phase12.E.3 — the OS-aware routing: Linux strategy claims
-        // TentaclePolling/Listening for any agent EXCEPT Windows. Windows
-        // agents fall through to WindowsTentacleUpgradeStrategy. The
-        // exactly-one-owner invariant in MachineUpgradeService.ResolveStrategy
-        // depends on this clean split — if both claim the same (style, OS)
-        // tuple, the resolver throws.
+        // P1-Phase12.E.5 — explicit-claim semantic (was "non-Windows"
+        // before): Linux strategy claims TentaclePolling/Listening for
+        // agents whose OS is Linux OR Unknown (cold cache / agent's
+        // "Unknown" fallback). It does NOT claim macOS / FreeBSD / any
+        // other OS — those get a clean "no strategy registered" resolver
+        // error until a dedicated strategy is added. The exactly-one-owner
+        // invariant in MachineUpgradeService.ResolveStrategy depends on
+        // this clean split.
+        //
+        // Key architectural property pinned: adding a future
+        // MacOSTentacleUpgradeStrategy plugs in via DI auto-registration
+        // WITHOUT MODIFYING THIS METHOD. The prior `!IsWindows` shape
+        // would have force-claimed macOS, requiring Linux to add
+        // `&& !IsMacOS` — open-closed violation.
         var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
         var capabilities = new MachineRuntimeCapabilities { Os = os };
 

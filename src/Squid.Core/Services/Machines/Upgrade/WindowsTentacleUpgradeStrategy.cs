@@ -134,14 +134,15 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
         if (!matchesStyle) return false;
 
-        return IsWindowsAgent(capabilities);
-    }
-
-    private static bool IsWindowsAgent(MachineRuntimeCapabilities capabilities)
-    {
+        // P1-Phase12.E.5 — read via the centralized IsWindows property
+        // instead of an inline string comparison. Same null-defensive
+        // semantic as before. The literal "Windows" string lives once in
+        // AgentOperatingSystems and the agent reports it from the same
+        // const — a rename surfaces as a build-time symbol-not-found,
+        // not a runtime "no strategy registered" silent breakage.
         if (capabilities == null) return false;
 
-        return capabilities.Os.Equals("Windows", StringComparison.OrdinalIgnoreCase);
+        return capabilities.IsWindows;
     }
 
     public async Task<MachineUpgradeOutcome> UpgradeAsync(Machine machine, string targetVersion, CancellationToken ct)

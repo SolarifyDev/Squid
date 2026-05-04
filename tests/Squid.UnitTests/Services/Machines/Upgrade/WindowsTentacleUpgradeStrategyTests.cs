@@ -85,7 +85,9 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [InlineData("WINDOWS", true)]
     [InlineData("Linux", false)]
     [InlineData("macOS", false)]
-    [InlineData("", false)]
+    [InlineData("", false)]                // cold cache → falls to Linux historical default, NOT Windows
+    [InlineData("Unknown", false)]         // P1-Phase12.E.5 — agent's "Unknown" fallback also falls to Linux, never Windows
+    [InlineData("FreeBSD", false)]         // any unrecognised OS → no Windows claim
     public void CanHandle_RoutesByOs_OnlyClaimsWindowsAgents(string os, bool expected)
     {
         var strategy = new WindowsTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
