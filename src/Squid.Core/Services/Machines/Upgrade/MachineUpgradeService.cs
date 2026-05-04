@@ -188,7 +188,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         if (strategy == null)
             return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.NotSupported, $"No upgrade strategy registered for CommunicationStyle '{style}'.");
 
-        var targetVersion = await ResolveTargetVersionAsync(command, style, ct).ConfigureAwait(false);
+        var targetVersion = await ResolveTargetVersionAsync(command, style, capabilities, ct).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(targetVersion)) return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.Failed, NoTargetVersionDetail());
 
@@ -254,7 +254,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         if (string.IsNullOrWhiteSpace(style) || ResolveStrategy(style, capabilities) == null)
             return string.Empty;
 
-        return await _versionRegistry.GetLatestVersionAsync(style, ct).ConfigureAwait(false) ?? string.Empty;
+        return await _versionRegistry.GetLatestVersionAsync(style, capabilities, ct).ConfigureAwait(false) ?? string.Empty;
     }
 
     /// <summary>
@@ -304,11 +304,11 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     // ── Resolution: target version, strategy ─────────────────────────────────
 
-    private async Task<string> ResolveTargetVersionAsync(UpgradeMachineCommand command, string style, CancellationToken ct)
+    private async Task<string> ResolveTargetVersionAsync(UpgradeMachineCommand command, string style, MachineRuntimeCapabilities capabilities, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(command.TargetVersion)) return command.TargetVersion.Trim();
 
-        return await _versionRegistry.GetLatestVersionAsync(style, ct).ConfigureAwait(false);
+        return await _versionRegistry.GetLatestVersionAsync(style, capabilities, ct).ConfigureAwait(false);
     }
 
     private IMachineUpgradeStrategy ResolveStrategy(string style, MachineRuntimeCapabilities capabilities)

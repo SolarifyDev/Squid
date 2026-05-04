@@ -35,7 +35,7 @@ public sealed class MachineUpgradeServiceTests
         // Default: registry returns 1.4.0 for every recognized style. Tests
         // that exercise the no-version path override on a per-test basis.
         _versionRegistry
-            .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("1.4.0");
 
         // P1-Phase12.E.3 — CanHandle widened to (style, capabilities).
@@ -85,7 +85,7 @@ public sealed class MachineUpgradeServiceTests
     public async Task UpgradeAsync_RegistryReturnsEmptyAndNoExplicitTarget_ReturnsFailedWithGuidance()
     {
         _versionRegistry
-            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(string.Empty);
         ArrangeMachine(id: 1, style: nameof(CommunicationStyle.TentaclePolling));
 
@@ -454,7 +454,7 @@ public sealed class MachineUpgradeServiceTests
         // NotSupported with the style name so the operator knows the real cause.
         ArrangeMachine(id: 88, style: "Ssh");
         _versionRegistry
-            .Setup(x => x.GetLatestVersionAsync("Ssh", It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetLatestVersionAsync("Ssh", It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(string.Empty);
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 88 }, CancellationToken.None);
@@ -569,7 +569,7 @@ public sealed class MachineUpgradeServiceTests
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 89 }, CancellationToken.None);
 
         _versionRegistry.Verify(
-            x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "no strategy → no need to query version registry");
     }
@@ -1308,7 +1308,7 @@ public sealed class MachineUpgradeServiceTests
         // FE should show "version info unavailable" instead of "update button".
         ArrangeMachine(id: 6, style: nameof(CommunicationStyle.TentaclePolling));
         _versionRegistry
-            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(string.Empty);
         _runtimeCache.Store(6, new Dictionary<string, string>(), agentVersion: "1.3.9");
 
