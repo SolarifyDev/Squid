@@ -10,6 +10,28 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
     public const string LinuxOverrideEnvVar = "SQUID_TARGET_LINUX_TENTACLE_VERSION";
     public const string K8sOverrideEnvVar = "SQUID_TARGET_K8S_AGENT_VERSION";
 
+    /// <summary>
+    /// P1-Phase12.E.1 — operator override for the Windows tentacle target
+    /// version. Set in air-gapped / canary deployments to pin a specific
+    /// version without round-tripping to GitHub. Falls through to the live
+    /// <see cref="WindowsLatestReleaseUrl"/> query when unset / blank.
+    /// Pinned per Rule 8.
+    /// </summary>
+    public const string WindowsOverrideEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_VERSION";
+
+    /// <summary>
+    /// P1-Phase12.E.1 — GitHub Releases REST API endpoint that resolves to
+    /// the highest non-prerelease tag of the Squid repo. Used as the
+    /// Windows tentacle live version source-of-truth (instead of Docker Hub,
+    /// because Phase 12.E.0 ships <c>.zip</c> artefacts via GitHub Releases
+    /// with no Windows Docker image planned). Pinned per Rule 8.
+    ///
+    /// <para>The <c>/releases/latest</c> endpoint excludes prereleases by
+    /// design — operators wanting prerelease channels set
+    /// <see cref="WindowsOverrideEnvVar"/> to a specific version.</para>
+    /// </summary>
+    public const string WindowsLatestReleaseUrl = "https://api.github.com/repos/SolarifyDev/Squid/releases/latest";
+
     private const string LinuxRepo = "squidcd/squid-tentacle-linux";
     private const string K8sRepo = "squidcd/squid-tentacle";
 
@@ -54,6 +76,108 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
             ?? await ResolveLiveAndCacheAsync(source.DockerRepo, ct).ConfigureAwait(false)
             ?? ResolveStaleCache(source.DockerRepo)
             ?? WarnExhausted(communicationStyle);
+    }
+
+    /// <summary>
+    /// P1-Phase12.E.1 — Windows tentacle version source. Separate from
+    /// <see cref="GetLatestVersionAsync"/> because Windows tentacles use
+    /// the SAME <c>CommunicationStyle</c> values as Linux (<c>TentaclePolling</c> /
+    /// <c>TentacleListening</c>) — so the style alone can't differentiate.
+    /// Phase 12.E.3 will add OS-aware strategy resolution; until then, this
+    /// dedicated method side-steps the multi-strategy "exactly one owner"
+    /// invariant in <c>MachineUpgradeService.ResolveStrategy</c>.
+    ///
+    /// <para>Resolution chain (first non-empty wins):</para>
+    /// <list type="number">
+    ///   <item>Env var override (<see cref="WindowsOverrideEnvVar"/>) — operator escape hatch.</item>
+    ///   <item>Live GitHub Releases query of <see cref="WindowsLatestReleaseUrl"/>.</item>
+    ///   <item>Empty + warning. Caller surfaces the gap to the operator.</item>
+    /// </list>
+    ///
+    /// <para>No TTL cache yet (deferred to Phase 12.E.3 when the
+    /// <c>WindowsTentacleUpgradeStrategy</c> call site exists). Adding a
+    /// cache without a caller is over-engineering: the GitHub /releases/latest
+    /// endpoint serves a CDN-cached body and 60-req/hr unauthenticated
+    /// rate limit is plenty for Phase 12.E.1's "interface only, not yet
+    /// dispatched" scope.</para>
+    /// </summary>
+    public async Task<string> GetLatestWindowsVersionAsync(CancellationToken ct)
+    {
+        var overrideValue = ResolveOverride(WindowsOverrideEnvVar);
+
+        if (!string.IsNullOrEmpty(overrideValue)) return overrideValue;
+
+        return await ResolveLiveWindowsVersionAsync(ct).ConfigureAwait(false) ?? string.Empty;
+    }
+
+    private async Task<string> ResolveLiveWindowsVersionAsync(CancellationToken ct)
+    {
+        if (_httpClientFactory == null) return null;
+
+        try
+        {
+            // GitHub API REQUIRES a User-Agent header; without it the
+            // request is rejected with 403 + "Request forbidden by
+            // administrative rules". Other Squid HTTP traffic doesn't
+            // care about UA so we set it just for this call.
+            using var client = _httpClientFactory.CreateClient(timeout: RequestTimeout);
+            using var request = new HttpRequestMessage(HttpMethod.Get, WindowsLatestReleaseUrl);
+
+            request.Headers.UserAgent.ParseAdd("squid-deploy-server");
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+            using var response = await client.SendAsync(request, ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Warning(
+                    "[Upgrade] GitHub /releases/latest returned {StatusCode} {ReasonPhrase} for Windows version lookup at {Url}",
+                    (int)response.StatusCode, response.ReasonPhrase, WindowsLatestReleaseUrl);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            return ExtractTagNameAsSemver(json);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[Upgrade] Failed to query GitHub Releases for Windows version at {Url}", WindowsLatestReleaseUrl);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses the GitHub Releases JSON payload, extracts <c>tag_name</c>,
+    /// and strips a leading <c>v</c> if present. Returns null on any
+    /// parse failure (malformed JSON, missing field, wrong value kind) so
+    /// the caller falls through to the warn-and-empty path.
+    /// </summary>
+    private static string ExtractTagNameAsSemver(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("tag_name", out var tagEl)) return null;
+            if (tagEl.ValueKind != JsonValueKind.String) return null;
+
+            var tag = tagEl.GetString();
+            if (string.IsNullOrWhiteSpace(tag)) return null;
+
+            // Strip leading 'v' so the version string matches what
+            // install-tentacle.ps1 (Phase 12.E.0) expects in its download
+            // URL pattern: /releases/download/{tag}/squid-tentacle-{version}-{rid}.zip
+            // — the file naming uses bare semver, the tag itself may have a v.
+            return tag.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? tag.Substring(1) : tag;
+        }
+        catch (JsonException ex)
+        {
+            Log.Warning(ex, "[Upgrade] Failed to parse GitHub Releases JSON for Windows version lookup");
+            return null;
+        }
     }
 
     // ── Step 1: env override ─────────────────────────────────────────────────
