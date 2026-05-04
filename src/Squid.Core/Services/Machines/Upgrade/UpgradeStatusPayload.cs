@@ -82,6 +82,22 @@ public sealed record UpgradeStatusPayload
     public string Detail { get; init; } = string.Empty;
 
     /// <summary>
+    /// P1-Phase12.E.7.B-2 — Phase B exit code from the upgrade script.
+    /// Linux .sh writes this into the JSON via the <c>"exitCode"</c> field
+    /// (existing v2 contract); Windows .ps1 also writes this field. Pre-12.E.7
+    /// the server silently dropped this on parse — the field was in the
+    /// agent's JSON but the C# record had no property to bind it to. Now
+    /// surfaced so operators can correlate non-zero exits in
+    /// <see cref="Status"/> with the actual exit code.
+    ///
+    /// <para>Nullable: schema v1 (1.4.x agent) doesn't write the field;
+    /// successful runs may omit it. Treat null as "no exit code recorded"
+    /// — caller distinguishes "not set" from <c>0</c>.</para>
+    /// </summary>
+    [JsonPropertyName("exitCode")]
+    public int? ExitCode { get; init; }
+
+    /// <summary>
     /// Deserialise the raw JSON emitted by the agent. Returns null on any
     /// parse failure — server treats "unparseable status" as "no status"
     /// and degrades gracefully (no staleness detection, but all other
