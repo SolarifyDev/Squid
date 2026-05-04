@@ -219,17 +219,50 @@ try {
                 exit 2
             }
 
-            # SHA256 verification is skipped when EXPECTED_SHA256 is empty —
-            # mirrors the Linux template's "Phase 1 default: release pipeline
-            # does not yet publish per-archive hashes" stance. Without this
-            # guard, the strategy substituting an empty placeholder would
-            # produce $expectedSha="" and `$actualSha -ne ""` is always true,
-            # so EVERY upgrade would exit 7. When the build pipeline starts
-            # publishing hashes, the strategy's substitution will populate a
-            # non-empty value and verification activates with no template change.
+            # P1-Phase12.E.9.3 — opportunistic SHA256 fetch mirroring Linux's
+            # upgrade-linux-tentacle.sh:418-429 pattern. Resolution chain:
+            #
+            #   (1) Strategy-substituted EXPECTED_SHA256 (server-side override
+            #       — operator pinned a specific hash via env var, or strategy
+            #       in the future starts substituting from a manifest)
+            #
+            #   (2) <DOWNLOAD_URL>.sha256 companion file (Phase 12.E.9.2 has
+            #       both release workflows publishing these). This is the
+            #       common case once the next tag-push lands.
+            #
+            #   (3) Fall through with skip-with-warning (matches Linux's
+            #       behaviour for older releases that don't have .sha256
+            #       companions yet — backward compat for in-the-wild artifacts)
+            #
+            # Format expected: `sha256sum`'s default output (`<64-hex>  <filename>`).
+            # We strip whitespace + tail and validate hex-only-64-chars before
+            # using — anything else is treated as "no valid SHA available"
+            # and falls through. Mirrors Linux's grep-and-validate guard.
             if ([string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
-                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — skipping verification (release pipeline does not yet publish per-archive hashes)"
-            } else {
+                $shaUrl = "$DOWNLOAD_URL.sha256"
+                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — opportunistic fetch from $shaUrl"
+                try {
+                    $shaResponse = Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    # Take ONLY the first whitespace-delimited token (hex digest).
+                    # `sha256sum file > file.sha256` writes "<hex>  <filename>".
+                    $fetched = ($shaResponse.Content -split '\s+', 2)[0].Trim().ToLower()
+                    if ($fetched -match '^[0-9a-f]{64}$') {
+                        $EXPECTED_SHA256 = $fetched
+                        Append-UpgradeLog "[upgrade-method:zip] Fetched expected SHA256 from $shaUrl"
+                    }
+                    else {
+                        Append-UpgradeLog "[upgrade-method:zip] Companion at $shaUrl returned non-hex / wrong-length content — skipping verification"
+                    }
+                }
+                catch {
+                    # Common, expected case for older releases without .sha256
+                    # companions OR for air-gap mirrors that haven't replicated
+                    # the companion files yet. NOT a fatal error.
+                    Append-UpgradeLog "[upgrade-method:zip] No .sha256 companion at $shaUrl — skipping verification (release pipeline does not yet publish per-archive hashes for this version)"
+                }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
                 Append-UpgradeLog "[upgrade-method:zip] Verifying SHA256"
 
                 $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
@@ -240,6 +273,7 @@ try {
                     Write-UpgradeStatus -Status 'FAILED' -InstallMethod 'zip' -Detail "SHA256 mismatch (expected $expectedSha, got $actualSha)" -ExitCode 7
                     exit 7
                 }
+                Append-UpgradeLog "[upgrade-method:zip] SHA256 verified: $actualSha"
             }
 
             $extractDir = Join-Path $stagingDir 'extract'

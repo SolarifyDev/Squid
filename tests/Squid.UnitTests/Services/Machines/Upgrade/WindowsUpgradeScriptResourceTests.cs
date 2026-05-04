@@ -179,12 +179,70 @@ public sealed class WindowsUpgradeScriptResourceTests
         // the build pipeline publishes per-archive hashes — empty.ToLower()=""
         // and (Get-FileHash).Hash != "" → exit 7 EVERY upgrade. The fix is to
         // skip verification when EXPECTED_SHA256 is whitespace-only.
+        //
+        // P1-Phase12.E.9.3 update: empty-skip is now BEHIND the
+        // opportunistic-fetch attempt. The template still skips verification
+        // when nothing populates EXPECTED_SHA256 (neither strategy substitution
+        // NOR the .sha256 companion fetch succeed) — backward compat for older
+        // releases without companion files. Pin both: the IsNullOrWhiteSpace
+        // gate enters the opportunistic-fetch path, AND there's a
+        // "skipping verification" log line on the fall-through path.
         var content = LoadResource();
 
         content.ShouldContain("IsNullOrWhiteSpace($EXPECTED_SHA256)",
-            customMessage: "must skip verification when SHA256 placeholder is empty (mirrors Linux EXPECTED_SHA256 empty-skip stance)");
+            customMessage: "must gate on empty placeholder (mirrors Linux EXPECTED_SHA256 empty-handling)");
         content.ShouldContain("skipping verification",
             customMessage: "operator must see the skip decision in the upgrade log so they understand why no hash check ran");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_MirrorsLinuxPattern()
+    {
+        // P1-Phase12.E.9.3 — Windows .ps1 must mirror upgrade-linux-tentacle.sh's
+        // opportunistic .sha256 companion fetch (Linux pattern at sh:418-429).
+        // Without this, releases shipped per Phase 12.E.9.2 (which publishes
+        // .sha256 companion files) would NOT activate verification on Windows
+        // — only Linux. Phase 12.E.9.3 closes that asymmetry.
+        var content = LoadResource();
+
+        content.ShouldContain("$DOWNLOAD_URL.sha256",
+            customMessage: "must construct .sha256 companion URL by appending '.sha256' to the download URL — same convention Linux uses + same convention Phase 12.E.9.2's release workflows publish");
+        content.ShouldContain("Invoke-WebRequest",
+            customMessage: "must use PowerShell's HTTP client (no external curl dep on Windows)");
+        content.ShouldContain("'^[0-9a-f]{64}$'",
+            customMessage: "must validate the fetched content is exactly 64 hex chars — guards against HTML 404 pages, partial bytes, etc. masquerading as a SHA");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_HandlesAirgapMirrorsWithoutCompanion()
+    {
+        // Pin the backward-compat path: when the .sha256 companion is absent
+        // (older releases or air-gap mirrors that haven't replicated the
+        // companion files yet), the opportunistic fetch fails NON-FATALLY
+        // and the script falls through to "skipping verification". Mirrors
+        // Linux's "::info::" non-error log line.
+        var content = LoadResource();
+
+        // The catch block must exist (Invoke-WebRequest with -ErrorAction Stop
+        // throws on 404 — must be caught + treated as "no SHA, fall through").
+        content.ShouldContain("catch",
+            customMessage: "Invoke-WebRequest 404 / network failure on .sha256 fetch MUST be caught — air-gap mirrors without companion files would otherwise fail every upgrade with a transport error");
+        content.ShouldContain("No .sha256 companion at",
+            customMessage: "fall-through log line must explain the absence — operators investigating a 'why didn't SHA verify' question see the absent-companion reason");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_StripsToFirstWhitespaceToken()
+    {
+        // sha256sum's default output is `<64-hex>  <filename>`. The agent
+        // must take ONLY the first whitespace-delimited token and strip
+        // trailing space — pinning this prevents a future "let's just
+        // ToLower the whole line" mistake that would treat the filename
+        // suffix as part of the hash.
+        var content = LoadResource();
+
+        content.ShouldContain("-split '\\s+'",
+            customMessage: "must split on whitespace to isolate the hex digest from the filename suffix that sha256sum's default format includes");
     }
 
     [Fact]

@@ -30,4 +30,16 @@ public static class WindowsUpgradeE2ECategories
     /// service, not a mock.
     /// </summary>
     public const string Service = "WindowsUpgradeServiceE2E";
+
+    /// <summary>
+    /// P1-Phase12.E.9 — E2E coverage for the opportunistic SHA256
+    /// companion-file fetch + verification logic in
+    /// <c>upgrade-windows-tentacle.ps1</c>. Uses an in-process HTTP
+    /// listener serving a known .sha256 + .zip pair so the .ps1's
+    /// <c>Invoke-WebRequest</c> + <c>Get-FileHash</c> path runs against
+    /// a real local server (no GitHub Releases dependency for the test
+    /// — the fixture controls EVERY response: 404, invalid body, valid
+    /// match, valid mismatch).
+    /// </summary>
+    public const string ShaVerify = "WindowsUpgradeShaVerifyE2E";
 }

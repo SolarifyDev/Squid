@@ -175,7 +175,7 @@ jobs:
           name: squid-tentacle-${{ matrix.rid }}
           path: dist/squid-tentacle-*${{ matrix.rid }}.zip
 
-  # ── Step 3: Upload .zip to GitHub Releases (tag-only) ─────────────────
+  # ── Step 3: Upload .zip + .sha256 to GitHub Releases (tag-only) ───────
   release:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -188,19 +188,36 @@ jobs:
           pattern: squid-tentacle-*
           merge-multiple: true
 
+      # P1-Phase12.E.9.2 — produce <archive>.sha256 companion files alongside
+      # each .zip. The Windows .ps1 / Linux .sh both fetch
+      # `${DOWNLOAD_URL}.sha256` opportunistically — present means
+      # transit-integrity verification fires; absent means fall through.
+      # `sha256sum`'s default output format is "<hex>  <filename>", which is
+      # the format both agent scripts parse (awk '{print $1}'). One file
+      # per .zip — matches the canonical Linux release distribution shape.
+      - name: Generate SHA256 companion files
+        run: |
+          cd artifacts
+          for archive in squid-tentacle-*.zip; do
+            sha256sum "$archive" > "${archive}.sha256"
+          done
+          ls -la *.sha256
+
       # Re-uses the same Release object the Linux workflow creates for the
       # SAME tag. softprops/action-gh-release with append behaviour: if the
       # Release exists, the new files are added; if not, it's created. So
       # operators end up with one Release per version containing BOTH
-      # Linux tar.gz AND Windows zip files — the canonical "this is what
-      # ships" listing.
+      # Linux tar.gz AND Windows zip files (each with its .sha256 companion)
+      # — the canonical "this is what ships" listing.
       - name: Create / Amend GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Squid Tentacle v${{ needs.resolve-tag.outputs.image_tag }}
           prerelease: ${{ contains(needs.resolve-tag.outputs.image_tag, '-') }}
-          files: artifacts/squid-tentacle-*.zip
+          files: |
+            artifacts/squid-tentacle-*.zip
+            artifacts/squid-tentacle-*.zip.sha256
           generate_release_notes: false
           append_body: true
           body: |
