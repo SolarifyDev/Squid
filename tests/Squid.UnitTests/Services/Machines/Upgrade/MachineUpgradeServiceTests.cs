@@ -19,6 +19,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 /// strategy dispatch, version skipping, current-version detection from cache,
 /// and operator-supplied override taking precedence over the bundled version.
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class MachineUpgradeServiceTests
 {
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();

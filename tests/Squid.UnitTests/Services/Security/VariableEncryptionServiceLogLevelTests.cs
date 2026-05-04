@@ -27,6 +27,7 @@ namespace Squid.UnitTests.Services.Security;
 /// raise the level explicitly. Failure / warning paths stay at
 /// <c>Warning</c> / <c>Error</c> as they were.</para>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class VariableEncryptionServiceLogLevelTests
 {
     [Fact]

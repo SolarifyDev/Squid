@@ -33,6 +33,7 @@ namespace Squid.UnitTests.Services.Deployments.Execution;
 /// from short generic values like "1", "y", "200". Aligned with
 /// <c>SensitiveValueMasker.MinValueLength=4</c>.</para>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class SensitiveValueLeakGuardTests
 {
     // ── Constant-name pin (Rule 8) ────────────────────────────────────────────

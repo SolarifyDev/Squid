@@ -11,10 +11,18 @@ namespace Squid.UnitTests.Observability;
 /// <see cref="DeploymentTracing.Source"/> — the actual end-to-end wiring is
 /// exercised by the existing DeploymentPipelineRunner integration tests.
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class ExecuteStepsPhaseTracingTests : IDisposable
 {
-    private readonly List<Activity> _captured = new();
+    // Phase 12.E.6 — lock-protected belt-and-braces, see DeploymentTracingTests.
+    private readonly List<Activity> _capturedRaw = new();
+    private readonly object _capturedLock = new();
     private readonly ActivityListener _listener;
+
+    private IReadOnlyList<Activity> _captured
+    {
+        get { lock (_capturedLock) return _capturedRaw.ToList(); }
+    }
 
     public ExecuteStepsPhaseTracingTests()
     {
@@ -22,7 +30,7 @@ public sealed class ExecuteStepsPhaseTracingTests : IDisposable
         {
             ShouldListenTo = s => s.Name == DeploymentTracing.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = a => _captured.Add(a)
+            ActivityStopped = a => { lock (_capturedLock) _capturedRaw.Add(a); }
         };
         ActivitySource.AddActivityListener(_listener);
     }

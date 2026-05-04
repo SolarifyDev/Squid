@@ -44,6 +44,7 @@ namespace Squid.UnitTests.Services.Deployments.Execution;
 /// are NOT collisions — only DIFFERENT values trigger the warn / strict path.
 /// Sensitive values are NEVER echoed in log payloads (B.7-style redaction).</para>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class OutputVariableMergerTests
 {
     [Fact]
@@ -266,9 +267,27 @@ public sealed class OutputVariableMergerTests
         return (sink, () => Log.Logger = original);
     }
 
+    /// <summary>
+    /// Lock-protected capture buffer. Phase 12.E.6 belt-and-braces: even if a
+    /// future test class skips <c>[Collection(GlobalStateSerialisedCollection.Name)]</c>,
+    /// concurrent <c>Emit</c> from another logger pipeline thread can't crash
+    /// our <c>foreach Events</c> iteration with <c>InvalidOperationException</c>.
+    /// The cross-test count drift would still fire as a deterministic
+    /// assertion failure (the right signal for "you forgot [Collection]").
+    /// </summary>
     private sealed class CapturingLogSink : Serilog.Core.ILogEventSink
     {
-        public List<LogEvent> Events { get; } = new();
-        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
+        private readonly List<LogEvent> _events = new();
+        private readonly object _lock = new();
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get { lock (_lock) return _events.ToList(); }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_lock) _events.Add(logEvent);
+        }
     }
 }

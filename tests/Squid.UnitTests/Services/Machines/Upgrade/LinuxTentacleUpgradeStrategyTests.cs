@@ -34,6 +34,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 ///         the bash-side <c>$RID</c>, no stale tokens left.</item>
 /// </list>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
 {
     private readonly string _previousBaseUrlOverride;
