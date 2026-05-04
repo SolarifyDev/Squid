@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
@@ -17,7 +18,9 @@ public sealed class KubernetesAgentUpgradeStrategyTests
     [Fact]
     public void CanHandle_KubernetesAgentStyle_True()
     {
-        _strategy.CanHandle(nameof(CommunicationStyle.KubernetesAgent)).ShouldBeTrue();
+        // P1-Phase12.E.3 — capabilities second arg ignored by K8s strategy
+        // (no OS variant). Pass Empty as the conventional cold-cache value.
+        _strategy.CanHandle(nameof(CommunicationStyle.KubernetesAgent), MachineRuntimeCapabilities.Empty).ShouldBeTrue();
     }
 
     [Theory]
@@ -29,7 +32,21 @@ public sealed class KubernetesAgentUpgradeStrategyTests
     [InlineData(null)]
     public void CanHandle_OtherStyles_False(string style)
     {
-        _strategy.CanHandle(style).ShouldBeFalse();
+        _strategy.CanHandle(style, MachineRuntimeCapabilities.Empty).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("Linux")]
+    [InlineData("Windows")]
+    [InlineData("")]
+    public void CanHandle_KubernetesAgentStyle_IgnoresOsCapability(string os)
+    {
+        // K8s pods always run Linux from the agent's perspective, so the OS
+        // capability is irrelevant — KubernetesAgentUpgradeStrategy claims
+        // the style regardless of capabilities.Os.
+        var capabilities = new MachineRuntimeCapabilities { Os = os };
+
+        _strategy.CanHandle(nameof(CommunicationStyle.KubernetesAgent), capabilities).ShouldBeTrue();
     }
 
     [Fact]
