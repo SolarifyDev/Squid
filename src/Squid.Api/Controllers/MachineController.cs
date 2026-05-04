@@ -216,6 +216,32 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>
+    /// P1-Phase12.E.8 — agent-reported upgrade-status snapshot for the
+    /// most recent upgrade attempt. Exposes the structured <c>ExitCode</c>
+    /// field that <c>GET /upgrade-events</c> (event stream) and
+    /// <c>GET /upgrade-log</c> (raw text) silently drop. Operators
+    /// investigating a Phase B failure on Windows / Linux see exit codes
+    /// like <c>7</c> (SHA256 mismatch), <c>14</c> (no install method
+    /// matched), <c>15</c> (insufficient privileges, Windows-only) directly
+    /// without grepping the log file.
+    ///
+    /// <para>Empty <c>Status</c> field on the response when no upgrade
+    /// has ever run on this machine, the agent's <c>last-upgrade.json</c>
+    /// file is missing, or the server pod restarted recently (cache
+    /// cold; refills on next health check).</para>
+    /// </summary>
+    [HttpGet("{machineId:int}/upgrade-status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeStatusResponse))]
+    public async Task<IActionResult> GetUpgradeStatusAsync(int machineId, CancellationToken ct)
+    {
+        var request = new GetUpgradeStatusRequest { MachineId = machineId };
+
+        var response = await _mediator.RequestAsync<GetUpgradeStatusRequest, GetUpgradeStatusResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("{machineId:int}/upgrade")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UpgradeMachineResponse))]
     public async Task<IActionResult> UpgradeMachineAsync(int machineId, [FromBody] UpgradeMachineCommand body, CancellationToken ct)

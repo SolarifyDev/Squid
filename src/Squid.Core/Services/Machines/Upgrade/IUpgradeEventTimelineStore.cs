@@ -52,6 +52,30 @@ public interface IUpgradeEventTimelineStore
     string GetLog(int machineId);
 
     /// <summary>
+    /// P1-Phase12.E.8.2 — store the LATEST parsed <see cref="UpgradeStatusPayload"/>
+    /// for a machine. Populated on every successful Capabilities RPC by
+    /// <see cref="DeploymentExecution.Tentacle.TentacleHealthCheckStrategy"/>
+    /// alongside the events list + Phase B log. Read by the API layer
+    /// (<c>GetUpgradeStatusRequest</c>) so operators see the agent's
+    /// last-reported terminal state — including the structured
+    /// <see cref="UpgradeStatusPayload.ExitCode"/> field that, prior
+    /// to 12.E.8, was parsed but never surfaced.
+    ///
+    /// <para>Pass null to clear the entry.</para>
+    /// </summary>
+    void StoreStatus(int machineId, UpgradeStatusPayload status);
+
+    /// <summary>
+    /// Read the cached upgrade status payload. Returns null when nothing
+    /// has been stored (cold cache, never-upgraded machine, agent's
+    /// upgrade-status metadata key absent on the last probe). Differs
+    /// from <see cref="Get"/> + <see cref="GetLog"/> which return empty
+    /// collections / strings — the status payload is conceptually
+    /// "all-or-nothing" so null is the right zero state for callers.
+    /// </summary>
+    UpgradeStatusPayload GetStatus(int machineId);
+
+    /// <summary>
     /// Drop the cached entry. Called after a successful upgrade if we want
     /// the next upgrade attempt to start from a clean slate (the agent
     /// truncates its JSONL file on Phase A start anyway, so this is purely
@@ -64,6 +88,7 @@ public sealed class InMemoryUpgradeEventTimelineStore : IUpgradeEventTimelineSto
 {
     private readonly ConcurrentDictionary<int, IReadOnlyList<UpgradeEvent>> _byMachine = new();
     private readonly ConcurrentDictionary<int, string> _logByMachine = new();
+    private readonly ConcurrentDictionary<int, UpgradeStatusPayload> _statusByMachine = new();
 
     public void Store(int machineId, IReadOnlyList<UpgradeEvent> events)
     {
@@ -85,9 +110,26 @@ public sealed class InMemoryUpgradeEventTimelineStore : IUpgradeEventTimelineSto
         return _logByMachine.TryGetValue(machineId, out var log) ? log : string.Empty;
     }
 
+    public void StoreStatus(int machineId, UpgradeStatusPayload status)
+    {
+        if (status == null)
+        {
+            _statusByMachine.TryRemove(machineId, out _);
+            return;
+        }
+
+        _statusByMachine[machineId] = status;
+    }
+
+    public UpgradeStatusPayload GetStatus(int machineId)
+    {
+        return _statusByMachine.TryGetValue(machineId, out var status) ? status : null;
+    }
+
     public void Clear(int machineId)
     {
         _byMachine.TryRemove(machineId, out _);
         _logByMachine.TryRemove(machineId, out _);
+        _statusByMachine.TryRemove(machineId, out _);
     }
 }
