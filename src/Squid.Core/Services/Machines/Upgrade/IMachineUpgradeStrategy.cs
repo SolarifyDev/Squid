@@ -1,12 +1,14 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 
 namespace Squid.Core.Services.Machines.Upgrade;
 
 /// <summary>
 /// Per-target-type strategy for performing an in-place self-upgrade of a
-/// running agent. One implementation per <c>CommunicationStyle</c>; resolved
-/// by <c>MachineUpgradeService</c> via <c>FirstOrDefault(s =&gt; s.CanHandle(style))</c>
-/// — same shape as <c>IExecutionStrategy</c> and <c>IHealthCheckStrategy</c>.
+/// running agent. One implementation per <c>CommunicationStyle</c> + agent OS;
+/// resolved by <c>MachineUpgradeService</c> via
+/// <c>FirstOrDefault(s =&gt; s.CanHandle(style, capabilities))</c> — same shape
+/// as <c>IExecutionStrategy</c> and <c>IHealthCheckStrategy</c>.
 ///
 /// <para>
 /// Strategies are stateless and idempotent: re-issuing the same upgrade for
@@ -14,10 +16,40 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// (cooldown, lock files) lives inside the per-target script the strategy
 /// dispatches.
 /// </para>
+///
+/// <para>
+/// <b>P1-Phase12.E.3 widening:</b> <see cref="CanHandle"/> takes
+/// <see cref="MachineRuntimeCapabilities"/> in addition to the
+/// communication-style string. This is required because Windows and Linux
+/// tentacles use the SAME wire-protocol communication style values
+/// (<c>TentaclePolling</c> / <c>TentacleListening</c>) — Halibut doesn't
+/// distinguish them. The agent OS, reported via the health-check
+/// capabilities probe and cached in
+/// <see cref="IMachineRuntimeCapabilitiesCache"/>, is what differentiates
+/// <c>LinuxTentacleUpgradeStrategy</c> from
+/// <c>WindowsTentacleUpgradeStrategy</c>. Cold cache (no health check yet)
+/// → empty <see cref="MachineRuntimeCapabilities.Os"/>; the Linux strategy
+/// claims that case as the historical default to preserve pre-Phase-12 behaviour.
+/// </para>
 /// </summary>
 public interface IMachineUpgradeStrategy : IScopedDependency
 {
-    bool CanHandle(string communicationStyle);
+    /// <summary>
+    /// Returns true when this strategy is the right one to dispatch an upgrade
+    /// against an agent with the given communication style + cached capabilities.
+    /// </summary>
+    /// <remarks>
+    /// <para>The resolver enforces an "exactly one owner" invariant — if two
+    /// strategies return true for the same (style, capabilities) pair, the
+    /// resolver throws with both class names so the drift is visible at the
+    /// first dispatch attempt rather than producing a silent wrong-binary
+    /// install.</para>
+    ///
+    /// <para>Implementations should be CHEAP — the resolver may call this
+    /// on every registered strategy per upgrade dispatch. No IO, no async
+    /// work; just a string + property check.</para>
+    /// </remarks>
+    bool CanHandle(string communicationStyle, MachineRuntimeCapabilities capabilities);
 
     Task<MachineUpgradeOutcome> UpgradeAsync(
         Machine machine,

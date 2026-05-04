@@ -4,10 +4,12 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Enums;
 // Disambiguate: `using Squid.Core.Persistence.Entities.Deployments` brings in
 // the entity `Environment` which collides with `System.Environment`. Alias
 // system one for the env-var helpers used in the URL-override tests.
@@ -175,7 +177,45 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     {
         var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
 
-        strategy.CanHandle(style).ShouldBe(expected);
+        // P1-Phase12.E.3 — empty capabilities (cold cache) preserves the
+        // pre-Phase-12 behaviour where Linux strategy claimed all matching
+        // styles regardless of OS. Linux-OS / Windows-OS routing is covered
+        // by the dedicated OS-routing Theories below.
+        strategy.CanHandle(style, MachineRuntimeCapabilities.Empty).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("Linux", true)]
+    [InlineData("linux", true)]    // case-insensitive match
+    [InlineData("LINUX", true)]
+    [InlineData("macOS", true)]    // any non-Windows OS still claims (Linux strategy is the historical default)
+    [InlineData("", true)]         // cold cache (no health check yet) — preserves pre-Phase-12 default
+    [InlineData("Windows", false)] // P1-Phase12.E.3 — explicit Windows skip so WindowsTentacleUpgradeStrategy can claim
+    [InlineData("windows", false)] // case-insensitive
+    [InlineData("WINDOWS", false)]
+    public void CanHandle_RoutesByOs_SkipsWindowsAgents(string os, bool expected)
+    {
+        // P1-Phase12.E.3 — the OS-aware routing: Linux strategy claims
+        // TentaclePolling/Listening for any agent EXCEPT Windows. Windows
+        // agents fall through to WindowsTentacleUpgradeStrategy. The
+        // exactly-one-owner invariant in MachineUpgradeService.ResolveStrategy
+        // depends on this clean split — if both claim the same (style, OS)
+        // tuple, the resolver throws.
+        var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
+        var capabilities = new MachineRuntimeCapabilities { Os = os };
+
+        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), capabilities).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void CanHandle_NullCapabilities_TreatedAsEmpty()
+    {
+        // Defensive: a future caller passing null capabilities (instead of
+        // MachineRuntimeCapabilities.Empty) should not NPE. Same fallback
+        // as the empty-OS case — Linux strategy claims.
+        var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
+
+        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), capabilities: null).ShouldBeTrue();
     }
 
     // ========================================================================

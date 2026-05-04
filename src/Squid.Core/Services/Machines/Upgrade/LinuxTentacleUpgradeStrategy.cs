@@ -105,9 +105,35 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         _observer = observer;
     }
 
-    public bool CanHandle(string communicationStyle)
-        => communicationStyle == nameof(CommunicationStyle.TentaclePolling)
-        || communicationStyle == nameof(CommunicationStyle.TentacleListening);
+    public bool CanHandle(string communicationStyle, MachineRuntimeCapabilities capabilities)
+    {
+        var matchesStyle = communicationStyle == nameof(CommunicationStyle.TentaclePolling)
+                        || communicationStyle == nameof(CommunicationStyle.TentacleListening);
+
+        if (!matchesStyle) return false;
+
+        // P1-Phase12.E.3 — Windows tentacles use the SAME wire styles
+        // (TentaclePolling / TentacleListening) but need the dedicated
+        // WindowsTentacleUpgradeStrategy. Skip Windows machines so the
+        // resolver routes them to the Windows strategy.
+        //
+        // Cold cache (no health check yet) → Os is empty → falls into the
+        // Linux branch by default. This preserves pre-Phase-12 behaviour:
+        // the operator base today is overwhelmingly Linux, so a freshly
+        // registered tentacle whose capabilities haven't been probed yet
+        // gets the Linux dispatch as the historical default. A real Windows
+        // tentacle would have run a health check before any operator-driven
+        // upgrade in practice (the FE only shows the upgrade affordance
+        // for healthy targets).
+        return !IsWindowsAgent(capabilities);
+    }
+
+    private static bool IsWindowsAgent(MachineRuntimeCapabilities capabilities)
+    {
+        if (capabilities == null) return false;
+
+        return capabilities.Os.Equals("Windows", StringComparison.OrdinalIgnoreCase);
+    }
 
     public async Task<MachineUpgradeOutcome> UpgradeAsync(Machine machine, string targetVersion, CancellationToken ct)
     {

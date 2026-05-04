@@ -38,10 +38,15 @@ public sealed class MachineUpgradeServiceTests
             .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("1.4.0");
 
-        _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling))).Returns(true);
-        _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentacleListening))).Returns(true);
+        // P1-Phase12.E.3 — CanHandle widened to (style, capabilities).
+        // Existing tests don't care about capabilities; pass `It.IsAny<>()`
+        // so the resolver still routes by style alone in legacy tests, and
+        // dedicated OS-routing tests in this file (added below) use specific
+        // capabilities to drive Linux-vs-Windows routing.
+        _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>())).Returns(true);
+        _linuxStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentacleListening), It.IsAny<MachineRuntimeCapabilities>())).Returns(true);
 
-        _k8sStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.KubernetesAgent))).Returns(true);
+        _k8sStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.KubernetesAgent), It.IsAny<MachineRuntimeCapabilities>())).Returns(true);
 
         // Default: lock is acquired and the supplied logic runs immediately.
         // Tests that exercise the lock-failed path override this on a per-test basis.
@@ -242,7 +247,7 @@ public sealed class MachineUpgradeServiceTests
         // Halibut dispatch, before any real side effect) and names both
         // conflicting types so the fix is obvious.
         var rogueStrategy = new Mock<IMachineUpgradeStrategy>();
-        rogueStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling))).Returns(true);
+        rogueStrategy.Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>())).Returns(true);
 
         var service = new MachineUpgradeService(
             _machineDataProvider.Object,
@@ -257,8 +262,146 @@ public sealed class MachineUpgradeServiceTests
             service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 201 }, CancellationToken.None));
 
         ex.Message.ShouldContain("TentaclePolling");
-        ex.Message.ShouldContain("Each style must have exactly one owner",
-            customMessage: "error must tell the developer what the invariant is, not just what broke");
+        ex.Message.ShouldContain("Each (style, OS) tuple must have exactly one owner",
+            customMessage: "error must tell the developer what the invariant is (P1-Phase12.E.3 — invariant widened from style-only to (style, OS)), not just what broke");
+    }
+
+    // ========================================================================
+    // P1-Phase12.E.3 — OS-aware routing at the orchestrator seam.
+    //
+    // Linux and Windows tentacles share the same CommunicationStyle wire values
+    // (TentaclePolling / TentacleListening) — Halibut doesn't distinguish OSes
+    // at the protocol layer. The agent OS, reported via the health-check
+    // capabilities probe and cached in IMachineRuntimeCapabilitiesCache, is
+    // what differentiates Linux from Windows strategies. These tests pin the
+    // orchestrator-level plumbing: ResolveStrategy reads from the cache,
+    // passes capabilities to CanHandle(), and throws the (style, OS) tuple
+    // exception when both strategies claim. Without these, an Os-axis routing
+    // regression would only surface via end-to-end run on a real Windows box.
+    // ========================================================================
+
+    [Fact]
+    public async Task UpgradeAsync_WindowsAgent_RoutesToWindowsStrategyNotLinux()
+    {
+        // Both strategies registered, capabilities.Os = "Windows" → only the
+        // Windows strategy claims, the Linux strategy explicitly skips. Without
+        // this, the legacy single-style resolver would route both Linux and
+        // Windows tentacles to the bash-only Linux dispatch and silently brick
+        // Windows agents.
+        var windowsStrategy = new Mock<IMachineUpgradeStrategy>();
+        windowsStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os == "Windows")))
+            .Returns(true);
+        windowsStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.NotSupported, Detail = "phase 12.E.4", AgentVersionMayHaveChanged = false });
+
+        // Linux strategy must NOT claim Windows machines (mirrors the
+        // production LinuxTentacleUpgradeStrategy.CanHandle override).
+        _linuxStrategy.Reset();
+        _linuxStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os != "Windows")))
+            .Returns(true);
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, windowsStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object);
+
+        ArrangeMachine(id: 301, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(301, new Dictionary<string, string> { ["os"] = "Windows" }, agentVersion: "1.3.0");
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 301 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.NotSupported);
+        resp.Detail.ShouldContain("12.E.4");
+        windowsStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once,
+            "Windows agent must dispatch to the Windows strategy");
+        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "Linux strategy must NOT be invoked for a Windows agent — would dispatch a bash script to PowerShell host");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_LinuxAgent_RoutesToLinuxStrategy_WindowsRegistered()
+    {
+        // Same registration as the Windows test — both strategies present —
+        // but capabilities.Os = "Linux" → only Linux strategy claims. This is
+        // the symmetric pin: Linux routing must not regress when the Windows
+        // strategy is added to the registry.
+        var windowsStrategy = new Mock<IMachineUpgradeStrategy>();
+        windowsStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os == "Windows")))
+            .Returns(true);
+
+        _linuxStrategy.Reset();
+        _linuxStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os != "Windows")))
+            .Returns(true);
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, windowsStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object);
+
+        ArrangeMachine(id: 302, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(302, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.0");
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 302 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once);
+        windowsStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "Linux agent must NOT be routed to Windows strategy — would dispatch PowerShell to a bash host");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_ColdCacheNoOs_RoutesToLinuxAsHistoricalDefault()
+    {
+        // Cold cache (machine never health-checked) → capabilities.Os = "" →
+        // Linux strategy claims as the historical default; Windows strategy
+        // skips. Preserves pre-Phase-12 behaviour for the operator base, which
+        // is overwhelmingly Linux. Without this, a freshly-registered tentacle
+        // would surface as "no strategy registered" until its first health
+        // check — confusing, since health checks are async.
+        var windowsStrategy = new Mock<IMachineUpgradeStrategy>();
+        windowsStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os == "Windows")))
+            .Returns(true);
+
+        _linuxStrategy.Reset();
+        _linuxStrategy
+            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os != "Windows")))
+            .Returns(true);
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "cold-cache default", AgentVersionMayHaveChanged = true });
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, windowsStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object);
+
+        ArrangeMachine(id: 303, style: nameof(CommunicationStyle.TentaclePolling));
+        // INTENTIONAL: no _runtimeCache.Store(303, ...) — cold cache scenario.
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once,
+            "cold-cache (empty Os) must route to Linux strategy as historical default — preserves pre-Phase-12 behaviour");
+        windowsStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

@@ -177,7 +177,13 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // never use, and "NotSupported with style name" is a far more
         // actionable error than "couldn't resolve version, set env var X"
         // (which would be nonsense advice for an Ssh target).
-        var strategy = ResolveStrategy(style);
+        //
+        // P1-Phase12.E.3 — pass cached capabilities so the resolver can
+        // route by OS (Linux vs Windows tentacles share the same wire-protocol
+        // CommunicationStyle values; the OS reported by the agent's last
+        // health check is what differentiates them).
+        var capabilities = _runtimeCache.TryGet(machine.Id) ?? MachineRuntimeCapabilities.Empty;
+        var strategy = ResolveStrategy(style, capabilities);
 
         if (strategy == null)
             return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.NotSupported, $"No upgrade strategy registered for CommunicationStyle '{style}'.");
@@ -218,9 +224,15 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         var style = ReadCommunicationStyle(machine);
         var currentVersion = ReadCachedAgentVersion(machine.Id);
 
-        var latestVersion = await ResolveLatestForInfoAsync(style, ct).ConfigureAwait(false);
+        // P1-Phase12.E.3 — capabilities thread through info path so OS-aware
+        // resolver can pick the right strategy (Linux vs Windows tentacle).
+        // Empty fallback for cold cache; LinuxTentacleUpgradeStrategy claims
+        // the empty case as the historical default.
+        var capabilities = _runtimeCache.TryGet(machine.Id) ?? MachineRuntimeCapabilities.Empty;
 
-        var (canUpgrade, reason) = EvaluateUpgradeEligibility(style, currentVersion, latestVersion);
+        var latestVersion = await ResolveLatestForInfoAsync(style, capabilities, ct).ConfigureAwait(false);
+
+        var (canUpgrade, reason) = EvaluateUpgradeEligibility(style, capabilities, currentVersion, latestVersion);
 
         return new GetUpgradeInfoResponseData
         {
@@ -237,9 +249,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// no point burning Docker Hub quota on an SSH target just to render
     /// its info row.
     /// </summary>
-    private async Task<string> ResolveLatestForInfoAsync(string style, CancellationToken ct)
+    private async Task<string> ResolveLatestForInfoAsync(string style, MachineRuntimeCapabilities capabilities, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(style) || ResolveStrategy(style) == null)
+        if (string.IsNullOrWhiteSpace(style) || ResolveStrategy(style, capabilities) == null)
             return string.Empty;
 
         return await _versionRegistry.GetLatestVersionAsync(style, ct).ConfigureAwait(false) ?? string.Empty;
@@ -250,12 +262,12 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// an upgrade affordance? Each branch returns a reason the FE can
     /// render verbatim in a tooltip.
     /// </summary>
-    private (bool canUpgrade, string reason) EvaluateUpgradeEligibility(string style, string currentVersion, string latestVersion)
+    private (bool canUpgrade, string reason) EvaluateUpgradeEligibility(string style, MachineRuntimeCapabilities capabilities, string currentVersion, string latestVersion)
     {
         if (string.IsNullOrWhiteSpace(style))
             return (false, "Machine endpoint JSON is malformed or missing CommunicationStyle — re-run machine registration.");
 
-        if (ResolveStrategy(style) == null)
+        if (ResolveStrategy(style, capabilities) == null)
             return (false, $"CommunicationStyle '{style}' is not supported for in-UI upgrades — use the style's manual upgrade path.");
 
         if (string.IsNullOrEmpty(latestVersion))
@@ -299,7 +311,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         return await _versionRegistry.GetLatestVersionAsync(style, ct).ConfigureAwait(false);
     }
 
-    private IMachineUpgradeStrategy ResolveStrategy(string style)
+    private IMachineUpgradeStrategy ResolveStrategy(string style, MachineRuntimeCapabilities capabilities)
     {
         // Single-owner invariant. Without this, a future refactor widening
         // two strategies' CanHandle() to overlap would silently dispatch
@@ -308,13 +320,21 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // wrong script), and debugging is brutal. Throw loudly at the
         // first trigger before any side effect. Surfaces both class names
         // so the fix is obvious: narrow CanHandle in one of them.
-        var matches = _strategies.Where(s => s.CanHandle(style)).ToList();
+        //
+        // P1-Phase12.E.3 — `capabilities` (cached from last health check)
+        // is the OS-axis input. Linux tentacle skips Windows agents,
+        // Windows tentacle claims them; the (style + OS) tuple is the
+        // unique resolver key. K8s strategy ignores capabilities (single
+        // OS variant). Cold cache → LinuxTentacleUpgradeStrategy claims
+        // the empty-OS case as the historical default to preserve
+        // pre-Phase-12 behaviour.
+        var matches = _strategies.Where(s => s.CanHandle(style, capabilities)).ToList();
 
         if (matches.Count > 1)
             throw new InvalidOperationException(
-                $"Multiple upgrade strategies claim CommunicationStyle '{style}': " +
+                $"Multiple upgrade strategies claim CommunicationStyle '{style}' on OS '{capabilities.Os}': " +
                 $"{string.Join(", ", matches.Select(m => m.GetType().Name))}. " +
-                "Each style must have exactly one owner. Narrow CanHandle() in one of them.");
+                "Each (style, OS) tuple must have exactly one owner. Narrow CanHandle() in one of them.");
 
         return matches.Count == 1 ? matches[0] : null;
     }
