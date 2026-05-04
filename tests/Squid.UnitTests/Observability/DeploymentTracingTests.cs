@@ -5,10 +5,22 @@ using Squid.Core.Observability;
 
 namespace Squid.UnitTests.Observability;
 
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class DeploymentTracingTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _captured = new();
+    // Phase 12.E.6 — lock-protected so a future cross-class race (caller
+    // forgetting [Collection]) at worst produces a deterministic count
+    // assertion failure, not a flaky InvalidOperationException during
+    // foreach. The [Collection] above SHOULD prevent the race entirely;
+    // this is belt-and-braces.
+    private readonly List<Activity> _capturedRaw = new();
+    private readonly object _capturedLock = new();
+
+    private IReadOnlyList<Activity> _captured
+    {
+        get { lock (_capturedLock) return _capturedRaw.ToList(); }
+    }
 
     public DeploymentTracingTests()
     {
@@ -16,7 +28,7 @@ public sealed class DeploymentTracingTests : IDisposable
         {
             ShouldListenTo = source => source.Name == DeploymentTracing.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity => _captured.Add(activity)
+            ActivityStopped = activity => { lock (_capturedLock) _capturedRaw.Add(activity); }
         };
         ActivitySource.AddActivityListener(_listener);
     }

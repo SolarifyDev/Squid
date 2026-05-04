@@ -39,6 +39,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 /// <see cref="MachineUpgradeStatus.Upgraded"/>. The actual outcome arrives
 /// via the next health check reading <c>last-upgrade.json</c>.</para>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
 {
     private readonly string _previousBaseUrlOverride;

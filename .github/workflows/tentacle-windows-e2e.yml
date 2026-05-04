@@ -4,6 +4,12 @@ name: Tentacle Windows E2E
 # most of the Team-plan 3000-minute budget. Run nightly + on merge to main, and
 # expose workflow_dispatch so a developer can trigger an on-demand Windows run
 # before a risky PR.
+#
+# Single-job, multi-step layout (vs tests.yml's one-job-per-project) is a
+# deliberate cost optimization — splitting into separate jobs would spin up an
+# additional windows-latest VM per project (2x billing applies per VM). The
+# trade-off is sequential execution + slightly muddier failure attribution;
+# the per-step name + per-step filter input are how we keep both clear.
 
 on:
   schedule:
@@ -13,9 +19,13 @@ on:
   workflow_dispatch:
     inputs:
       test_filter:
-        description: "xUnit --filter argument (default runs the full Windows E2E suite)"
+        description: "xUnit --filter for the Squid.Tentacle.Tests step (agent-binary Windows E2E)"
         required: false
         default: "Category=WindowsTentacleE2E"
+      upgrade_test_filter:
+        description: "xUnit --filter for the Squid.WindowsUpgradeE2ETests step (upgrade-wrapper E2E)"
+        required: false
+        default: "Category=WindowsUpgradeWrapperE2E"
 
 permissions:
   contents: read
@@ -46,15 +56,28 @@ jobs:
           Write-Host "pwsh: $(pwsh -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
           Write-Host "powershell: $(powershell -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
 
-      - name: Restore
+      - name: Restore Squid.Tentacle.Tests
         shell: pwsh
         run: dotnet restore tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj --configfile "$env:NUGET_CONFIG"
 
-      - name: Run Windows-specific Tentacle tests
+      - name: Run Squid.Tentacle.Tests
         shell: pwsh
         run: |
           $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsTentacleE2E" }
           dotnet test tests/Squid.Tentacle.Tests/Squid.Tentacle.Tests.csproj `
+            --configuration Release --no-restore `
+            --filter $filter `
+            --logger "console;verbosity=normal"
+
+      - name: Restore Squid.WindowsUpgradeE2ETests
+        shell: pwsh
+        run: dotnet restore tests/Squid.WindowsUpgradeE2ETests/Squid.WindowsUpgradeE2ETests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Squid.WindowsUpgradeE2ETests
+        shell: pwsh
+        run: |
+          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E" }
+          dotnet test tests/Squid.WindowsUpgradeE2ETests/Squid.WindowsUpgradeE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
             --logger "console;verbosity=normal"
