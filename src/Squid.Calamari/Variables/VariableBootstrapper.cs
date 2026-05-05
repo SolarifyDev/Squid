@@ -50,7 +50,7 @@ public static class VariableBootstrapper
     /// Caller appends directly with no surrounding quotes — the function
     /// wraps with single quotes itself.
     ///
-    /// <para><b>P1-Phase-7 audit follow-up to B.6</b>: pre-fix this used
+    /// <para><b> audit follow-up to B.6</b>: pre-fix this used
     /// double-quote wrapping with backslash escapes for <c>"</c>, <c>$</c>,
     /// <c>`</c>, <c>\</c>, and replaced <c>\n</c> / <c>\r</c> / <c>\t</c>
     /// with their literal-text two-char forms. The literal-text forms made
@@ -59,7 +59,7 @@ public static class VariableBootstrapper
     /// <c>BashRuntimeBundle.EscapeBashValue</c> was migrated in B.6 to
     /// single-quote wrapping; this file (the agent-side bootstrapper used
     /// by Calamari for every Run-Script-style execution) was missed.
-    /// Phase-7 audit caught it. Both sides now use the same single-quote
+    ///  audit caught it. Both sides now use the same single-quote
     /// strategy: every metacharacter inside the quote is literal; only
     /// <c>'</c> itself needs the four-character POSIX idiom <c>'\''</c>.</para>
     /// </summary>

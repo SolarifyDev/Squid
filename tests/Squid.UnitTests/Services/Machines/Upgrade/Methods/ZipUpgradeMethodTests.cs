@@ -4,7 +4,7 @@ using Squid.Core.Services.Machines.Upgrade.Methods;
 namespace Squid.UnitTests.Services.Machines.Upgrade.Methods;
 
 /// <summary>
-/// P1-Phase12.E.2 — pins the <see cref="ZipUpgradeMethod"/> snippet contract.
+/// pins the <see cref="ZipUpgradeMethod"/> snippet contract.
 /// Mirrors <see cref="TarballUpgradeMethodTests"/> shape exactly: the zip
 /// method is the universal Windows fallback (always available — no host
 /// prerequisites beyond <c>Invoke-WebRequest</c> + <c>Expand-Archive</c>),

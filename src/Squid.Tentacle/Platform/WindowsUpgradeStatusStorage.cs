@@ -4,7 +4,7 @@ using Squid.Tentacle.Core;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 — Windows upgrade-status storage. Paths under
+/// Windows upgrade-status storage. Paths under
 /// <c>%PROGRAMDATA%\Squid\Tentacle\upgrade\</c>.
 ///
 /// <para><b>Forward-compat with future Squid.Tentacle.Upgrader.exe</b>:

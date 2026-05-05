@@ -165,7 +165,7 @@ public class ScriptIsolationMutexTests
         Should.NotThrow(() => handle.Dispose());
     }
 
-    // ── P1-Phase11.2 (audit ARCH.9 F1.1) — pure-sync TryAcquireBlocking ─────
+    // ──  (audit ARCH.9 F1.1) — pure-sync TryAcquireBlocking ─────
 
     [Fact]
     public void TryAcquireBlocking_FreeMutex_SucceedsImmediately()

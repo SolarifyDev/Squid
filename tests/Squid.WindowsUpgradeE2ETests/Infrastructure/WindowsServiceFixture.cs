@@ -3,9 +3,9 @@ using System.Diagnostics;
 namespace Squid.WindowsUpgradeE2ETests.Infrastructure;
 
 /// <summary>
-/// P1-Phase12.E.7.A-1.b — reusable Windows service install/start/stop/uninstall
+/// reusable Windows service install/start/stop/uninstall
 /// fixture used by the upgrade-pipeline E2E tests. Wraps <c>sc.exe</c>
-/// (mirroring Phase 12.C's <c>WindowsServiceHost</c> production code path
+/// (mirroring 's <c>WindowsServiceHost</c> production code path
 /// exactly — the production SCM choice + this test fixture stay in sync) with:
 ///
 /// <list type="bullet">
@@ -109,7 +109,7 @@ public sealed class WindowsServiceFixture : IDisposable
         File.WriteAllText(VersionFilePath, initialVersion);
 
         // sc.exe create — same shape as production WindowsServiceHost in
-        // Phase 12.C (start= auto, type= own). LocalSystem identity by
+        //  (start= auto, type= own). LocalSystem identity by
         // default, no RunAsUser specified.
         RunScExpectingSuccess(
             "/Create failed",

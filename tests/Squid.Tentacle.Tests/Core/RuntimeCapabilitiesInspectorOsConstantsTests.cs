@@ -4,7 +4,7 @@ using Squid.Tentacle.Core;
 namespace Squid.Tentacle.Tests.Core;
 
 /// <summary>
-/// P1-Phase12.E.5 — agent half of the cross-process OS-string contract pin.
+/// agent half of the cross-process OS-string contract pin.
 /// The server side mirrors this with
 /// <c>MachineRuntimeCapabilitiesOsConstantsTests</c> in
 /// <c>Squid.UnitTests</c>. Both halves must pin the SAME literal values

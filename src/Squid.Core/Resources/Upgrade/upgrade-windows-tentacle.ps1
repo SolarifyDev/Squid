@@ -2,7 +2,7 @@
 # Squid Tentacle self-upgrade script (Windows)
 # ------------------------------------------------------------------------------
 # Sent over a Halibut polling RPC by the server's WindowsTentacleUpgradeStrategy
-# (Phase 12.E.3) at ScriptIsolationLevel.FullIsolation, so the agent serialises
+# at ScriptIsolationLevel.FullIsolation, so the agent serialises
 # this behind any in-flight deployment scripts — we never restart a tentacle
 # mid-deploy.
 #
@@ -10,14 +10,14 @@
 #
 # Mirrors the Linux upgrade-linux-tentacle.sh structure for operator-readability
 # parity: same Phase A → Phase B split, same INSTALL_OK / INSTALL_METHOD
-# variables, same status-file shape (Phase 12.A.2 WindowsUpgradeStatusStorage
+# variables, same status-file shape (WindowsUpgradeStatusStorage
 # layout: %ProgramData%\Squid\Tentacle\upgrade\last-upgrade.json).
 #
 # ARCHITECTURE:
 #   Phase A (in tentacle process / Halibut sees logs):
 #     • Pre-flight (arch, status file setup, idempotency lock).
 #     • INSTALL_METHODS block (server-injected): ordered chocolatey → MSI →
-#       zip-marker dispatch (Phase 12.E.4 ships chocolatey + MSI; Phase 12.E.2
+#       zip-marker dispatch (ships chocolatey + MSI;
 #       ships zip-marker only). The first method whose detection branch matches
 #       sets $INSTALL_OK = $true.
 #     • If $INSTALL_METHOD = 'zip', the existing zip download/verify/extract
@@ -36,10 +36,10 @@
 #       (Octopus parity: server reads on next health check via
 #       Capabilities RPC).
 #
-# Detach mechanism (Phase 12.E.3 concern, NOT template's):
+# Detach mechanism:
 #   When the SCM does Stop-Service squid-tentacle, the service's main process
 #   (PID running this script as a child) is terminated. To survive the
-#   restart, the Phase 12.E.3 WindowsTentacleUpgradeStrategy will wrap the
+#   restart, the WindowsTentacleUpgradeStrategy will wrap the
 #   template invocation in a detach mechanism (likely Task Scheduler one-shot
 #   task running as SYSTEM, equivalent to Linux's `systemd-run --scope`).
 #   This template is written ASSUMING the detach has already happened — it
@@ -67,8 +67,8 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# ── Identity gate (Phase 12.E.4) ──────────────────────────────────────────────
-# The Phase 12.E.4 WindowsTentacleUpgradeStrategy wraps invocation in a
+# ── Identity gate ──────────────────────────────────────────────
+# The WindowsTentacleUpgradeStrategy wraps invocation in a
 # Task Scheduler one-shot task with `/RU SYSTEM` — equivalent to Linux's
 # `systemd-run --scope` running as root. If we see a non-elevated identity
 # here, the wrapper failed silently and Phase B's `Stop-Service` /
@@ -79,13 +79,13 @@ $isElevated = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]
 $isSystem = $identity.IsSystem
 
 if (-not $isElevated -and -not $isSystem) {
-    Write-Host "::error:: Upgrade script must run as Administrator or LocalSystem (current identity: $($identity.Name), elevated=$isElevated, system=$isSystem). The Phase 12.E.4 strategy schedules this script via Task Scheduler with /RU SYSTEM; if you see this error the wrapper did not detach correctly."
+    Write-Host "::error:: Upgrade script must run as Administrator or LocalSystem (current identity: $($identity.Name), elevated=$isElevated, system=$isSystem). The strategy schedules this script via Task Scheduler with /RU SYSTEM; if you see this error the wrapper did not detach correctly."
     exit 15
 }
 
 # ── Arch detection MUST run before DOWNLOAD_URL is consumed ───────────────────
 # $env:PROCESSOR_ARCHITECTURE on a 64-bit OS is "AMD64" (x64) or "ARM64".
-# 32-bit Windows is NOT supported — Phase 12.E.0 docs analysis concluded
+# 32-bit Windows is NOT supported — docs analysis concluded
 # x86 has no real audience in 2026 (Server 2012 R2 was the last 32-bit
 # Windows Server, EOL 2023).
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -107,7 +107,7 @@ $INSTALL_DIR      = '{{INSTALL_DIR}}'
 $SERVICE_NAME     = '{{SERVICE_NAME}}'
 $HEALTHCHECK_URL  = '{{HEALTHCHECK_URL}}'
 
-# Phase 12.A.2 contract: %ProgramData%\Squid\Tentacle\upgrade\
+#  contract: %ProgramData%\Squid\Tentacle\upgrade\
 $STATUS_DIR  = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'
 $STATUS_FILE = Join-Path $STATUS_DIR 'last-upgrade.json'
 $LOCK_FILE   = Join-Path $STATUS_DIR 'upgrade.lock'
@@ -171,7 +171,7 @@ try {
 
     # ── Already-on-target short-circuit ─────────────────────────────────────
     # If the running binary is already at the target version, short-circuit.
-    # The Phase 12.E.3 strategy would normally do this server-side via the
+    # The strategy would normally do this server-side via the
     # AlreadyUpToDate path, but a stale runtime-cache could let an upgrade
     # dispatch through anyway — this is the agent-side defence-in-depth.
     $tentacleExe = Join-Path $INSTALL_DIR 'Squid.Tentacle.exe'
@@ -188,8 +188,8 @@ try {
 
     # ── INSTALL_METHODS dispatch (server-injected) ──────────────────────────
     # The server replaces {{INSTALL_METHODS}} with the concatenated snippets
-    # from each IWindowsUpgradeMethod's RenderDetectAndInstall(). Phase 12.E.2
-    # ships zip-marker only; Phase 12.E.4 will add chocolatey + MSI.
+    # from each IWindowsUpgradeMethod's RenderDetectAndInstall.
+    # ships zip-marker only;  will add chocolatey + MSI.
     $INSTALL_OK = $false
     $INSTALL_METHOD = ''
 
@@ -219,17 +219,50 @@ try {
                 exit 2
             }
 
-            # SHA256 verification is skipped when EXPECTED_SHA256 is empty —
-            # mirrors the Linux template's "Phase 1 default: release pipeline
-            # does not yet publish per-archive hashes" stance. Without this
-            # guard, the strategy substituting an empty placeholder would
-            # produce $expectedSha="" and `$actualSha -ne ""` is always true,
-            # so EVERY upgrade would exit 7. When the build pipeline starts
-            # publishing hashes, the strategy's substitution will populate a
-            # non-empty value and verification activates with no template change.
+            # opportunistic SHA256 fetch mirroring Linux's
+            # upgrade-linux-tentacle.sh:418-429 pattern. Resolution chain:
+            #
+            #   (1) Strategy-substituted EXPECTED_SHA256 (server-side override
+            #       — operator pinned a specific hash via env var, or strategy
+            #       in the future starts substituting from a manifest)
+            #
+            #   (2) <DOWNLOAD_URL>.sha256 companion file (has
+            #       both release workflows publishing these). This is the
+            #       common case once the next tag-push lands.
+            #
+            #   (3) Fall through with skip-with-warning (matches Linux's
+            #       behaviour for older releases that don't have .sha256
+            #       companions yet — backward compat for in-the-wild artifacts)
+            #
+            # Format expected: `sha256sum`'s default output (`<64-hex>  <filename>`).
+            # We strip whitespace + tail and validate hex-only-64-chars before
+            # using — anything else is treated as "no valid SHA available"
+            # and falls through. Mirrors Linux's grep-and-validate guard.
             if ([string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
-                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — skipping verification (release pipeline does not yet publish per-archive hashes)"
-            } else {
+                $shaUrl = "$DOWNLOAD_URL.sha256"
+                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — opportunistic fetch from $shaUrl"
+                try {
+                    $shaResponse = Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    # Take ONLY the first whitespace-delimited token (hex digest).
+                    # `sha256sum file > file.sha256` writes "<hex>  <filename>".
+                    $fetched = ($shaResponse.Content -split '\s+', 2)[0].Trim().ToLower()
+                    if ($fetched -match '^[0-9a-f]{64}$') {
+                        $EXPECTED_SHA256 = $fetched
+                        Append-UpgradeLog "[upgrade-method:zip] Fetched expected SHA256 from $shaUrl"
+                    }
+                    else {
+                        Append-UpgradeLog "[upgrade-method:zip] Companion at $shaUrl returned non-hex / wrong-length content — skipping verification"
+                    }
+                }
+                catch {
+                    # Common, expected case for older releases without .sha256
+                    # companions OR for air-gap mirrors that haven't replicated
+                    # the companion files yet. NOT a fatal error.
+                    Append-UpgradeLog "[upgrade-method:zip] No .sha256 companion at $shaUrl — skipping verification (release pipeline does not yet publish per-archive hashes for this version)"
+                }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
                 Append-UpgradeLog "[upgrade-method:zip] Verifying SHA256"
 
                 $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
@@ -240,6 +273,7 @@ try {
                     Write-UpgradeStatus -Status 'FAILED' -InstallMethod 'zip' -Detail "SHA256 mismatch (expected $expectedSha, got $actualSha)" -ExitCode 7
                     exit 7
                 }
+                Append-UpgradeLog "[upgrade-method:zip] SHA256 verified: $actualSha"
             }
 
             $extractDir = Join-Path $stagingDir 'extract'
@@ -274,7 +308,7 @@ try {
     }
 
     # ── Phase B: Stop service → swap → start service → health check ─────────
-    # This block runs SYNCHRONOUSLY and assumes the Phase 12.E.3 strategy has
+    # This block runs SYNCHRONOUSLY and assumes the strategy has
     # already detached the script process from the Tentacle service tree
     # (likely via a Task Scheduler one-shot wrapper, equivalent to Linux's
     # `systemd-run --scope`). If the script is invoked directly inside the

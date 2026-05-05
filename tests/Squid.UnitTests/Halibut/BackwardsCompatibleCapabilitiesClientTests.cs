@@ -71,7 +71,7 @@ public sealed class BackwardsCompatibleCapabilitiesClientTests
             await decorator.GetCapabilitiesAsync(new CapabilitiesRequest()));
     }
 
-    // ── P1-Phase9b.2: typed-exception detection (Halibut 8.1.1943) ──────────
+    // ── : typed-exception detection (Halibut 8.1.1943) ──────────
     //
     // Halibut 8.1.x ships SPECIFIC subclasses of HalibutClientException for
     // missing-service-or-method scenarios. Our prior Phase-implementation

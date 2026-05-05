@@ -12,7 +12,7 @@ namespace Squid.Tentacle.Halibut;
 public class TentacleHalibutHost : ITentacleHalibutHost
 {
     /// <summary>
-    /// P1-T.10 (Phase-8): env var that selects the IP address the listening
+    /// P1-T.10: env var that selects the IP address the listening
     /// Halibut runtime binds to. Default (unset / blank / "any") is
     /// <c>IPAddress.Any</c> (0.0.0.0) — listen on all interfaces, matching
     /// pre-fix behaviour. Operators on multi-NIC hosts or strict-firewall
@@ -55,7 +55,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
         var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService());
 
-        // P1-Phase9b.3: register the file-transfer service. Default impl writes
+        // : register the file-transfer service. Default impl writes
         // under ~/.squid/uploads with workspace-boundary path rewriting (rooted
         // / traversal paths are sanitised to a hash-derived filename).
         var fileTransfer = fileTransferService ?? new FileTransfer.LocalFileTransferService();
@@ -74,7 +74,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     }
 
     /// <summary>
-    /// P1-Phase9.15 — startup-jitter env var for thundering-herd mitigation.
+    /// startup-jitter env var for thundering-herd mitigation.
     ///
     /// <para><b>Problem</b>: when the server restarts, all N polling Tentacles
     /// detect the connection drop simultaneously and try to reconnect at the
@@ -88,7 +88,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     /// 30000ms (30s) so the reconnect storm is spread over ~30s instead of
     /// arriving in a single second.</para>
     ///
-    /// <para>Default 0ms preserves pre-Phase-9.15 behaviour (no jitter) for
+    /// <para>Default 0ms preserves behaviour (no jitter) for
     /// small fleets where the storm wouldn't matter. Operators with bigger
     /// fleets opt-in by setting the env var.</para>
     /// </summary>
@@ -99,7 +99,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
     public void StartPolling(string serverThumbprint, string subscriptionId, string subscriptionUri = null)
     {
-        // P1-Phase9.15: jitter the start of polling so reconnect storms after
+        // : jitter the start of polling so reconnect storms after
         // server restart don't arrive in a single instant. Read env var on
         // every call (cheap, allows operators to flip without restart).
         ApplyStartupJitter();
@@ -193,10 +193,10 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     }
 
     /// <summary>
-    /// P1-Phase9b.4 — hot-reloads the server-certificate trust list without
+    /// hot-reloads the server-certificate trust list without
     /// restarting the agent.
     ///
-    /// <para><b>Why this exists</b>: pre-Phase-9b.4, when the operator
+    /// <para><b>Why this exists</b>: , when the operator
     /// rotated the server's TLS certificate, every running Tentacle
     /// continued trusting only the OLD thumbprint. Even though the agent's
     /// config file had been updated with the new thumbprint, the in-process
@@ -240,7 +240,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     }
 
     /// <summary>
-    /// P1-Phase9b.4 — registers a SIGHUP handler that reloads the
+    /// registers a SIGHUP handler that reloads the
     /// <c>ServerCertificate</c> setting from the live config file and applies
     /// it via <see cref="ReloadTrustList"/>.
     ///
@@ -259,7 +259,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     /// supports <c>SIGHUP</c> only on Linux + macOS. On Windows the call
     /// throws <see cref="PlatformNotSupportedException"/> — we catch that
     /// silently. Windows operators have no native SIGHUP equivalent; the
-    /// agent's <c>service reload</c> CLI command (Phase-9b.5) is the
+    /// agent's <c>service reload</c> CLI command is the
     /// platform-portable alternative.</para>
     ///
     /// <para>Returns the registration so the caller can dispose it on
@@ -311,7 +311,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
             Log.Information("Trusted server thumbprint {Thumbprint} for listening mode", thumbprint);
         }
 
-        // P1-T.10 (Phase-8): bind IP resolved from env var. Default IPAddress.Any
+        // P1-T.10: bind IP resolved from env var. Default IPAddress.Any
         // preserves pre-fix behaviour. HalibutRuntime.Listen(IPEndPoint) returns
         // the actual bound port — important when port=0 (kernel-assigned
         // ephemeral) and useful even when explicit, because it confirms the
@@ -336,12 +336,12 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         => ParseListenIpAddress(System.Environment.GetEnvironmentVariable(ListenIpAddressEnvVar));
 
     /// <summary>
-    /// P1-Phase9.15 — sleep 0..jitterMs (uniformly random) before polling
+    /// sleep 0..jitterMs (uniformly random) before polling
     /// startup. Reads <see cref="PollingStartupJitterEnvVar"/> at every
     /// invocation so operators can flip it without service restart.
     ///
     /// <para>Out-of-range / unparseable input falls back silently to 0
-    /// (no jitter, identical to pre-Phase-9.15 behaviour) — we don't WANT
+    /// (no jitter, identical to behaviour) — we don't WANT
     /// to crash an operator's Tentacle on a typo.</para>
     /// </summary>
     private static void ApplyStartupJitter()
@@ -415,7 +415,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
     /// <paramref name="subscriptionUri"/> is preferred when present, else
     /// falls back to the deterministic <c>poll://{subscriptionId}/</c>.
     ///
-    /// <para><b>P1-T.14 (Phase-8)</b>: a malformed server-returned URI used
+    /// <para><b>P1-T.14</b>: a malformed server-returned URI used
     /// to throw <see cref="UriFormatException"/> from <c>new Uri(...)</c>,
     /// crashing tentacle startup with no clean recovery. A buggy server
     /// release would brick every fresh-registering agent. Now we catch

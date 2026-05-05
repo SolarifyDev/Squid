@@ -10,7 +10,7 @@ namespace Squid.UnitTests.Middlewares;
 /// <summary>
 /// P0-Phase10.3 (audit D.3 / H-19) — pin the cross-space privesc gate.
 ///
-/// <para><b>The privesc vector pre-Phase-10.3</b>: a user with team
+/// <para><b>The privesc vector </b>: a user with team
 /// membership in Space-1 sends a command with HTTP header
 /// <c>X-Space-Id: 2</c>. SpaceIdInjectionSpecification trusted the header,
 /// injected SpaceId=2 into the command body, and downstream authorization
@@ -21,13 +21,13 @@ namespace Squid.UnitTests.Middlewares;
 /// <para>This middleware runs BEFORE the injection spec and rejects with
 /// <see cref="CrossSpaceAccessDeniedException"/> when the header references
 /// a Space the user isn't a member of. Internal users (Hangfire, system
-/// tasks) bypass via <c>IsInternal=true</c> — same pattern as Phase-7 D.6.</para>
+/// tasks) bypass via <c>IsInternal=true</c> — same pattern as D.6.</para>
 /// </summary>
 // Tests in this class mutate SQUID_SPACE_MEMBERSHIP_ENFORCEMENT process-wide
 // for mode-specific assertions. xUnit serializes methods within a class but
 // runs classes in parallel — collection attribute ensures any other test class
 // that ALSO mutates this env var queues behind us. None currently exists; the
-// attribute is defensive future-proofing against the same issue Phase-9a
+// attribute is defensive future-proofing against the same issue
 // uncovered with Serilog Log.Logger pollution.
 [Collection("SpaceMembershipEnforcementEnvVarMutators")]
 public sealed class SpaceMembershipSpecificationTests
@@ -64,7 +64,7 @@ public sealed class SpaceMembershipSpecificationTests
     public async Task InternalUser_Bypasses_RegardlessOfMembership()
     {
         // Hangfire / system tasks pass IsInternal=true — they don't have
-        // team memberships, must bypass entirely (Phase-7 D.6 pattern).
+        // team memberships, must bypass entirely.
         var spec = CreateSpec(headerValue: "5", currentUserId: 8888, isInternal: true, isMemberOfRequestedSpace: false);
         var message = new TestSpaceScopedRequest();
         var context = CreateContext(message);
@@ -101,7 +101,7 @@ public sealed class SpaceMembershipSpecificationTests
     [Fact]
     public async Task NullUserId_RejectsBeforeMembershipLookup()
     {
-        // Phase-7 D.6 fail-closed posture: an ApiUser stuck in a non-HTTP
+        //  D.6 fail-closed posture: an ApiUser stuck in a non-HTTP
         // scope returns null Id. Pre-fix this slipped through. We follow
         // the D.6 pattern and refuse loudly with a -1 placeholder UserId
         // in the exception (operator can correlate via timestamp + path).
@@ -198,7 +198,7 @@ public sealed class SpaceMembershipSpecificationTests
     public async Task OffMode_PrivescAttempt_SilentlyAllows()
     {
         // Off mode is the emergency-rollback knob. No log, no throw —
-        // identical to pre-Phase-10.3 behaviour. Operators use this ONLY
+        // identical to behaviour. Operators use this ONLY
         // during incident response when the membership data store has a
         // bug and no users would pass the check.
         var previous = Environment.GetEnvironmentVariable(

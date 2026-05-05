@@ -11,7 +11,7 @@ using Xunit;
 namespace Squid.UnitTests.Services.Deployments.Execution;
 
 /// <summary>
-/// Phase-6.5: pins the contract of <see cref="OutputVariableMerger"/>.
+/// : pins the contract of <see cref="OutputVariableMerger"/>.
 ///
 /// <para><b>The bug it closes</b>: <c>_ctx.Variables.AddRange(result.OutputVariables)</c>
 /// in <c>ExecuteStepsPhase.ApplyBatchResults</c> blindly appends every output
@@ -268,7 +268,7 @@ public sealed class OutputVariableMergerTests
     }
 
     /// <summary>
-    /// Lock-protected capture buffer. Phase 12.E.6 belt-and-braces: even if a
+    /// Lock-protected capture buffer.  belt-and-braces: even if a
     /// future test class skips <c>[Collection(GlobalStateSerialisedCollection.Name)]</c>,
     /// concurrent <c>Emit</c> from another logger pipeline thread can't crash
     /// our <c>foreach Events</c> iteration with <c>InvalidOperationException</c>.

@@ -156,7 +156,7 @@ public class MachineController : ControllerBase
     /// Triggers an in-place self-upgrade of the agent on the target machine.
     /// Per-target dispatch is via <c>IMachineUpgradeStrategy</c> (Linux
     /// Tentacle delivers a bash script over Halibut; Kubernetes Agent will
-    /// helm-upgrade the chart in Phase 2).
+    /// helm-upgrade the chart in).
     /// </summary>
     /// <summary>
     /// Read-only "can this machine be upgraded right now?" probe powering
@@ -212,6 +212,32 @@ public class MachineController : ControllerBase
         var request = new GetUpgradeLogRequest { MachineId = machineId };
 
         var response = await _mediator.RequestAsync<GetUpgradeLogRequest, GetUpgradeLogResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// agent-reported upgrade-status snapshot for the
+    /// most recent upgrade attempt. Exposes the structured <c>ExitCode</c>
+    /// field that <c>GET /upgrade-events</c> (event stream) and
+    /// <c>GET /upgrade-log</c> (raw text) silently drop. Operators
+    /// investigating a Phase B failure on Windows / Linux see exit codes
+    /// like <c>7</c> (SHA256 mismatch), <c>14</c> (no install method
+    /// matched), <c>15</c> (insufficient privileges, Windows-only) directly
+    /// without grepping the log file.
+    ///
+    /// <para>Empty <c>Status</c> field on the response when no upgrade
+    /// has ever run on this machine, the agent's <c>last-upgrade.json</c>
+    /// file is missing, or the server pod restarted recently (cache
+    /// cold; refills on next health check).</para>
+    /// </summary>
+    [HttpGet("{machineId:int}/upgrade-status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeStatusResponse))]
+    public async Task<IActionResult> GetUpgradeStatusAsync(int machineId, CancellationToken ct)
+    {
+        var request = new GetUpgradeStatusRequest { MachineId = machineId };
+
+        var response = await _mediator.RequestAsync<GetUpgradeStatusRequest, GetUpgradeStatusResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

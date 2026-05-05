@@ -16,10 +16,10 @@ public sealed class DeploymentLogWriter : IDeploymentLogWriter, IAsyncDisposable
     private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(300);
 
     /// <summary>
-    /// Phase-6.4: env var that selects the in-memory buffer capacity. Default
+    /// : env var that selects the in-memory buffer capacity. Default
     /// (unset / blank / unrecognised) is <c>50_000</c> entries — caps memory
     /// under sustained DB blips while leaving plenty of headroom for normal
-    /// deploys. <c>"unbounded"</c> restores the pre-Phase-6 behaviour
+    /// deploys. <c>"unbounded"</c> restores the behaviour
     /// (no cap; OOM possible under DB stall + heavy producer rate).
     /// </summary>
     public const string BufferCapacityEnvVar = "SQUID_DEPLOY_LOG_BUFFER_CAPACITY";

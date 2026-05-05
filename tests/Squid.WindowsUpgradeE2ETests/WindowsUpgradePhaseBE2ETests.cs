@@ -6,7 +6,7 @@ using Squid.WindowsUpgradeE2ETests.Infrastructure;
 namespace Squid.WindowsUpgradeE2ETests;
 
 /// <summary>
-/// P1-Phase12.E.7.A-2 — full upgrade Phase B E2E. Drives the load-bearing
+/// full upgrade Phase B E2E. Drives the load-bearing
 /// physical mechanics of the Windows tentacle upgrade pipeline (the
 /// portion that ONLY runs on a real Windows host with a real running
 /// service):
@@ -15,7 +15,7 @@ namespace Squid.WindowsUpgradeE2ETests;
 ///   <item><c>Stop-Service</c> against a running service must reach
 ///         STOPPED state.</item>
 ///   <item>Backup-then-swap via <c>Split-Path</c>-derived sibling .bak
-///         path (Phase 12.E.4 polish #2 — must NOT use string
+///         path (polish #2 — must NOT use string
 ///         interpolation that would create a hidden .bak inside
 ///         <c>$INSTALL_DIR</c>).</item>
 ///   <item>Move-Item directory swap from
@@ -28,7 +28,7 @@ namespace Squid.WindowsUpgradeE2ETests;
 ///
 /// <para><b>Why a separate Phase B test file (not inside
 /// upgrade-windows-tentacle.ps1's full flow):</b> the production .ps1
-/// expects to run detached via Task Scheduler (see Phase 12.E.4's
+/// expects to run detached via Task Scheduler (see 's
 /// outer wrapper) AND owns the download / SHA verify / lock file /
 /// status JSON. Re-running ALL of that here would conflate the test
 /// of Phase B's mechanics with concerns already covered: download/SHA
@@ -169,7 +169,7 @@ public sealed class WindowsUpgradePhaseBE2ETests
             "Stop-Service",
             "Move-Item",
             "Start-Service",
-            "Split-Path -Parent",   // Phase 12.E.4 polish #2: bak path safety
+            "Split-Path -Parent",   //  polish #2: bak path safety
             "Split-Path -Leaf",
             "Join-Path"
         };

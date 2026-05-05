@@ -77,14 +77,14 @@ public class SshExecutionStrategy : IExecutionStrategy
     /// P0-Phase9.2 — cleanup-finally guarantee: workDir cleanup runs on EVERY
     /// exit path (success, exception, cancellation), not just success.
     ///
-    /// <para><b>The bug pre-Phase-9.2</b>: <c>CleanupRemoteWorkDirectory</c> sat
+    /// <para><b>The bug </b>: <c>CleanupRemoteWorkDirectory</c> sat
     /// on the success path. If <c>PrepareRemoteWorkDirectoryAsync</c> threw
     /// after creating the work dir on remote, OR if <c>ExecuteScriptAsync</c>
     /// threw after dropping <c>sensitiveVariables.json</c> to disk, the work
     /// dir was orphaned forever. Result: <c>/tmp</c> filled with stale dirs
     /// AND decrypted password files remained world-readable on the remote.</para>
     ///
-    /// <para><b>P1-Phase9.4 addition</b>: when cancellation fires (user clicked
+    /// <para><b> addition</b>: when cancellation fires (user clicked
     /// "cancel deployment" in the UI), the local polling loop in
     /// <c>SshRemoteShellExecutor.ExecuteAsync</c> exits via OCE — but the
     /// REMOTE bash process keeps running. The finally block now also issues a
@@ -110,7 +110,7 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
         finally
         {
-            // P1-Phase9.4: kill straggler processes BEFORE rm -rf so the
+            // : kill straggler processes BEFORE rm -rf so the
             // cleanup doesn't race a still-running script that's writing files
             // back into workDir. Only fires when CT is cancelled — success and
             // non-cancel exception paths skip the kill (process already done).
@@ -125,7 +125,7 @@ public class SshExecutionStrategy : IExecutionStrategy
     }
 
     /// <summary>
-    /// P1-Phase9.4 — best-effort SIGTERM/SIGKILL of remote processes whose argv
+    /// best-effort SIGTERM/SIGKILL of remote processes whose argv
     /// contains the per-task workDir marker.
     ///
     /// <para><b>Why this exists</b>: <c>SshRemoteShellExecutor.ExecuteAsync</c>

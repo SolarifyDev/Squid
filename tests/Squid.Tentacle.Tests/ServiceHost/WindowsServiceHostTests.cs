@@ -6,12 +6,12 @@ using Xunit;
 namespace Squid.Tentacle.Tests.ServiceHost;
 
 /// <summary>
-/// P1-Phase12.C — pin the <c>sc.exe</c> argv contract for Windows Service
+/// pin the <c>sc.exe</c> argv contract for Windows Service
 /// install/uninstall/start/stop/status.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12.C the <see cref="WindowsServiceHost"/>
+/// <para><b>Why this exists</b>:  the <see cref="WindowsServiceHost"/>
 /// was a stub that always returned exit code 2 with "not yet implemented".
-/// Phase-12.C ships the real impl shelling out to <c>sc.exe</c>; these tests
+///  ships the real impl shelling out to <c>sc.exe</c>; these tests
 /// pin the EXACT argv shape so any drift (dropped <c>start= auto</c>, missing
 /// space after <c>=</c>, reordered args) is compile/test-time visible
 /// before hitting a real Windows runner.</para>
@@ -138,7 +138,7 @@ public sealed class WindowsServiceHostTests
     [Fact]
     public void BuildScCreateArgs_EmptyRunAsUser_DefaultsToLocalSystem()
     {
-        // RunAsUser empty (Phase-12.A.3 WindowsServiceUserProvider returns ""
+        // RunAsUser empty (WindowsServiceUserProvider returns ""
         // = "use platform default") → obj= LocalSystem. Explicit > implicit.
         var args = WindowsServiceHost.BuildScCreateArgs(new ServiceInstallRequest
         {
@@ -168,7 +168,7 @@ public sealed class WindowsServiceHostTests
     [Fact]
     public void BuildScCreateArgs_CustomRunAsUser_PassedThrough()
     {
-        // Future Phase-12.C-followup will add LSA grant + password= for
+        // Future will add LSA grant + password= for
         // non-system identities. For now the value is passed through to
         // sc.exe verbatim — operator sees the SAME error if invalid.
         var args = WindowsServiceHost.BuildScCreateArgs(new ServiceInstallRequest
@@ -212,12 +212,12 @@ public sealed class WindowsServiceHostTests
         args.ShouldBe(new[] { "query", "squid-tentacle" });
     }
 
-    // ── BuildScFailureArgs — Phase-12.D restart-on-failure policy ──────────────
+    // ── BuildScFailureArgs — restart-on-failure policy ──────────────
 
     [Fact]
     public void BuildScFailureArgs_DefaultValues_ProducesPinnedArgv()
     {
-        // The canonical Phase-12.D default: 3 restart actions, 10s between
+        // The canonical default: 3 restart actions, 10s between
         // restarts, 24h stable-runtime reset window. Mirrors systemd's
         // Restart=on-failure + RestartSec=10 + StartLimitBurst=3 trio.
         //
@@ -278,7 +278,7 @@ public sealed class WindowsServiceHostTests
         // The same delay is applied to every restart in the actions list — sc
         // failure doesn't support per-action delays (a real limitation vs
         // systemd's `RestartSteps`/`RestartMaxDelaySec` for backoff). For
-        // Phase-12.D scope, fixed delay matches systemd's `RestartSec=10`.
+        //  scope, fixed delay matches systemd's `RestartSec=10`.
         var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount: 3, restartDelayMs: 30_000, resetSeconds: 86_400);
 
         args[3].ShouldBe("actions= restart/30000/restart/30000/restart/30000");

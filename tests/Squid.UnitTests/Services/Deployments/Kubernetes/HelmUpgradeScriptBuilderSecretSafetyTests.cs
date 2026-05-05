@@ -10,7 +10,7 @@ namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 /// <summary>
 /// P0-Phase10.2 (audit C.2) — pin the "no secrets in helm argv" contract.
 ///
-/// <para><b>The bug pre-Phase-10.2</b>: <c>HelmUpgradeScriptBuilder</c>
+/// <para><b>The bug </b>: <c>HelmUpgradeScriptBuilder</c>
 /// emitted <c>--set "key=value"</c> for inline values. The full value text
 /// landed in the helm process argv → visible to:
 /// <list type="bullet">
@@ -81,7 +81,7 @@ public sealed class HelmUpgradeScriptBuilderSecretSafetyTests
 
         // A generated file with the secret content must be emitted so the
         // server can ship it to the workspace alongside any user-supplied
-        // values files. Per-task workspace dir is 0700 (Phase-9.2 invariant).
+        // values files. Per-task workspace dir is 0700.
         files.Count.ShouldBe(1);
         var generated = System.Linq.Enumerable.First(files, f => f.RelativePath.Contains("inline"));
         var content = System.Text.Encoding.UTF8.GetString(generated.Content);
@@ -93,7 +93,7 @@ public sealed class HelmUpgradeScriptBuilderSecretSafetyTests
     public void Bash_InlineAndUserSuppliedFiles_GeneratedGoesLastForPrecedence()
     {
         // Helm --values precedence: later files override earlier ones.
-        // pre-Phase-10.2 --set always overrode --values; the generated
+        //  --set always overrode --values; the generated
         // inline-values file must take its place at the END of the
         // --values chain to preserve override semantics.
         var userYaml = System.Text.Encoding.UTF8.GetBytes("database:\n  password: from-base\n");

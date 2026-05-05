@@ -102,7 +102,7 @@ public sealed class VariableEncryptionServiceMasterKeyTests
 
         bytes.ShouldNotBeNull(customMessage: "Warn mode must NOT throw on empty master key");
         bytes.Length.ShouldBe(0,
-            customMessage: "empty input → empty bytes (matches pre-Phase-1 behaviour exactly)");
+            customMessage: "empty input → empty bytes (matches behaviour exactly)");
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public sealed class VariableEncryptionServiceMasterKeyTests
     [Fact]
     public void Constructor_EmptyMasterKey_DoesNotThrow_BackwardCompatPreserved()
     {
-        // The whole point of the Phase-3 refactor: existing deploys that have
+        // The whole point of the refactor: existing deploys that have
         // an empty MasterKey (because they never set one) must continue to
         // start. Warning lands in logs.
         var setting = BuildSetting(string.Empty);

@@ -179,13 +179,13 @@ public sealed class ServiceCommand : ITentacleCommand
     }
 
     /// <summary>
-    /// P1-Phase12.A.3 — delegates to the platform-resolved
-    /// <see cref="Platform.IServiceUserProvider"/>. Pre-Phase-12 this
+    /// delegates to the platform-resolved
+    /// <see cref="Platform.IServiceUserProvider"/>.  this
     /// shelled directly to <c>getent passwd squid-tentacle</c> with a
     /// hardcoded <c>OperatingSystem.IsLinux()</c> guard. Now the
     /// platform-specific impl chooses (Linux: getent + "squid-tentacle";
     /// Windows: empty = LocalSystem; macOS: null fallback). Returns null
-    /// when no usable service user is found, matching the pre-Phase-12
+    /// when no usable service user is found, matching the
     /// "service host interprets null as 'run as the caller / root'"
     /// contract.
     /// </summary>

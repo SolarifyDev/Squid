@@ -58,7 +58,7 @@ public sealed class BackwardsCompatibleCapabilitiesClient : IAsyncCapabilitiesSe
 
     internal static bool IsNoSuchServiceError(Exception ex)
     {
-        // P1-Phase9b.2: Halibut 8.1.x ships SPECIFIC subclasses of
+        // : Halibut 8.1.x ships SPECIFIC subclasses of
         // HalibutClientException for missing-service-or-method scenarios.
         // Type-based detection is the resilient primary path — robust
         // against future i18n / message wording changes that would

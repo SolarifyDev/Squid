@@ -9,7 +9,7 @@ namespace Squid.Tentacle.ScriptExecution;
 /// <summary>
 /// Extracts sensitive variable values from workspace files for output masking.
 ///
-/// <para><b>Dual-format reader (P1-Phase9.1)</b> — symmetry with
+/// <para><b>Dual-format reader</b> — symmetry with
 /// <c>Squid.Calamari.Variables.SensitiveVariableDecryptor</c> and the server-side
 /// emit path. The Tentacle's masking pass MUST decrypt the same envelope formats
 /// that the server / Calamari side emits, otherwise sensitive values flow into
@@ -17,7 +17,7 @@ namespace Squid.Tentacle.ScriptExecution;
 ///
 /// <list type="bullet">
 ///   <item><b>V1 (legacy)</b>: <c>IV__</c> + AES-128-CBC, PBKDF2-SHA1, 1000 iters,
-///         fixed salt <c>"SquidDep"</c>. Pre-Phase-8 servers emit this. Mode-gated
+///         fixed salt <c>"SquidDep"</c>.  servers emit this. Mode-gated
 ///         via <see cref="LegacyAcceptEnforcementEnvVar"/> so an operator can
 ///         lock down once the fleet is on v1.7+.</item>
 ///   <item><b>V2 (new)</b>: <c>V2__</c> + salt(16) + nonce(12) + AES-256-GCM

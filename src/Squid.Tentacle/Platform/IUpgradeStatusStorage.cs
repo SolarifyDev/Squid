@@ -1,10 +1,10 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 (Windows Tentacle foundations) — abstraction over the
+///  (Windows Tentacle foundations) — abstraction over the
 /// agent's on-disk upgrade-status / events / log files.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12 the agent's
+/// <para><b>Why this exists</b>:  the agent's
 /// <c>CapabilitiesService</c> hardcoded three Linux-specific paths
 /// (<c>/var/lib/squid-tentacle/last-upgrade.json</c>, etc.) and read
 /// them via three private static <c>Func&lt;string&gt;</c> readers.
@@ -16,7 +16,7 @@ namespace Squid.Tentacle.Platform;
 /// <para>Three concrete implementations:
 /// <list type="bullet">
 ///   <item><see cref="LinuxUpgradeStatusStorage"/> — preserves the
-///         exact pre-Phase-12 paths bit-for-bit; matches what
+///         exact paths bit-for-bit; matches what
 ///         <c>upgrade-linux-tentacle.sh</c> writes.</item>
 ///   <item><see cref="WindowsUpgradeStatusStorage"/> — reads from
 ///         <c>%PROGRAMDATA%\Squid\Tentacle\upgrade\</c>. Server-side

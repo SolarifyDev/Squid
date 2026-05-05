@@ -4,9 +4,9 @@ using System.Text;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.B.1 — PowerShell Core launcher (<c>pwsh</c> binary on PATH).
+/// PowerShell Core launcher (<c>pwsh</c> binary on PATH).
 /// Used on Linux + macOS for <c>ScriptType.PowerShell</c>; Windows uses the
-/// dedicated <see cref="WindowsPowerShellProcessLauncher"/> (Phase 12.B.2)
+/// dedicated <see cref="WindowsPowerShellProcessLauncher"/>
 /// which targets the OS-bundled <c>PowerShell.exe</c> with OEM-codepage
 /// stdout decoding instead.
 /// </summary>

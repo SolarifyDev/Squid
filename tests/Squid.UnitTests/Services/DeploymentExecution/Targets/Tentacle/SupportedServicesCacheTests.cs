@@ -30,7 +30,7 @@ public sealed class SupportedServicesCacheTests
     public void Store_WithoutSupportedServices_DefaultsToEmpty()
     {
         // Optional-default overload preserves backward compat with existing callers
-        // (TentacleHealthCheckStrategy pre-Phase-4, unit-test helpers, etc.).
+        // (TentacleHealthCheckStrategy , unit-test helpers, etc.).
         var cache = new InMemoryMachineRuntimeCapabilitiesCache();
 
         cache.Store(42, new Dictionary<string, string>(), "1.6.0");

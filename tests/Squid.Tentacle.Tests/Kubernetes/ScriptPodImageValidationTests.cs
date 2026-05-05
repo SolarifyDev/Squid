@@ -88,7 +88,7 @@ public sealed class ScriptPodImageValidationTests
         Should.NotThrow(
             () => ScriptPodImageValidator.EnsureSafe(image, EnforcementMode.Warn),
             customMessage:
-                "Warn mode must NOT throw on tag-only image. Pre-Phase-3 default " +
+                "Warn mode must NOT throw on tag-only image.  default " +
                 "behaviour was Strict and broke deploys at first pod creation. The whole " +
                 "point of this refactor is that 'warn-then-eventually-flip' allows time " +
                 "for ops to remediate.");

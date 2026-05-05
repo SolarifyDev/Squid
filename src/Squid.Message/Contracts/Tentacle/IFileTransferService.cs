@@ -3,10 +3,10 @@ using Halibut;
 namespace Squid.Message.Contracts.Tentacle;
 
 /// <summary>
-/// P1-Phase9b.3 (audit OctopusTentacle gap #1) — separate file upload/download
+///  (audit OctopusTentacle gap #1) — separate file upload/download
 /// wire contract, distinct from <see cref="IScriptService"/>.
 ///
-/// <para><b>Why a separate contract</b>: pre-Phase-9b.3, files crossed the wire
+/// <para><b>Why a separate contract</b>: , files crossed the wire
 /// only as <c>StartScriptCommand.Files</c> embedded in a script-execution
 /// command. That works for the deployment fast-path but precluded:
 /// <list type="bullet">

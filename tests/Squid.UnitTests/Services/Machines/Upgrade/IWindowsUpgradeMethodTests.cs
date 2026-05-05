@@ -3,8 +3,8 @@ using Squid.Core.Services.Machines.Upgrade;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.1 — pins the <see cref="IWindowsUpgradeMethod"/> interface
-/// shape via a stub impl. Phase 12.E.1 is foundation-only: no concrete
+/// pins the <see cref="IWindowsUpgradeMethod"/> interface
+/// shape via a stub impl.  is foundation-only: no concrete
 /// methods (no <c>ZipUpgradeMethod</c> / <c>MsiUpgradeMethod</c>) exist
 /// yet — they ship in 12.E.2. Until then, the interface contract itself is
 /// the deliverable, and the most reliable contract pin is a class that

@@ -174,7 +174,7 @@ public class PollingTrustDistributorTests : IDisposable
         Should.NotThrow(() => distributor.Reconfigure());
     }
 
-    // ── P1 (Phase-6, post-Phase-5 deep audit) ────────────────────────────────
+    // ── P1 ────────────────────────────────
     //
     // Context: ReconfigureIfMissing was called from MachineRegistrationService
     // .TentacleListening.cs:50 INSIDE an async controller call, transitively
@@ -291,7 +291,7 @@ public class PollingTrustDistributorTests : IDisposable
 
     // ── P0-Phase9.2 startup-race serialization ──────────────────────────────
     //
-    // The bug pre-Phase-9.3:
+    // The bug :
     //   1. Start() schedules the initial DB load on a background Task.Run.
     //   2. Concurrent registration arrives before the initial load finishes.
     //   3. Registration calls ReconfigureIfMissingAsync → ReconfigureAsync → reads
@@ -357,7 +357,7 @@ public class PollingTrustDistributorTests : IDisposable
         _halibutRuntime.IsTrusted("A").ShouldBeTrue();
         _halibutRuntime.IsTrusted("B").ShouldBeTrue();
         _halibutRuntime.IsTrusted("C").ShouldBeTrue(customMessage:
-            "C must remain trusted after concurrent reconfigure — pre-Phase-9.3 race could drop it.");
+            "C must remain trusted after concurrent reconfigure — race could drop it.");
     }
 
     [Fact]

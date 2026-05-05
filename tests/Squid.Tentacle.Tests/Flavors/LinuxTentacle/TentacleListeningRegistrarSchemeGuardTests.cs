@@ -79,14 +79,14 @@ public sealed class TentacleListeningRegistrarSchemeGuardTests
     [InlineData("http://localhost:5078")]
     public void Warn_HttpWithSecret_DoesNotThrow_BackwardCompat(string serverUrl)
     {
-        // Warn mode (default) preserves pre-Phase-1 behaviour for any deploy
+        // Warn mode (default) preserves behaviour for any deploy
         // that hasn't yet set SQUID_REGISTER_HTTPS_ENFORCEMENT. Operator sees
         // structured warning in logs.
         Should.NotThrow(
             () => TentacleListeningRegistrar.EnsureSchemeSafeForSecret(
                 serverUrl, hasSecret: true, mode: EnforcementMode.Warn),
             customMessage:
-                "Warn mode must NOT throw on http+secret. Pre-Phase-3 strict-by-default " +
+                "Warn mode must NOT throw on http+secret.  strict-by-default " +
                 "broke deploys that ship with http listening URLs (internal networks).");
     }
 

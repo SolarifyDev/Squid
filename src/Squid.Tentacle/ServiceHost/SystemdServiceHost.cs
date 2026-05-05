@@ -129,7 +129,7 @@ public sealed class SystemdServiceHost : IServiceHost
         // of headroom, and operators can `systemctl reset-failed` +
         // `systemctl start` to resume.
         // ── TimeoutStopSec coordination with ShutdownDrainTimeoutSeconds ──
-        // P1-Phase9.5 raised TentacleSettings.DefaultShutdownDrainTimeoutSeconds
+        //  raised TentacleSettings.DefaultShutdownDrainTimeoutSeconds
         // from 30 → 300. systemd's TimeoutStopSec MUST exceed the in-process
         // drain timeout, otherwise systemd SIGKILLs the Tentacle BEFORE drain
         // completes, abruptly terminating in-flight scripts WITHOUT

@@ -37,7 +37,7 @@ public class ServiceCommandTests
         unit.ShouldContain("StartLimitIntervalSec=120");
         unit.ShouldContain("StartLimitAction=none");
         unit.ShouldContain("KillSignal=SIGINT");
-        // P1-Phase9.5: bumped 60 → 330 to cover the drain-default-300 + 30 grace.
+        // : bumped 60 → 330 to cover the drain-default-300 + 30 grace.
         // Without this, systemd SIGKILLs Tentacle mid-drain, abruptly terminating
         // in-flight scripts. See SystemdServiceHost.BuildUnitFile XML doc.
         unit.ShouldContain("TimeoutStopSec=330");

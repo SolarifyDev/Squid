@@ -4,7 +4,7 @@ using System.Runtime.Versioning;
 namespace Squid.Tentacle.ServiceHost;
 
 /// <summary>
-/// P1-Phase12.C — Windows Services backend driven by <c>sc.exe</c>. Mirrors the
+/// Windows Services backend driven by <c>sc.exe</c>. Mirrors the
 /// shape of <see cref="SystemdServiceHost"/> (pure-function argv builders for
 /// testability, single shell-out helper for invocation, exit-code passthrough).
 /// </summary>
@@ -21,8 +21,8 @@ namespace Squid.Tentacle.ServiceHost;
 /// <c>sc create</c> uses without an explicit <c>obj=</c> argument; specifying
 /// it explicitly here makes the contract visible in the audit trail. Custom
 /// users (non-empty <c>RunAsUser</c>) require an LSA <c>SeServiceLogonRight</c>
-/// grant + a <c>password=</c> arg — Phase-12.C scope is LocalSystem only;
-/// Phase-12.C-followup will add the LSA-grant + WMI <c>Win32_Service.Change</c>
+/// grant + a <c>password=</c> arg — scope is LocalSystem only;
+///  will add the LSA-grant + WMI <c>Win32_Service.Change</c>
 /// dance for operator <c>--username</c>/<c>--password</c> input.</para>
 ///
 /// <para><b>Already-installed handling</b>: <c>sc create</c> returns 1073
@@ -46,20 +46,20 @@ public sealed class WindowsServiceHost : IServiceHost
     /// via PATH.</summary>
     public const string ScExeFileName = "sc.exe";
 
-    /// <summary>P1-Phase12.D — default number of restart-on-failure attempts.
+    /// <summary>default number of restart-on-failure attempts.
     /// Mirrors <see cref="SystemdServiceHost"/>'s <c>StartLimitBurst=3</c>:
     /// after 3 consecutive failures within the reset window the SCM stops
     /// trying (Windows leaves the service in stopped state — there is no
     /// "reboot host on failure" default). Pinned per Rule 8.</summary>
     public const int DefaultRestartCount = 3;
 
-    /// <summary>P1-Phase12.D — default delay between restart attempts, in
+    /// <summary>default delay between restart attempts, in
     /// milliseconds. 10_000 ms = 10s; mirrors <see cref="SystemdServiceHost"/>'s
     /// <c>RestartSec=10</c>. Operators on mixed Linux/Windows fleets see the
     /// SAME restart cadence on either platform. Pinned per Rule 8.</summary>
     public const int DefaultRestartDelayMs = 10_000;
 
-    /// <summary>P1-Phase12.D — default seconds of stable runtime after which
+    /// <summary>default seconds of stable runtime after which
     /// the SCM resets the failure counter. 86_400 s = 24h. Windows's
     /// <c>sc failure</c> only supports "reset after stable runtime" (NOT
     /// systemd's rolling-window <c>StartLimitIntervalSec</c>); 24h is the
@@ -106,7 +106,7 @@ public sealed class WindowsServiceHost : IServiceHost
 
         Console.WriteLine($"Created Windows service '{request.ServiceName}'.");
 
-        // P1-Phase12.D — apply restart-on-failure policy BEFORE first start so
+        // apply restart-on-failure policy BEFORE first start so
         // the SCM has the policy active from boot 1. Mirrors systemd's
         // "Restart=on-failure / RestartSec=10 / StartLimitBurst=3" trio.
         //
@@ -117,7 +117,7 @@ public sealed class WindowsServiceHost : IServiceHost
         // warning + continue is better — operator sees the warning, can run
         // `sc failure squid-tentacle reset= 86400 actions= restart/10000/restart/10000/restart/10000`
         // manually post-install. The service still runs without restart
-        // policy, matching pre-Phase-12.D behaviour.
+        // policy, matching behaviour.
         var failureExit = Sc(BuildScFailureArgs(request.ServiceName));
 
         if (failureExit != 0)
@@ -218,7 +218,7 @@ public sealed class WindowsServiceHost : IServiceHost
     /// <c>Environment.ProcessPath</c> + absolute paths internally so a
     /// non-bin-relative cwd is functionally fine; the silent divergence from
     /// the systemd path's <c>WorkingDirectory=</c> directive is therefore
-    /// non-functional. Phase-12.C-followup may add a registry step if a future
+    /// non-functional.  may add a registry step if a future
     /// Tentacle code path ever needs a relative-path lookup.</para>
     /// </remarks>
     internal static string[] BuildScCreateArgs(ServiceInstallRequest request)
@@ -249,16 +249,16 @@ public sealed class WindowsServiceHost : IServiceHost
     }
 
     /// <summary>
-    /// P1-Phase12.D — builds the argv for <c>sc.exe failure</c> with default
+    /// builds the argv for <c>sc.exe failure</c> with default
     /// restart policy. Mirrors <see cref="SystemdServiceHost"/>'s
     /// <c>Restart=on-failure</c> + <c>RestartSec=10</c> + <c>StartLimitBurst=3</c>
-    /// trio, using the Phase-12.D defaults pinned by Rule 8.
+    /// trio, using the defaults pinned by Rule 8.
     /// </summary>
     internal static string[] BuildScFailureArgs(string serviceName)
         => BuildScFailureArgs(serviceName, DefaultRestartCount, DefaultRestartDelayMs, DefaultResetSeconds);
 
     /// <summary>
-    /// P1-Phase12.D — builds the argv for <c>sc.exe failure</c> with explicit
+    /// builds the argv for <c>sc.exe failure</c> with explicit
     /// restart policy values. Pure function, deterministic; pinned by tests.
     /// </summary>
     /// <remarks>
@@ -271,9 +271,9 @@ public sealed class WindowsServiceHost : IServiceHost
     ///
     /// <para><b>Why not per-action delays</b>: sc failure doesn't support
     /// distinct delays per attempt (no equivalent of systemd's
-    /// <c>RestartSteps</c> backoff). Phase-12.D ships a fixed delay matching
+    /// <c>RestartSteps</c> backoff).  ships a fixed delay matching
     /// systemd's <c>RestartSec=10</c>; if a future operator needs backoff,
-    /// they can override the per-call args via a Phase-12.D-followup env-var
+    /// they can override the per-call args via a env-var
     /// gate (Rule 8 escape hatch).</para>
     /// </remarks>
     internal static string[] BuildScFailureArgs(string serviceName, int restartCount, int restartDelayMs, int resetSeconds)

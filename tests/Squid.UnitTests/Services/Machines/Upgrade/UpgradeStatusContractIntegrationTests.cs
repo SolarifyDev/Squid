@@ -6,7 +6,7 @@ using Squid.Tentacle.Platform;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.7.B-3 — cross-boundary integration coverage for the
+/// cross-boundary integration coverage for the
 /// upgrade-status contract. Pre-12.E.7.B-3 the agent-side write
 /// (<see cref="IUpgradeStatusStorage"/> + <see cref="CapabilitiesService"/>)
 /// and server-side read (<see cref="UpgradeStatusPayload.TryParse"/>) were

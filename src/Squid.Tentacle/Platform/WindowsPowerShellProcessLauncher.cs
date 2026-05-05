@@ -6,7 +6,7 @@ using System.Text;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.B.2 — Windows PowerShell 5.1 launcher targeting the OS-bundled
+/// Windows PowerShell 5.1 launcher targeting the OS-bundled
 /// <c>PowerShell.exe</c> with OEM-codepage stdout decoding.
 /// </summary>
 /// <remarks>

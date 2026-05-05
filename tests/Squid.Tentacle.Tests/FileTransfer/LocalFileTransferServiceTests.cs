@@ -8,7 +8,7 @@ using Xunit;
 namespace Squid.Tentacle.Tests.FileTransfer;
 
 /// <summary>
-/// P1-Phase9b.3 — LocalFileTransferService unit tests.
+/// LocalFileTransferService unit tests.
 ///
 /// <para>Pin the workspace-boundary contract: rooted / traversal paths get
 /// rewritten to a hash-derived filename inside the upload root. Defence-in-

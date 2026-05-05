@@ -116,8 +116,8 @@ public sealed class WindowsPowerShellE2ETests : IDisposable
     [Fact]
     public void Pwsh_OptInWindowsPowerShellExe_ViaEnvVar_RunsSuccessfully()
     {
-        // P1-Phase12.B.3 — the operator opt-in path: setting
-        // SQUID_TENTACLE_USE_WINDOWS_POWERSHELL=true routes Phase-12.B's
+        // the operator opt-in path: setting
+        // SQUID_TENTACLE_USE_WINDOWS_POWERSHELL=true routes 's
         // factory dispatch to WindowsPowerShellProcessLauncher (which targets
         // the OS-bundled PowerShell.exe). This E2E proves the env var →
         // factory → launcher → Process.Start chain actually works on real

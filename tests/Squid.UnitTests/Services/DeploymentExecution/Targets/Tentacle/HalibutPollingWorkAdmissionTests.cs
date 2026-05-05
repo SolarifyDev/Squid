@@ -6,7 +6,7 @@ using Xunit;
 namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 
 /// <summary>
-/// P1-Phase9b.1 (audit item B.2) — pin the bounded polling-work admission
+///  (audit item B.2) — pin the bounded polling-work admission
 /// gate that protects server memory against unbounded backlog when an agent
 /// goes offline.
 ///
@@ -15,7 +15,7 @@ namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 /// dispatches via Halibut, the script command sits in Halibut's in-memory
 /// pending-request queue waiting for the agent to poll. Agent never polls
 /// (network partition, crashed process). Halibut's queue grows unbounded;
-/// server RAM grows; OOM-killer terminates Squid. Pre-Phase-9b.1 there was
+/// server RAM grows; OOM-killer terminates Squid.  there was
 /// no upper bound — every queued deploy succeeded into Halibut's queue.</para>
 ///
 /// <para>Fix shape: per-machine in-flight counter held by the strategy. New

@@ -57,7 +57,7 @@ public static class AtomicFileWriter
 
     private static void TryRestrictPermissions(string path)
     {
-        // P1-Phase12.A.1 (Windows Tentacle foundations): pre-fix this was
+        //  (Windows Tentacle foundations): pre-fix this was
         // a Windows-skip + raw File.SetUnixFileMode. The new abstraction
         // ALSO hardens on Windows — break ACL inheritance so a sibling
         // user can't read the secret-bearing file. Linux behaviour is

@@ -147,7 +147,7 @@ public class KubernetesAgentHealthCheckStrategyTests
     // ========================================================================
     // P0-Phase10.1 (audit C.3): RBAC dry-run via Capabilities metadata
     //
-    // The pre-Phase-10.1 silent-failure scenario:
+    // The silent-failure scenario:
     //   1. Agent's K8s ServiceAccount RBAC was revoked / namespace deleted
     //   2. Halibut polling still works fine (cert still trusted, network ok)
     //   3. server-side health check just calls GetCapabilities → returns ok
@@ -186,7 +186,7 @@ public class KubernetesAgentHealthCheckStrategyTests
 
         result.Healthy.ShouldBeFalse(customMessage:
             "Agent reachable via Halibut but lacking RBAC to create pods MUST report unhealthy " +
-            "— pre-Phase-10.1 this was a silent-success that turned into a cryptic deploy fail.");
+            "— this was a silent-success that turned into a cryptic deploy fail.");
         result.Detail.ShouldContain("RBAC", customMessage:
             "Failure detail must name the RBAC subsystem so operators know to check ServiceAccount.");
         result.Detail.ShouldContain("create pods", customMessage:
@@ -226,7 +226,7 @@ public class KubernetesAgentHealthCheckStrategyTests
     [Fact]
     public async Task CheckHealth_RbacMetadataMissing_TolerantOfOlderAgent()
     {
-        // Old agents (pre-Phase-10.1) don't surface RBAC metadata at all.
+        // Old agents don't surface RBAC metadata at all.
         // Server must not break health-check for them — falls back to the
         // pre-fix behaviour (Halibut reachable = healthy). Operators get the
         // strict-RBAC check only AFTER all agents in the fleet are upgraded.
@@ -250,7 +250,7 @@ public class KubernetesAgentHealthCheckStrategyTests
         var result = await _strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
         result.Healthy.ShouldBeTrue(customMessage:
-            "Missing RBAC metadata MUST be tolerated for backward-compat with pre-Phase-10.1 agents.");
+            "Missing RBAC metadata MUST be tolerated for backward-compat with agents.");
     }
 
     [Theory]

@@ -12,7 +12,7 @@ namespace Squid.Calamari.Variables;
 ///   <item><b>V1 (legacy)</b>: <c>IV__</c> + IV(16) + AES-128-CBC. PBKDF2-SHA1, 1000
 ///         iters, fixed salt <c>"SquidDep"</c>. No MAC — vulnerable to bit-flip
 ///         attacks. Still accepted for rolling-upgrade compatibility with
-///         pre-Phase-4 servers. Operator can harden by setting
+///          servers. Operator can harden by setting
 ///         <see cref="LegacyAcceptEnforcementEnvVar"/>=strict once the server fleet
 ///         is confirmed on v1.7+ (which emits only V2).</item>
 ///   <item><b>V2 (new)</b>: <c>V2__</c> + salt(16) + nonce(12) + AES-256-GCM

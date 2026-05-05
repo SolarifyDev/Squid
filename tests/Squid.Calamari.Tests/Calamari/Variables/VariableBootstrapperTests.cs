@@ -3,7 +3,7 @@ using Squid.Calamari.Variables;
 namespace Squid.Calamari.Tests.Calamari.Variables;
 
 /// <summary>
-/// P1-Phase-7 audit follow-up to B.6: Calamari's <c>VariableBootstrapper</c>
+///  audit follow-up to B.6: Calamari's <c>VariableBootstrapper</c>
 /// is the AGENT-SIDE bash export preamble generator (the server-side
 /// counterpart is <c>BashRuntimeBundle</c> in Squid.Core). B.6 migrated
 /// the server side to single-quote wrapping; this file pins the matching

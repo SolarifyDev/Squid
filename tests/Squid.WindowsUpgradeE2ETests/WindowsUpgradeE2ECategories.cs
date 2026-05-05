@@ -1,7 +1,7 @@
 namespace Squid.WindowsUpgradeE2ETests;
 
 /// <summary>
-/// P1-Phase12.E.6 — xUnit Trait categories for the Windows upgrade E2E
+/// xUnit Trait categories for the Windows upgrade E2E
 /// suite. Mirrors the discipline in Squid.Tentacle.Tests.Support.TentacleTestCategories.
 ///
 /// <para>The CI workflow filters by these categories so a developer running
@@ -21,7 +21,7 @@ public static class WindowsUpgradeE2ECategories
     public const string Wrapper = "WindowsUpgradeWrapperE2E";
 
     /// <summary>
-    /// P1-Phase12.E.7 — E2E coverage for the Phase B physical mechanics
+    /// E2E coverage for the Phase B physical mechanics
     /// (Stop-Service / Move-Item swap / Start-Service / version verify)
     /// against a real <c>sc.exe</c>-installed Windows service. Uses
     /// <c>WindowsServiceFixture</c> to install + start + cleanup the
@@ -30,4 +30,16 @@ public static class WindowsUpgradeE2ECategories
     /// service, not a mock.
     /// </summary>
     public const string Service = "WindowsUpgradeServiceE2E";
+
+    /// <summary>
+    /// E2E coverage for the opportunistic SHA256
+    /// companion-file fetch + verification logic in
+    /// <c>upgrade-windows-tentacle.ps1</c>. Uses an in-process HTTP
+    /// listener serving a known .sha256 + .zip pair so the .ps1's
+    /// <c>Invoke-WebRequest</c> + <c>Get-FileHash</c> path runs against
+    /// a real local server (no GitHub Releases dependency for the test
+    /// — the fixture controls EVERY response: 404, invalid body, valid
+    /// match, valid mismatch).
+    /// </summary>
+    public const string ShaVerify = "WindowsUpgradeShaVerifyE2E";
 }

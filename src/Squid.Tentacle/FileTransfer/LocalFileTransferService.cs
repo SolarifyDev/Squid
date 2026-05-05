@@ -6,7 +6,7 @@ using Squid.Message.Contracts.Tentacle;
 namespace Squid.Tentacle.FileTransfer;
 
 /// <summary>
-/// P1-Phase9b.3 — agent-side implementation of <see cref="IFileTransferService"/>.
+/// agent-side implementation of <see cref="IFileTransferService"/>.
 ///
 /// <para><b>Workspace boundary</b>: uploads land under
 /// <see cref="UploadRoot"/> (default <c>~/.squid/uploads</c>) — the agent
@@ -51,7 +51,7 @@ public sealed class LocalFileTransferService : IFileTransferService
         long bytesWritten;
         string hash;
 
-        // P1-Phase9b.3: hash AS WE WRITE. Two reasons:
+        // : hash AS WE WRITE. Two reasons:
         //   1. Server can verify integrity without re-reading the file from disk.
         //   2. The hash is what gates "did the upload corrupt mid-stream" —
         //      Halibut's DataStream is a streaming abstraction and a network
@@ -101,7 +101,7 @@ public sealed class LocalFileTransferService : IFileTransferService
     }
 
     /// <summary>
-    /// P1-Phase9b.3 — workspace-boundary path rewrite.
+    /// workspace-boundary path rewrite.
     ///
     /// <para>Behaviour:
     /// <list type="bullet">

@@ -8,7 +8,7 @@ namespace Squid.Tentacle.Core;
 /// <c>kubectl auth can-i &lt;verb&gt; &lt;resource&gt;</c> and surfaces the
 /// results via <see cref="Squid.Message.Contracts.Tentacle.CapabilitiesResponse.Metadata"/>.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-10.1, an agent whose ServiceAccount
+/// <para><b>Why this exists</b>: , an agent whose ServiceAccount
 /// RBAC was revoked / namespace was deleted would still report "healthy" to
 /// the server (Halibut polling worked fine). The first deploy then failed
 /// with a cryptic kubectl Forbidden error. Now the server's

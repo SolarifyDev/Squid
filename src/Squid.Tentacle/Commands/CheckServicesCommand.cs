@@ -6,7 +6,7 @@ using Serilog;
 namespace Squid.Tentacle.Commands;
 
 /// <summary>
-/// P1-Phase9b.5 (audit OctopusTentacle gap #7) — operator-facing self-diagnostic
+///  (audit OctopusTentacle gap #7) — operator-facing self-diagnostic
 /// CLI command. Verifies the agent's local services would respond correctly
 /// to a server's health-check probe, WITHOUT actually contacting a server.
 /// Mirrors OctopusTentacle's <c>check-services</c> command.

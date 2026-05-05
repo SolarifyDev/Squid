@@ -9,7 +9,7 @@ using Xunit;
 namespace Squid.UnitTests.Services.Security;
 
 /// <summary>
-/// P1-B.10 (Phase-8): pin the V2 envelope upgrade for variable encryption.
+/// P1-B.10: pin the V2 envelope upgrade for variable encryption.
 ///
 /// <para><b>The bug it closes</b>: pre-fix <c>DeriveKey</c> used a
 /// DETERMINISTIC salt (variableSetId padded with zeros) and only
@@ -73,7 +73,7 @@ public sealed class VariableEncryptionServiceB10Tests
         }
 
         encrypted.ShouldStartWith(VariableEncryptionService.EncryptionPrefixV2,
-            customMessage: "Phase-8 encrypts MUST emit V2; legacy V1 prefix is read-only.");
+            customMessage: " encrypts MUST emit V2; legacy V1 prefix is read-only.");
 
         var decrypted = await service.DecryptAsync(encrypted, variableSetId: 42);
 
@@ -101,7 +101,7 @@ public sealed class VariableEncryptionServiceB10Tests
     [Fact]
     public async Task DecryptV1Ciphertext_PostPhase8Service_StillReadable()
     {
-        // Backward compat: a ciphertext written by a pre-Phase-8 server
+        // Backward compat: a ciphertext written by a server
         // (V1 prefix `SQUID_ENCRYPTED:`) MUST decrypt cleanly post-upgrade.
         // Otherwise every existing sensitive variable in production would
         // become unreadable on deploy.
@@ -178,7 +178,7 @@ public sealed class VariableEncryptionServiceB10Tests
 
     /// <summary>
     /// Reconstructs a V1 ciphertext using the SAME KDF/cipher parameters
-    /// the pre-Phase-8 service used. Lets us prove the dual-format
+    /// the service used. Lets us prove the dual-format
     /// decrypt path can read pre-upgrade ciphertexts without spinning up
     /// a separate "old-version" service.
     /// </summary>

@@ -4,7 +4,7 @@ using System.ServiceProcess;
 namespace Squid.WindowsUpgradeE2E.TestService;
 
 /// <summary>
-/// P1-Phase12.E.7.A-1.a — entry point for the test Windows service. Two
+/// entry point for the test Windows service. Two
 /// modes via argv:
 /// <list type="bullet">
 ///   <item><c>--service</c> (default when launched by SCM): runs as a

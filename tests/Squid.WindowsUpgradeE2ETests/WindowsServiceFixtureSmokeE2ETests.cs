@@ -4,7 +4,7 @@ using Squid.WindowsUpgradeE2ETests.Infrastructure;
 namespace Squid.WindowsUpgradeE2ETests;
 
 /// <summary>
-/// P1-Phase12.E.7.A-1.c — minimal smoke test for
+/// minimal smoke test for
 /// <see cref="WindowsServiceFixture"/>. Establishes that the fixture's
 /// install/start/marker-write/stop/uninstall lifecycle ACTUALLY works
 /// end-to-end on a real Windows host BEFORE the A-2 upgrade tests

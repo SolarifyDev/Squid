@@ -7,12 +7,12 @@ using Xunit;
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
 /// <summary>
-/// P1-Phase11.1 (audit ARCH.9 Plan A) — pin the per-ticket soft-cancellation
+///  (audit ARCH.9 Plan A) — pin the per-ticket soft-cancellation
 /// registry contract.
 ///
 /// <para><b>Why this exists</b>: the agent's <see cref="IScriptService"/>
 /// wire contract is SYNC (Halibut V1 design) so RPC handlers can't
-/// receive a real CancellationToken from the wire. Pre-Phase-11.1, this
+/// receive a real CancellationToken from the wire. , this
 /// meant the agent's in-flight async work (DataStream file save, mutex
 /// acquire) was stuck with hardcoded <c>CancellationToken.None</c> — even
 /// when the server sent a <c>CancelScript</c> RPC, the agent's already-

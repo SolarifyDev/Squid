@@ -6,7 +6,7 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 — pin the IUpgradeStatusStorage abstraction:
+/// pin the IUpgradeStatusStorage abstraction:
 /// Linux paths bit-for-bit preserved (regression guard for existing
 /// upgrade bash scripts that write these exact paths), Windows paths
 /// follow PlatformPaths convention.
@@ -57,7 +57,7 @@ public sealed class UpgradeStatusStorageTests
     [Fact]
     public void Storage_MissingFiles_ReturnEmptyString()
     {
-        // Pre-Phase-12 behaviour preserved: missing upgrade files → empty
+        //  behaviour preserved: missing upgrade files → empty
         // string (NOT null, NOT exception). Server treats empty as "no
         // status available" and falls back to inferring outcome from the
         // reported agent version. Pinned across all impls.

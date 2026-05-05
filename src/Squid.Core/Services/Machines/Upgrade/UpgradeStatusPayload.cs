@@ -82,7 +82,7 @@ public sealed record UpgradeStatusPayload
     public string Detail { get; init; } = string.Empty;
 
     /// <summary>
-    /// P1-Phase12.E.7.B-2 — Phase B exit code from the upgrade script.
+    /// Phase B exit code from the upgrade script.
     /// Linux .sh writes this into the JSON via the <c>"exitCode"</c> field
     /// (existing v2 contract); Windows .ps1 also writes this field. Pre-12.E.7
     /// the server silently dropped this on parse — the field was in the

@@ -9,9 +9,9 @@ using Xunit;
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
 /// <summary>
-/// P1-Phase9.1 — agent-side V2 envelope symmetric decryption.
+/// agent-side V2 envelope symmetric decryption.
 ///
-/// <para><b>Why this exists</b>: Phase-8.6 introduced the V2 sensitive-variable
+/// <para><b>Why this exists</b>:  introduced the V2 sensitive-variable
 /// envelope (<c>V2__</c> + AES-256-GCM + 600k PBKDF2-SHA256) on the server +
 /// Calamari sides for the <c>sensitiveVariables.json</c> file format. The
 /// Tentacle's output-masking helper
@@ -58,12 +58,12 @@ public sealed class SensitiveVariableDecryptorDualFormatTests : IDisposable
             .ShouldBe("SQUID_SENSITIVE_VAR_DECRYPT_LEGACY_ACCEPT");
     }
 
-    // ── V2 — masking extracts values from V2 envelopes (the Phase-8.6 gap) ──
+    // ── V2 — masking extracts values from V2 envelopes (the gap) ──
 
     [Fact]
     public void ExtractSensitiveValues_V2Envelope_ExtractsAllValues()
     {
-        // The bug this guards: pre-Phase-9.1, V2 envelopes hit the V1-only
+        // The bug this guards: , V2 envelopes hit the V1-only
         // decryptor → InvalidOperationException("missing IV prefix") → swallowed
         // as Debug → return empty set → no masking → SECRETS printed verbatim.
         WriteSensitiveFile(_workDir, EncryptV2Manually(TestPassword, JsonOf("dbPwd", "s3cret-V2", "apiKey", "K3Y-V2")));

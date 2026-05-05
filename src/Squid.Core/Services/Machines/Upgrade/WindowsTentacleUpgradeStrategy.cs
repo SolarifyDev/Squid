@@ -14,7 +14,7 @@ using Squid.Message.Enums;
 namespace Squid.Core.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.4 — registered counterpart to <see cref="LinuxTentacleUpgradeStrategy"/>
+/// registered counterpart to <see cref="LinuxTentacleUpgradeStrategy"/>
 /// that performs the in-place upgrade of a Windows Tentacle. Same Halibut RPC
 /// path the deployment pipeline uses for "Run a Script" steps; same outcome
 /// contract (exception → status mapping, <see cref="MachineUpgradeOutcome.AgentVersionMayHaveChanged"/>
@@ -66,7 +66,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     private const string EmbeddedScriptResource = "Squid.Core.Resources.Upgrade.upgrade-windows-tentacle.ps1";
 
     /// <summary>
-    /// Default install dir matches Phase 12.E.0's <c>install-tentacle.ps1</c>
+    /// Default install dir matches 's <c>install-tentacle.ps1</c>
     /// — operators upgrading a deployment that used the canonical installer
     /// don't need to override. Pinned per Rule 8 by
     /// <c>WindowsTentacleUpgradeStrategyTests.DefaultInstallDir_PinnedToCanonicalProgramFilesPath</c>.
@@ -75,7 +75,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     /// <summary>
     /// Default service name matches what <c>WindowsServiceHost.Install</c>
-    /// (Phase 12.C) creates and what <c>install-tentacle.ps1</c> registers.
+    /// creates and what <c>install-tentacle.ps1</c> registers.
     /// Pinned per Rule 8.
     /// </summary>
     internal const string DefaultServiceName = "squid-tentacle";
@@ -109,7 +109,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     private static readonly Lazy<string> _scriptTemplate = new(LoadEmbeddedScript);
 
     /// <summary>
-    /// Default method order — zip-only in Phase 12.E.4. Phase 12.E.5 will
+    /// Default method order — zip-only in .  will
     /// prepend chocolatey + MSI. Stateless static instance shared across
     /// all dispatches.
     /// </summary>
@@ -134,7 +134,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
         if (!matchesStyle) return false;
 
-        // P1-Phase12.E.5 — read via the centralized IsWindows property
+        // read via the centralized IsWindows property
         // instead of an inline string comparison. Same null-defensive
         // semantic as before. The literal "Windows" string lives once in
         // AgentOperatingSystems and the agent reports it from the same
@@ -381,7 +381,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             # Inner upgrade-windows-tentacle.ps1 (placeholders pre-substituted server-side, base64-encoded)
             $InnerBase64 = '{{innerBase64}}'
 
-            # %ProgramData%\Squid\Tentacle\upgrade — Phase 12.A.2 contract dir
+            # %ProgramData%\Squid\Tentacle\upgrade — contract dir
             $DispatchDir = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'
             if (-not (Test-Path $DispatchDir)) {
                 New-Item -ItemType Directory -Path $DispatchDir -Force | Out-Null

@@ -8,13 +8,13 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh.Packages.Staging;
 /// a byte-identical copy of the package, return a <see cref="PackageStagingStrategy.CacheHit"/>
 /// plan and skip the upload entirely.
 ///
-/// <para><b>P1-Phase9.6 namespace move</b>: previously lived under
+/// <para><b> namespace move</b>: previously lived under
 /// <c>Squid.Core.Services.DeploymentExecution.Packages.Staging.Handlers</c>
 /// (a generic-looking directory) but the implementation was SSH-specific —
 /// it casts to <c>SshPackageStagingContext</c>. New transports adding their own
 /// staging implementations should mirror this layout: under
 /// <c>Targets/&lt;Transport&gt;/Packages/Staging/</c>. Same structural fix as
-/// Phase-8.7's <c>EndpointVariableFactory</c> move.</para>
+/// 's <c>EndpointVariableFactory</c> move.</para>
 /// </summary>
 public class CacheHitStagingHandler : IPackageStagingHandler
 {

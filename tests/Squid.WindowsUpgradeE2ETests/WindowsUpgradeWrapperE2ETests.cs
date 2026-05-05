@@ -6,7 +6,7 @@ using Squid.Core.Services.Machines.Upgrade;
 namespace Squid.WindowsUpgradeE2ETests;
 
 /// <summary>
-/// P1-Phase12.E.6 — end-to-end verification of the Phase 12.E.4 outer-wrapper
+/// end-to-end verification of the outer-wrapper
 /// detach mechanism on a real Windows host. The unit tests in
 /// <c>WindowsTentacleUpgradeStrategyTests</c> already pin the wrapper SHAPE
 /// (contains schtasks, /RU SYSTEM, /Z, GUID task name, base64-encoded inner,
@@ -63,7 +63,7 @@ public sealed class WindowsUpgradeWrapperE2ETests : IDisposable
         foreach (var path in _tempScriptsToCleanup)
             TrySafeDelete(path);
 
-        // Phase 12.E.4 strategy writes dispatch.ps1 to %ProgramData%\Squid\Tentacle\upgrade\
+        //  strategy writes dispatch.ps1 to %ProgramData%\Squid\Tentacle\upgrade\
         // The path persists across tests by design (production agents reuse
         // the location); we leave the LATEST dispatch.ps1 alone but each test
         // can read its own content right after the wrapper runs.
@@ -89,7 +89,7 @@ public sealed class WindowsUpgradeWrapperE2ETests : IDisposable
 
         var dispatchPath = GetExpectedDispatchPath();
         File.Exists(dispatchPath).ShouldBeTrue(
-            customMessage: $"wrapper must write inner to {dispatchPath} (Phase 12.A.2 contract dir)");
+            customMessage: $"wrapper must write inner to {dispatchPath}");
 
         var taskName = ExtractTaskName(stdout);
         _scheduledTaskNamesToCleanup.Add(taskName);
@@ -370,7 +370,7 @@ exit 0
     }
 
     /// <summary>
-    /// %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 — Phase 12.A.2 contract dir.
+    /// %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 — contract dir.
     /// </summary>
     private static string GetExpectedDispatchPath()
     {

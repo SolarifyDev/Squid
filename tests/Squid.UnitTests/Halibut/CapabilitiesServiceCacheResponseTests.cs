@@ -8,7 +8,7 @@ using Xunit;
 namespace Squid.UnitTests.Halibut;
 
 /// <summary>
-/// P1-Phase9.7 — pin Halibut <see cref="CacheResponseAttribute"/> on the
+/// pin Halibut <see cref="CacheResponseAttribute"/> on the
 /// CapabilitiesService contract. Without this, every server-side health-check
 /// poll re-reads three on-disk files (<c>last-upgrade.json</c>, OS detection,
 /// shells) on every agent. With 60s TTL, agents survive a healthy fleet's
@@ -33,7 +33,7 @@ public sealed class CapabilitiesServiceCacheResponseTests
 
         attr.ShouldNotBeNull(customMessage:
             "ICapabilitiesService.GetCapabilities MUST have [CacheResponse]. " +
-            "Pre-Phase-9.7 each health-check poll re-read 3 files from agent disk; " +
+            " each health-check poll re-read 3 files from agent disk; " +
             "this attribute is the only thing keeping that cost bounded.");
 
         attr.DurationInSeconds.ShouldBe(60, customMessage:

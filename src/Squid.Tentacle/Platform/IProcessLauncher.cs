@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.B — narrow per-platform shaper of the <see cref="ProcessStartInfo"/>
+/// narrow per-platform shaper of the <see cref="ProcessStartInfo"/>
 /// used to launch a user script. Lifecycle (Start, EnableRaisingEvents, output
 /// pump, kill-on-cancel, drain) stays in <see cref="ScriptExecution.LocalScriptService"/>;
 /// the launcher's only job is "build the PSI right for THIS platform + THIS syntax".

@@ -1,7 +1,7 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 — picks the platform-appropriate
+/// picks the platform-appropriate
 /// <see cref="IUpgradeStatusStorage"/>. Static factory matching the
 /// <see cref="FilePermissionManagerFactory"/> + <see cref="PlatformPaths"/>
 /// convention in this namespace.

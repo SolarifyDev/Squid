@@ -74,7 +74,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
 
             CacheCapabilitiesFor(machine, response);
 
-            await ReconcileStaleUpgradeIfNeededAsync(machine, response, ct).ConfigureAwait(false);
+            await ProcessUpgradeStatusAsync(machine, response, ct).ConfigureAwait(false);
 
             CaptureUpgradeEventTimeline(machine, response);
 
@@ -101,21 +101,78 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     }
 
     /// <summary>
-    /// If the agent reports a stale IN_PROGRESS upgrade (schema v2+ only —
-    /// 1.4.x agents are silently skipped), delete the server-side Redis
-    /// dispatch lock so the next operator click isn't blocked. Never throws
-    /// — a reconciler failure MUST NOT turn a healthy tentacle into an
-    /// unhealthy one in the health-check UI.
+    /// Parse the agent's upgrade-status JSON ONCE and dispatch to two
+    /// independent consumers: (1) the stale-lock reconciler that clears
+    /// abandoned Redis upgrade locks, and (2) the
+    /// <see cref="IUpgradeEventTimelineStore"/> status snapshot cache
+    /// (feeds the FE-facing GetUpgradeStatus endpoint
+    /// so operators see the agent's last-reported terminal state +
+    /// structured <see cref="UpgradeStatusPayload.ExitCode"/>).
+    ///
+    /// <para><b>Why dispatch from a single parse step</b>: parsing the
+    /// JSON twice (once per consumer) would burn cycles per health-check
+    /// poll and double the chance of inconsistent observations between
+    /// consumers. Parsing once + fanning out also makes the
+    /// "metadata-key-absent → both consumers skip" + "metadata-key-present-
+    /// but-parse-fails → both consumers skip" semantic atomic.</para>
+    ///
+    /// <para><b>Independent dependencies</b>: each consumer has its own
+    /// null check + try/catch swallow so a reconciler failure can't hide
+    /// a cache update and vice-versa. Mirrors the
+    /// <see cref="CaptureUpgradeEventTimeline"/> pattern.</para>
+    ///
+    /// <para><b>Never throws</b>: upgrade-status reporting is advisory
+    /// metadata; a reconciler / cache failure MUST NOT turn a healthy
+    /// tentacle into an unhealthy one in the health-check UI.</para>
     /// </summary>
-    private async Task ReconcileStaleUpgradeIfNeededAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
+    private async Task ProcessUpgradeStatusAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
     {
-        if (_upgradeLockReconciler == null || machine == null || response?.Metadata == null) return;
+        if (machine == null || response?.Metadata == null) return;
 
         if (!response.Metadata.TryGetValue(UpgradeStatusMetadataKey, out var rawStatusJson)) return;
 
         var payload = UpgradeStatusPayload.TryParse(rawStatusJson);
 
         if (payload == null) return;
+
+        CacheUpgradeStatusForFrontend(machine, payload);
+
+        await ReconcileStaleUpgradeIfNeededAsync(machine, payload, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// feed the parsed payload (including the
+    /// previously-orphan <see cref="UpgradeStatusPayload.ExitCode"/> field
+    /// added in 12.E.7.B-2) into the per-machine snapshot cache. The
+    /// FE-facing <c>GET /api/machine/{id}/upgrade-status</c> endpoint
+    /// reads from this cache so operators see Phase B's structured exit
+    /// code without SSHing to the agent.
+    ///
+    /// <para>Swallows errors — a cache write failure must not propagate
+    /// up to break the health check or the reconciler.</para>
+    /// </summary>
+    private void CacheUpgradeStatusForFrontend(Machine machine, UpgradeStatusPayload payload)
+    {
+        if (_upgradeEventStore == null) return;
+
+        try
+        {
+            _upgradeEventStore.StoreStatus(machine.Id, payload);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[UpgradeAudit] Failed to cache upgrade status snapshot for machine {MachineId} — operator GetUpgradeStatus query will return stale data until next probe succeeds", machine.Id);
+        }
+    }
+
+    /// <summary>
+    /// If the agent reports a stale IN_PROGRESS upgrade (schema v2+ only —
+    /// 1.4.x agents are silently skipped), delete the server-side Redis
+    /// dispatch lock so the next operator click isn't blocked. Never throws.
+    /// </summary>
+    private async Task ReconcileStaleUpgradeIfNeededAsync(Machine machine, UpgradeStatusPayload payload, CancellationToken ct)
+    {
+        if (_upgradeLockReconciler == null) return;
 
         try
         {

@@ -5,22 +5,22 @@ using Squid.Core.Services.Machines.Upgrade;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.2 — pins the embedded PowerShell upgrade-template resource
+/// pins the embedded PowerShell upgrade-template resource
 /// so a future "let's reorganise Resources/" refactor can't silently drop
 /// the file from the assembly. Mirrors how the Linux side relies on
 /// <c>upgrade-linux-tentacle.sh</c> being shipped as an embedded resource
 /// resolved by manifest name in <c>LinuxTentacleUpgradeStrategy</c>.
 ///
-/// <para>The Phase 12.E.3 <c>WindowsTentacleUpgradeStrategy</c> will load
+/// <para>The  <c>WindowsTentacleUpgradeStrategy</c> will load
 /// the template by manifest name, substitute placeholders (TARGET_VERSION,
 /// DOWNLOAD_URL, etc.), inject the per-method snippet from the renderer
 /// chain (zip / future MSI / future Chocolatey), and dispatch the result
-/// over Halibut. Phase 12.E.2 ships the template + ZipUpgradeMethod; Phase
+/// over Halibut.  ships the template + ZipUpgradeMethod; Phase
 /// 12.E.3 wires the loader.</para>
 ///
 /// <para><b>Why pin placeholders explicitly</b>: a placeholder rename in
 /// the .ps1 (e.g. <c>{{TARGET_VERSION}}</c> → <c>{{TARGETVERSION}}</c>)
-/// without matching the Phase-12.E.3 strategy's substitution code would
+/// without matching the strategy's substitution code would
 /// produce silently-broken upgrades on the agent (the literal
 /// <c>{{TARGET_VERSION}}</c> string ends up in the running script,
 /// download URL is malformed, install fails with a confusing 404).
@@ -88,7 +88,7 @@ public sealed class WindowsUpgradeScriptResourceTests
     [InlineData("{{INSTALL_METHODS}}")]
     public void Resource_ContainsPlaceholder(string placeholder)
     {
-        // The Phase 12.E.3 WindowsTentacleUpgradeStrategy will use string
+        // The WindowsTentacleUpgradeStrategy will use string
         // replacement on these EXACT tokens. A drift on either side
         // (template renames a placeholder; strategy doesn't update its
         // substitution table; or vice-versa) produces a script that contains
@@ -98,7 +98,7 @@ public sealed class WindowsUpgradeScriptResourceTests
         var content = LoadResource();
 
         content.ShouldContain(placeholder,
-            customMessage: $"Phase-12.E.3 strategy substitution depends on this token; renaming requires updating both sides.");
+            customMessage: $" strategy substitution depends on this token; renaming requires updating both sides.");
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class WindowsUpgradeScriptResourceTests
     }
 
     // ========================================================================
-    // P1-Phase12.E.4 polish contracts (4 fixes added in 12.E.4 to close the
+    //  polish contracts (4 fixes added in 12.E.4 to close the
     // pre-real-dispatch fragility surfaced by the architectural audit).
     // Each pair is: (1) a positive Fact pinning the new behaviour, and where
     // applicable (2) a NEGATIVE Fact pinning that the prior buggy form is gone.
@@ -139,8 +139,8 @@ public sealed class WindowsUpgradeScriptResourceTests
     [Fact]
     public void Resource_GatesOnIdentityAtTopOfScript_AdminOrSystemRequired()
     {
-        // Phase 12.E.4 — the template assumes detach happened (Task Scheduler
-        // /RU SYSTEM). If the Phase 12.E.4 wrapper failed silently and the
+        // the template assumes detach happened (Task Scheduler
+        // /RU SYSTEM). If the wrapper failed silently and the
         // script ran as a regular user, Stop-Service / Move-Item would fail
         // mid-upgrade with confusing "Access is denied" errors at random
         // points. Failing fast at a specific identity check exits cleanly
@@ -161,7 +161,7 @@ public sealed class WindowsUpgradeScriptResourceTests
     public void Resource_DocumentsExitCode15_InsufficientPrivileges()
     {
         // Audit Rule 8: every operator-facing exit code must be in the header
-        // documentation table. Phase 12.E.4 adds 15; the table must list it.
+        // documentation table.  adds 15; the table must list it.
         var content = LoadResource();
 
         content.ShouldContain("15",
@@ -173,18 +173,76 @@ public sealed class WindowsUpgradeScriptResourceTests
     [Fact]
     public void Resource_SkipsSha256VerificationWhenEmpty_DoesNotFalsifyEveryUpgrade()
     {
-        // Audit (architectural review pre-12.E.4): the Phase 12.E.2 template
+        // Audit (architectural review pre-12.E.4): the template
         // unconditionally compared $actualSha against $EXPECTED_SHA256.ToLower().
         // The strategy will (per Linux parity) substitute empty string until
         // the build pipeline publishes per-archive hashes — empty.ToLower()=""
         // and (Get-FileHash).Hash != "" → exit 7 EVERY upgrade. The fix is to
         // skip verification when EXPECTED_SHA256 is whitespace-only.
+        //
+        //  update: empty-skip is now BEHIND the
+        // opportunistic-fetch attempt. The template still skips verification
+        // when nothing populates EXPECTED_SHA256 (neither strategy substitution
+        // NOR the .sha256 companion fetch succeed) — backward compat for older
+        // releases without companion files. Pin both: the IsNullOrWhiteSpace
+        // gate enters the opportunistic-fetch path, AND there's a
+        // "skipping verification" log line on the fall-through path.
         var content = LoadResource();
 
         content.ShouldContain("IsNullOrWhiteSpace($EXPECTED_SHA256)",
-            customMessage: "must skip verification when SHA256 placeholder is empty (mirrors Linux EXPECTED_SHA256 empty-skip stance)");
+            customMessage: "must gate on empty placeholder (mirrors Linux EXPECTED_SHA256 empty-handling)");
         content.ShouldContain("skipping verification",
             customMessage: "operator must see the skip decision in the upgrade log so they understand why no hash check ran");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_MirrorsLinuxPattern()
+    {
+        // Windows .ps1 must mirror upgrade-linux-tentacle.sh's
+        // opportunistic .sha256 companion fetch (Linux pattern at sh:418-429).
+        // Without this, releases shipped per  (which publishes
+        // .sha256 companion files) would NOT activate verification on Windows
+        // — only Linux.  closes that asymmetry.
+        var content = LoadResource();
+
+        content.ShouldContain("$DOWNLOAD_URL.sha256",
+            customMessage: "must construct .sha256 companion URL by appending '.sha256' to the download URL — same convention Linux uses + same convention 's release workflows publish");
+        content.ShouldContain("Invoke-WebRequest",
+            customMessage: "must use PowerShell's HTTP client (no external curl dep on Windows)");
+        content.ShouldContain("'^[0-9a-f]{64}$'",
+            customMessage: "must validate the fetched content is exactly 64 hex chars — guards against HTML 404 pages, partial bytes, etc. masquerading as a SHA");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_HandlesAirgapMirrorsWithoutCompanion()
+    {
+        // Pin the backward-compat path: when the .sha256 companion is absent
+        // (older releases or air-gap mirrors that haven't replicated the
+        // companion files yet), the opportunistic fetch fails NON-FATALLY
+        // and the script falls through to "skipping verification". Mirrors
+        // Linux's "::info::" non-error log line.
+        var content = LoadResource();
+
+        // The catch block must exist (Invoke-WebRequest with -ErrorAction Stop
+        // throws on 404 — must be caught + treated as "no SHA, fall through").
+        content.ShouldContain("catch",
+            customMessage: "Invoke-WebRequest 404 / network failure on .sha256 fetch MUST be caught — air-gap mirrors without companion files would otherwise fail every upgrade with a transport error");
+        content.ShouldContain("No .sha256 companion at",
+            customMessage: "fall-through log line must explain the absence — operators investigating a 'why didn't SHA verify' question see the absent-companion reason");
+    }
+
+    [Fact]
+    public void Resource_OpportunisticSha256Fetch_StripsToFirstWhitespaceToken()
+    {
+        // sha256sum's default output is `<64-hex>  <filename>`. The agent
+        // must take ONLY the first whitespace-delimited token and strip
+        // trailing space — pinning this prevents a future "let's just
+        // ToLower the whole line" mistake that would treat the filename
+        // suffix as part of the hash.
+        var content = LoadResource();
+
+        content.ShouldContain("-split '\\s+'",
+            customMessage: "must split on whitespace to isolate the hex digest from the filename suffix that sha256sum's default format includes");
     }
 
     [Fact]
@@ -222,7 +280,7 @@ public sealed class WindowsUpgradeScriptResourceTests
     [Fact]
     public void Resource_PhaseB_UsesExtractDirVariable_NotGetChildItemSearch()
     {
-        // Audit (architectural review pre-12.E.4): the Phase 12.E.2 template
+        // Audit (architectural review pre-12.E.4): the template
         // searched for the staging dir via `Get-ChildItem | Sort-Object
         // LastWriteTimeUtc -Descending | Select -First 1`. This races with
         // any earlier abandoned staging dir (operator dispatched twice, the

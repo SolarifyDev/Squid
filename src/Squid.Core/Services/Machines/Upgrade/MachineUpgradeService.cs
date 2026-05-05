@@ -111,7 +111,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // `[UpgradeAudit]` prefix for ops filtering. Outcome log uses
         // structured props (status, elapsedMs) so it's aggregate-queryable.
         // ICurrentUser integration + log-sink-based contract tests are
-        // Phase 2 work; today the logs capture what we know without
+        //  work; today the logs capture what we know without
         // expanding the service's dependencies.
         var sw = Stopwatch.StartNew();
         UpgradeMachineResponseData result = null;
@@ -178,7 +178,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // actionable error than "couldn't resolve version, set env var X"
         // (which would be nonsense advice for an Ssh target).
         //
-        // P1-Phase12.E.3 — pass cached capabilities so the resolver can
+        // pass cached capabilities so the resolver can
         // route by OS (Linux vs Windows tentacles share the same wire-protocol
         // CommunicationStyle values; the OS reported by the agent's last
         // health check is what differentiates them).
@@ -224,7 +224,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         var style = ReadCommunicationStyle(machine);
         var currentVersion = ReadCachedAgentVersion(machine.Id);
 
-        // P1-Phase12.E.3 — capabilities thread through info path so OS-aware
+        // capabilities thread through info path so OS-aware
         // resolver can pick the right strategy (Linux vs Windows tentacle).
         // Empty fallback for cold cache; LinuxTentacleUpgradeStrategy claims
         // the empty case as the historical default.
@@ -321,13 +321,13 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // first trigger before any side effect. Surfaces both class names
         // so the fix is obvious: narrow CanHandle in one of them.
         //
-        // P1-Phase12.E.3 — `capabilities` (cached from last health check)
+        // `capabilities` (cached from last health check)
         // is the OS-axis input. Linux tentacle skips Windows agents,
         // Windows tentacle claims them; the (style + OS) tuple is the
         // unique resolver key. K8s strategy ignores capabilities (single
         // OS variant). Cold cache → LinuxTentacleUpgradeStrategy claims
         // the empty-OS case as the historical default to preserve
-        // pre-Phase-12 behaviour.
+        //  behaviour.
         var matches = _strategies.Where(s => s.CanHandle(style, capabilities)).ToList();
 
         if (matches.Count > 1)

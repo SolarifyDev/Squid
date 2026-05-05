@@ -4,7 +4,7 @@ using Serilog;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.3 — Linux impl. Wraps the pre-Phase-12 logic from
+/// Linux impl. Wraps the logic from
 /// <c>ServiceCommand.DetectServiceUser</c> + <c>InstanceOwnershipHandover</c>.
 /// </summary>
 public sealed class LinuxServiceUserProvider : IServiceUserProvider
@@ -15,7 +15,7 @@ public sealed class LinuxServiceUserProvider : IServiceUserProvider
     public bool IsRunningElevated()
     {
         // euid == 0 is the canonical "root" check. Environment.UserName == "root"
-        // is what pre-Phase-12 code did; preserve it bit-for-bit.
+        // is what code did; preserve it bit-for-bit.
         if (!OperatingSystem.IsLinux()) return false;
 
         return Environment.UserName.Equals("root", StringComparison.Ordinal);

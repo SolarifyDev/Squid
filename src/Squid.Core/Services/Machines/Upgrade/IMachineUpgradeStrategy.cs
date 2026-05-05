@@ -18,7 +18,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// </para>
 ///
 /// <para>
-/// <b>P1-Phase12.E.3 widening:</b> <see cref="CanHandle"/> takes
+/// <b> widening:</b> <see cref="CanHandle"/> takes
 /// <see cref="MachineRuntimeCapabilities"/> in addition to the
 /// communication-style string. This is required because Windows and Linux
 /// tentacles use the SAME wire-protocol communication style values
@@ -29,7 +29,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// <c>LinuxTentacleUpgradeStrategy</c> from
 /// <c>WindowsTentacleUpgradeStrategy</c>. Cold cache (no health check yet)
 /// → empty <see cref="MachineRuntimeCapabilities.Os"/>; the Linux strategy
-/// claims that case as the historical default to preserve pre-Phase-12 behaviour.
+/// claims that case as the historical default to preserve behaviour.
 /// </para>
 /// </summary>
 public interface IMachineUpgradeStrategy : IScopedDependency
