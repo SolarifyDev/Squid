@@ -41,14 +41,19 @@ public sealed class SpaceMembershipResolver : ISpaceMembershipResolver
 
     public async Task<bool> IsMemberAsync(int userId, int spaceId, CancellationToken ct = default)
     {
-        // Two-step async query (intentionally simple — operator-readable in profiler):
-        //   1. team IDs the user is a member of
-        //   2. ANY of those teams in the requested space
-        // The single-query variant via join works too but the materialised
-        // intermediate set keeps the predicate filter simple and matches
-        // the existing GetByTeamIdsAsync pattern in ScopedUserRoleDataProvider.
+        // Membership is the UNION of two paths:
         //
-        // CRITICAL: must use ToListAsync / AnyAsync — sync ToList()/Any() on EF
+        //   Path 1 (direct): User → TeamMember → Team where Team.SpaceId == spaceId.
+        //                    Covers space-local teams created inside a Space.
+        //
+        //   Path 2 (indirect): User → TeamMember → Team → ScopedUserRole where the
+        //                      role grant targets the requested space (SpaceId == spaceId)
+        //                      OR is system-wide (SpaceId == null). Covers global teams
+        //                      (Team.SpaceId = 0) that are bound to specific spaces via
+        //                      role assignments — the seeded "Squid Administrators" path
+        //                      where the global team owns the default Space via SpaceOwner.
+        //
+        // CRITICAL: must use ToListAsync / AnyAsync — sync ToList() / Any() on EF
         // blocks the Mediator pipeline thread, which on a hot HTTP path can
         // exhaust the threadpool under bursty load. Same async-discipline as
         // every other resolver in Squid.Core.
@@ -59,10 +64,17 @@ public sealed class SpaceMembershipResolver : ISpaceMembershipResolver
 
         if (userTeamIds.Count == 0) return false;
 
-        var hasMatch = await _repository.Query<Team>(t => t.SpaceId == spaceId)
+        var directMatch = await _repository.Query<Team>(t => t.SpaceId == spaceId)
             .AnyAsync(t => userTeamIds.Contains(t.Id), ct)
             .ConfigureAwait(false);
 
-        return hasMatch;
+        if (directMatch) return true;
+
+        var indirectMatch = await _repository
+            .Query<ScopedUserRole>(sur => userTeamIds.Contains(sur.TeamId) && (sur.SpaceId == spaceId || sur.SpaceId == null))
+            .AnyAsync(ct)
+            .ConfigureAwait(false);
+
+        return indirectMatch;
     }
 }
