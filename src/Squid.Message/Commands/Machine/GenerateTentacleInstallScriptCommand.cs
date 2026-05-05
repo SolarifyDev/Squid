@@ -1,5 +1,6 @@
 using Squid.Message.Attributes;
 using Squid.Message.Enums;
+using Squid.Message.Requests.Machines;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Machine;
@@ -47,6 +48,24 @@ public class GenerateTentacleInstallScriptData
     /// once a real Tentacle tries to poll.
     /// </summary>
     public TentacleCommsProbeInfo CommsUrlProbe { get; set; }
+
+    /// <summary>
+    /// Per-OS / per-architecture archive download URLs corresponding to the
+    /// scripts above. Bundled in the same response so the FE wizard can
+    /// render BOTH UX paths in a single step:
+    /// <list type="bullet">
+    ///   <item>"Paste this script" — uses <see cref="Scripts"/></item>
+    ///   <item>"Or download the installer manually" — uses <see cref="Downloads"/></item>
+    /// </list>
+    /// Mirrors Octopus's Tentacle wizard which surfaces an MSI download menu
+    /// alongside the auto-install option. Filtered by
+    /// <see cref="GenerateTentacleInstallScriptCommand.OperatingSystem"/>.
+    /// Bit-identical to the standalone
+    /// <c>GET /api/machines/tentacle-downloads</c> response — both call the
+    /// same <c>TentacleDownloadCatalog</c>, so a download URL change here
+    /// propagates uniformly to both surfaces.
+    /// </summary>
+    public List<TentacleDownloadDto> Downloads { get; set; } = [];
 }
 
 public class TentacleInstallScript

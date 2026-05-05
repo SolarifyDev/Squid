@@ -1,7 +1,9 @@
 using System.Net;
 using Squid.Core.Services.Account;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Scripts.Tentacle;
+using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Account;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Constants;
@@ -14,6 +16,7 @@ public class MachineInstallScriptServiceTests
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
     private readonly Mock<ITentacleCommsUrlProbe> _commsUrlProbe = new();
+    private readonly Mock<ITentacleVersionRegistry> _versionRegistry = new();
     private readonly MachineScriptService _service;
 
     public MachineInstallScriptServiceTests()
@@ -27,13 +30,18 @@ public class MachineInstallScriptServiceTests
             .Setup(x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TentacleCommsProbeResult { Skipped = true, Detail = "Stubbed for unit test" });
 
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("1.6.0");
+
         _service = new MachineScriptService(
             _accountService.Object,
             _machineDataProvider.Object,
             _agentVersionProvider.Object,
             new Squid.Core.Settings.SelfCert.SelfCertSetting(),
             [],
-            _commsUrlProbe.Object);
+            _commsUrlProbe.Object,
+            _versionRegistry.Object);
     }
 
     private static GenerateKubernetesAgentInstallScriptCommand CreateCommand(
