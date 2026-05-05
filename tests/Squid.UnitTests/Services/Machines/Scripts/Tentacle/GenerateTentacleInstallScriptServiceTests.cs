@@ -1,8 +1,10 @@
 using System.Linq;
 using System.Net;
 using Squid.Core.Services.Account;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Scripts.Tentacle;
+using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Account;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Constants;
@@ -15,6 +17,7 @@ public class GenerateTentacleInstallScriptServiceTests
     private readonly Mock<IMachineDataProvider> _machineDataProvider = new();
     private readonly Mock<IAgentVersionProvider> _agentVersionProvider = new();
     private readonly Mock<ITentacleCommsUrlProbe> _commsUrlProbe = new();
+    private readonly Mock<ITentacleVersionRegistry> _versionRegistry = new();
 
     public GenerateTentacleInstallScriptServiceTests()
     {
@@ -25,6 +28,10 @@ public class GenerateTentacleInstallScriptServiceTests
         _commsUrlProbe
             .Setup(x => x.ProbeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TentacleCommsProbeResult { Skipped = true, Detail = "Stubbed for unit test" });
+
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("1.6.0");
     }
 
     [Fact]
@@ -91,6 +98,55 @@ public class GenerateTentacleInstallScriptServiceTests
     }
 
     [Fact]
+    public async Task GenerateTentacleInstallScript_AlwaysIncludesDownloadsList_FilteredByOsFilter()
+    {
+        // The Downloads array bundles the same payload as
+        // GET /api/machines/tentacle-downloads so the FE wizard can render
+        // both UX paths (paste-script + manual-download) from a single API call.
+        var service = BuildService(
+            new LinuxBinaryScriptBuilder(),
+            new WindowsPowerShellScriptBuilder());
+
+        var noFilter = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Listening", ServerUrl = "https://squid:7078" },
+            CancellationToken.None);
+
+        var winOnly = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Listening", ServerUrl = "https://squid:7078", OperatingSystem = "Windows" },
+            CancellationToken.None);
+
+        var linuxOnly = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Listening", ServerUrl = "https://squid:7078", OperatingSystem = "Linux" },
+            CancellationToken.None);
+
+        noFilter.Data.Downloads.Count.ShouldBe(6, customMessage:
+            "no OS filter → 2 Windows + 4 Linux downloads, mirroring tentacle-downloads endpoint");
+        winOnly.Data.Downloads.Count.ShouldBe(2);
+        winOnly.Data.Downloads.ShouldAllBe(d => d.OperatingSystem == "Windows");
+        linuxOnly.Data.Downloads.Count.ShouldBe(4);
+        linuxOnly.Data.Downloads.ShouldAllBe(d => d.OperatingSystem == "Linux");
+    }
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_DownloadsAndScripts_HonourSameOsFilter()
+    {
+        // Cross-field consistency pin: Scripts[] and Downloads[] both honour
+        // the same OperatingSystem filter — Linux scripts paired with Linux
+        // downloads, Windows with Windows. A divergence here would confuse the
+        // FE wizard (operator picks Windows, sees Linux download links).
+        var service = BuildService(
+            new LinuxBinaryScriptBuilder(),
+            new WindowsPowerShellScriptBuilder());
+
+        var winResp = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Listening", ServerUrl = "https://squid:7078", OperatingSystem = "Windows" },
+            CancellationToken.None);
+
+        winResp.Data.Scripts.ShouldAllBe(s => s.OperatingSystem == "Windows");
+        winResp.Data.Downloads.ShouldAllBe(d => d.OperatingSystem == "Windows");
+    }
+
+    [Fact]
     public async Task GenerateTentacleInstallScript_OsFilterWindows_RealBuilder_ReturnsPowerShellScript()
     {
         // End-to-end test using the REAL WindowsPowerShellScriptBuilder (not a fake)
@@ -148,7 +204,8 @@ public class GenerateTentacleInstallScriptServiceTests
             _agentVersionProvider.Object,
             new Squid.Core.Settings.SelfCert.SelfCertSetting(),
             builders,
-            _commsUrlProbe.Object);
+            _commsUrlProbe.Object,
+            _versionRegistry.Object);
     }
 
     private sealed class FakeBuilder : ITentacleInstallScriptBuilder

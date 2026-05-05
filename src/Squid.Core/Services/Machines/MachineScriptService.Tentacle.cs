@@ -1,8 +1,11 @@
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines.Scripts.Tentacle;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Constants;
+using Squid.Message.Enums;
+using Squid.Message.Requests.Machines;
 
 namespace Squid.Core.Services.Machines;
 
@@ -37,12 +40,15 @@ public partial class MachineScriptService
 
             var probe = await ProbePollingCommsUrlAsync(command, serverThumbprint, ct).ConfigureAwait(false);
 
+            var downloads = await BuildDownloadsAsync(command.OperatingSystem, ct).ConfigureAwait(false);
+
             return Success<GenerateTentacleInstallScriptResponse, GenerateTentacleInstallScriptData>(
                 new GenerateTentacleInstallScriptData
                 {
                     ServerThumbprint = serverThumbprint,
                     Scripts = scripts,
-                    CommsUrlProbe = probe
+                    CommsUrlProbe = probe,
+                    Downloads = downloads
                 });
         }
         catch (Exception ex)
@@ -62,6 +68,42 @@ public partial class MachineScriptService
             .Select(b => b.Build(context))
             .ToList();
     }
+
+    /// <summary>
+    /// Builds the per-OS / per-architecture archive download list bundled
+    /// alongside the install scripts. Filters by the same <c>OperatingSystem</c>
+    /// the script builder honoured so the FE sees a consistent view (Linux
+    /// scripts → Linux downloads only, etc.). Always uses "latest" version
+    /// — the install-script flow has no Version pin (the script downloads
+    /// whatever's latest at the moment the operator runs it on the agent
+    /// host); operators who need a specific version pin the standalone
+    /// <c>GET /tentacle-downloads?version=...</c> endpoint instead.
+    /// </summary>
+    private async Task<List<TentacleDownloadDto>> BuildDownloadsAsync(string osFilter, CancellationToken ct)
+    {
+        var normalisedFilter = TentacleDownloadCatalog.NormaliseOsFilter(osFilter);
+        var downloads = new List<TentacleDownloadDto>();
+
+        if (TentacleDownloadCatalog.ShouldIncludeWindows(normalisedFilter))
+        {
+            var version = await ResolveLatestVersionAsync(AgentOperatingSystems.Windows, ct).ConfigureAwait(false);
+            downloads.AddRange(TentacleDownloadCatalog.BuildWindows(version));
+        }
+
+        if (TentacleDownloadCatalog.ShouldIncludeLinux(normalisedFilter))
+        {
+            var version = await ResolveLatestVersionAsync(AgentOperatingSystems.Linux, ct).ConfigureAwait(false);
+            downloads.AddRange(TentacleDownloadCatalog.BuildLinux(version));
+        }
+
+        return downloads;
+    }
+
+    private Task<string> ResolveLatestVersionAsync(string os, CancellationToken ct) =>
+        _tentacleVersionRegistry.GetLatestVersionAsync(
+            nameof(CommunicationStyle.TentaclePolling),
+            new MachineRuntimeCapabilities { Os = os },
+            ct);
 
     private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateTentacleApiKeyAsync(CancellationToken ct)
     {

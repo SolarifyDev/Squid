@@ -133,6 +133,15 @@ public class MachineController : ControllerBase
         return Ok(response);
     }
 
+    [HttpGet("tentacle-downloads")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetTentacleDownloadsResponse))]
+    public async Task<IActionResult> GetTentacleDownloadsAsync([FromQuery] GetTentacleDownloadsRequest request, CancellationToken ct)
+    {
+        var response = await _mediator.RequestAsync<GetTentacleDownloadsRequest, GetTentacleDownloadsResponse>(request ?? new GetTentacleDownloadsRequest(), ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("connection-status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetConnectionStatusResponse))]
     public async Task<IActionResult> GetConnectionStatusAsync([FromQuery] GetConnectionStatusRequest request, CancellationToken ct)
