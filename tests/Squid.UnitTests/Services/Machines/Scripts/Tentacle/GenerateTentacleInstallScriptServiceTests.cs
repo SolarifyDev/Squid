@@ -91,6 +91,40 @@ public class GenerateTentacleInstallScriptServiceTests
     }
 
     [Fact]
+    public async Task GenerateTentacleInstallScript_OsFilterWindows_RealBuilder_ReturnsPowerShellScript()
+    {
+        // End-to-end test using the REAL WindowsPowerShellScriptBuilder (not a fake)
+        // — confirms (a) the OS filter routes through to the real builder, (b) the
+        // real builder emits PowerShell content not a stub. Catches a future
+        // mis-registration where the Windows builder gets dropped from DI scan
+        // and the service silently returns zero scripts under OS=Windows filter.
+        var service = BuildService(
+            new LinuxBinaryScriptBuilder(),
+            new WindowsPowerShellScriptBuilder());
+
+        var response = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand
+            {
+                CommunicationMode = "Listening",
+                OperatingSystem = "Windows",
+                ServerUrl = "https://squid:7078",
+                ListeningHostName = "win-host",
+                ListeningPort = 10933
+            },
+            CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.Scripts.Count.ShouldBe(1, customMessage:
+            "OS=Windows filter must return exactly the Windows builders — Linux must be filtered out.");
+        response.Data.Scripts[0].Id.ShouldBe("windows-powershell");
+        response.Data.Scripts[0].ScriptType.ShouldBe("powershell");
+        response.Data.Scripts[0].Content.ShouldContain("Invoke-WebRequest", customMessage:
+            "Real Windows builder must emit PowerShell-flavoured download command.");
+        response.Data.Scripts[0].Content.ShouldContain("squid-tentacle.exe' register", customMessage:
+            "Real Windows builder must invoke the Windows binary path for register.");
+    }
+
+    [Fact]
     public async Task GenerateTentacleInstallScript_ApiKeyCreationFails_ReturnsInternalError()
     {
         _accountService

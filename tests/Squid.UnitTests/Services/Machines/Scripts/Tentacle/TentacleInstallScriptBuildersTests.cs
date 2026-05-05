@@ -204,6 +204,179 @@ public class TentacleInstallScriptBuildersTests
     }
 
     // ========================================================================
+    // WindowsPowerShellScriptBuilder
+    //
+    // Mirrors LinuxBinaryScriptBuilder's contract for Windows: download the
+    // canonical installer.ps1, run it with -NoServiceInstall (binary + firewall
+    // only, NO sc.exe yet), then register, then `service install`. Same step
+    // ordering as the Linux script — register BEFORE service install so the
+    // SCM start finds a valid config and doesn't crash on PermissionDenied
+    // mid-Phase-A.
+    // ========================================================================
+
+    [Fact]
+    public void WindowsPowerShell_Listening_IncludesServerCertAndListeningArgs()
+    {
+        var ctx = ListeningContext(serverThumbprint: "FAF04764");
+        var script = new WindowsPowerShellScriptBuilder().Build(ctx);
+
+        script.Id.ShouldBe("windows-powershell");
+        script.OperatingSystem.ShouldBe("Windows");
+        script.InstallationMethod.ShouldBe("PowerShell");
+        script.ScriptType.ShouldBe("powershell");
+        script.IsRecommended.ShouldBeTrue(
+            "Only one Windows builder today — must be the default selection.");
+
+        // install-tentacle.ps1 download + invoke
+        script.Content.ShouldContain("Invoke-WebRequest");
+        script.Content.ShouldContain("install-tentacle.ps1");
+        script.Content.ShouldContain("-NoServiceInstall", customMessage:
+            "Step 1 must defer service install so register can write config first " +
+            "(matches LinuxBinaryScriptBuilder's install-then-register-then-service order).");
+
+        // register
+        script.Content.ShouldContain("squid-tentacle.exe' register");
+        script.Content.ShouldContain("--listening-host \"host.local\"");
+        script.Content.ShouldContain("--listening-port \"10933\"");
+        script.Content.ShouldContain("--server-cert \"FAF04764\"");
+
+        // service install must come AFTER register
+        var registerIdx = script.Content.IndexOf("register", StringComparison.Ordinal);
+        var serviceInstallIdx = script.Content.IndexOf("service install", StringComparison.Ordinal);
+        registerIdx.ShouldBeGreaterThan(0);
+        serviceInstallIdx.ShouldBeGreaterThan(registerIdx,
+            "service install MUST run AFTER register so the Windows Service starts with a valid config.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_Polling_IncludesCommsUrlAndServerCert()
+    {
+        // --server-cert is required for both modes — same rationale as Linux:
+        // Polling tentacles pin the Server's Halibut cert on every poll handshake.
+        var script = new WindowsPowerShellScriptBuilder().Build(PollingContext());
+
+        script.Content.ShouldContain("--comms-url \"https://squid:10943\"");
+        script.Content.ShouldContain("--server-cert \"FAF04764\"");
+        script.Content.ShouldNotContain("--listening-host");
+        script.Content.ShouldNotContain("--listening-port");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_PowerShellLineContinuation_NotBashBackslash()
+    {
+        // PowerShell uses backtick (`) for line continuation. A backslash at
+        // EOL would be parsed as a path-separator-typo and the register call
+        // would fail with cryptic argv-parse errors. Pin the literal char so
+        // a future refactor that reuses LinuxBinaryScriptBuilder's bash join
+        // helper (which emits `\\\n`) can't slip past review.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain(" `\n", customMessage:
+            "Multi-line `register` invocation must use PowerShell backtick continuation.");
+        script.Content.ShouldNotContain(" \\\n", customMessage:
+            "Bash backslash-newline continuation is invalid PowerShell — would cause " +
+            "the register call to fail with confusing 'is not recognized' errors.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_NoSudo()
+    {
+        // Windows has no `sudo`. The script assumes elevated PowerShell already
+        // (the operator runs `Start-Process powershell -Verb RunAs` or right-click
+        // → Run as Administrator). A literal `sudo` would error with
+        // "'sudo' is not recognized" and abort the install.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldNotContain("sudo");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_WithMachineNameAndRoles_IncludesThemInRegisterArgs()
+    {
+        var ctx = ListeningContext(cmd =>
+        {
+            cmd.MachineName = "win-web-01";
+            cmd.Tags = ["web", "frontend"];
+            cmd.Environments = ["Production", "Staging"];
+        });
+
+        var script = new WindowsPowerShellScriptBuilder().Build(ctx);
+
+        script.Content.ShouldContain("--name \"win-web-01\"");
+        script.Content.ShouldContain("--role \"web,frontend\"");
+        script.Content.ShouldContain("--environment \"Production,Staging\"");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_NoServerCertificate_OmitsArg()
+    {
+        // Same shape as Linux builders — when server can't supply a thumbprint,
+        // omit the arg rather than emitting --server-cert "" which the register
+        // CLI would reject as malformed.
+        var ctx = ListeningContext(serverThumbprint: "");
+        var script = new WindowsPowerShellScriptBuilder().Build(ctx);
+
+        script.Content.ShouldNotContain("--server-cert");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_BinaryPath_PinsCanonicalProgramFilesLocation()
+    {
+        // install-tentacle.ps1 default install dir is C:\Program Files\Squid Tentacle.
+        // Pinning the literal here ensures the script and the installer agree —
+        // a future installer that defaults elsewhere would silently break this
+        // generated script (binary not found at the path the script invokes).
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain(@"C:\Program Files\Squid Tentacle\squid-tentacle.exe", customMessage:
+            "Generated script must reference the canonical install path written by install-tentacle.ps1. " +
+            "If install-tentacle.ps1's default ever changes, update both sides — caught by this pin.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_ContainsAllThreeOrderedSteps()
+    {
+        // Defensive ordering pin: the script must contain Step 1 (install),
+        // Step 2 (register), Step 3 (service install) in that order. A refactor
+        // that accidentally reorders them would break the registration flow
+        // because service install before register starts the SCM-managed
+        // process with no config → it crashes within seconds → operator sees
+        // a confusing "service stopped immediately" rather than a clean error.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        var step1Idx = script.Content.IndexOf("Step 1", StringComparison.Ordinal);
+        var step2Idx = script.Content.IndexOf("Step 2", StringComparison.Ordinal);
+        var step3Idx = script.Content.IndexOf("Step 3", StringComparison.Ordinal);
+
+        step1Idx.ShouldBeGreaterThan(-1);
+        step2Idx.ShouldBeGreaterThan(step1Idx);
+        step3Idx.ShouldBeGreaterThan(step2Idx);
+    }
+
+    // ========================================================================
+    // Cross-OS metadata: Windows must NOT collide with Linux Ids and the
+    // recommended-flag invariant must hold per OS.
+    // ========================================================================
+
+    [Fact]
+    public void AllBuilders_HaveUniqueIds_AndOnePerOsIsRecommended()
+    {
+        var builders = new ITentacleInstallScriptBuilder[]
+        {
+            new LinuxDockerRunScriptBuilder(),
+            new LinuxDockerComposeScriptBuilder(),
+            new LinuxBinaryScriptBuilder(),
+            new WindowsPowerShellScriptBuilder()
+        };
+
+        builders.Select(b => b.Id).Distinct().Count().ShouldBe(builders.Length,
+            "Builder Ids must be globally unique — they're FE selection keys.");
+
+        builders.Where(b => b.OperatingSystem == "Linux").Count(b => b.IsRecommended).ShouldBe(1);
+        builders.Where(b => b.OperatingSystem == "Windows").Count(b => b.IsRecommended).ShouldBe(1);
+    }
+
+    // ========================================================================
     // Helpers
     // ========================================================================
 
