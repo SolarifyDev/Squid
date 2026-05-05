@@ -1,7 +1,7 @@
 namespace Squid.UnitTests.Support;
 
 /// <summary>
-/// P1-Phase12.E.6 — xUnit collection that disables parallelization across
+/// xUnit collection that disables parallelization across
 /// every test class that mutates a process-global static handle. Without
 /// serialisation, parallel cross-class execution races on shared globals
 /// (Serilog <c>Log.Logger</c> setter, <c>ActivitySource.AddActivityListener</c>

@@ -43,7 +43,7 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
     /// <summary>
     /// P0-Phase9.3 — serializes (read-thumbprints + TrustOnly) pairs.
     ///
-    /// <para><b>The race pre-Phase-9.3</b>: Start() schedules the initial DB
+    /// <para><b>The race </b>: Start schedules the initial DB
     /// load on a background Task.Run. A concurrent registration arriving
     /// during that window calls ReconfigureIfMissingAsync → ReconfigureAsync,
     /// which races. If both calls reach <c>TrustOnly</c> in different orders
@@ -131,7 +131,7 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
     }
 
     /// <summary>
-    /// P1 (Phase-6, post-Phase-5 deep audit): the original sync entry point
+    /// P1: the original sync entry point
     /// blocked Kestrel request threads via <c>.GetAwaiter().GetResult()</c>
     /// on the DB query when invoked from registration controllers. Kept for
     /// back-compat with non-async callers; new code paths must call

@@ -52,7 +52,7 @@ public interface IUpgradeEventTimelineStore
     string GetLog(int machineId);
 
     /// <summary>
-    /// P1-Phase12.E.8.2 — store the LATEST parsed <see cref="UpgradeStatusPayload"/>
+    /// store the LATEST parsed <see cref="UpgradeStatusPayload"/>
     /// for a machine. Populated on every successful Capabilities RPC by
     /// <see cref="DeploymentExecution.Tentacle.TentacleHealthCheckStrategy"/>
     /// alongside the events list + Phase B log. Read by the API layer

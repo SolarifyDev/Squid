@@ -4,8 +4,8 @@ using System.Text;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.B.1 — Bash launcher. Cross-platform (Linux, macOS, WSL on Windows).
-/// Extracted bit-for-bit from the pre-Phase-12 <c>LocalScriptService.StartBashProcess</c>;
+/// Bash launcher. Cross-platform (Linux, macOS, WSL on Windows).
+/// Extracted bit-for-bit from the  <c>LocalScriptService.StartBashProcess</c>;
 /// every PSI field preserved exactly so existing real-bash tests stay green
 /// without modification.
 /// </summary>

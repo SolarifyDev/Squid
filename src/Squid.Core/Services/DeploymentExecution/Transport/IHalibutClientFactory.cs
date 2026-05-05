@@ -11,7 +11,7 @@ public interface IHalibutClientFactory : IScopedDependency
     IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint);
 
     /// <summary>
-    /// P1-Phase9b.3 — separate file-transfer client for out-of-band file
+    /// separate file-transfer client for out-of-band file
     /// upload/download to a polling tentacle. Returned client routes through
     /// the agent's <see cref="IFileTransferService"/> registration.
     /// </summary>

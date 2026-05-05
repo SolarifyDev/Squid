@@ -4,7 +4,7 @@ using Squid.Message.Contracts.Tentacle;
 namespace Squid.Tentacle.ScriptExecution;
 
 /// <summary>
-/// P1-Phase11.1 (audit ARCH.9 Plan A) — per-ticket soft-cancellation registry.
+///  (audit ARCH.9 Plan A) — per-ticket soft-cancellation registry.
 ///
 /// <para><b>Why this exists</b>: the agent's <see cref="IScriptService"/>
 /// wire contract is SYNC (Halibut V1 design) so RPC handlers can't

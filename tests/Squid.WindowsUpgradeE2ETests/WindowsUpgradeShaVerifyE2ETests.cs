@@ -8,9 +8,9 @@ using System.Text.RegularExpressions;
 namespace Squid.WindowsUpgradeE2ETests;
 
 /// <summary>
-/// P1-Phase12.E.9.4 — end-to-end verification of the opportunistic SHA256
+/// end-to-end verification of the opportunistic SHA256
 /// companion-file fetch + verification logic added to
-/// <c>upgrade-windows-tentacle.ps1</c> in Phase 12.E.9.3. Uses an
+/// <c>upgrade-windows-tentacle.ps1</c> in . Uses an
 /// in-process <see cref="HttpListener"/> serving a known fixture pair
 /// (.zip + .sha256) so each test controls EVERY server response (404,
 /// invalid body, valid match, valid mismatch) — no GitHub Releases
@@ -69,14 +69,14 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
         foreach (var op in keyOperations)
         {
             prodTemplate.ShouldContain(op,
-                customMessage: $"production upgrade-windows-tentacle.ps1 must contain '{op}' (key SHA-handling operation pinned by Phase 12.E.9.3 + verified by 12.E.9.4 E2E tests). If this fails: a polish to the SHA block dropped the operation; either restore it OR update the drift detector to reflect the new contract.");
+                customMessage: $"production upgrade-windows-tentacle.ps1 must contain '{op}' (key SHA-handling operation pinned by  + verified by 12.E.9.4 E2E tests). If this fails: a polish to the SHA block dropped the operation; either restore it OR update the drift detector to reflect the new contract.");
         }
     }
 
     [Fact]
     public void Sha256VerifyBlock_DownloadUrlConvention_AppendDotSha256()
     {
-        // Phase 12.E.9.2 release workflows publish `<archive>.sha256` next
+        //  release workflows publish `<archive>.sha256` next
         // to `<archive>.zip`. The .ps1 must construct the companion URL by
         // appending '.sha256' to DOWNLOAD_URL — same convention Linux .sh
         // uses (sh:421). Drift would mean .ps1 hits a 404 for every

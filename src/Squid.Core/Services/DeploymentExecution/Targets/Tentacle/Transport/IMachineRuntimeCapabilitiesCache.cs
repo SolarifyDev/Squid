@@ -66,7 +66,7 @@ public sealed class MachineRuntimeCapabilities
         SupportedServices.Any(s => string.Equals(s, "IScriptService/v2", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// P1-Phase12.E.5 — explicit-claim OS predicates the upgrade-strategy
+    /// explicit-claim OS predicates the upgrade-strategy
     /// resolvers + version registry use INSTEAD of inline string comparisons.
     /// Each consumer reads <c>capabilities.IsWindows</c> / <c>IsLinux</c> /
     /// <c>IsMacOS</c> / <c>IsUnknown</c>; the literal strings live ONCE in
@@ -79,7 +79,7 @@ public sealed class MachineRuntimeCapabilities
     /// <summary>True when agent reported Linux OS (any distro) via Capabilities probe.</summary>
     public bool IsLinux => string.Equals(Os, AgentOperatingSystems.Linux, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>True when agent reported macOS via Capabilities probe. No upgrade strategy claims this today (Phase 12.E.5 routing fix); a future <c>MacOSTentacleUpgradeStrategy</c> would plug in without modifying the Linux strategy.</summary>
+    /// <summary>True when agent reported macOS via Capabilities probe. No upgrade strategy claims this today; a future <c>MacOSTentacleUpgradeStrategy</c> would plug in without modifying the Linux strategy.</summary>
     public bool IsMacOS => string.Equals(Os, AgentOperatingSystems.MacOS, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -89,8 +89,8 @@ public sealed class MachineRuntimeCapabilities
     /// neither <c>OperatingSystem.IsWindows()</c>, <c>IsLinux()</c>, nor
     /// <c>IsMacOS()</c> matched). The Linux upgrade strategy claims this
     /// case (<c>IsLinux || IsUnknown</c>) as the historical default to
-    /// preserve pre-Phase-12 behaviour for the existing operator base —
-    /// pre-Phase-12 there was no OS axis at all and Linux was the only
+    /// preserve behaviour for the existing operator base —
+    ///  there was no OS axis at all and Linux was the only
     /// strategy. <see cref="string.IsNullOrWhiteSpace"/> covers both the
     /// empty cold-cache path and the explicit "Unknown" fallback path.
     /// </summary>

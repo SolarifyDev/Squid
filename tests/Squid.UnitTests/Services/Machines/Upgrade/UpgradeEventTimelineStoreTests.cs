@@ -160,9 +160,9 @@ public sealed class UpgradeEventTimelineStoreTests
     }
 
     // ========================================================================
-    // P1-Phase12.E.8.2 — UpgradeStatusPayload snapshot cache.
+    // UpgradeStatusPayload snapshot cache.
     //
-    // The agent reports a structured status (with ExitCode after Phase 12.E.7.B-2)
+    // The agent reports a structured status (with ExitCode after)
     // on every Capabilities probe; the cache holds the LATEST one so the
     // GetUpgradeStatus API can serve it to the FE without an extra RPC.
     // ========================================================================
@@ -214,7 +214,7 @@ public sealed class UpgradeEventTimelineStoreTests
         // Passing null is the explicit "clear status" sentinel. Some callers
         // (e.g., agent stops reporting because last-upgrade.json was deleted)
         // need to wipe the entry without a separate API method. Mirrors the
-        // empty-storage protocol from Phase 12.E.7.B-3.
+        // empty-storage protocol from .
         var store = new InMemoryUpgradeEventTimelineStore();
         store.StoreStatus(1, new UpgradeStatusPayload { Status = "SUCCESS" });
         store.GetStatus(1).ShouldNotBeNull("precondition: status was set");

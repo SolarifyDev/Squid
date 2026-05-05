@@ -1,7 +1,7 @@
 namespace Squid.Core.Services.DeploymentExecution.Exceptions;
 
 /// <summary>
-/// P1-Phase9b.1 — thrown when a polling-Tentacle dispatch is rejected because
+/// thrown when a polling-Tentacle dispatch is rejected because
 /// the per-machine in-flight work count is at the configured cap.
 ///
 /// <para>The Hangfire worker propagating this gets a structured failure (not

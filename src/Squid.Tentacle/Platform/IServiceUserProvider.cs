@@ -1,8 +1,8 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.3 (Windows Tentacle foundations) — cross-platform service-
-/// user abstraction. Consolidates the pre-Phase-12 split between
+///  (Windows Tentacle foundations) — cross-platform service-
+/// user abstraction. Consolidates the split between
 /// <c>ServiceCommand.DetectServiceUser</c> (Linux <c>getent</c>) and
 /// <c>InstanceOwnershipHandover</c> (Linux <c>chown</c>) onto a single
 /// typed contract.

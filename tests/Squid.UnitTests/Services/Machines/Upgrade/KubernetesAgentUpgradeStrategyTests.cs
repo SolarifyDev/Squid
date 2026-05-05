@@ -7,9 +7,9 @@ using Squid.Message.Enums;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// Phase 1 placeholder behaviour: returns <c>NotSupported</c> with a clear
+///  placeholder behaviour: returns <c>NotSupported</c> with a clear
 /// helm-shaped remediation hint so operators know the manual workaround
-/// while Phase 2 is being implemented.
+/// while is being implemented.
 /// </summary>
 public sealed class KubernetesAgentUpgradeStrategyTests
 {
@@ -18,7 +18,7 @@ public sealed class KubernetesAgentUpgradeStrategyTests
     [Fact]
     public void CanHandle_KubernetesAgentStyle_True()
     {
-        // P1-Phase12.E.3 — capabilities second arg ignored by K8s strategy
+        // capabilities second arg ignored by K8s strategy
         // (no OS variant). Pass Empty as the conventional cold-cache value.
         _strategy.CanHandle(nameof(CommunicationStyle.KubernetesAgent), MachineRuntimeCapabilities.Empty).ShouldBeTrue();
     }

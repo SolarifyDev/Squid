@@ -99,7 +99,7 @@ public class TentacleHealthCheckStrategyTests
         result.Healthy.ShouldBeFalse();
     }
 
-    // ========== Phase 3: capabilities metadata → machine runtime cache ==========
+    // ========== : capabilities metadata → machine runtime cache ==========
 
     [Fact]
     public async Task CheckHealth_PopulatesRuntimeCapabilitiesCache_FromMetadata()
@@ -165,7 +165,7 @@ public class TentacleHealthCheckStrategyTests
     }
 
     // ========================================================================
-    // P1-Phase12.E.8.3 — UpgradeStatusPayload snapshot cache wiring.
+    // UpgradeStatusPayload snapshot cache wiring.
     //
     // The health-check parses the agent's upgradeStatus metadata into a
     // typed payload + dispatches it to TWO independent consumers: the stale-

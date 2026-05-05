@@ -61,7 +61,7 @@ public class TentacleSettings
     public string ServerCommsAddresses { get; set; } = string.Empty;
 
     /// <summary>
-    /// P1-Phase9.5 — bumped 30 → 300 (5 min).
+    /// bumped 30 → 300 (5 min).
     ///
     /// <para><b>Old default rationale (30s)</b>: matched Halibut's polling
     /// reconnect cadence. Worked for K8s-agent flavour where pods are

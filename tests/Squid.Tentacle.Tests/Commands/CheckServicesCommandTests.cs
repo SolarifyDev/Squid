@@ -7,7 +7,7 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Commands;
 
 /// <summary>
-/// P1-Phase9b.5 — pin the operator-facing self-diagnostic CLI contract.
+/// pin the operator-facing self-diagnostic CLI contract.
 ///
 /// <para><b>Why these tests matter</b>: <c>tentacle check-services</c> is
 /// what an operator runs when an agent <em>looks</em> healthy in

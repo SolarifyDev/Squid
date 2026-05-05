@@ -65,9 +65,9 @@ public class ScriptIsolationMutex
         => AcquireAsync(command.Isolation, command.IsolationMutexName, command.ScriptIsolationMutexTimeout, ct);
 
     /// <summary>
-    /// P1-Phase11.2 (audit ARCH.9 F1.1) — pure-sync acquire-with-polling.
+    ///  (audit ARCH.9 F1.1) — pure-sync acquire-with-polling.
     ///
-    /// <para><b>Why this exists</b>: pre-Phase-11.2,
+    /// <para><b>Why this exists</b>: ,
     /// <see cref="LocalScriptService.StartScript"/> wrapped
     /// <see cref="AcquireAsync(StartScriptCommand, CancellationToken)"/>
     /// in <c>.GetAwaiter().GetResult()</c>. That sync-over-async pattern

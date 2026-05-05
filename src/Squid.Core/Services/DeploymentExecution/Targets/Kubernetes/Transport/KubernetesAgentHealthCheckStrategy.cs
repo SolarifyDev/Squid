@@ -19,7 +19,7 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
     /// Capabilities-metadata keys the agent populates by running
     /// <c>kubectl auth can-i &lt;verb&gt; &lt;resource&gt;</c> at startup.
     /// Server-side health check reads them; missing keys are tolerated for
-    /// backward-compat with pre-Phase-10.1 agents that don't surface them.
+    /// backward-compat with agents that don't surface them.
     /// Pinned literals — operators reference these in alerting rules.
     /// </summary>
     public const string RbacCanCreatePodsKey = "kubernetes.canCreatePods";

@@ -10,9 +10,9 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Platform;
 
 /// <summary>
-/// P1-Phase12.B.1 — pin the cross-platform process-launcher abstraction.
+/// pin the cross-platform process-launcher abstraction.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12.B the agent had per-syntax
+/// <para><b>Why this exists</b>:  the agent had per-syntax
 /// process-launching code split across two private static helpers in
 /// <c>LocalScriptService</c> (<c>StartBashProcess</c> + <c>StartPwshProcess</c>),
 /// each with the same five-line PSI shape duplicated. Windows Tentacle support
@@ -32,7 +32,7 @@ namespace Squid.Tentacle.Tests.Platform;
 [Trait("Category", TentacleTestCategories.Core)]
 public sealed class ProcessLauncherTests
 {
-    // ── BashProcessLauncher PSI shape — pinned bit-for-bit from pre-Phase-12 ───
+    // ── BashProcessLauncher PSI shape — pinned bit-for-bit from  ───
 
     [Fact]
     public void Bash_BuildStartInfo_FileNameIsBash()
@@ -105,7 +105,7 @@ public sealed class ProcessLauncherTests
     {
         var psi = new PwshCoreProcessLauncher().BuildStartInfo("/tmp/x", new[] { "alpha" });
 
-        // The -File form is what the pre-Phase-12 launcher used.
+        // The -File form is what the launcher used.
         // Drift here would change how pwsh interprets the script (e.g.
         // -Command would change exit-code propagation semantics).
         psi.ArgumentList.Count.ShouldBe(3);
@@ -156,7 +156,7 @@ public sealed class ProcessLauncherTests
     [Fact]
     public void Factory_PowerShell_ResolvesToPwshCoreLauncher_OnNonWindows()
     {
-        // Phase-12.B.1: PowerShell always routes to pwsh-Core. Phase-12.B.2
+        // : PowerShell always routes to pwsh-Core.
         // will override this on Windows hosts to route to WindowsPowerShellProcessLauncher.
         // This test pins the B.1 baseline and will be amended in B.2.
         if (OperatingSystem.IsWindows()) return;
@@ -179,7 +179,7 @@ public sealed class ProcessLauncherTests
             .Message.ShouldContain(syntax.ToString());
     }
 
-    // ── WindowsPowerShellProcessLauncher PSI shape (Phase 12.B.2) ──────────────
+    // ── WindowsPowerShellProcessLauncher PSI shape ──────────────
     //
     // The actual point of Phase B: PowerShell.exe + OEM stdout decoding so
     // non-ASCII script output (中文 / emoji / accented chars) round-trips
@@ -323,7 +323,7 @@ public sealed class ProcessLauncherTests
     [Fact]
     public void Factory_PowerShell_OnWindows_DefaultRoutesToPwshCore_NoBreakingChange()
     {
-        // Phase-12.B.3 — preserve pre-Phase-12 behaviour: PowerShell on Windows
+        // preserve behaviour: PowerShell on Windows
         // routes to PwshCoreProcessLauncher by default. Switching to
         // WindowsPowerShellProcessLauncher requires the operator to set
         // SQUID_TENTACLE_USE_WINDOWS_POWERSHELL=true (see env-var-gate test

@@ -156,7 +156,7 @@ public class MachineController : ControllerBase
     /// Triggers an in-place self-upgrade of the agent on the target machine.
     /// Per-target dispatch is via <c>IMachineUpgradeStrategy</c> (Linux
     /// Tentacle delivers a bash script over Halibut; Kubernetes Agent will
-    /// helm-upgrade the chart in Phase 2).
+    /// helm-upgrade the chart in).
     /// </summary>
     /// <summary>
     /// Read-only "can this machine be upgraded right now?" probe powering
@@ -217,7 +217,7 @@ public class MachineController : ControllerBase
     }
 
     /// <summary>
-    /// P1-Phase12.E.8 — agent-reported upgrade-status snapshot for the
+    /// agent-reported upgrade-status snapshot for the
     /// most recent upgrade attempt. Exposes the structured <c>ExitCode</c>
     /// field that <c>GET /upgrade-events</c> (event stream) and
     /// <c>GET /upgrade-log</c> (raw text) silently drop. Operators

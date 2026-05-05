@@ -273,7 +273,7 @@ public class DeploymentLogWriterBufferingTests
         persisted.Name.ShouldBe("Test Node");
     }
 
-    // === Phase-6.4: bounded buffer (Agent B P1.1 + Agent D #2) =================
+    // === : bounded buffer (Agent B P1.1 + Agent D #2) =================
     //
     // Pre-fix: Channel.CreateUnbounded — under DB-stall + high producer rate
     // (100 targets × kubectl-streaming = 30k+ entries/sec), the channel grew
@@ -334,7 +334,7 @@ public class DeploymentLogWriterBufferingTests
     public async Task AddLogAsync_UnboundedMode_NeverDrops()
     {
         // Legacy escape hatch — operator opts out of the bound by passing
-        // capacity=null. Same behaviour as the pre-Phase-6 unbounded channel.
+        // capacity=null. Same behaviour as the unbounded channel.
         var options = CreateOptions();
         await using var writer = new DeploymentLogWriter(options, capacity: null);
 

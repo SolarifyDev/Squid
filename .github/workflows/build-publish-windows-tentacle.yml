@@ -1,20 +1,20 @@
 name: Build & Publish Windows Tentacle
 
-# P1-Phase12.E.0 — companion to build-publish-linux-tentacle.yml. Produces
+# companion to build-publish-linux-tentacle.yml. Produces
 # self-contained .zip archives for win-x64 + win-arm64 and uploads them to
 # GitHub Releases on tag pushes. Mirrors the Linux pipeline shape (GitVersion
 # → matrix publish → release upload) but drops Docker (Windows base images are
 # 6+ GB and there's no demand for "Tentacle in Windows container" today —
 # defer to a follow-up if that ever changes).
 #
-# Why .zip and not .msi: per Phase 12.E analysis, Octopus's MSI is essentially
+# Why .zip and not .msi: per analysis, Octopus's MSI is essentially
 # a thin file-extract wrapper + Add/Remove Programs entry; the real work is
 # done post-install via `Tentacle.exe service --install`. Squid already has
-# the equivalent via Phase-12.C (`squid-tentacle service install` → sc.exe).
+# the equivalent via  (`squid-tentacle service install` → sc.exe).
 # A self-contained .zip + install-tentacle.ps1 covers the same operator
 # scenarios (manual install, scripted bootstrap, in-UI upgrade dispatch) at a
 # fraction of the build complexity (no WiX toolset, no windows-latest runner,
-# no Authenticode signing prerequisite). MSI is deferred to Phase 12.E.4 if a
+# no Authenticode signing prerequisite). MSI is deferred to if a
 # real operator asks for SCCM/GPO mass-deploy.
 #
 # Why ubuntu-latest cross-compile instead of windows-latest: Windows GHA
@@ -106,7 +106,7 @@ jobs:
         include:
           - rid: win-x64
             arch_label: x64
-          # Phase-12.E.0 ships ARM64 from day 1 even though Octopus has no
+          #  ships ARM64 from day 1 even though Octopus has no
           # Windows ARM build. Linux side already supports arm64; Windows on
           # ARM (Surface Pro X, Azure Dpsv5/Eps ARM VMs, AWS Graviton with
           # Windows preview) is small but growing, and self-contained .NET 9
@@ -188,7 +188,7 @@ jobs:
           pattern: squid-tentacle-*
           merge-multiple: true
 
-      # P1-Phase12.E.9.2 — produce <archive>.sha256 companion files alongside
+      # produce <archive>.sha256 companion files alongside
       # each .zip. The Windows .ps1 / Linux .sh both fetch
       # `${DOWNLOAD_URL}.sha256` opportunistically — present means
       # transit-integrity verification fires; absent means fall through.

@@ -1,7 +1,7 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.3 — fallback impl for macOS / unsupported platforms /
+/// fallback impl for macOS / unsupported platforms /
 /// test contexts. Always reports "no service user concept here" —
 /// callers that depend on service-user semantics short-circuit cleanly
 /// without OS branching.

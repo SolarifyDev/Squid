@@ -39,7 +39,7 @@ public static class RuntimeCapabilitiesInspector
 
     private static string DetectOs()
     {
-        // P1-Phase12.E.5 — these strings are the agent half of the
+        // these strings are the agent half of the
         // cross-process OS-aware routing contract. The server side
         // (MachineRuntimeCapabilities.IsWindows / IsLinux / IsMacOS /
         // IsUnknown) reads them via Capabilities RPC. Use the centralized

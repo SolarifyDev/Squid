@@ -6,9 +6,9 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Platform;
 
 /// <summary>
-/// P1-Phase12.A.3 — pin the cross-platform service-user abstraction.
+/// pin the cross-platform service-user abstraction.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12 the agent had Linux-only
+/// <para><b>Why this exists</b>:  the agent had Linux-only
 /// service-user logic split across two files: <c>ServiceCommand.DetectServiceUser</c>
 /// shells to <c>getent passwd squid-tentacle</c> + <c>InstanceOwnershipHandover</c>
 /// has its own Func-injectable seams for the same conceptual operations.
@@ -100,7 +100,7 @@ public sealed class ServiceUserProviderTests
     public void WindowsProvider_TrySetOwnership_NoOpReturnsTrue()
     {
         // Windows uses ACLs not Unix-style chown. The
-        // FilePermissionManager (Phase-12.A.1) handles ACL hardening; this
+        // FilePermissionManager handles ACL hardening; this
         // provider's TrySetOwnership is a no-op for Windows so the same
         // shared call site works on both platforms without branching.
         new WindowsServiceUserProvider().TrySetOwnership(path: "C:\\temp", "anyone").ShouldBeTrue();

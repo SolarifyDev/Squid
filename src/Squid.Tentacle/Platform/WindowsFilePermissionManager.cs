@@ -6,7 +6,7 @@ using Serilog;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.1 — Windows implementation of
+/// Windows implementation of
 /// <see cref="IFilePermissionManager"/>.
 ///
 /// <para><b>Mapping</b>:

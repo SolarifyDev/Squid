@@ -39,7 +39,7 @@ public sealed class MachineUpgradeServiceTests
             .Setup(x => x.GetLatestVersionAsync(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("1.4.0");
 
-        // P1-Phase12.E.3 — CanHandle widened to (style, capabilities).
+        // CanHandle widened to (style, capabilities).
         // Existing tests don't care about capabilities; pass `It.IsAny<>()`
         // so the resolver still routes by style alone in legacy tests, and
         // dedicated OS-routing tests in this file (added below) use specific
@@ -264,11 +264,11 @@ public sealed class MachineUpgradeServiceTests
 
         ex.Message.ShouldContain("TentaclePolling");
         ex.Message.ShouldContain("Each (style, OS) tuple must have exactly one owner",
-            customMessage: "error must tell the developer what the invariant is (P1-Phase12.E.3 — invariant widened from style-only to (style, OS)), not just what broke");
+            customMessage: "error must tell the developer what the invariant is (invariant widened from style-only to (style, OS)), not just what broke");
     }
 
     // ========================================================================
-    // P1-Phase12.E.3 — OS-aware routing at the orchestrator seam.
+    // OS-aware routing at the orchestrator seam.
     //
     // Linux and Windows tentacles share the same CommunicationStyle wire values
     // (TentaclePolling / TentacleListening) — Halibut doesn't distinguish OSes
@@ -369,7 +369,7 @@ public sealed class MachineUpgradeServiceTests
     {
         // Cold cache (machine never health-checked) → capabilities.Os = "" →
         // Linux strategy claims as the historical default; Windows strategy
-        // skips. Preserves pre-Phase-12 behaviour for the operator base, which
+        // skips. Preserves behaviour for the operator base, which
         // is overwhelmingly Linux. Without this, a freshly-registered tentacle
         // would surface as "no strategy registered" until its first health
         // check — confusing, since health checks are async.
@@ -401,7 +401,7 @@ public sealed class MachineUpgradeServiceTests
 
         resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
         _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once,
-            "cold-cache (empty Os) must route to Linux strategy as historical default — preserves pre-Phase-12 behaviour");
+            "cold-cache (empty Os) must route to Linux strategy as historical default — preserves behaviour");
         windowsStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1057,7 +1057,7 @@ public sealed class MachineUpgradeServiceTests
     [Fact]
     public void LockExpiry_BalancedForAbandonedLockRecoveryAndAutoExtendHeadroom()
     {
-        // Invariant revised in 1.5.0 (Phase 1 A1). Rationale:
+        // Invariant revised in 1.5.0. Rationale:
         //
         // RedLockNet auto-extends the lock at expiry/3 intervals while the
         // wrapped operation (RunStrategyAsync) is running. So:
@@ -1212,7 +1212,7 @@ public sealed class MachineUpgradeServiceTests
 
     // ========================================================================
     // GetUpgradeInfoAsync — read-only endpoint powering FE's "upgrade available"
-    // badge (FE Phase-2 §9.2). Pure read: no Redis lock, no dispatch, no
+    // badge (FE  §9.2). Pure read: no Redis lock, no dispatch, no
     // side effect — just a richer version comparison than the UI can do
     // client-side with just list data.
     // ========================================================================

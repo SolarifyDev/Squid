@@ -3,7 +3,7 @@ using Squid.Core.Services.Machines.Upgrade;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.7.B-2 — dedicated coverage for <see cref="UpgradeStatusPayload"/>
+/// dedicated coverage for <see cref="UpgradeStatusPayload"/>
 /// the cross-process JSON contract between the Tentacle agent's
 /// <c>IUpgradeStatusStorage</c> writers (Linux .sh, Windows .ps1, K8s
 /// future) and the server-side parser consumed by
@@ -12,7 +12,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 ///
 /// <para><b>Why a dedicated test class</b>: pre-12.E.7 the parser tests
 /// lived inside <c>UpgradeDispatchLockReconcilerTests</c> because that
-/// reconciler was the only consumer. Phase 12.E.7's investigation
+/// reconciler was the only consumer. 's investigation
 /// surfaced two contract gaps that are NOT reconciler-specific —
 /// they're parser-level guarantees that ALL future consumers (tracing
 /// timeline, status storage integration tests, full upgrade E2E)
@@ -45,7 +45,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 public sealed class UpgradeStatusPayloadTests
 {
     // ========================================================================
-    // ExitCode field — Phase 12.E.7.B-2 gap fix.
+    // ExitCode field — gap fix.
     //
     // Pre-fix: UpgradeStatusPayload had no ExitCode property; the agent's
     // JSON contained "exitCode": 7 but System.Text.Json silently ignored
@@ -152,7 +152,7 @@ public sealed class UpgradeStatusPayloadTests
     [Fact]
     public void TryParse_SchemaV1Payload_OmitsBothExitCodeAndStartedAt_DeserialisesAsNull()
     {
-        // 1.4.x agent format predates Phase 12.E.7. No schemaVersion field
+        // 1.4.x agent format predates . No schemaVersion field
         // (defaults to 1), no startedAt, no scriptPid, no exitCode.
         // Reconciler treats v1 conservatively (no staleness detection)
         // because all the metadata fields it needs are absent.

@@ -8,10 +8,10 @@ using Xunit;
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
 /// <summary>
-/// P1-Phase11.3 (audit ARCH.9 F1.2) — pin the soft-cancel propagation through
+///  (audit ARCH.9 F1.2) — pin the soft-cancel propagation through
 /// the file-save path.
 ///
-/// <para><b>The bug pre-Phase-11.3</b>: WriteAdditionalFiles used hardcoded
+/// <para><b>The bug </b>: WriteAdditionalFiles used hardcoded
 /// <c>CancellationToken.None</c> on the inner <c>SaveToAsync</c> call.
 /// A 1GB sensitiveVariables.json or large package payload would write to
 /// completion regardless of CancelScript — operators saw "cancelled"
@@ -74,7 +74,7 @@ public sealed class LocalScriptServiceSoftCancelTests : IDisposable
             () => LocalScriptService.WriteAdditionalFiles(_workDir, files, cts.Token));
 
         File.Exists(Path.Combine(_workDir, "test.txt")).ShouldBeFalse(customMessage:
-            "Pre-cancelled CT must abort BEFORE writing the file — pre-Phase-11.3 the CT was None and this would have written.");
+            "Pre-cancelled CT must abort BEFORE writing the file — the CT was None and this would have written.");
     }
 
     [Fact]
@@ -102,7 +102,7 @@ public sealed class LocalScriptServiceSoftCancelTests : IDisposable
         File.Exists(Path.Combine(_workDir, "file2.txt")).ShouldBeFalse();
     }
 
-    // ── P1-Phase11 audit follow-up: leak + null-ticket defences ─────────────
+    // ──  audit follow-up: leak + null-ticket defences ─────────────
 
     [Fact]
     public void CompleteScript_StartFailedBeforeScriptsAdd_DoesNotLeakCtsEntry()

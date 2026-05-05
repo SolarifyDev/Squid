@@ -1,10 +1,10 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.1 (Windows Tentacle foundations) — cross-platform file
+///  (Windows Tentacle foundations) — cross-platform file
 /// permission abstraction.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12 the agent had 6+ scattered
+/// <para><b>Why this exists</b>:  the agent had 6+ scattered
 /// call sites of <c>File.SetUnixFileMode(path, mode)</c>, each gated by
 /// <c>OperatingSystem.IsWindows()</c> with a silent skip. As Windows
 /// Tentacle support comes online, the secret-bearing paths (PFX,
@@ -50,7 +50,7 @@ public interface IFilePermissionManager
     /// by parent-directory inherited ACLs anyway).
     ///
     /// <para>Use this for the workspace scripts / asset files that
-    /// pre-Phase-12 called <c>File.SetUnixFileMode</c> directly with
+    ///  called <c>File.SetUnixFileMode</c> directly with
     /// modes like 0640 / 0750 — those modes carry semantic intent on
     /// Unix but Windows tolerates the parent-dir's inherited ACL just
     /// fine.</para>

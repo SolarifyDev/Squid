@@ -32,7 +32,7 @@ public class VariableEncryptionService : IVariableEncryptionService
     private readonly string _encryptionPrefix = "SQUID_ENCRYPTED:";
 
     /// <summary>
-    /// P1-B.10 (Phase-8) V2 envelope prefix. Encrypts emitted by post-Phase-8
+    /// P1-B.10 V2 envelope prefix. Encrypts emitted by post-
     /// servers carry this prefix; decrypts on either prefix work.
     /// <para>Layout (after the prefix): <c>salt(16) || nonce(12) || tag(16)
     /// || ciphertext(var)</c>, base64-encoded as a whole.</para>
@@ -218,7 +218,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
         try
         {
-            // P1-B.10 (Phase-8): always emit V2. Random per-payload salt +
+            // P1-B.10: always emit V2. Random per-payload salt +
             // 600k PBKDF2 iters = OWASP-aligned. Existing V1 ciphertexts
             // remain readable via the dual-format decrypt path; new writes
             // upgrade naturally as variables are saved.
@@ -234,7 +234,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
             var result = $"{EncryptionPrefixV2}{Convert.ToBase64String(envelope)}";
 
-            // P1-B.5 (Phase-7): Debug not Information.
+            // P1-B.5: Debug not Information.
             Log.Debug("Successfully encrypted variable for VariableSet {VariableSetId}", variableSetId);
             return result;
         }
@@ -251,10 +251,10 @@ public class VariableEncryptionService : IVariableEncryptionService
 
         try
         {
-            // P1-B.10 (Phase-8): dual-format decrypt. V2 prefix gets the
+            // P1-B.10: dual-format decrypt. V2 prefix gets the
             // V2 path (random salt from envelope, 600k iters); V1 prefix
             // gets the legacy path (deterministic salt from variableSetId,
-            // 10k iters). Existing pre-Phase-8 ciphertexts remain readable.
+            // 10k iters). Existing ciphertexts remain readable.
             string plainText;
 
             if (encryptedText.StartsWith(EncryptionPrefixV2, StringComparison.Ordinal))
@@ -391,7 +391,7 @@ public class VariableEncryptionService : IVariableEncryptionService
 
     /// <summary>
     /// Legacy V1 KDF — deterministic salt from variableSetId, 10k iters.
-    /// Kept ONLY to read pre-Phase-8 ciphertexts. Never used for new writes.
+    /// Kept ONLY to read ciphertexts. Never used for new writes.
     /// </summary>
     private static byte[] DeriveKey(byte[] masterKey, int variableSetId)
     {
@@ -403,7 +403,7 @@ public class VariableEncryptionService : IVariableEncryptionService
     }
 
     /// <summary>
-    /// P1-B.10 (Phase-8) V2 KDF: random per-payload salt (caller-supplied,
+    /// P1-B.10 V2 KDF: random per-payload salt (caller-supplied,
     /// drawn from <see cref="RandomNumberGenerator"/>), 600k PBKDF2-SHA256
     /// iters (OWASP 2023). 32-byte output for AES-256.
     /// </summary>

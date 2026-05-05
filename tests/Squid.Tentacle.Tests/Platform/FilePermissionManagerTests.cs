@@ -6,10 +6,10 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Platform;
 
 /// <summary>
-/// P1-Phase12.A.1 (Windows Tentacle foundations) — pin the file-permission
+///  (Windows Tentacle foundations) — pin the file-permission
 /// abstraction contract.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-12 the agent had 6+ scattered
+/// <para><b>Why this exists</b>:  the agent had 6+ scattered
 /// call sites of <c>File.SetUnixFileMode(path, mode)</c>, each gated by
 /// <c>OperatingSystem.IsWindows()</c>. As we add Windows Tentacle support,
 /// the secret-bearing paths (PFX, encrypted config) need genuine ACL
@@ -68,7 +68,7 @@ public sealed class FilePermissionManagerTests : IDisposable
         var mode = File.GetUnixFileMode(path);
         // 0600 = UserRead | UserWrite. Group/Other should have NONE.
         mode.ShouldBe(UnixFileMode.UserRead | UnixFileMode.UserWrite, customMessage:
-            "Secret-bearing files MUST be 0600 on Unix — pre-Phase-12 AtomicFileWriter set this exact mode.");
+            "Secret-bearing files MUST be 0600 on Unix — AtomicFileWriter set this exact mode.");
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public sealed class FilePermissionManagerTests : IDisposable
         File.WriteAllText(path, "#!/bin/sh\necho hi");
 
         var mgr = new UnixFilePermissionManager();
-        // 0750 — pre-Phase-12 LocalScriptService:774 mode for executable scripts
+        // 0750 — LocalScriptService:774 mode for executable scripts
         var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute;
         mgr.TrySetUnixMode(path, mode);
@@ -146,7 +146,7 @@ public sealed class FilePermissionManagerTests : IDisposable
     [Fact]
     public void UnixManager_RoundTrip_LinuxPreservesPreviousBehaviour()
     {
-        // Pin: the pre-Phase-12 LocalScriptService modes still apply
+        // Pin: the LocalScriptService modes still apply
         // identically through the new interface on Linux.
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 

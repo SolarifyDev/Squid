@@ -3,7 +3,7 @@ using Halibut;
 namespace Squid.Message.Contracts.Tentacle;
 
 /// <summary>
-/// P1-Phase9b.3 — server-side (agent-side) async surface for
+/// server-side (agent-side) async surface for
 /// <see cref="IFileTransferService"/>. Used by the agent's
 /// <c>DelegateServiceFactory.Register&lt;IFileTransferService, IFileTransferServiceAsync&gt;</c>
 /// — Halibut routes inbound RPCs through this interface, allowing the agent

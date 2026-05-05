@@ -6,7 +6,7 @@ using Squid.Calamari.Variables;
 namespace Squid.Calamari.Tests.Calamari.Variables;
 
 /// <summary>
-/// P0-B.3 regression guard (2026-04-24 audit, Phase 4 Calamari side).
+/// P0-B.3 regression guard (2026-04-24 audit,  Calamari side).
 ///
 /// <para>The server side <c>SquidVariableEncryption</c> has its own (input × mode)
 /// matrix tests in <c>Squid.UnitTests</c>. This file pins the Calamari decryptor:
@@ -80,8 +80,8 @@ public sealed class SensitiveVariableDecryptorDualFormatTests
     [Fact]
     public void V1Envelope_WarnMode_Accepts_BackwardCompat()
     {
-        // Phase-3 rule 11 posture: default Warn = keep deploys working during rolling
-        // upgrade. Pre-Phase-4 servers emit V1; new Calamari must decrypt without
+        //  rule 11 posture: default Warn = keep deploys working during rolling
+        // upgrade.  servers emit V1; new Calamari must decrypt without
         // surprising the operator.
         var ciphertext = EncryptV1Manually(TestPassword, "v1-secret");
 

@@ -266,7 +266,7 @@ jobs:
           pattern: squid-tentacle-*
           merge-multiple: true
 
-      # P1-Phase12.E.9.2 — produce <archive>.sha256 companion files
+      # produce <archive>.sha256 companion files
       # alongside each .tar.gz. upgrade-linux-tentacle.sh's tarball method
       # already has opportunistic .sha256 fetch logic (see lines 418-429
       # of the script) — present means transit-integrity verification

@@ -12,7 +12,7 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
     public const string K8sOverrideEnvVar = "SQUID_TARGET_K8S_AGENT_VERSION";
 
     /// <summary>
-    /// P1-Phase12.E.1 — operator override for the Windows tentacle target
+    /// operator override for the Windows tentacle target
     /// version. Set in air-gapped / canary deployments to pin a specific
     /// version without round-tripping to GitHub. Falls through to the live
     /// <see cref="WindowsLatestReleaseUrl"/> query when unset / blank.
@@ -21,10 +21,10 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
     public const string WindowsOverrideEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_VERSION";
 
     /// <summary>
-    /// P1-Phase12.E.1 — GitHub Releases REST API endpoint that resolves to
+    /// GitHub Releases REST API endpoint that resolves to
     /// the highest non-prerelease tag of the Squid repo. Used as the
     /// Windows tentacle live version source-of-truth (instead of Docker Hub,
-    /// because Phase 12.E.0 ships <c>.zip</c> artefacts via GitHub Releases
+    /// because ships <c>.zip</c> artefacts via GitHub Releases
     /// with no Windows Docker image planned). Pinned per Rule 8.
     ///
     /// <para>The <c>/releases/latest</c> endpoint excludes prereleases by
@@ -68,7 +68,7 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
 
     public async Task<string> GetLatestVersionAsync(string communicationStyle, MachineRuntimeCapabilities capabilities, CancellationToken ct)
     {
-        // P1-Phase12.E.4 — OS-aware routing for Windows tentacles. Halibut
+        // OS-aware routing for Windows tentacles. Halibut
         // wire-protocol styles (TentaclePolling / TentacleListening) are
         // shared between Linux + Windows; the agent-reported OS in
         // capabilities is what differentiates the version SOURCE: Linux
@@ -100,7 +100,7 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
 
         if (capabilities == null) return false;
 
-        // P1-Phase12.E.5 — read via the centralized IsWindows property
+        // read via the centralized IsWindows property
         // instead of an inline string comparison. Mirrors
         // WindowsTentacleUpgradeStrategy.CanHandle so a constant rename
         // can't desync routing across the strategy resolver and the
@@ -110,12 +110,12 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
 
     /// <summary>
     /// Windows-specific resolution path: env override → live GitHub Releases →
-    /// empty + warning. <c>internal</c> so the existing Phase-12.E.1
+    /// empty + warning. <c>internal</c> so the existing
     /// behavioural unit tests can keep calling it directly without losing
     /// coverage; the production OS-aware dispatch lives in
     /// <see cref="GetLatestVersionAsync"/> above.
     ///
-    /// <para><b>Why GitHub Releases not Docker Hub:</b> Phase 12.E.0 ships
+    /// <para><b>Why GitHub Releases not Docker Hub:</b>  ships
     /// the Windows tentacle as a <c>.zip</c> attached to GitHub Releases
     /// (no Windows Docker image planned — Windows base images are 6+ GB,
     /// container deploys aren't a Windows-tentacle target audience). The
@@ -194,7 +194,7 @@ public sealed class TentacleVersionRegistry : ITentacleVersionRegistry
             if (string.IsNullOrWhiteSpace(tag)) return null;
 
             // Strip leading 'v' so the version string matches what
-            // install-tentacle.ps1 (Phase 12.E.0) expects in its download
+            // install-tentacle.ps1 expects in its download
             // URL pattern: /releases/download/{tag}/squid-tentacle-{version}-{rid}.zip
             // — the file naming uses bare semver, the tag itself may have a v.
             return tag.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? tag.Substring(1) : tag;

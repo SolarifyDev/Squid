@@ -12,7 +12,7 @@ namespace Squid.UnitTests.Services.Identity;
 ///
 /// <para><b>The privesc vector this protects against</b>: a user with team
 /// membership in Space-1 sends a command to a controller, with HTTP header
-/// <c>X-Space-Id: 2</c>. Pre-Phase-10.3, the SpaceIdInjectionSpecification
+/// <c>X-Space-Id: 2</c>. , the SpaceIdInjectionSpecification
 /// trusted the header and injected SpaceId=2 into the command, allowing
 /// the user to read/mutate Space-2's resources despite having no membership
 /// there. This was the only TRUE cross-space privilege-escalation vector

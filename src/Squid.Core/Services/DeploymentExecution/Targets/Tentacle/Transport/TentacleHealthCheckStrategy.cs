@@ -105,7 +105,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     /// independent consumers: (1) the stale-lock reconciler that clears
     /// abandoned Redis upgrade locks, and (2) the
     /// <see cref="IUpgradeEventTimelineStore"/> status snapshot cache
-    /// (P1-Phase12.E.8.3 — feeds the FE-facing GetUpgradeStatus endpoint
+    /// (feeds the FE-facing GetUpgradeStatus endpoint
     /// so operators see the agent's last-reported terminal state +
     /// structured <see cref="UpgradeStatusPayload.ExitCode"/>).
     ///
@@ -141,7 +141,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     }
 
     /// <summary>
-    /// P1-Phase12.E.8.3 — feed the parsed payload (including the
+    /// feed the parsed payload (including the
     /// previously-orphan <see cref="UpgradeStatusPayload.ExitCode"/> field
     /// added in 12.E.7.B-2) into the per-machine snapshot cache. The
     /// FE-facing <c>GET /api/machine/{id}/upgrade-status</c> endpoint

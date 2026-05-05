@@ -1,7 +1,7 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.1 — resolves the platform-appropriate
+/// resolves the platform-appropriate
 /// <see cref="IFilePermissionManager"/>.
 ///
 /// <para>Static factory rather than DI registration because the call

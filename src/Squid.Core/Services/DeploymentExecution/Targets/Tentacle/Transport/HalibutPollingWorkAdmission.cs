@@ -3,13 +3,13 @@ using System.Collections.Concurrent;
 namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 
 /// <summary>
-/// P1-Phase9b.1 (audit item B.2) — bounded polling-work admission gate.
+///  (audit item B.2) — bounded polling-work admission gate.
 ///
 /// <para><b>Why this exists</b>: when a polling Tentacle goes offline (network
 /// partition, crashed agent process), every queued deploy still hits the
 /// server-side dispatch path. Without a gate, Halibut's in-memory pending-
 /// request queue grows unbounded — RAM rises, OOM-killer eventually
-/// terminates Squid. Pre-Phase-9b.1 there was no upper bound: 1000 deploys
+/// terminates Squid.  there was no upper bound: 1000 deploys
 /// queued for an offline agent would all sit in the queue waiting forever.</para>
 ///
 /// <para><b>Contract</b>: per-machine in-flight counter. <see cref="TryAdmit"/>

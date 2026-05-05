@@ -9,7 +9,7 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh.Packages.Staging;
 /// plan. Runs last in the priority chain after <see cref="CacheHitStagingHandler"/>
 /// and any future delta/remote-download handlers.
 ///
-/// <para><b>P1-Phase9.6 namespace move</b>: see <see cref="CacheHitStagingHandler"/>.</para>
+/// <para><b> namespace move</b>: see <see cref="CacheHitStagingHandler"/>.</para>
 /// </summary>
 public class FullUploadStagingHandler : IPackageStagingHandler
 {

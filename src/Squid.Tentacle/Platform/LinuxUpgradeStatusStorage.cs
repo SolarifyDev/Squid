@@ -3,8 +3,8 @@ using Squid.Tentacle.Core;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 — Linux upgrade-status storage. Paths are bit-for-bit
-/// identical to pre-Phase-12 hardcoded literals in <c>CapabilitiesService</c>.
+/// Linux upgrade-status storage. Paths are bit-for-bit
+/// identical to hardcoded literals in <c>CapabilitiesService</c>.
 ///
 /// <para><b>Why pinned literals matter</b>: <c>upgrade-linux-tentacle.sh</c>
 /// (the bash script the server-side <c>LinuxTentacleUpgradeStrategy</c>

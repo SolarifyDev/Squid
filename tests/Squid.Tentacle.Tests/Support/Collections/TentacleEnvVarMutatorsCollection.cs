@@ -1,7 +1,7 @@
 namespace Squid.Tentacle.Tests.Support.Collections;
 
 /// <summary>
-/// P1-Phase12.B-audit-fix — serialises tests that mutate process-global env
+/// serialises tests that mutate process-global env
 /// vars consumed by Tentacle production code (e.g.
 /// <c>SQUID_TENTACLE_USE_WINDOWS_POWERSHELL</c>).
 ///
@@ -15,7 +15,7 @@ namespace Squid.Tentacle.Tests.Support.Collections;
 /// races with <c>Factory_PowerShell_OnWindows_DefaultRoutesToPwshCore_NoBreakingChange</c>.
 /// </para>
 ///
-/// <para><b>Same pattern as</b>: Phase-10.3-audit fix in
+/// <para><b>Same pattern as</b>:  fix in
 /// <c>KubernetesRbacInspectorTests</c> (<c>[Collection("KubernetesEnvVarMutators")]</c>)
 /// for the same class of env-var-race hazard against KUBERNETES_SERVICE_HOST.</para>
 /// </summary>

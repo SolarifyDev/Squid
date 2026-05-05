@@ -6,8 +6,8 @@ using Xunit;
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
 /// <summary>
-/// P1-Phase9.11 — pin the env-var override + value-bounds contract for
-/// <c>OrphanMaxAge</c>. Pre-Phase-9.11 the TTL was a hardcoded 24h. Operators
+/// pin the env-var override + value-bounds contract for
+/// <c>OrphanMaxAge</c>.  the TTL was a hardcoded 24h. Operators
 /// with high-throughput agents need to tighten it; operators in incident
 /// post-mortem mode want to loosen it. Env var name is documented in operator
 /// runbooks — Rule 8 pin prevents a "harmless" rename from invalidating
@@ -32,7 +32,7 @@ public sealed class OrphanWorkspaceCleanupConfigTests
     [Fact]
     public void DefaultOrphanMaxAgeHours_ValueIs24_BackwardCompat()
     {
-        // 24h was the pre-Phase-9.11 hardcoded value. Default must NOT change
+        // 24h was the hardcoded value. Default must NOT change
         // without a documented breaking-change note — operators may have built
         // alerting around the 24h cleanup window.
         LocalScriptService.DefaultOrphanMaxAgeHours.ShouldBe(24);

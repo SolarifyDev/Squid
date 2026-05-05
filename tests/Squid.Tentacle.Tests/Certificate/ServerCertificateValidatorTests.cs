@@ -105,14 +105,14 @@ public class ServerCertificateValidatorTests
     }
 
     // ========================================================================
-    // ValidateCore — P0-T.1 three-mode decision matrix (Phase-3 refactor)
+    // ValidateCore — P0-T.1 three-mode decision matrix
     //
-    // Pre-Phase-1, the validator accepted ANY self-signed cert with only a log
-    // warning when no thumbprint was configured. Phase-1 fix: fail-closed by
-    // default. Phase-3 refactor: three-mode pattern (Off / Warn / Strict) so
+    // , the validator accepted ANY self-signed cert with only a log
+    // warning when no thumbprint was configured.  fix: fail-closed by
+    // default.  refactor: three-mode pattern (Off / Warn / Strict) so
     // backward compat is preserved while the operator can opt INTO Strict for
     // production hardening. Default is Warn — accepts the unpinned cert with
-    // a structured warning, matching pre-Phase-1 behaviour for any deploy that
+    // a structured warning, matching behaviour for any deploy that
     // never set SQUID_ALLOW_UNPINNED_SERVER_CERT.
     // ========================================================================
 
@@ -198,7 +198,7 @@ public class ServerCertificateValidatorTests
     [Fact]
     public void ValidateCore_ChainInvalid_NoThumbprint_Warn_AcceptsWithWarning_BackwardCompat()
     {
-        // The whole point of Phase-3: Warn-as-default preserves pre-Phase-1
+        // The whole point of : Warn-as-default preserves
         // behaviour so deploys that didn't pin a thumbprint AND don't have a
         // public-CA cert continue to work. Operator sees warning in logs.
         var result = ServerCertificateValidator.ValidateCore(
@@ -210,7 +210,7 @@ public class ServerCertificateValidatorTests
         result.ShouldBeTrue(
             customMessage:
                 "Warn mode (default) must accept invalid-chain + no-pin — preserves backward " +
-                "compat. Pre-Phase-3 the strict-by-default broke every deploy that didn't set " +
+                "compat.  the strict-by-default broke every deploy that didn't set " +
                 "ServerCertificate.");
     }
 

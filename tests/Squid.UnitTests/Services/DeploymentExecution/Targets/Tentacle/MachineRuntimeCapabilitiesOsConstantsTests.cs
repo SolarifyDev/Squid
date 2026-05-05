@@ -4,7 +4,7 @@ using Squid.Message.Constants;
 namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
 
 /// <summary>
-/// P1-Phase12.E.5 — pins the agent↔server cross-process OS-string contract.
+/// pins the agent↔server cross-process OS-string contract.
 /// The Tentacle agent's <c>RuntimeCapabilitiesInspector.DetectOs()</c> writes
 /// these strings into <c>CapabilitiesResponse.Metadata["os"]</c>; the server
 /// reads them via <c>MachineRuntimeCapabilities.Os</c> and routes through
@@ -102,7 +102,7 @@ public sealed class MachineRuntimeCapabilitiesOsConstantsTests
     //       "neither Windows nor macOS nor Linux" branch and reported the
     //       literal "Unknown" sentinel.
     // Linux strategy claims this case (`IsLinux || IsUnknown`) as historical
-    // default — pre-Phase-12 there was no OS axis and Linux was the only
+    // default — there was no OS axis and Linux was the only
     // strategy.
 
     [Theory]

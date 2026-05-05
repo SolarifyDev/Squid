@@ -16,14 +16,14 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 /// (KubernetesAgent pod, Linux/Windows polling tentacle calling home over
 /// <c>poll://</c>).
 ///
-/// <para><b>P1-Phase9.6 namespace move</b>: previously lived under
+/// <para><b> namespace move</b>: previously lived under
 /// <c>Squid.Core.Services.DeploymentExecution.Infrastructure</c>, which made
 /// it look like a generic infrastructure helper. It's actually the canonical
 /// Tentacle-protocol execution strategy — Halibut IS the Tentacle wire
 /// protocol. Moved into <c>Targets/Tentacle/Transport/</c> alongside the other
 /// Tentacle composition pieces so a new transport contributor doesn't try to
 /// extend it from the wrong place. Same structural-genericity fix as
-/// Phase-8.7 (<c>EndpointVariableFactory</c>).</para>
+///  (<c>EndpointVariableFactory</c>).</para>
 /// </summary>
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
@@ -65,7 +65,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var breaker = _breakerRegistry?.GetOrCreate(request.Machine.Id);
         breaker?.ThrowIfOpen();
 
-        // P1-Phase9b.1 (audit B.2): bounded polling-work admission gate.
+        //  (audit B.2): bounded polling-work admission gate.
         // Pre-fix, an offline polling Tentacle could absorb 1000+ queued
         // dispatches — Halibut's pending-request queue grew unbounded → OOM.
         // We pre-check before CreateClient, reject fast above the cap so the
@@ -119,7 +119,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         }
         finally
         {
-            // P1-Phase9b.1: release the admission slot on every exit path
+            // : release the admission slot on every exit path
             // (success, exception, cancellation). Without finally, an
             // exception-throwing dispatch would leak admission counts and
             // the per-machine cap would slowly drift to 0 effective slots.
@@ -253,7 +253,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     /// <summary>
-    /// ARCH.7 (Phase-6, post-Phase-5 deep audit): produces a fresh
+    /// ARCH.7: produces a fresh
     /// <see cref="ScriptTicket"/> id per dispatch attempt. The
     /// <paramref name="serverTaskId"/> / <paramref name="stepName"/> /
     /// <paramref name="actionName"/> / <paramref name="machineId"/> tuple is

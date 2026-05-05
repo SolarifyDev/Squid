@@ -3,10 +3,10 @@ using Serilog;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.1 — Linux + macOS implementation of
+/// Linux + macOS implementation of
 /// <see cref="IFilePermissionManager"/>.
 ///
-/// <para>Wraps <see cref="File.SetUnixFileMode"/> directly. Pre-Phase-12
+/// <para>Wraps <see cref="File.SetUnixFileMode"/> directly.
 /// behaviour preserved exactly — every call site that previously did
 /// <c>File.SetUnixFileMode(path, 0xxx)</c> now goes through this
 /// adapter without any observable change on Linux.</para>

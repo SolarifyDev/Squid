@@ -54,7 +54,7 @@ public class CapabilitiesService : ICapabilitiesService
     internal const int MaxUpgradeLogBytes = 50_000;
 
     /// <summary>
-    /// P1-Phase12.A.2 — public-internal exposure for
+    /// public-internal exposure for
     /// <see cref="Squid.Tentacle.Platform.IUpgradeStatusStorage"/> impls
     /// that share the same byte cap as this service's metadata response.
     /// Drift between cap values would mean storage truncates differently
@@ -71,9 +71,9 @@ public class CapabilitiesService : ICapabilitiesService
         : this(metadata, Squid.Tentacle.Platform.UpgradeStatusStorageFactory.Resolve()) { }
 
     /// <summary>
-    /// P1-Phase12.A.2 — test-friendly ctor accepting a custom
+    /// test-friendly ctor accepting a custom
     /// <see cref="Squid.Tentacle.Platform.IUpgradeStatusStorage"/>.
-    /// Replaces the pre-Phase-12 three-Func injection point with a
+    /// Replaces the three-Func injection point with a
     /// single typed contract — same testability, cleaner surface.
     /// Default implementations live at:
     ///   <list type="bullet">

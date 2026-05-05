@@ -7,7 +7,7 @@ namespace Squid.Core.Services.Identity;
 /// P0-Phase10.3 (audit D.3 / H-19) — resolves whether a user has membership
 /// in a given Space via the Team → TeamMember chain.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-10.3, the only thing gating cross-
+/// <para><b>Why this exists</b>: , the only thing gating cross-
 /// space access was that controllers checked authorization-via-permission
 /// AGAINST the SpaceId already injected from the X-Space-Id HTTP header.
 /// A user in Space-1 could send <c>X-Space-Id: 2</c>, the

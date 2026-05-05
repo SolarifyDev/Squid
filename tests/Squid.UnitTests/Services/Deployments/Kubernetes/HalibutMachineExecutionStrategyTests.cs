@@ -317,7 +317,7 @@ public class HalibutMachineExecutionStrategyTests
 
     // === Ticket ID — fresh-per-attempt (ARCH.7) ===
     //
-    // Pre-Phase-6 these tests pinned `GenerateTicketId` as a pure function of
+    //  these tests pinned `GenerateTicketId` as a pure function of
     // the (taskId, step, action, machineId) tuple — same input, same output.
     // ARCH.7 deliberately broke that property: ticket is now Guid-per-attempt
     // so retries don't trap on agent-side state from the previous attempt.
@@ -384,14 +384,14 @@ public class HalibutMachineExecutionStrategyTests
         return scriptClient;
     }
 
-    // ── P1-Phase9b.1 admission gate — wired into ExecuteScriptAsync ──────────
+    // ──  admission gate — wired into ExecuteScriptAsync ──────────
 
     [Fact]
     public async Task ExecuteScriptAsync_AdmissionGateAtCap_RejectsWithStructuredException()
     {
         // Saturate machine 1234's admission slots up to default cap (100), then
         // dispatch one more — must be rejected with PollingWorkAdmissionExceededException.
-        // This is the integration-level pin that Phase-9b.1's gate is wired into
+        // This is the integration-level pin that 's gate is wired into
         // the strategy's ExecuteScriptAsync entry point. Pre-fix, the gate was
         // a separate utility but the strategy never called it; tests at the
         // utility level alone wouldn't have caught a wiring regression.

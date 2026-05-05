@@ -616,14 +616,14 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     }
 
     // ========================================================================
-    // P1-Phase12.E.1 — Windows version source (separate from Linux/K8s).
+    // Windows version source (separate from Linux/K8s).
     //
     // Why a separate method instead of a new CommunicationStyle case in
     // GetLatestVersionAsync(style):
     //   - Windows tentacles use the SAME CommunicationStyle values as Linux
     //     (TentaclePolling / TentacleListening) because they speak the same
     //     Halibut wire protocol. So `style` alone can't differentiate.
-    //   - Phase 12.E.3 will add OS-aware strategy resolution; until then,
+    //   -  will add OS-aware strategy resolution; until then,
     //     keeping the Windows version source as a separate explicit method
     //     side-steps the multi-strategy "exactly one owner" invariant in
     //     MachineUpgradeService.ResolveStrategy.
@@ -723,7 +723,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
         // The `tag_name` field is what we extract. Leading "v" is stripped
         // because Squid GitHub Releases use both "v1.6.0" and "1.6.0" tag
         // styles depending on tagger (and the install-tentacle.sh fallback
-        // chain in Phase 12.E.0 normalises both forms).
+        // chain in normalises both forms).
         var responses = new Dictionary<string, string>
         {
             [TentacleVersionRegistry.WindowsLatestReleaseUrl] =
@@ -813,7 +813,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     }
 
     // ========================================================================
-    // P1-Phase12.E.4 — OS-aware routing through the unified public API.
+    // OS-aware routing through the unified public API.
     // The widened GetLatestVersionAsync(style, capabilities, ct) must route
     // Tentacle-style + Windows-OS callers to the GitHub Releases path,
     // and all other (style, OS) tuples to the legacy Docker Hub path.
@@ -869,7 +869,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
     [Fact]
     public async Task GetLatestVersionAsync_TentacleStyleWithEmptyOs_RoutesToLinuxAsHistoricalDefault()
     {
-        // Cold cache (capabilities.Os empty) preserves pre-Phase-12 behaviour:
+        // Cold cache (capabilities.Os empty) preserves behaviour:
         // Linux strategy claims, Linux Docker Hub is the version source. This
         // mirrors the OS-aware strategy resolver's same default and keeps
         // existing Linux deployments working when the runtime cache hasn't
@@ -883,7 +883,7 @@ public sealed class TentacleVersionRegistryTests : IDisposable
             nameof(CommunicationStyle.TentaclePolling), MachineRuntimeCapabilities.Empty, CancellationToken.None);
 
         version.ShouldBe("1.6.0-linux",
-            "cold-cache (empty Os) defaults to Linux Docker Hub — preserves pre-Phase-12 behaviour for the existing operator base");
+            "cold-cache (empty Os) defaults to Linux Docker Hub — preserves behaviour for the existing operator base");
     }
 
     [Fact]

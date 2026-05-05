@@ -31,7 +31,7 @@ public static class TentacleMetrics
     public static long OrphanedPodsCleanedTotal => Interlocked.Read(ref _orphanedPodsCleanedTotal);
 
     /// <summary>
-    /// P1-Phase9.11 — total Tentacle workspace directories swept by the
+    /// total Tentacle workspace directories swept by the
     /// background cleanup loop (default every 10 min, TTL configurable via
     /// <c>SQUID_TENTACLE_ORPHAN_WORKSPACE_TTL_HOURS</c>). Operators alert
     /// when this rate spikes (script crashes leaving workspaces behind) or
@@ -89,7 +89,7 @@ public static class TentacleMetrics
     }
 
     /// <summary>
-    /// P1-Phase9.11 — call once per orphaned workspace dir actually deleted
+    /// call once per orphaned workspace dir actually deleted
     /// by <c>LocalScriptService.CleanupOrphanedWorkspaces</c>. Skipped dirs
     /// (still in TTL, or in-flight) do NOT count.
     /// </summary>

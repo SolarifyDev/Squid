@@ -11,7 +11,7 @@ namespace Squid.Core.Services.DeploymentExecution.Variables;
 /// Tentacle, OpenClaw — to materialise the endpoint payload and emit
 /// per-target context variables.
 ///
-/// <para><b>Namespace history</b>: pre-Phase-8 this lived under
+/// <para><b>Namespace history</b>:  this lived under
 /// <c>Squid.Core.Services.DeploymentExecution.Kubernetes</c> for historical
 /// reasons (it was extracted during the K8s refactor). That made every
 /// non-K8s transport import a K8s-flavoured namespace just to deserialize

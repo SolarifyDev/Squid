@@ -9,7 +9,7 @@ namespace Squid.UnitTests.Observability;
 public sealed class DeploymentTracingTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    // Phase 12.E.6 — lock-protected so a future cross-class race (caller
+    // lock-protected so a future cross-class race (caller
     // forgetting [Collection]) at worst produces a deterministic count
     // assertion failure, not a flaky InvalidOperationException during
     // foreach. The [Collection] above SHOULD prevent the race entirely;

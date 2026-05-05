@@ -1,11 +1,11 @@
 namespace Squid.Core.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.1 — Windows-side counterpart to <see cref="ILinuxUpgradeMethod"/>.
+/// Windows-side counterpart to <see cref="ILinuxUpgradeMethod"/>.
 /// One way to put the new tentacle binary on a Windows host during the in-UI
 /// upgrade flow. Implementations render a self-contained PowerShell snippet
 /// that detects whether the method is usable on the agent host and, if so,
-/// performs the install. The snippets are concatenated by the Phase 12.E.3
+/// performs the install. The snippets are concatenated by the
 /// <c>WindowsTentacleUpgradeStrategy</c> (not yet shipped) in priority order;
 /// the first one whose detection block matches sets <c>$INSTALL_OK = $true</c>,
 /// and the remaining snippets short-circuit out.
@@ -13,8 +13,8 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// <remarks>
 /// <para>This abstraction matches the same pattern used on Linux — apt-get
 /// → yum → tarball — except the Windows method order will be: chocolatey
-/// (if registered) → MSI (if WiX MSI is published per Phase 12.E.4) → zip
-/// (universal fallback). Phase 12.E.2 ships only the zip method; later
+/// (if registered) → MSI (if WiX MSI is published per) → zip
+/// (universal fallback).  ships only the zip method; later
 /// phases add MSI and chocolatey behind operator-driven feature gates.</para>
 ///
 /// <para><b>Snippet contract every implementation must honour:</b>
@@ -35,7 +35,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 ///         <c>[upgrade-method:&lt;name&gt;]</c> so operators can grep
 ///         <c>Get-EventLog -LogName Application</c> (or the
 ///         <c>upgrade.log</c> file under <c>%ProgramData%\Squid\Tentacle\upgrade</c>
-///         per Phase 12.A.2's <see cref="WindowsUpgradeStatusStorage"/>) for
+///         per 's <see cref="WindowsUpgradeStatusStorage"/>) for
 ///         the path taken.</item>
 ///   <item>If the install attempt fails (non-zero <c>$LASTEXITCODE</c> /
 ///         exception), do NOT set <c>$INSTALL_OK</c> — the next method in
@@ -56,7 +56,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// (<see cref="Name"/>, <see cref="RenderDetectAndInstall"/>,
 /// <see cref="RequiresExplicitSwap"/>) with the same XML-doc contract.
 /// Renaming or reshaping one but not the other would break the operator's
-/// mental model + the Phase 12.E.3 strategy's ability to dispatch
+/// mental model + the strategy's ability to dispatch
 /// uniformly across both shell flavours.</para>
 /// </remarks>
 public interface IWindowsUpgradeMethod
@@ -88,11 +88,11 @@ public interface IWindowsUpgradeMethod
     /// the in-scope swap step is a no-op for this method).
     /// </summary>
     /// <remarks>
-    /// <para>Zip method (Phase 12.E.2): <see langword="true"/> — we
+    /// <para>Zip method: <see langword="true"/> — we
     /// <c>Expand-Archive</c> to <c>%TEMP%\squid-tentacle-staging</c> and
     /// need the scope phase to <c>Move-Item</c> it into
     /// <c>%ProgramFiles%\Squid Tentacle\</c>.</para>
-    /// <para>MSI method (future Phase 12.E.4): <see langword="false"/> —
+    /// <para>MSI method (future): <see langword="false"/> —
     /// <c>msiexec /i …</c> already wrote files to the install location
     /// during the install step; the scope phase only needs to restart the
     /// service.</para>

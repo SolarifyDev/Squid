@@ -37,7 +37,7 @@ public class SshExecutionStrategyTests
     private SshExecutionStrategy CreateStrategy() => new(_connectionFactory.Object, _executionMutex.Object, _stagingPlanner.Object, _runtimeBundleProvider);
 
     /// <summary>
-    /// P0-Phase9.2 + P1-Phase9.4 test seam: subclass that counts cleanup AND
+    /// P0-Phase9.2 +  test seam: subclass that counts cleanup AND
     /// kill invocations. Tests assert both behaviours via this class.
     /// </summary>
     private class CleanupCountingStrategy : SshExecutionStrategy
@@ -328,7 +328,7 @@ public class SshExecutionStrategyTests
 
     // ========== P0-Phase9.2 cleanup-finally guarantee ==========
     //
-    // Pre-Phase-9.2 bug: CleanupRemoteWorkDirectory sat AFTER the success
+    //  bug: CleanupRemoteWorkDirectory sat AFTER the success
     // return statement. If staging or script-execution threw, the workDir
     // (containing decrypted sensitiveVariables.json) was orphaned indefinitely
     // on the remote host. This block pins cleanup-runs-on-every-exit-path.
@@ -370,7 +370,7 @@ public class SshExecutionStrategyTests
             "remote host with decrypted sensitiveVariables.json. This is the P0 leak.");
     }
 
-    // ========== P1-Phase9.4 cancel-kill propagation ==========
+    // ==========  cancel-kill propagation ==========
     //
     // When user cancels mid-deploy, the local polling loop exits via OCE,
     // but the remote bash process keeps running unless explicitly killed.
@@ -427,10 +427,10 @@ public class SshExecutionStrategyTests
         catch (OperationCanceledException) { /* expected */ }
 
         strategy.KillCallCount.ShouldBe(1, customMessage:
-            "Kill MUST run on cancellation — pre-Phase-9.4 the remote bash kept " +
+            "Kill MUST run on cancellation — the remote bash kept " +
             "running after local polling loop exited via OCE.");
         strategy.CleanupCallCount.ShouldBe(1, customMessage:
-            "Cleanup must still run after kill (existing Phase-9.2 invariant).");
+            "Cleanup must still run after kill (existing invariant).");
         strategy.LastKilledWorkDir.ShouldBe(strategy.LastWorkDir, customMessage:
             "Kill and cleanup must target the same workDir.");
     }
@@ -458,7 +458,7 @@ public class SshExecutionStrategyTests
         result.Success.ShouldBeFalse();
         strategy.CleanupCallCount.ShouldBe(1, customMessage:
             "Cleanup MUST run when script execution throws AFTER workDir is " +
-            "populated — pre-Phase-9.2 the finally block didn't exist and the " +
+            "populated — the finally block didn't exist and the " +
             "decrypted sensitiveVariables.json stayed on the remote forever.");
     }
 }

@@ -6,7 +6,7 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Halibut;
 
 /// <summary>
-/// P1-Phase9.15 — pin the env-var-driven polling-startup-jitter surface.
+/// pin the env-var-driven polling-startup-jitter surface.
 ///
 /// <para><b>Why this exists</b>: when the server restarts, all N polling
 /// Tentacles detect the connection drop simultaneously and try to reconnect at
@@ -34,7 +34,7 @@ public sealed class TentacleHalibutHostStartupJitterTests
     [Fact]
     public void DefaultPollingStartupJitterMs_IsZero_BackwardCompat()
     {
-        // Default 0 means no jitter — pre-Phase-9.15 behaviour. Operators with
+        // Default 0 means no jitter — behaviour. Operators with
         // small fleets see no behaviour change. Big-fleet operators opt in by
         // setting the env var to N>0.
         TentacleHalibutHost.DefaultPollingStartupJitterMs.ShouldBe(0);

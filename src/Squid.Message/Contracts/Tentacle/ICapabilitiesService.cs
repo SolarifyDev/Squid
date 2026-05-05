@@ -5,7 +5,7 @@ namespace Squid.Message.Contracts.Tentacle;
 public interface ICapabilitiesService
 {
     /// <summary>
-    /// P1-Phase9.7: Halibut response cache (60s TTL).
+    /// : Halibut response cache (60s TTL).
     ///
     /// <para><b>Why cache</b>: <see cref="CapabilitiesResponse"/> is built by
     /// the agent's <c>RuntimeCapabilitiesInspector</c> which reads three on-disk

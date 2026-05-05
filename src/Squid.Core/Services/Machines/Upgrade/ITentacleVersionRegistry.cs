@@ -15,7 +15,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// touching the registry.
 /// </para>
 ///
-/// <para><b>P1-Phase12.E.4 widening:</b> <see cref="GetLatestVersionAsync"/>
+/// <para><b> widening:</b> <see cref="GetLatestVersionAsync"/>
 /// takes <see cref="MachineRuntimeCapabilities"/> in addition to the
 /// communication-style string. Linux + Windows tentacles share the SAME
 /// wire-protocol communication styles (<c>TentaclePolling</c> /

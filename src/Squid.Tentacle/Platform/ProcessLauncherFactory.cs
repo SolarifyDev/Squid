@@ -3,7 +3,7 @@ using Squid.Message.Contracts.Tentacle;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.B.1 — picks the platform-appropriate <see cref="IProcessLauncher"/>
+/// picks the platform-appropriate <see cref="IProcessLauncher"/>
 /// for a given <see cref="ScriptType"/>. Static factory matching the
 /// <see cref="FilePermissionManagerFactory"/> + <see cref="UpgradeStatusStorageFactory"/>
 /// + <see cref="ServiceUserProviderFactory"/> convention.
@@ -15,7 +15,7 @@ namespace Squid.Tentacle.Platform;
 /// <item><c>ScriptType.PowerShell</c> on Linux / macOS → <see cref="PwshCoreProcessLauncher"/>
 /// (pwsh on PATH + UTF-8 stdout).</item>
 /// <item><c>ScriptType.PowerShell</c> on Windows → <see cref="PwshCoreProcessLauncher"/>
-/// (default — preserves pre-Phase-12 behaviour and UTF-8 Unicode round-trip).
+/// (default — preserves behaviour and UTF-8 Unicode round-trip).
 /// Operators who specifically want the OS-bundled <c>PowerShell.exe</c>
 /// (Windows PowerShell 5.1) opt in via env var <see cref="UseWindowsPowerShellEnvVar"/>
 /// — covered by <see cref="WindowsPowerShellProcessLauncher"/>.</item>
@@ -26,7 +26,7 @@ namespace Squid.Tentacle.Platform;
 /// etc). Capturing OEM bytes via the redirect pipe with a matched
 /// StandardOutputEncoding works for ASCII + locale-matching characters but
 /// silently mangles cross-locale Unicode (e.g. 中文 on en-US runners produces
-/// <c>"??"</c>). Phase-12.B keeps the modern, UTF-8-by-default pwsh-Core path
+/// <c>"??"</c>).  keeps the modern, UTF-8-by-default pwsh-Core path
 /// as the safe default; a future phase can address the encoding strategy
 /// (e.g. <c>chcp 65001</c> bootstrap or <c>$OutputEncoding=[Text.Encoding]::UTF8</c>
 /// prepend) before promoting Windows PowerShell to the default.</para>
@@ -36,12 +36,12 @@ namespace Squid.Tentacle.Platform;
 /// <c>StartFSharpProcess</c> path inside <see cref="ScriptExecution.LocalScriptService"/>
 /// — they have no Windows variance worth abstracting yet. Calamari similarly
 /// keeps its dedicated <c>BuildCalamariProcessStartInfo</c> path because of the
-/// sensitive-password env var contract pinned by Phase-2 B.2 tests.</para>
+/// sensitive-password env var contract pinned by B.2 tests.</para>
 /// </remarks>
 public static class ProcessLauncherFactory
 {
     /// <summary>
-    /// P1-Phase12.B.3 — operator opt-in to the OS-bundled
+    /// operator opt-in to the OS-bundled
     /// <c>PowerShell.exe</c> (Windows PowerShell 5.1) on Windows hosts. Pinned
     /// by test (Rule 8) — air-gapped operators may bake this into their
     /// systemd / sc.exe start env, renaming would silently break their setup.

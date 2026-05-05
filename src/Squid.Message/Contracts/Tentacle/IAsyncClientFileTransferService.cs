@@ -3,7 +3,7 @@ using Halibut;
 namespace Squid.Message.Contracts.Tentacle;
 
 /// <summary>
-/// P1-Phase9b.3 — client-side async surface for <see cref="IFileTransferService"/>.
+/// client-side async surface for <see cref="IFileTransferService"/>.
 /// Used by the server's
 /// <c>HalibutRuntime.CreateAsyncClient&lt;IFileTransferService, IAsyncClientFileTransferService&gt;(endpoint)</c>
 /// — the server invokes file uploads/downloads via this proxy.

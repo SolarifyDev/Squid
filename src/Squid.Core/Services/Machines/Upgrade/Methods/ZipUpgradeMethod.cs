@@ -1,12 +1,12 @@
 namespace Squid.Core.Services.Machines.Upgrade.Methods;
 
 /// <summary>
-/// P1-Phase12.E.2 — Windows analog of <see cref="TarballUpgradeMethod"/>.
+/// Windows analog of <see cref="TarballUpgradeMethod"/>.
 /// Install via direct GitHub Releases <c>.zip</c> download. Always available
 /// (no host prerequisites beyond <c>Invoke-WebRequest</c> + <c>Expand-Archive</c>,
 /// both built into Windows PowerShell 5.0+) and serves as the universal
 /// fallback when neither Chocolatey nor MSI is configured. Same path the
-/// Phase-12.E.3 PowerShell template will take when no higher-priority
+///  PowerShell template will take when no higher-priority
 /// method's detection block matches.
 /// </summary>
 /// <remarks>
@@ -17,7 +17,7 @@ namespace Squid.Core.Services.Machines.Upgrade.Methods;
 ///         <c>Get-Package</c> / Add/Remove Programs; zip installs are
 ///         invisible to those tools, so the operator's standard inventory
 ///         tooling can't see Squid Tentacle as a managed package.</item>
-///   <item>Future Chocolatey / MSI methods (Phase 12.E.4) can ship
+///   <item>Future Chocolatey / MSI methods can ship
 ///         downgrade paths declaratively (<c>choco install --version=…</c>
 ///         / MSI <c>UPGRADECODE</c> Windows Installer logic), whereas zip
 ///         operators have to manually re-run install-tentacle.ps1 against
@@ -43,7 +43,7 @@ public sealed class ZipUpgradeMethod : IWindowsUpgradeMethod
         // Zip is the unconditional fallback — no detection needed beyond
         // "have we already installed via a higher-priority method?". The
         // actual download/verify/extract logic stays in the PowerShell
-        // template (Phase 12.E.3 ships the loader). This snippet just
+        // template. This snippet just
         // signals the template that zip is the chosen method, which gates
         // the existing zip block.
         //

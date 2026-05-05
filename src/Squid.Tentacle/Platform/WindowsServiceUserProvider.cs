@@ -4,7 +4,7 @@ using System.Security.Principal;
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.3 — Windows impl.
+/// Windows impl.
 ///
 /// <para><b>Default-user contract on Windows</b>: empty string means
 /// "use platform default" — sc.exe with no <c>obj=</c> arg installs
@@ -16,7 +16,7 @@ namespace Squid.Tentacle.Platform;
 /// <para><b>Ownership semantics</b>: Windows doesn't have Unix chown.
 /// Files are governed by ACLs, which
 /// <see cref="IFilePermissionManager.RestrictToOwner"/> already handles
-/// (Phase-12.A.1). <see cref="TrySetOwnership"/> here is a no-op that
+///. <see cref="TrySetOwnership"/> here is a no-op that
 /// returns true so the same shared call site (e.g.
 /// <c>InstanceOwnershipHandover</c>) can run on both platforms without
 /// adding an explicit OS branch.</para>

@@ -4,7 +4,7 @@ using Squid.Message.Contracts.Tentacle;
 namespace Squid.Tentacle.Halibut;
 
 /// <summary>
-/// P1-Phase9b.3 — adapts <see cref="IFileTransferService"/> (sync wire
+/// adapts <see cref="IFileTransferService"/> (sync wire
 /// contract) to <see cref="IFileTransferServiceAsync"/> (server-facing
 /// async surface). Halibut routes incoming RPCs through the async surface
 /// so a slow upload can't block a Halibut worker thread.

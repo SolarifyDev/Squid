@@ -6,7 +6,7 @@ using Squid.Message.Enums;
 namespace Squid.Core.Services.Machines.Upgrade;
 
 /// <summary>
-/// Phase 2 placeholder. Kubernetes Agent upgrades will go through
+///  placeholder. Kubernetes Agent upgrades will go through
 /// <c>helm upgrade --install --reuse-values --set image.tag=&lt;version&gt;</c>
 /// against the cluster's k8s API; the agent doesn't participate (no Halibut
 /// RPC needed — k8s does the rolling update + automatic rollback). Until
@@ -15,7 +15,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// </summary>
 public sealed class KubernetesAgentUpgradeStrategy : IMachineUpgradeStrategy
 {
-    // P1-Phase12.E.3 — capabilities param exists for OS-aware routing but
+    // capabilities param exists for OS-aware routing but
     // isn't used here: KubernetesAgent is a single CommunicationStyle with no
     // OS variant (k8s pods are always Linux from the agent's perspective).
     public bool CanHandle(string communicationStyle, MachineRuntimeCapabilities capabilities)
@@ -27,7 +27,7 @@ public sealed class KubernetesAgentUpgradeStrategy : IMachineUpgradeStrategy
         {
             Status = MachineUpgradeStatus.NotSupported,
             Detail =
-                "Kubernetes Agent upgrade via the UI is planned for Phase 2 of the self-upgrade roadmap. " +
+                "Kubernetes Agent upgrade via the UI is planned for of the self-upgrade roadmap. " +
                 "For now, run helm upgrade against the cluster directly: " +
                 $"helm upgrade --reuse-values --set tentacle.image.tag={targetVersion} <release-name> <chart>",
             AgentVersionMayHaveChanged = false   // placeholder did nothing → cache still valid

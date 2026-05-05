@@ -11,7 +11,7 @@ namespace Squid.Core.Middlewares.SpaceScope;
 /// the requesting user's actual team membership BEFORE
 /// <see cref="SpaceIdInjectionSpecification{TContext}"/> trusts the header.
 ///
-/// <para><b>The privesc vector pre-Phase-10.3</b>: a user with Team membership
+/// <para><b>The privesc vector </b>: a user with Team membership
 /// in Space-1 sends a command, with HTTP header <c>X-Space-Id: 2</c>.
 /// SpaceIdInjectionSpecification trusted the header verbatim and injected
 /// SpaceId=2 into the command body. The user could read/mutate Space-2
@@ -22,7 +22,7 @@ namespace Squid.Core.Middlewares.SpaceScope;
 /// <see cref="SpaceIdInjectionSpecification{TContext}"/>. If the user isn't
 /// a member of the requested space, we throw before any injection happens.
 /// Internal users (Hangfire, system tasks) bypass entirely — they're
-/// trusted (Phase-7 D.6 IsInternal pattern).</para>
+/// trusted.</para>
 ///
 /// <para><b>Three-mode enforcement</b> (CLAUDE.md Rule 11): per the project
 /// pattern for hardening checks, this gate exposes
@@ -74,7 +74,7 @@ public sealed class SpaceMembershipSpecification<TContext> : IPipeSpecification<
         if (context.Message is not Message.Contracts.ISpaceScoped) return;
 
         // Internal users (Hangfire / system tasks) bypass the gate. Same
-        // bypass pattern as AuthorizationSpecification — Phase-7 D.6's
+        // bypass pattern as AuthorizationSpecification — D.6's
         // IsInternal property is the canonical "trusted internal" signal,
         // explicitly NOT keyed off the Id-equals-8888 heuristic.
         if (_currentUser.IsInternal) return;
@@ -90,8 +90,8 @@ public sealed class SpaceMembershipSpecification<TContext> : IPipeSpecification<
         if (mode == EnforcementMode.Off) return;
 
         // The user MUST have a resolvable identity to claim a space.
-        // Pre-Phase-7-D.6 a null Id silently slipped through; we follow
-        // the Phase-7 fail-closed pattern and reject loudly even in Warn
+        //  a null Id silently slipped through; we follow
+        // the fail-closed pattern and reject loudly even in Warn
         // mode — null-Id is unambiguously a bug, not a permission decision.
         if (_currentUser.Id == null)
             throw new CrossSpaceAccessDeniedException(userId: -1, requestedSpaceId: headerSpaceId);
@@ -108,7 +108,7 @@ public sealed class SpaceMembershipSpecification<TContext> : IPipeSpecification<
             case EnforcementMode.Warn:
                 Serilog.Log.Warning(
                     "[SPACE-MEMBERSHIP] User {UserId} accessing SpaceId={SpaceId} without team " +
-                    "membership — allowing under {EnvVar}=warn. This is a Phase-10.3 privesc-gate " +
+                    "membership — allowing under {EnvVar}=warn. This is a privesc-gate " +
                     "violation: production should run with strict enforcement. To fix: add the user " +
                     "to a Team in Space {SpaceId}, or set {EnvVar}=strict to reject.",
                     _currentUser.Id.Value, headerSpaceId, EnforcementEnvVar, headerSpaceId);

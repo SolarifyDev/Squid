@@ -19,7 +19,7 @@ using SystemEnvironment = System.Environment;
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
 /// <summary>
-/// P1-Phase12.E.4 — coverage for the real Windows tentacle upgrade dispatch.
+/// coverage for the real Windows tentacle upgrade dispatch.
 ///
 /// <para>Test strategy mirrors <see cref="LinuxTentacleUpgradeStrategyTests"/>:
 /// pure functions (URL pattern, env override, embedded template + outer wrapper
@@ -27,7 +27,7 @@ namespace Squid.UnitTests.Services.Machines.Upgrade;
 /// <c>IHalibutClientFactory</c> + <c>IHalibutScriptObserver</c> for each of
 /// the 5 outcome paths the real strategy emits (success / mid-disconnect /
 /// pre-dispatch failure / liveness-probe abort / cancel / generic). The 16
-/// stub-era CanHandle tests are preserved verbatim — Phase 12.E.3 routing
+/// stub-era CanHandle tests are preserved verbatim — routing
 /// invariants don't change in 12.E.4.</para>
 ///
 /// <para><b>Windows-specific divergence from Linux pin:</b>
@@ -61,7 +61,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     }
 
     // ========================================================================
-    // CanHandle: (style, OS) tuple routing — preserved from Phase-12.E.3 stub.
+    // CanHandle: (style, OS) tuple routing — preserved from stub.
     // ========================================================================
 
     [Theory]
@@ -87,7 +87,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [InlineData("Linux", false)]
     [InlineData("macOS", false)]
     [InlineData("", false)]                // cold cache → falls to Linux historical default, NOT Windows
-    [InlineData("Unknown", false)]         // P1-Phase12.E.5 — agent's "Unknown" fallback also falls to Linux, never Windows
+    [InlineData("Unknown", false)]         // agent's "Unknown" fallback also falls to Linux, never Windows
     [InlineData("FreeBSD", false)]         // any unrecognised OS → no Windows claim
     public void CanHandle_RoutesByOs_OnlyClaimsWindowsAgents(string os, bool expected)
     {
@@ -128,7 +128,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void DefaultInstallDir_PinnedToCanonicalProgramFilesPath()
     {
-        // Operators who installed via Phase 12.E.0's install-tentacle.ps1 land
+        // Operators who installed via 's install-tentacle.ps1 land
         // in this exact path. Drift here breaks every upgrade against a
         // canonically-installed agent (Phase B's Stop-Service / Move-Item
         // would target the wrong dir).
@@ -138,7 +138,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void DefaultServiceName_PinnedToSquidTentacle()
     {
-        // sc.exe service name from Phase 12.C's WindowsServiceHost — operators'
+        // sc.exe service name from 's WindowsServiceHost — operators'
         // runbooks (`sc query squid-tentacle`, `Get-Service squid-tentacle`)
         // depend on this literal.
         WindowsTentacleUpgradeStrategy.DefaultServiceName.ShouldBe("squid-tentacle");
@@ -298,7 +298,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void RenderInnerScript_DefaultMethodOrder_IsZipOnlyForPhase12E4()
     {
-        // Phase 12.E.4 ships zip-only. Future phases prepend chocolatey/MSI.
+        //  ships zip-only. Future phases prepend chocolatey/MSI.
         // Pin the count + the only-impl shape so a premature add gets caught.
         WindowsTentacleUpgradeStrategy.DefaultMethodOrder.Count.ShouldBe(1);
         WindowsTentacleUpgradeStrategy.DefaultMethodOrder[0].ShouldBeOfType<ZipUpgradeMethod>();
@@ -389,14 +389,13 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void BuildScript_OuterWrapper_WritesInnerToProgramDataDispatch()
     {
-        // %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 — Phase 12.A.2
-        // contract directory + canonical inner script path. WindowsUpgradeStatusStorage
+        // %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 —        // contract directory + canonical inner script path. WindowsUpgradeStatusStorage
         // already reads from this directory; the dispatch.ps1 lands as a
         // sibling of last-upgrade.json + upgrade.log + upgrade.lock.
         var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
 
         script.ShouldContain("Squid\\Tentacle\\upgrade",
-            customMessage: "outer wrapper must write to the Phase 12.A.2 contract dir under %ProgramData%");
+            customMessage: "outer wrapper must write to the contract dir under %ProgramData%");
         script.ShouldContain("dispatch.ps1");
     }
 

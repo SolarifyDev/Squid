@@ -5,7 +5,7 @@ using Squid.Message.Requests.Machines;
 namespace Squid.UnitTests.Services.Machines;
 
 /// <summary>
-/// P1-Phase12.E.8.4 — coverage for the GetUpgradeStatus mediator handler.
+/// coverage for the GetUpgradeStatus mediator handler.
 /// The handler is intentionally trivial (lookup + projection) but the
 /// projection contract is load-bearing — it's the wire boundary where
 /// the agent-reported <see cref="UpgradeStatusPayload.ExitCode"/> field

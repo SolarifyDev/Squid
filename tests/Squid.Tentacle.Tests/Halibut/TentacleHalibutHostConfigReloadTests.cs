@@ -12,9 +12,9 @@ using Xunit;
 namespace Squid.Tentacle.Tests.Halibut;
 
 /// <summary>
-/// P1-Phase9b.4 — pin the SIGHUP-driven trust-list hot-reload contract.
+/// pin the SIGHUP-driven trust-list hot-reload contract.
 ///
-/// <para><b>Why this exists</b>: pre-Phase-9b.4, rotating the server's TLS
+/// <para><b>Why this exists</b>: , rotating the server's TLS
 /// certificate forced operators to restart every running Tentacle in the
 /// fleet (the in-process trust list was loaded once at startup). Now
 /// SIGHUP triggers a re-read of <c>ServerCertificate</c> + atomic
@@ -72,7 +72,7 @@ public sealed class TentacleHalibutHostConfigReloadTests : IDisposable
 
         // OLD thumbprints must NO LONGER be trusted (TrustOnly replaces)
         _exposedRuntime.IsTrusted("OLD-A").ShouldBeFalse(customMessage:
-            "OLD-A must be removed from trust after rotation — pre-Phase-9b.4 it would persist forever.");
+            "OLD-A must be removed from trust after rotation — it would persist forever.");
         _exposedRuntime.IsTrusted("OLD-B").ShouldBeFalse();
         _exposedRuntime.IsTrusted("NEW-A").ShouldBeTrue();
     }

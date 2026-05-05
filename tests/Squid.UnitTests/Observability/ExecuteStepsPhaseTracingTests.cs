@@ -14,7 +14,7 @@ namespace Squid.UnitTests.Observability;
 [Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class ExecuteStepsPhaseTracingTests : IDisposable
 {
-    // Phase 12.E.6 — lock-protected belt-and-braces, see DeploymentTracingTests.
+    // lock-protected belt-and-braces, see DeploymentTracingTests.
     private readonly List<Activity> _capturedRaw = new();
     private readonly object _capturedLock = new();
     private readonly ActivityListener _listener;

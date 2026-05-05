@@ -5,7 +5,7 @@ using Squid.Message.Response;
 namespace Squid.Message.Requests.Machines;
 
 /// <summary>
-/// P1-Phase12.E.8 — read-only fetch of the agent-reported upgrade-status
+/// read-only fetch of the agent-reported upgrade-status
 /// snapshot for a machine. Returns the typed projection of the agent's
 /// <c>last-upgrade.json</c> (Linux <c>/var/lib/squid-tentacle/last-upgrade.json</c>
 /// or Windows <c>%PROGRAMDATA%\Squid\Tentacle\upgrade\last-upgrade.json</c>)
@@ -81,7 +81,7 @@ public class UpgradeStatusDto
     /// Schema version reported by the agent. v1 (1.4.x agents) lacks
     /// <see cref="StartedAt"/> / <see cref="ScriptPid"/>; v2 (1.5.0+)
     /// includes both. v2+ Windows/Linux schemas also write
-    /// <see cref="ExitCode"/> on terminal status writes (P1-Phase12.E.7.B-2).
+    /// <see cref="ExitCode"/> on terminal status writes.
     /// </summary>
     public int SchemaVersion { get; set; }
 
@@ -108,7 +108,7 @@ public class UpgradeStatusDto
     public string Detail { get; set; } = string.Empty;
 
     /// <summary>
-    /// P1-Phase12.E.8 — structured Phase B exit code. The whole point
+    /// structured Phase B exit code. The whole point
     /// of the GetUpgradeStatus endpoint is exposing this field that
     /// the existing GetUpgradeEventTimeline endpoint silently drops.
     ///

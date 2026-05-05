@@ -112,7 +112,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
         if (!matchesStyle) return false;
 
-        // P1-Phase12.E.5 — explicit-claim semantic (was "non-Windows"
+        // explicit-claim semantic (was "non-Windows"
         // before): the Linux strategy claims agents whose reported OS is
         // Linux OR whose capabilities are unknown (cold cache / agent
         // hasn't health-checked yet / explicit "Unknown" fallback). It
@@ -124,7 +124,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         // macOS and required modifying Linux to add a `&& !IsMacOS` skip
         // — open-closed violation).
         //
-        // Cold-cache historical default: pre-Phase-12 there was no OS
+        // Cold-cache historical default:  there was no OS
         // axis, Linux was the only strategy, so a tentacle with
         // capabilities.Os = empty (never health-checked) MUST still route
         // to Linux to preserve operator backward compatibility.
@@ -233,8 +233,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     private static MachineUpgradeOutcome InterpretMidScriptDisconnect(Machine machine, HalibutClientException ex)
     {
-        // Halibut disconnect AFTER StartScriptAsync acked is EXPECTED — Phase 1
-        // the upgrade script detaches into a transient systemd scope via
+        // Halibut disconnect AFTER StartScriptAsync acked is EXPECTED —        // the upgrade script detaches into a transient systemd scope via
         // `exec sudo systemd-run --scope`; the scoped continuation restarts the
         // tentacle service (safely, since the scope is in a separate cgroup).
         // The original Halibut-connected bash lives in the tentacle's own cgroup,

@@ -16,7 +16,7 @@ internal static class HelmUpgradeScriptBuilder
 {
     /// <summary>
     /// P0-Phase10.2 (audit C.2): generated YAML file name for inline values.
-    /// Lives in the per-task workspace (0700 perms via Phase-9.2 invariant)
+    /// Lives in the per-task workspace (0700 perms via invariant)
     /// and is cleaned up by the existing finally-block. Pinned literal —
     /// scripts reference it; rename would silently break Helm's value chain.
     /// </summary>

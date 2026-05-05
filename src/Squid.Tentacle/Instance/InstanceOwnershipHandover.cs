@@ -45,7 +45,7 @@ public sealed class InstanceOwnershipHandover
     private readonly Func<string, string, bool> _chown;
 
     /// <summary>Production default — delegates to the platform-resolved
-    /// <see cref="Platform.IServiceUserProvider"/> (Phase-12.A.3) so the
+    /// <see cref="Platform.IServiceUserProvider"/> so the
     /// same call site works on Linux + Windows + macOS without OS branches.</summary>
     public InstanceOwnershipHandover()
         : this(Platform.ServiceUserProviderFactory.Resolve())
@@ -53,7 +53,7 @@ public sealed class InstanceOwnershipHandover
     }
 
     /// <summary>
-    /// P1-Phase12.A.3 — provider-based ctor. Internally adapts to the
+    /// provider-based ctor. Internally adapts to the
     /// existing 3-Func seam so the test ctor (and all 10+ existing tests
     /// that use it) continues to work without modification.
     /// </summary>

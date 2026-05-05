@@ -24,7 +24,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
     /// <summary>
-    /// P1-Phase11 (audit ARCH.9 Plan A) — per-ticket soft-cancellation registry.
+    ///  (audit ARCH.9 Plan A) — per-ticket soft-cancellation registry.
     /// Bridges the wire-level "no CT" limitation with internal async work
     /// (file save, mutex acquire) so a CancelScript RPC can actually
     /// short-circuit in-flight operations rather than letting them run to
@@ -45,8 +45,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// P1-Phase9.11 — env-var override for the orphan-workspace TTL.
-    /// Default 24h was hardcoded pre-Phase-9.11; operators with high deploy
+    /// env-var override for the orphan-workspace TTL.
+    /// Default 24h was hardcoded ; operators with high deploy
     /// throughput (100 scripts/h × 100 MB workdir = ~240 GB/day stale
     /// accumulation) need to tighten this aggressively. Operators with rare
     /// deploys may want to LOOSEN it (so a workspace stays around long enough
@@ -106,7 +106,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse StartScript(StartScriptCommand command)
     {
-        // P1-T.11 (Phase-5 follow-up to 2026-04-24 audit): the pre-fix path
+        // P1-T.11: the pre-fix path
         // threw InvalidOperationException, which Halibut wrapped as a generic
         // RPC failure → server logged a cryptic message and marked the
         // deployment failed. The new contract: return a structured Complete
@@ -138,8 +138,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(Path.GetTempPath());
         CleanupOrphanedWorkspacesIfDue();
 
-        // P1-Phase11.2 (audit ARCH.9 F1.1) — pure-sync mutex acquire.
-        // Pre-Phase-11.2 this was AcquireAsync(...).GetAwaiter().GetResult():
+        //  (audit ARCH.9 F1.1) — pure-sync mutex acquire.
+        //  this was AcquireAsync(...).GetAwaiter.GetResult:
         // sync-over-async pattern that burned a Halibut RPC thread on a
         // Task.Delay-based async polling loop (allocation churn, threadpool
         // pressure under contention). The new TryAcquireBlocking uses
@@ -183,7 +183,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
             var syntax = command.ScriptSyntax;
             WriteScriptFile(workDir, command.ScriptBody, syntax);
-            // P1-Phase11.3: thread the per-ticket soft-cancel token so a
+            // : thread the per-ticket soft-cancel token so a
             // CancelScript RPC arriving mid-write actually aborts.
             WriteAdditionalFiles(workDir, command.Files, softCancelToken);
 
@@ -534,7 +534,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
     {
-        // P1-Phase11 audit follow-up (#2): null-ticket NRE defence. Pre-fix
+        //  audit follow-up (#2): null-ticket NRE defence. Pre-fix
         // a malformed RPC with null Ticket caused NullReferenceException
         // inside the registry's TaskId access — Halibut wrapped as opaque
         // RPC failure. Fail explicitly so the operator gets a structured
@@ -546,7 +546,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         {
             var workDir = ResolveWorkDir(command.Ticket.TaskId);
             DeletePersistedStateIfAny(workDir);
-            // P1-Phase11 audit follow-up (#1): CompleteScript early-return
+            //  audit follow-up (#1): CompleteScript early-return
             // path was missing _cancellationRegistry.Cleanup. The leak
             // path: StartScript registers with the registry BEFORE
             // _scripts.TryAdd; if a failure between those steps leaves
@@ -579,7 +579,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
-        // P1-Phase11.2: release the per-ticket soft-cancel CTS now the
+        // : release the per-ticket soft-cancel CTS now the
         // script has reached a terminal state. Without this, the registry
         // accumulates one CTS per script ever run — small leak but
         // unbounded over agent lifetime.
@@ -613,13 +613,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command)
     {
-        // P1-Phase11 audit follow-up (#2): null-ticket NRE defence. Pre-fix
+        //  audit follow-up (#2): null-ticket NRE defence. Pre-fix
         // a malformed RPC with null Ticket caused NullReferenceException
         // inside the registry's TaskId access. Match StartScript's pattern.
         if (command.Ticket == null)
             throw new ArgumentException("CancelScriptCommand.Ticket is required", nameof(command));
 
-        // P1-Phase11.2 (audit ARCH.9 F2.x soft-cancel): flip the registry's
+        //  (audit ARCH.9 F2.x soft-cancel): flip the registry's
         // CTS BEFORE attempting to remove from _scripts. This signals any
         // in-flight async work (mutex acquire, file save) that's NOT yet
         // tracked in _scripts — a CancelScript that races a slow StartScript
@@ -656,7 +656,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         CleanupWorkDir(running.WorkDir);
         running.Process.Dispose();
 
-        // P1-Phase11.2: dispose the per-ticket CTS now the script has been
+        // : dispose the per-ticket CTS now the script has been
         // cancelled. Idempotent — safe even if Cancel was a no-op above.
         _cancellationRegistry.Cleanup(command.Ticket);
 
@@ -812,7 +812,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         foreach (var file in files)
         {
-            // P1-Phase11.3 (audit ARCH.9 F1.2): observe soft-cancel BETWEEN
+            //  (audit ARCH.9 F1.2): observe soft-cancel BETWEEN
             // files. CancelScript arriving mid-write of a 1GB sensitiveVars
             // payload now short-circuits the loop instead of proceeding to
             // the next file. The per-file SaveToAsync ALSO threads the CT
@@ -835,9 +835,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
             try
             {
-                // P1-Phase11.3 (audit ARCH.9 F1.2): pass the per-ticket
+                //  (audit ARCH.9 F1.2): pass the per-ticket
                 // soft-cancel token through to the DataStream receiver.
-                // Pre-Phase-11.3 this was hardcoded CancellationToken.None
+                //  this was hardcoded CancellationToken.None
                 // — a 1GB sensitiveVariables.json payload would write to
                 // completion regardless of CancelScript. Now mid-stream
                 // cancel aborts the SaveToAsync via the underlying
@@ -930,15 +930,15 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             ScriptType.CSharp => StartCSharpProcess(workDir, command.Arguments),
             ScriptType.FSharp => StartFSharpProcess(workDir, command.Arguments),
             // Default arm matches Bash AND any future ScriptType not in the
-            // explicit list — preserves pre-Phase-12.B behaviour where unknown
+            // explicit list — preserves behaviour where unknown
             // syntaxes silently fell through to bash. Kept verbatim for Rule 1.
             _ => StartViaLauncher(workDir, ScriptType.Bash, command.Arguments)
         };
     }
 
     /// <summary>
-    /// P1-Phase12.B.3 — dispatches to the platform-resolved
-    /// <see cref="IProcessLauncher"/>. Pre-Phase-12.B this method's body
+    /// dispatches to the platform-resolved
+    /// <see cref="IProcessLauncher"/>.  this method's body
     /// was duplicated across <c>StartBashProcess</c> + <c>StartPwshProcess</c>
     /// (both bit-for-bit identical PSI shapes minus FileName + ArgumentList).
     /// Now the per-syntax PSI shape lives in
@@ -1241,7 +1241,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                     {
                         Directory.Delete(dir, recursive: true);
                         cleaned++;
-                        // P1-Phase9.11: per-deletion counter for Prometheus.
+                        // : per-deletion counter for Prometheus.
                         // Only fires when delete actually succeeded (skipped /
                         // failed dirs do NOT count).
                         Squid.Tentacle.Health.TentacleMetrics.OrphanedWorkspaceCleaned();

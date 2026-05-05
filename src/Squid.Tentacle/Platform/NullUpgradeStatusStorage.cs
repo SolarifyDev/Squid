@@ -1,7 +1,7 @@
 namespace Squid.Tentacle.Platform;
 
 /// <summary>
-/// P1-Phase12.A.2 — fallback impl for unsupported platforms (macOS,
+/// fallback impl for unsupported platforms (macOS,
 /// FreeBSD, etc.) and unit-test contexts. Always returns empty strings.
 ///
 /// <para>Server treats empty upgrade metadata as "no status available"

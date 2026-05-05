@@ -178,8 +178,8 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     {
         var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
 
-        // P1-Phase12.E.3 — empty capabilities (cold cache) preserves the
-        // pre-Phase-12 behaviour where Linux strategy claimed all matching
+        // empty capabilities (cold cache) preserves the
+        //  behaviour where Linux strategy claimed all matching
         // styles regardless of OS. Linux-OS / Windows-OS routing is covered
         // by the dedicated OS-routing Theories below.
         strategy.CanHandle(style, MachineRuntimeCapabilities.Empty).ShouldBe(expected);
@@ -189,17 +189,17 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     [InlineData("Linux", true)]    // explicit Linux — claims
     [InlineData("linux", true)]    // case-insensitive
     [InlineData("LINUX", true)]
-    [InlineData("", true)]         // cold cache → IsUnknown=true → historical default (preserves pre-Phase-12 behaviour)
-    [InlineData("Unknown", true)]  // P1-Phase12.E.5 — agent's "Unknown" fallback (when IsWindows()/IsLinux()/IsMacOS() all false) routes to Linux historical default
+    [InlineData("", true)]         // cold cache → IsUnknown=true → historical default (preserves behaviour)
+    [InlineData("Unknown", true)]  // agent's "Unknown" fallback (when IsWindows/IsLinux/IsMacOS all false) routes to Linux historical default
     [InlineData("Windows", false)] // explicit Windows skip — WindowsTentacleUpgradeStrategy claims
     [InlineData("windows", false)]
     [InlineData("WINDOWS", false)]
-    [InlineData("macOS", false)]   // P1-Phase12.E.5 — explicit-claim refactor: Linux NO LONGER claims macOS (was true under "non-Windows" predicate). A future MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS METHOD.
+    [InlineData("macOS", false)]   // explicit-claim refactor: Linux NO LONGER claims macOS (was true under "non-Windows" predicate). A future MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS METHOD.
     [InlineData("MACOS", false)]   // case-insensitive
     [InlineData("FreeBSD", false)] // any unknown OS string (not in AgentOperatingSystems) → no Linux claim → resolver says "no strategy registered"; clear operator error vs silent install-tarball-on-FreeBSD attempt
     public void CanHandle_RoutesByOs_ClaimsLinuxOrUnknownOnly(string os, bool expected)
     {
-        // P1-Phase12.E.5 — explicit-claim semantic (was "non-Windows"
+        // explicit-claim semantic (was "non-Windows"
         // before): Linux strategy claims TentaclePolling/Listening for
         // agents whose OS is Linux OR Unknown (cold cache / agent's
         // "Unknown" fallback). It does NOT claim macOS / FreeBSD / any
@@ -396,9 +396,9 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void BuildScript_ExpectedSha256_DefaultsToEmptyUntilReleasePipelineEmitsHashes()
     {
-        // Phase 1: SHA256 placeholder is always empty (release pipeline doesn't
+        // : SHA256 placeholder is always empty (release pipeline doesn't
         // publish per-tarball hashes yet). The bash script treats empty as
-        // "skip verification" — when Phase 2 lands, the test will be updated.
+        // "skip verification" — when lands, the test will be updated.
         var script = LinuxTentacleUpgradeStrategy.BuildScript("1.4.0");
 
         script.ShouldContain("EXPECTED_SHA256=\"\"");

@@ -4,7 +4,7 @@ using Squid.Message.Requests.Machines;
 namespace Squid.Core.Handlers.RequestHandlers.Machines;
 
 /// <summary>
-/// P1-Phase12.E.8 — mediator bridge for the agent-reported upgrade-status
+/// mediator bridge for the agent-reported upgrade-status
 /// snapshot. Reads the per-machine cached <see cref="UpgradeStatusPayload"/>
 /// from the timeline store (populated by
 /// <see cref="DeploymentExecution.Tentacle.TentacleHealthCheckStrategy"/>
@@ -15,7 +15,7 @@ namespace Squid.Core.Handlers.RequestHandlers.Machines;
 /// the WHOLE reason this endpoint exists separately from
 /// <c>GetUpgradeEventTimelineRequest</c> is to surface the structured
 /// integer exit code that ONLY appears in <c>last-upgrade.json</c> (NOT
-/// in the JSONL events stream). Phase 12.E.7.B-2 added the parser
+/// in the JSONL events stream).  added the parser
 /// support; this handler completes the chain to the operator.</para>
 ///
 /// <para>No DB hit, no RPC — an in-memory dictionary lookup + projection.
