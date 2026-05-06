@@ -239,7 +239,12 @@ exit 0
     {
         var script = BuildFetchAndExtractScript(downloadUrl);
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-sha-fetch-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(tempScript, script, new UTF8Encoding(false));
+        // UTF-8 WITH BOM — Windows PowerShell 5.1 parses BOM-less UTF-8 as ANSI
+        // codepage by default, mangling non-ASCII (em-dashes, Chinese, emoji)
+        // into "?" or invalid chars and triggering parse errors. Production
+        // LocalScriptService.WriteScriptFile uses encoderShouldEmitUTF8Identifier
+        // = true for the same reason.
+        File.WriteAllText(tempScript, script, new UTF8Encoding(true));
 
         try
         {
@@ -338,6 +343,13 @@ exit 0
                     if (Routes.TryGetValue(path, out var route))
                     {
                         ctx.Response.StatusCode = route.status;
+                        // CRITICAL: Set Content-Type explicitly. Without it, PowerShell 5.1's
+                        // Invoke-WebRequest may auto-detect octet-stream and return .Content
+                        // as byte[] instead of string. The .ps1's `-split '\s+'` then operates
+                        // on a byte[] and produces no usable hex token → the regex fails →
+                        // "non-hex / wrong length" path executes when the test expected the
+                        // valid-SHA path. text/plain forces string interpretation.
+                        ctx.Response.ContentType = "text/plain; charset=utf-8";
                         var bytes = Encoding.UTF8.GetBytes(route.body);
                         ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
                     }

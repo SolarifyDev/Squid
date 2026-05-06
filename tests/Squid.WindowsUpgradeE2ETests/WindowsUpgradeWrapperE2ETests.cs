@@ -63,14 +63,15 @@ public sealed class WindowsUpgradeWrapperE2ETests : IDisposable
         foreach (var path in _tempScriptsToCleanup)
             TrySafeDelete(path);
 
-        //  strategy writes dispatch.ps1 to %ProgramData%\Squid\Tentacle\upgrade\
-        // The path persists across tests by design (production agents reuse
-        // the location); we leave the LATEST dispatch.ps1 alone but each test
-        // can read its own content right after the wrapper runs.
+        //  strategy writes dispatch-<TaskName>.ps1 to %ProgramData%\Squid\Tentacle\upgrade\
+        // (per-task — concurrent-dispatch race fix). Each test's per-task
+        // dispatch file is added to _tempScriptsToCleanup so they're
+        // cleaned at Dispose; the wrapper itself also runs a >1h cleanup
+        // pass at the start of every new dispatch so accumulation is bounded.
     }
 
     // ========================================================================
-    // Test 1: Wrapper exits cleanly + dispatch.ps1 file written + task registered
+    // Test 1: Wrapper exits cleanly + per-task dispatch-<TaskName>.ps1 written + task registered
     // ========================================================================
 
     [Fact]
@@ -87,12 +88,16 @@ public sealed class WindowsUpgradeWrapperE2ETests : IDisposable
         exitCode.ShouldBe(0,
             customMessage: $"wrapper must exit 0 after schtasks /Run; stdout was: {stdout}");
 
-        var dispatchPath = GetExpectedDispatchPath();
-        File.Exists(dispatchPath).ShouldBeTrue(
-            customMessage: $"wrapper must write inner to {dispatchPath}");
-
         var taskName = ExtractTaskName(stdout);
         _scheduledTaskNamesToCleanup.Add(taskName);
+
+        // dispatch file is now per-task (dispatch-<TaskName>.ps1) so concurrent
+        // wrappers can't race on a shared file. Verify the per-task dispatch
+        // file exists in the contract dir.
+        var dispatchPath = GetExpectedDispatchPath(taskName);
+        _tempScriptsToCleanup.Add(dispatchPath);
+        File.Exists(dispatchPath).ShouldBeTrue(
+            customMessage: $"wrapper must write inner to {dispatchPath}");
 
         // The inner script's actual execution is verified in Test 2; here we
         // just pin that the scheduling step itself reported success.
@@ -312,7 +317,10 @@ exit 0
     private (int exitCode, string stdout) RunWrapper(string wrapperScript, TimeSpan timeout)
     {
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-upgrade-e2e-outer-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(tempScript, wrapperScript, new UTF8Encoding(false));
+        // UTF-8 WITH BOM — Windows PowerShell 5.1 parses BOM-less UTF-8 as ANSI
+        // codepage and mangles non-ASCII (em-dashes etc.) → parse error → exit 1.
+        // Mirrors production LocalScriptService.WriteScriptFile's encoder choice.
+        File.WriteAllText(tempScript, wrapperScript, new UTF8Encoding(true));
         _tempScriptsToCleanup.Add(tempScript);
 
         var psi = new ProcessStartInfo
@@ -370,13 +378,17 @@ exit 0
     }
 
     /// <summary>
-    /// %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 — contract dir.
+    /// %ProgramData%\Squid\Tentacle\upgrade\dispatch-&lt;TaskName&gt;.ps1 —
+    /// contract dir + per-task dispatch script. The wrapper writes one file
+    /// per task so concurrent dispatches don't race on a shared file. The
+    /// caller passes the extracted task name (from wrapper stdout) so the
+    /// computed path matches the file the wrapper actually wrote.
     /// </summary>
-    private static string GetExpectedDispatchPath()
+    private static string GetExpectedDispatchPath(string taskName)
     {
         var programData = Environment.GetEnvironmentVariable("ProgramData")
             ?? throw new InvalidOperationException("%ProgramData% must be set on Windows hosts");
-        return Path.Combine(programData, "Squid", "Tentacle", "upgrade", "dispatch.ps1");
+        return Path.Combine(programData, "Squid", "Tentacle", "upgrade", $"dispatch-{taskName}.ps1");
     }
 
     private static bool WaitForFileExists(string path, TimeSpan timeout)

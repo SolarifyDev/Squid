@@ -42,4 +42,71 @@ public static class WindowsUpgradeE2ECategories
     /// match, valid mismatch).
     /// </summary>
     public const string ShaVerify = "WindowsUpgradeShaVerifyE2E";
+
+    /// <summary>
+    /// E2E coverage for the production
+    /// <c>Squid.Tentacle.ServiceHost.WindowsServiceHost</c> class — the
+    /// SCM lifecycle round-trip (Install → Start → Stop → Uninstall) the
+    /// upgrade pipeline depends on. Unit tests pin the sc.exe argv shape;
+    /// this category proves the SAME argv actually produces a Running /
+    /// Stopped / Absent service in the SCM database when executed against
+    /// a real Windows host. Companion to the systemd E2E that lives
+    /// alongside the Linux upgrade tests (Phase 12.F).
+    /// </summary>
+    public const string ServiceHost = "WindowsServiceHostE2E";
+
+    /// <summary>
+    /// Phase 12.H smoke tests for the
+    /// <see cref="Infrastructure.StubSquidServer"/> shared fixture. Tier
+    /// 🔵 Fixture-only (Rule 12) — does NOT count toward production E2E
+    /// coverage. Subsequent Phase 12.I+ categories (register, deploy,
+    /// upgrade) consume the stub and provide the high-fidelity
+    /// production coverage.
+    /// </summary>
+    public const string StubSquidServer = "StubSquidServerE2E";
+
+    /// <summary>
+    /// Phase 12.I E2E coverage for the production
+    /// <c>squid-tentacle register</c> CLI: handshake against
+    /// <see cref="Infrastructure.StubSquidServer"/>'s REST endpoint,
+    /// config-file persistence at <c>PlatformPaths.GetInstanceConfigPath</c>,
+    /// and InstanceRegistry update. Tier 🟢 high-fidelity — drives
+    /// <c>RegisterCommand.ExecuteAsync</c> directly with real HTTP +
+    /// real JSON config write. Cross-platform (runs on macOS / Linux /
+    /// Windows) — Squid.Tentacle's register flow is OS-agnostic except
+    /// for the Linux ownership-handover step which is covered separately
+    /// in the Linux phase.
+    /// </summary>
+    public const string TentacleRegister = "TentacleRegisterE2E";
+
+    /// <summary>
+    /// Phase 12.J E2E coverage for the deployment-execution round-trip:
+    /// server (<see cref="Infrastructure.StubSquidServer"/>) →
+    /// agent (<see cref="Infrastructure.StubAgent"/> wrapping the
+    /// production <c>LocalScriptService</c>) → real shell execution
+    /// (PowerShell on Windows / bash on Linux+macOS) → results back
+    /// over Halibut RPC. Tier 🟢 high-fidelity — every component except
+    /// the upstream Squid server is production code. Cross-platform
+    /// (runs on Windows / Linux / macOS) via per-OS script-syntax
+    /// branches in each test method.
+    /// </summary>
+    public const string TentacleDeploy = "TentacleDeployE2E";
+
+    /// <summary>
+    /// Phase 12.J.E E2E coverage for the production
+    /// <c>WindowsTentacleUpgradeStrategy.UpgradeAsync</c> end-to-end:
+    /// strategy constructs the outer wrapper, dispatches via Halibut to a
+    /// real listening agent, observes via real <c>HalibutScriptObserver</c>,
+    /// maps the script result to <c>MachineUpgradeOutcome</c>. Tier 🟢
+    /// high-fidelity — every component is production code, only the
+    /// Squid server is replaced by <see cref="Infrastructure.StubSquidServer"/>.
+    ///
+    /// <para>Coverage delta vs <c>WindowsUpgradeWrapperE2ETests</c>: that
+    /// suite tests <c>BuildOuterWrapper</c> in isolation by running the
+    /// returned PowerShell directly. This category adds the FULL
+    /// dispatch+observe path through Halibut RPC, so a regression in
+    /// <c>HalibutClientFactory</c>, <c>HalibutScriptObserver</c>, or the
+    /// outcome mapper surfaces here.</para>
+    /// </summary>
+    public const string TentacleUpgrade = "TentacleUpgradeE2E";
 }

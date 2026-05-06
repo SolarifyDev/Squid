@@ -668,6 +668,94 @@ Optional params: `agentSubscriptionId`, `agentThumbprint` — for Agent tests to
 
 ---
 
+## Tentacle E2E Coverage — Phase 12.G+ Discipline
+
+The Tentacle (Windows + Linux) is the highest-stakes path in the system: every deployment in production runs through it. Phase 12.G+ targets E2E coverage so complete that a green test suite alone gives confidence to ship — no manual UI smoke-test needed.
+
+### Authoritative documents
+
+| Doc | Role |
+|---|---|
+| `docs/e2e-scenario-matrix.md` | Source-of-truth ledger of all scenarios (≈214 entries) across 8 areas (install, lifecycle, register, deploy, upgrade, health, multi-instance, boundary). Each row tracks **status** (Planned/WIP/Covered/Verified) + **phase** (12.H/I/J/K/L) + **OS scope**. PRs that touch Tentacle code SHOULD reference matrix IDs they affect. |
+| `~/.claude/CLAUDE.md` Rule 12 | The fidelity tiers + canonical E2E test pattern. Every new E2E follows this shape. |
+| `~/.claude/CLAUDE.md` Rule 9 | Three-tier coverage requirement (Unit + Integration + E2E). |
+
+### Phase plan
+
+| Phase | Scope | Deliverable | Status |
+|---|---|---|---|
+| **12.G** | Round 1-3 fixes + WindowsServiceHost SCM lifecycle (G.2) + uninstall+purge (G.5) | 32 E2E green | ✅ done |
+| **12.H** | `StubSquidServer` fixture (Halibut + REST + cert) | Shared fixture; unblocks I/J/K/L | 🟡 in progress |
+| **12.I** | `register` CLI E2E (~18 tests Windows + ~18 tests Linux) | Real `Squid.Tentacle.exe register` against StubSquidServer; config-file persistence verified | planned |
+| **12.J** | Deployment execution + upgrade flow E2E (~52 + ~68 tests) | Full server→tentacle→script + server→tentacle→upgrade→last-upgrade.json round-trip | planned |
+| **12.K** | Install scripts + boundary cases (~24 + ~16 tests) | `install-tentacle.{sh,ps1}` happy + edge | planned |
+| **12.L** | Multi-instance + health (~10 + ~8 tests) | Concurrent instance isolation + capabilities probe | planned |
+
+### Phase 12.H — StubSquidServer fixture
+
+Shared in-process server stub that production `Squid.Tentacle.exe` can register against and exchange Halibut RPC with. Used by Phase 12.I+ to drive real binaries without dragging in the full Postgres + Kind cluster fixture.
+
+Public surface:
+
+```csharp
+public sealed class StubSquidServer : IAsyncDisposable
+{
+    public string ServerThumbprint { get; }      // self-signed cert thumbprint
+    public Uri ServerUri { get; }                 // https://localhost:{rest-port}/
+    public Uri PollingUri { get; }                // https://localhost:{halibut-port}/
+
+    public static async Task<StubSquidServer> StartAsync();   // ports via TcpListener(0)
+
+    // Polling agents dial in to PollingUri; server queues commands for them
+    public Task TrustAgentAsync(string agentThumbprint);
+    public Task<ScriptStatusResponse> DispatchScriptToPollingAgentAsync(
+        string subscriptionId, StartScriptCommand command);
+
+    // Listening agents accept inbound; server dials out to their endpoint
+    public Task<ScriptStatusResponse> DispatchScriptToListeningAgentAsync(
+        Uri agentUri, string agentThumbprint, StartScriptCommand command);
+
+    // REST: register handshake, capabilities response, last-upgrade.json reception
+    public IReadOnlyList<RegisterRequest> ReceivedRegistrations { get; }
+
+    public ValueTask DisposeAsync();
+}
+```
+
+Fixture lives in shared infrastructure (NOT in `Squid.E2ETests` which carries Postgres+Kind) so Windows + Linux tentacle E2E projects can both reference it.
+
+### Naming conventions for new Tentacle E2E
+
+Follow the existing G.2/G.5 pattern:
+
+| File | Class | Category Trait |
+|---|---|---|
+| `<Feature>E2ETests.cs` | `<Feature>E2ETests` | `WindowsTentacle<Feature>E2E` or `LinuxTentacle<Feature>E2E` |
+| Examples | `WindowsTentacleRegisterE2ETests`, `LinuxTentacleDeployE2ETests`, `WindowsTentacleUpgradeFlowE2ETests` | |
+
+Workflow files (`tentacle-windows-e2e.yml`, future `tentacle-linux-e2e.yml`) must include each new category in their default filter so a forgotten category doesn't silently skip on CI.
+
+### Test context pattern (mandatory)
+
+Every E2E test class follows the inner-`TestContext` pattern from G.2 (`WindowsServiceHostE2ETests.ServiceHostTestContext`):
+
+- GUID-suffixed unique names for every OS resource
+- `IDisposable` with best-effort cleanup of every staged artefact
+- `MarkClean()` flag the happy path sets to short-circuit Dispose's defensive cleanup
+- Recursive copy of binary trees when staging service binaries (round-2 lesson)
+
+### Drift detector pattern (mandatory for medium-mirror)
+
+Any test that inlines production logic (e.g. an inline PowerShell script that mirrors `upgrade-windows-tentacle.ps1`) MUST have a separate `[Fact]` that:
+
+1. Reads the production source (`File.ReadAllText` of the embedded `.ps1`)
+2. Compares to the inline version using a substring/regex check on every key operation
+3. Fails with a clear "drift detected — update inline copy at line X" message
+
+Established example: `WindowsUpgradePhaseBE2ETests.PhaseBScript_MirrorsProductionTemplate_KeyOperations`. Reuse the pattern; do not invent new drift-detection schemes.
+
+---
+
 ## C# Coding Conventions
 
 Reference: SmartTalk `RealtimeAiServiceV2` pattern.
