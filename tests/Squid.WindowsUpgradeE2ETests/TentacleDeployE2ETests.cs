@@ -205,30 +205,33 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        // Three scripts dispatched in near-parallel (50ms stagger). Each
-        // writes a unique marker. Assertions verify each result captures
-        // ONLY its own marker — no interleaving across tickets.
-        // NoIsolation lets them run concurrently agent-side; the per-
-        // ticket log isolation in LocalScriptService is what we're pinning.
+        // Round 8 design — robust concurrent overlap via SleepThenEcho:
         //
-        // Why staggered, not Task.WhenAll: spawning 3 powershell.exe
-        // processes at the EXACT same instant can starve the third
-        // process's stdout reader on Windows (round-5 of P12.G found this:
-        // resultC.AllText was "" 1/3 of the time). 50ms stagger gives
-        // each process time to fully spawn its child + IO threads before
-        // the next dispatch arrives. This matches real-world concurrency
-        // better — production never fires 3 dispatches in literally the
-        // same instant; they're separated by at least HTTP round-trip
-        // latency.
-        var (bodyA, typeA) = OsScript.Echo("ticket-A-marker");
-        var (bodyB, typeB) = OsScript.Echo("ticket-B-marker");
-        var (bodyC, typeC) = OsScript.Echo("ticket-C-marker");
+        // Round 5 (50ms stagger + bare echo) was flaky on stressed Windows
+        // runners — sometimes resultA, sometimes resultC ended up with
+        // empty AllText. The bare echo finishes in <100ms; if pwsh.exe
+        // spawn is slow enough, the script completes before its stdout
+        // reader is fully attached → output lost.
+        //
+        // This shape uses SleepThenEcho(1, "marker") so each script:
+        //   1. Spawns pwsh.exe (~300-500ms on Windows runner)
+        //   2. Sleeps 1 second
+        //   3. Emits the marker AFTER stdout reader is fully attached
+        //
+        // 100ms stagger ensures the dispatches DON'T literally race the
+        // first 100ms of spawn (where the OS thread pool is busiest), but
+        // since each script then sleeps 1s, all three are simultaneously
+        // running for ~700ms — real concurrent overlap, real isolation
+        // test.
+        var (bodyA, typeA) = OsScript.SleepThenEcho(1, "ticket-A-marker");
+        var (bodyB, typeB) = OsScript.SleepThenEcho(1, "ticket-B-marker");
+        var (bodyC, typeC) = OsScript.SleepThenEcho(1, "ticket-C-marker");
 
-        var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA);
-        await Task.Delay(50);
-        var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB);
-        await Task.Delay(50);
-        var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC);
+        var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA, observeTimeout: TimeSpan.FromSeconds(15));
+        await Task.Delay(100);
+        var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB, observeTimeout: TimeSpan.FromSeconds(15));
+        await Task.Delay(100);
+        var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC, observeTimeout: TimeSpan.FromSeconds(15));
 
         await Task.WhenAll(taskA, taskB, taskC);
 
