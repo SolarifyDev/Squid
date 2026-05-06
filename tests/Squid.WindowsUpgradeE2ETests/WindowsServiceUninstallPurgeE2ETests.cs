@@ -67,8 +67,12 @@ public sealed class WindowsServiceUninstallPurgeE2ETests
             exitCode.ShouldBe(0,
                 customMessage: "service uninstall (no --purge) must succeed when service is registered");
 
-            ScQueryExitCode(ctx.ServiceName).ShouldNotBe(0,
-                customMessage: $"after uninstall, sc query {ctx.ServiceName} must return non-zero — SCM entry should be gone regardless of --purge flag");
+            // SCM finalization is async — wait for the deletion to land
+            // (typically within a second; bound by 15s for slow CI). Without
+            // the wait, the test races the SCM and intermittently sees the
+            // service still present. Caught by Phase 12.H Windows run.
+            WaitForScGone(ctx.ServiceName, TimeSpan.FromSeconds(15)).ShouldBeTrue(
+                customMessage: $"after uninstall, sc query {ctx.ServiceName} must eventually return non-zero within 15s — SCM entry should be gone regardless of --purge flag. If still present after 15s, host.Uninstall's sc.exe delete didn't take.");
 
             File.Exists(ctx.InstanceConfigPath).ShouldBeTrue(
                 customMessage: $"WITHOUT --purge, instance config file at {ctx.InstanceConfigPath} MUST be preserved. Operators rely on this for cert-identity preservation across reinstall.");
@@ -109,8 +113,8 @@ public sealed class WindowsServiceUninstallPurgeE2ETests
         exitCode.ShouldBe(0,
             customMessage: "service uninstall --purge must succeed when service is registered AND artefacts exist");
 
-        ScQueryExitCode(ctx.ServiceName).ShouldNotBe(0,
-            customMessage: $"after uninstall --purge, sc query {ctx.ServiceName} must return non-zero — SCM entry should be gone");
+        WaitForScGone(ctx.ServiceName, TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            customMessage: $"after uninstall --purge, sc query {ctx.ServiceName} must eventually return non-zero within 15s — SCM entry should be gone");
 
         File.Exists(ctx.InstanceConfigPath).ShouldBeFalse(
             customMessage: $"--purge MUST delete instance config file at {ctx.InstanceConfigPath}. If still present, PurgeInstanceArtefacts didn't run or its DeleteFileQuietly silently failed (suspect: file lock).");
@@ -177,6 +181,44 @@ public sealed class WindowsServiceUninstallPurgeE2ETests
     {
         var (exitCode, _, _) = RunSc("query", serviceName);
         return exitCode;
+    }
+
+    /// <summary>
+    /// Polls <c>sc query</c> until the service reports the expected STATE
+    /// substring (case-insensitive) OR the timeout expires. Mirrors
+    /// WindowsServiceFixture.WaitForState — SCM transitions are async so
+    /// install/start must be polled, never assumed synchronous.
+    /// </summary>
+    private static bool WaitForScState(string serviceName, string expectedState, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var (exitCode, stdout, _) = RunSc("query", serviceName);
+            if (exitCode == 0 && stdout.Contains(expectedState, StringComparison.OrdinalIgnoreCase))
+                return true;
+            Thread.Sleep(200);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Polls <c>sc query</c> until the service is GONE from SCM (exit code
+    /// != 0; typically 1060). Counterpart to <see cref="WaitForScState"/>.
+    /// Caller uses this after calling uninstall — the SCM may take a moment
+    /// to finalize deletion (especially if the service was mid-state-
+    /// transition when delete was issued), so an immediate ScQueryExitCode
+    /// check can race the SCM and see the service still present.
+    /// </summary>
+    private static bool WaitForScGone(string serviceName, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ScQueryExitCode(serviceName) != 0) return true;
+            Thread.Sleep(200);
+        }
+        return false;
     }
 
     private static (int exitCode, string stdout, string stderr) RunSc(params string[] args)
@@ -298,6 +340,21 @@ public sealed class WindowsServiceUninstallPurgeE2ETests
                 throw new InvalidOperationException(
                     $"PurgeTestContext: pre-test service install failed (rc={exitCode}). " +
                     $"sc.exe environment broken? Check the GHA windows-latest runner's SCM database state.");
+
+            // Wait for the service to fully reach RUNNING before any test
+            // code runs. WHY: an immediate uninstall while the service is
+            // still in START_PENDING leaves SCM in a "marked for deletion"
+            // state that `sc query` continues to return 0 for until the
+            // initial start completes — flaky assertion target. By waiting
+            // for RUNNING here we ensure the subsequent Stop+Delete in
+            // host.Uninstall has a clean state to act on. Caught by
+            // round-3 GHA run when Uninstall_WithoutPurge intermittently
+            // failed with sc query returning 0 post-uninstall.
+            if (!WaitForScState(ServiceName, "RUNNING", TimeSpan.FromSeconds(30)))
+                throw new InvalidOperationException(
+                    $"PurgeTestContext: service '{ServiceName}' did not reach RUNNING within 30s after install. " +
+                    $"Check `sc query {ServiceName}` manually. Likely cause: test-service exe failed to start " +
+                    $"(missing runtime sibling files? Check StageBinaryTree's recursive copy).");
         }
 
         public void AssertRegistryDoesNotContainInstance()
