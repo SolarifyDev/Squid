@@ -54,4 +54,14 @@ public static class WindowsUpgradeE2ECategories
     /// alongside the Linux upgrade tests (Phase 12.F).
     /// </summary>
     public const string ServiceHost = "WindowsServiceHostE2E";
+
+    /// <summary>
+    /// Phase 12.H smoke tests for the
+    /// <see cref="Infrastructure.StubSquidServer"/> shared fixture. Tier
+    /// 🔵 Fixture-only (Rule 12) — does NOT count toward production E2E
+    /// coverage. Subsequent Phase 12.I+ categories (register, deploy,
+    /// upgrade) consume the stub and provide the high-fidelity
+    /// production coverage.
+    /// </summary>
+    public const string StubSquidServer = "StubSquidServerE2E";
 }
