@@ -29,7 +29,8 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// the squid-tentacle service is stopped, every child process under it dies.
 /// The Windows analog is <b>Task Scheduler one-shot task as SYSTEM</b>: a
 /// short outer wrapper script (delivered via the same Halibut RPC) writes
-/// the rendered inner template to <c>%ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1</c>,
+/// the rendered inner template to <c>%ProgramData%\Squid\Tentacle\upgrade\dispatch-&lt;TaskName&gt;.ps1</c>
+/// (per-task to avoid concurrent-dispatch races on a shared file),
 /// registers a one-shot task pointing at that file with <c>/RU SYSTEM /Z /F</c>,
 /// triggers it via <c>/Run</c>, then exits 0. The Task-Scheduler-launched
 /// process tree is independent of the squid-tentacle service, so Phase B's
@@ -355,19 +356,21 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
     /// <summary>
     /// Constructs the Halibut-connected outer wrapper. Decodes the base64
-    /// inner content, writes it to <c>%ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1</c>,
-    /// schedules a one-shot Task Scheduler task as SYSTEM (cross-dispatch
-    /// uniqueness via GUID-suffixed task name), triggers it, then exits 0.
-    /// Inner script runs in a separate Task Scheduler process tree —
-    /// survives Phase B's <c>Stop-Service</c>.
+    /// inner content, writes it to <c>%ProgramData%\Squid\Tentacle\upgrade\dispatch-&lt;TaskName&gt;.ps1</c>
+    /// (per-task to avoid the concurrent-dispatch race two wrappers would hit
+    /// on a shared <c>dispatch.ps1</c>), schedules a one-shot Task Scheduler
+    /// task as SYSTEM (cross-dispatch uniqueness via GUID-suffixed task name),
+    /// triggers it, then exits 0. Inner script runs in a separate Task
+    /// Scheduler process tree — survives Phase B's <c>Stop-Service</c>.
     ///
     /// <para><b>Why base64 not a here-string</b>: PowerShell here-strings
     /// (<c>@'...'@</c>) terminate at <c>'@</c> at start of line. A future
     /// install method snippet (<c>MsiUpgradeMethod</c>, etc.) might happen
     /// to include such a sequence in a heredoc-style log message. Base64
     /// encoding makes the inner content opaque to the wrapper's lexer.
-    /// Operators can still inspect the inner via <c>%ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1</c>
-    /// after dispatch. Audit pre-12.E.4.</para>
+    /// Operators can still inspect the inner via the per-task dispatch
+    /// file under <c>%ProgramData%\Squid\Tentacle\upgrade\</c> until it
+    /// auto-cleans (1h cleanup pass on next dispatch). Audit pre-12.E.4.</para>
     /// </summary>
     internal static string BuildOuterWrapper(string innerBase64)
     {
@@ -399,20 +402,31 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             if (-not (Test-Path $DispatchDir)) {
                 New-Item -ItemType Directory -Path $DispatchDir -Force | Out-Null
             }
-            $DispatchPath = Join-Path $DispatchDir 'dispatch.ps1'
+
+            # Task Scheduler one-shot — SYSTEM identity, GUID-suffixed name for
+            # cross-dispatch uniqueness. The dispatch script file is keyed to the
+            # SAME GUID so two concurrent wrappers don't race on a single shared
+            # dispatch.ps1 (caught by WindowsUpgradeWrapperE2ETests'
+            # Wrapper_ConcurrentDispatches test — without per-task scoping, dispatch
+            # B's Set-Content overwrites A's content before A's task fires, and
+            # both tasks end up running B's inner).
+            $TaskName = "SquidTentacleUpgrade_$([guid]::NewGuid().ToString('N'))"
+            $DispatchPath = Join-Path $DispatchDir "dispatch-$TaskName.ps1"
 
             $InnerScript = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($InnerBase64))
             Set-Content -Path $DispatchPath -Value $InnerScript -Encoding UTF8 -Force
 
             Write-Host "[upgrade-wrapper] Inner script written to $DispatchPath ($($InnerScript.Length) chars)"
 
-            # Task Scheduler one-shot — SYSTEM identity, GUID-suffixed name
-            # for cross-dispatch uniqueness. Cleanup mechanism:
-            #   - DeleteExpiredTaskAfter = task auto-deletes 1 minute after expiry
-            #   - ExecutionTimeLimit (1h) bounds Phase A + Phase B end-to-end
-            # Replaces the legacy `schtasks.exe /Z` flag which fails on Server 2022
-            # with a malformed-XML error (see comment block above this string).
-            $TaskName = "SquidTentacleUpgrade_$([guid]::NewGuid().ToString('N'))"
+            # Cleanup any stale per-task dispatch files older than 1 hour. Dispatch
+            # files are normally cleaned up alongside their task auto-deletion, but
+            # an interrupted dispatch (host reboot mid-run) can leave an orphan
+            # file. Keep operator's contract dir tidy without affecting in-flight tasks.
+            try {
+                Get-ChildItem -Path $DispatchDir -Filter 'dispatch-*.ps1' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+            } catch { } # best-effort
 
             try {
                 $action = New-ScheduledTaskAction `
@@ -431,7 +445,17 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
                 # we set it directly. Format MUST be ISO 8601 (yyyy-MM-ddTHH:mm:ss);
                 # without this, Register-ScheduledTask fails with "The task XML is
                 # missing a required element or attribute" on Windows Server 2022.
-                $trigger.EndBoundary = (Get-Date).AddHours(1).ToString('yyyy-MM-ddTHH:mm:ss')
+                #
+                # Window kept short (StartBoundary +2s, EndBoundary +30s) so the
+                # trigger expires fast and Task Scheduler's auto-delete kicks in
+                # quickly after the action completes. EndBoundary only governs
+                # trigger validity, NOT the running action — ExecutionTimeLimit
+                # (1h below) is what bounds the actual upgrade duration. Setting
+                # EndBoundary to +1h would mean the task can only auto-delete
+                # 1h+DeleteExpiredTaskAfter after registration which makes the
+                # auto-delete invariant practically untestable + leaves stale
+                # task entries visible for an hour after every upgrade.
+                $trigger.EndBoundary = (Get-Date).AddSeconds(30).ToString('yyyy-MM-ddTHH:mm:ss')
 
                 # SYSTEM identity, RunLevel Highest = elevated by default. Same
                 # privilege level as the LocalSystem service tree the wrapper
@@ -442,8 +466,13 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
                     -LogonType ServiceAccount `
                     -RunLevel Highest
 
+                # DeleteExpiredTaskAfter = 30s (the documented minimum that Task
+                # Scheduler honours; lower values are silently treated as "never
+                # delete"). Combined with EndBoundary +30s, total wall-clock to
+                # auto-delete is ≈60s after registration — fits inside the E2E
+                # test's auto-delete poll window.
                 $settings = New-ScheduledTaskSettingsSet `
-                    -DeleteExpiredTaskAfter (New-TimeSpan -Minutes 1) `
+                    -DeleteExpiredTaskAfter (New-TimeSpan -Seconds 30) `
                     -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
                     -AllowStartIfOnBatteries `
                     -DontStopIfGoingOnBatteries `
@@ -461,7 +490,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
                 exit 1
             }
 
-            Write-Host "[upgrade-wrapper] Task '$TaskName' registered (UserId=SYSTEM, auto-deletes 1min after expiry)"
+            Write-Host "[upgrade-wrapper] Task '$TaskName' registered (UserId=SYSTEM, auto-deletes ≈60s after registration)"
             Write-Host "[upgrade-wrapper] Task '$TaskName' triggered; Phase A+B run detached as SYSTEM. Outcome via last-upgrade.json on next health check."
             exit 0
             """;

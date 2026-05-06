@@ -73,15 +73,22 @@ public sealed class WindowsUpgradePhaseBE2ETests
         //    the service reads on Start.
         var extractDir = Path.Combine(stagingDir, "extract");
         Directory.CreateDirectory(extractDir);
-        File.Copy(testServiceExe, Path.Combine(extractDir, "SquidUpgradeE2ETestService.exe"));
-        // CRITICAL: also copy the runtime config + deps so the service
-        // exe can actually start when launched from the new dir.
+
+        // Recursive copy of the ENTIRE source directory tree (not just the .exe
+        // and not just top-level files). A framework-dependent .NET 9 service
+        // exe needs its sibling runtime files (.dll, .runtimeconfig.json,
+        // .deps.json) AND any subdirectory dependencies (e.g. runtimes/)
+        // co-located in the new install dir or SCM-launched start fails with
+        // 1053 ("did not respond in a timely fashion"). Mirrors the recursive
+        // copy in WindowsServiceFixture.InstallAndStart — same root cause.
         var exeSourceDir = Path.GetDirectoryName(testServiceExe)!;
-        foreach (var dependency in Directory.EnumerateFiles(exeSourceDir))
+        foreach (var sourceFile in Directory.EnumerateFiles(exeSourceDir, "*", SearchOption.AllDirectories))
         {
-            var fileName = Path.GetFileName(dependency);
-            if (fileName == "SquidUpgradeE2ETestService.exe") continue;
-            File.Copy(dependency, Path.Combine(extractDir, fileName), overwrite: true);
+            var relativePath = Path.GetRelativePath(exeSourceDir, sourceFile);
+            var destFile = Path.Combine(extractDir, relativePath);
+            var destDir = Path.GetDirectoryName(destFile);
+            if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+            File.Copy(sourceFile, destFile, overwrite: true);
         }
         File.WriteAllText(Path.Combine(extractDir, "version.txt"), "2.0.0");
 

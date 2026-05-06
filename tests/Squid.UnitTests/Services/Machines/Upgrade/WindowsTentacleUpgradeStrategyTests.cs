@@ -409,14 +409,33 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [Fact]
     public void BuildScript_OuterWrapper_WritesInnerToProgramDataDispatch()
     {
-        // %ProgramData%\Squid\Tentacle\upgrade\dispatch.ps1 —        // contract directory + canonical inner script path. WindowsUpgradeStatusStorage
-        // already reads from this directory; the dispatch.ps1 lands as a
-        // sibling of last-upgrade.json + upgrade.log + upgrade.lock.
+        // %ProgramData%\Squid\Tentacle\upgrade\dispatch-<TaskName>.ps1 —
+        // contract directory + per-task inner script path. The dispatch file
+        // lands as a sibling of last-upgrade.json + upgrade.log + upgrade.lock.
+        // It MUST be per-task (not a shared dispatch.ps1) because two
+        // concurrent dispatches would otherwise overwrite each other before
+        // their tasks fire — caught by Wrapper_ConcurrentDispatches E2E.
         var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
 
         script.ShouldContain("Squid\\Tentacle\\upgrade",
             customMessage: "outer wrapper must write to the contract dir under %ProgramData%");
-        script.ShouldContain("dispatch.ps1");
+        script.ShouldContain("dispatch-$TaskName.ps1",
+            customMessage: "dispatch file must be per-task (interpolated $TaskName) so concurrent dispatches don't race on a single shared file");
+    }
+
+    [Fact]
+    public void BuildScript_OuterWrapper_DispatchPath_IsNotASharedConstant()
+    {
+        // Reverse-verify guard: a future refactor that goes back to a constant
+        // 'dispatch.ps1' would re-introduce the concurrent-dispatch race
+        // (caught by Wrapper_ConcurrentDispatches E2E). Pin the absence of the
+        // legacy literal here so the regression is compile/test-time visible.
+        var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
+
+        script.ShouldNotContain("'dispatch.ps1'",
+            customMessage: "constant 'dispatch.ps1' would race under concurrent wrappers; dispatch file MUST be per-task");
+        script.ShouldNotContain("\"dispatch.ps1\"",
+            customMessage: "constant \"dispatch.ps1\" would race under concurrent wrappers; dispatch file MUST be per-task");
     }
 
     [Fact]
