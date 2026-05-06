@@ -1,3 +1,5 @@
+using System.Text;
+using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Message.Contracts.Tentacle;
 using Squid.WindowsUpgradeE2ETests.Infrastructure;
 
@@ -280,6 +282,123 @@ public sealed class TentacleDeployE2ETests
             customMessage: $"emoji (rocket 🚀) MUST be preserved through UTF-8 encoding pipeline. Got:\n{result.AllText}");
     }
 
+    // ========================================================================
+    // D7.h — Plain output variable: `##squid[setVariable name='X' value='Y']`
+    //
+    // Round-trip:
+    //   shell echo → process stdout → Halibut log capture → ObservedScriptResult →
+    //   production ServiceMessageParser.ParseOutputVariables → assertion
+    //
+    // This test pins the FULL extraction pipeline operators rely on for
+    // pushing values from a deployment script back to the orchestrator.
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_PlainOutputVariable_RoundTripsToProductionParser()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string varName = "DeploymentArtefactUrl";
+        const string varValue = "https://artifacts.example/build-1234.zip";
+
+        var (scriptBody, scriptType) = OsScript.EmitServiceMessage(
+            $"##squid[setVariable name='{varName}' value='{varValue}']");
+
+        var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"setVariable script MUST exit 0. Logs:\n{result.AllText}");
+
+        // Run logs through the production parser — same code DeploymentTaskExecutor uses.
+        var parser = new ServiceMessageParser();
+        var variables = parser.ParseOutputVariables(result.AllLogs.Select(l => l.Text));
+
+        variables.ShouldContainKey(varName,
+            customMessage: $"production parser MUST extract '{varName}' from agent's log lines. Got logs:\n{result.AllText}\nParsed variables: [{string.Join(", ", variables.Keys)}]");
+
+        variables[varName].Value.ShouldBe(varValue);
+        variables[varName].IsSensitive.ShouldBeFalse(
+            customMessage: "without sensitive='True' attribute, variable MUST default to non-sensitive");
+    }
+
+    // ========================================================================
+    // D7.h2 — Sensitive output variable: `sensitive='True'`
+    //
+    // Pins the IsSensitive flag → operators rely on this to mask values
+    // in logs and encrypt at rest. Regression that drops the flag would
+    // leak secrets in plain logs.
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_SensitiveOutputVariable_FlaggedByProductionParser()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string varName = "DatabasePassword";
+        const string varValue = "p4ssw0rd-do-not-leak";
+
+        var (scriptBody, scriptType) = OsScript.EmitServiceMessage(
+            $"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']");
+
+        var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
+
+        result.ExitCode.ShouldBe(0);
+
+        var parser = new ServiceMessageParser();
+        var variables = parser.ParseOutputVariables(result.AllLogs.Select(l => l.Text));
+
+        variables.ShouldContainKey(varName);
+        variables[varName].IsSensitive.ShouldBeTrue(
+            customMessage: $"with sensitive='True' attribute, variable MUST be flagged as sensitive. Got: {variables[varName].IsSensitive}. Without this, the value '{varValue}' would not be masked downstream.");
+        variables[varName].Value.ShouldBe(varValue,
+            customMessage: "even when sensitive, the parser still extracts the actual value (masking is downstream). Round-trip shape MUST be preserved.");
+    }
+
+    // ========================================================================
+    // D7.u1 — Output variable with special characters via base64-encoded value
+    //
+    // Production wire shape: `name="<b64>" value="<b64>"` (double quotes =
+    // base64). Used when the value contains characters incompatible with
+    // single-quoted plaintext (apostrophes, embedded newlines, control
+    // chars). Tests round-trip through the parser's TryDecodeBase64 path.
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_OutputVariableWithBase64Encoding_RoundTripsCorrectly()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string varName = "ConnectionString";
+        const string varValue = "Server=db1;User='admin';Password=\"p'\\\"\";";
+
+        var nameB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(varName));
+        var valueB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(varValue));
+
+        // Double-quoted form per ServiceMessageParser's regex.
+        var (scriptBody, scriptType) = OsScript.EmitServiceMessage(
+            $"##squid[setVariable name=\"{nameB64}\" value=\"{valueB64}\"]");
+
+        var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"base64-encoded setVariable script MUST exit 0. Logs:\n{result.AllText}");
+
+        var parser = new ServiceMessageParser();
+        var variables = parser.ParseOutputVariables(result.AllLogs.Select(l => l.Text));
+
+        variables.ShouldContainKey(varName,
+            customMessage: $"parser MUST decode base64-encoded NAME. Got logs:\n{result.AllText}\nParsed: [{string.Join(", ", variables.Keys)}]");
+
+        variables[varName].Value.ShouldBe(varValue,
+            customMessage: $"parser MUST decode base64-encoded VALUE preserving every special char (apostrophes, double-quotes, semicolons, equals). Got: '{variables[varName].Value}'");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -350,5 +469,31 @@ public sealed class TentacleDeployE2ETests
             => OperatingSystem.IsWindows()
                 ? ($"Start-Sleep -Seconds {seconds}; Write-Output '{text}'", ScriptType.PowerShell)
                 : ($"sleep {seconds}; echo '{text}'", ScriptType.Bash);
+
+        /// <summary>
+        /// Emits a service-message line literally to stdout. Used for
+        /// <c>##squid[setVariable ...]</c> tests where the value contains
+        /// single quotes (so the standard <see cref="Echo"/> single-quote
+        /// wrapper would break). Wraps with the SHELL'S OWN heredoc /
+        /// here-string so the inner string passes through verbatim.
+        /// </summary>
+        public static (string body, ScriptType type) EmitServiceMessage(string magicLine)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                // PowerShell here-string (single-quote = literal, no
+                // expansion). Body terminator '@ MUST be at start of a
+                // physical line.
+                var ps = "Write-Output @'\n" + magicLine + "\n'@";
+                return (ps, ScriptType.PowerShell);
+            }
+            else
+            {
+                // Bash heredoc with single-quoted delimiter — same "no
+                // expansion" semantics as the PowerShell variant.
+                var bash = "cat <<'SQUIDMSGEOF'\n" + magicLine + "\nSQUIDMSGEOF";
+                return (bash, ScriptType.Bash);
+            }
+        }
     }
 }
