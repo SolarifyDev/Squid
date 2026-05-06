@@ -108,6 +108,14 @@ public sealed class StubSquidServer : IAsyncDisposable
     public int ServerPort { get; }
 
     /// <summary>
+    /// Underlying Halibut runtime — exposed for Phase 12.J.E+ tests that
+    /// need to construct production <see cref="Squid.Core.Services.DeploymentExecution.Transport.IHalibutClientFactory"/>
+    /// instances pointing at this stub. Tests that just use
+    /// <c>DispatchAndObserve*Async</c> don't need this.
+    /// </summary>
+    public HalibutRuntime HalibutRuntime => _runtime;
+
+    /// <summary>
     /// Snapshot of every <c>POST /api/machines/register/...</c> call
     /// received since the stub started. Tests assert on the request shape
     /// (machineName, roles, thumbprint, subscriptionId, listening URI, etc.).

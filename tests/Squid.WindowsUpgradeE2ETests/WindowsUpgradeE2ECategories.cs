@@ -91,4 +91,22 @@ public static class WindowsUpgradeE2ECategories
     /// branches in each test method.
     /// </summary>
     public const string TentacleDeploy = "TentacleDeployE2E";
+
+    /// <summary>
+    /// Phase 12.J.E E2E coverage for the production
+    /// <c>WindowsTentacleUpgradeStrategy.UpgradeAsync</c> end-to-end:
+    /// strategy constructs the outer wrapper, dispatches via Halibut to a
+    /// real listening agent, observes via real <c>HalibutScriptObserver</c>,
+    /// maps the script result to <c>MachineUpgradeOutcome</c>. Tier 🟢
+    /// high-fidelity — every component is production code, only the
+    /// Squid server is replaced by <see cref="Infrastructure.StubSquidServer"/>.
+    ///
+    /// <para>Coverage delta vs <c>WindowsUpgradeWrapperE2ETests</c>: that
+    /// suite tests <c>BuildOuterWrapper</c> in isolation by running the
+    /// returned PowerShell directly. This category adds the FULL
+    /// dispatch+observe path through Halibut RPC, so a regression in
+    /// <c>HalibutClientFactory</c>, <c>HalibutScriptObserver</c>, or the
+    /// outcome mapper surfaces here.</para>
+    /// </summary>
+    public const string TentacleUpgrade = "TentacleUpgradeE2E";
 }
