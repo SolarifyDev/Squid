@@ -64,6 +64,61 @@ public sealed class MultiSyntaxScriptDispatchTests
         finally { TryDelete(workDir); }
     }
 
+    [Fact]
+    public void WriteScriptFile_PowerShellSyntax_PrependsUtf8OutputEncodingPreamble()
+    {
+        // Windows powershell.exe + (in some host configs) pwsh.exe default
+        // $OutputEncoding to the OEM codepage. Without an explicit reset to
+        // UTF-8 before user code runs, Write-Output of non-ASCII (中文 / emoji)
+        // is encoded into the OEM codepage and chars not representable there
+        // become '?'. The preamble pins both encoding variables to UTF-8 so
+        // the captured-log layer round-trips Chinese / emoji unchanged.
+        // Pinned by Pwsh_UnicodeOutput_EncodedCorrectly E2E on windows-latest.
+        var workDir = NewWorkDir();
+        try
+        {
+            LocalScriptService.WriteScriptFile(workDir, "Write-Output '你好'", ScriptType.PowerShell);
+
+            var path = Path.Combine(workDir, "script.ps1");
+            var content = File.ReadAllText(path);
+
+            content.ShouldContain("$OutputEncoding", customMessage:
+                "PowerShell preamble must set $OutputEncoding so non-ASCII output round-trips on Windows.");
+            content.ShouldContain("[Console]::OutputEncoding", customMessage:
+                "PowerShell preamble must also set [Console]::OutputEncoding — both knobs are needed.");
+            content.ShouldContain("UTF8Encoding", customMessage:
+                "Preamble must explicitly target UTF-8.");
+
+            // Preamble must come BEFORE user code, otherwise the user's first
+            // Write-Output runs under the wrong encoding.
+            var preambleIdx = content.IndexOf("$OutputEncoding", StringComparison.Ordinal);
+            var userCodeIdx = content.IndexOf("Write-Output", StringComparison.Ordinal);
+            preambleIdx.ShouldBeLessThan(userCodeIdx, customMessage:
+                "Preamble MUST precede user code — order is load-bearing.");
+        }
+        finally { TryDelete(workDir); }
+    }
+
+    [Fact]
+    public void WriteScriptFile_NonPowerShellSyntax_DoesNotGetThePowerShellPreamble()
+    {
+        // Defensive: bash / python / csharp / fsharp must NOT get the PowerShell
+        // preamble — pasting `$OutputEncoding=...` into a bash script breaks the
+        // script with a syntax error on the very first line.
+        var workDir = NewWorkDir();
+        try
+        {
+            LocalScriptService.WriteScriptFile(workDir, "echo hi", ScriptType.Bash);
+
+            var path = Path.Combine(workDir, "script.sh");
+            var content = File.ReadAllText(path);
+
+            content.ShouldNotContain("$OutputEncoding");
+            content.ShouldNotContain("[Console]::OutputEncoding");
+        }
+        finally { TryDelete(workDir); }
+    }
+
     [Theory]
     [InlineData(ScriptType.Bash, "script.sh")]
     [InlineData(ScriptType.CSharp, "script.csx")]

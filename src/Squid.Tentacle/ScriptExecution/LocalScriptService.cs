@@ -769,13 +769,44 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     {
         var scriptPath = Path.Combine(workDir, ScriptFileNameFor(syntax));
 
-        File.WriteAllText(scriptPath, scriptBody, EncodingFor(syntax));
+        var content = syntax == ScriptType.PowerShell
+            ? PowerShellUtf8Preamble + scriptBody
+            : scriptBody;
+
+        File.WriteAllText(scriptPath, content, EncodingFor(syntax));
 
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             File.SetUnixFileMode(scriptPath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                 UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
     }
+
+    /// <summary>
+    /// Forces UTF-8 stdout encoding inside the spawned PowerShell process.
+    ///
+    /// <para><b>Why this is needed:</b> on Windows, both <c>powershell.exe</c> 5.1
+    /// (always) AND <c>pwsh.exe</c> 7.x (in some host configurations on
+    /// GHA <c>windows-latest</c> + non-en-US locales) default <c>$OutputEncoding</c>
+    /// and/or <c>[Console]::OutputEncoding</c> to the host's OEM codepage
+    /// (cp437 / cp936 / cp932 …). When a script does <c>Write-Output '你好'</c>,
+    /// PowerShell encodes the chars via that OEM codepage; chars not representable
+    /// in the codepage become <c>?</c>. The .NET parent process then decodes the
+    /// already-mangled bytes via <see cref="ProcessStartInfo.StandardOutputEncoding"/>
+    /// — but the chars are gone before they hit the pipe.</para>
+    ///
+    /// <para><b>The fix:</b> prepend a one-liner that hard-pins both encoding
+    /// variables to BOM-less UTF-8 BEFORE the user's script runs. Cheap, idempotent,
+    /// safe on every PowerShell host (Windows + Linux pwsh-Core + macOS pwsh-Core).
+    /// Single-line keeps script line-number shift at exactly 2 (header comment + setter)
+    /// so error messages from operator scripts still point at meaningful lines.</para>
+    ///
+    /// <para><b>Pinned by</b> <c>Squid.Tentacle.Tests.ScriptExecution.WindowsPowerShellE2ETests
+    /// .Pwsh_UnicodeOutput_EncodedCorrectly</c> (Chinese chars round-trip through the captured
+    /// log) — the test that surfaced this bug on the GHA windows-latest runner.</para>
+    /// </summary>
+    internal const string PowerShellUtf8Preamble =
+        "# Squid: force UTF-8 stdout so non-ASCII chars (Chinese / emoji) round-trip through the captured-log layer.\n" +
+        "$OutputEncoding=[System.Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=$OutputEncoding\n";
 
     /// <summary>
     /// Canonical on-disk filename for a given script syntax. Each interpreter
