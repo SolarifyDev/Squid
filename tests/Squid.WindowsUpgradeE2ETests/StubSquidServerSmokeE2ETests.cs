@@ -124,4 +124,75 @@ public sealed class StubSquidServerSmokeE2ETests
             customMessage: "two stubs MUST have different cert thumbprints (cert subject uses unique GUID). " +
                            "If equal, certificate generation is caching — security test isolation is broken.");
     }
+
+    [Fact]
+    public async Task ServerUri_IsReachableForHttp()
+    {
+        // The REST endpoint backs Phase 12.I+ register tests. Smoke check:
+        // POST to a known register path returns 200 + a JSON envelope with
+        // serverThumbprint matching the stub's. If this fails, register
+        // E2Es will all fail with a misleading "registration failed" rather
+        // than the real cause "REST stub didn't bind".
+        await using var stub = await StubSquidServer.StartAsync();
+
+        using var http = new HttpClient { BaseAddress = stub.ServerUri };
+
+        var payload = new System.Net.Http.Json.JsonContent[0]; // not actually used
+        var body = """{"machineName":"smoke","thumbprint":"AABBCC","subscriptionId":"smoke-sub","spaceId":1,"roles":"","environments":"","agentVersion":"smoke"}""";
+        var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
+        var response = await http.PostAsync("/api/machines/register/tentacle-polling", content);
+
+        ((int)response.StatusCode).ShouldBe(200,
+            customMessage: $"smoke POST to {stub.ServerUri}api/machines/register/tentacle-polling MUST return 200 by default. " +
+                           $"Got {(int)response.StatusCode}. If non-200, the HttpListener loop didn't process the request — Phase 12.I tests will fail with misleading errors.");
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        responseBody.ShouldContain(stub.ServerThumbprint,
+            customMessage: $"response body MUST contain stub server thumbprint '{stub.ServerThumbprint}'. Got: {responseBody}");
+    }
+
+    [Fact]
+    public async Task ReceivedRegistrations_RecordsPostedRequest()
+    {
+        // A test that asserts on what the agent sent must trust the stub
+        // recorded the request shape correctly. This pins the parsing
+        // contract: machineName + thumbprint + subscriptionId all extracted
+        // from the POST body's JSON.
+        await using var stub = await StubSquidServer.StartAsync();
+
+        using var http = new HttpClient { BaseAddress = stub.ServerUri };
+        var body = """{"machineName":"smoke-machine","thumbprint":"AABBCCDD1234","subscriptionId":"smoke-sub-id","spaceId":7,"roles":"role-a","environments":"env-1","agentVersion":"1.6.0"}""";
+        var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        await http.PostAsync("/api/machines/register/tentacle-polling", content);
+
+        // ConcurrentBag is unordered but for one request it has one element.
+        stub.ReceivedRegistrations.Count.ShouldBe(1);
+        var record = stub.ReceivedRegistrations.First();
+
+        record.Kind.ShouldBe(RegistrationKind.Polling);
+        record.MachineName.ShouldBe("smoke-machine");
+        record.AgentThumbprint.ShouldBe("AABBCCDD1234");
+        record.SubscriptionId.ShouldBe("smoke-sub-id");
+        record.SpaceId.ShouldBe(7);
+        record.Roles.ShouldBe("role-a");
+        record.Environments.ShouldBe("env-1");
+        record.AgentVersion.ShouldBe("1.6.0");
+    }
+
+    [Fact]
+    public async Task ConfigureRegisterStatusCode_AppliesToNextResponse()
+    {
+        // Tests that need to inject an unhappy register response (401, 500,
+        // etc.) flip the status code via ConfigureRegisterStatusCode. Smoke
+        // check: 401 status flows through correctly.
+        await using var stub = await StubSquidServer.StartAsync();
+        stub.ConfigureRegisterStatusCode(401);
+
+        using var http = new HttpClient { BaseAddress = stub.ServerUri };
+        var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/api/machines/register/tentacle-polling", content);
+
+        ((int)response.StatusCode).ShouldBe(401);
+    }
 }

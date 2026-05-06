@@ -64,4 +64,18 @@ public static class WindowsUpgradeE2ECategories
     /// production coverage.
     /// </summary>
     public const string StubSquidServer = "StubSquidServerE2E";
+
+    /// <summary>
+    /// Phase 12.I E2E coverage for the production
+    /// <c>squid-tentacle register</c> CLI: handshake against
+    /// <see cref="Infrastructure.StubSquidServer"/>'s REST endpoint,
+    /// config-file persistence at <c>PlatformPaths.GetInstanceConfigPath</c>,
+    /// and InstanceRegistry update. Tier 🟢 high-fidelity — drives
+    /// <c>RegisterCommand.ExecuteAsync</c> directly with real HTTP +
+    /// real JSON config write. Cross-platform (runs on macOS / Linux /
+    /// Windows) — Squid.Tentacle's register flow is OS-agnostic except
+    /// for the Linux ownership-handover step which is covered separately
+    /// in the Linux phase.
+    /// </summary>
+    public const string TentacleRegister = "TentacleRegisterE2E";
 }

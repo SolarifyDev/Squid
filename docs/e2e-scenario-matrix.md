@@ -94,24 +94,25 @@ This is the authoritative ledger for **every** Tentacle E2E scenario across Wind
 
 | ID | Scenario | Win | Lin | Phase | Status | Tier | Notes |
 |---|---|---|---|---|---|---|---|
-| C1.h | Listening register against stub server → exit 0; config file persisted with thumbprint + server URL | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C1.u1 | Server responds 401 → exit non-zero with "API key rejected" | ✓ | ✓ | 12.I | ⚪ | 🟢 | stub returns 401 |
-| C1.u2 | Server unreachable → exit non-zero with "could not connect" | ✓ | ✓ | 12.I | ⚪ | 🟢 | stub stopped before register |
-| C2.h | Polling register with `--comms-url` → config file persisted; subscription ID created; cert thumbprint registered | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C2.u1 | `--comms-url` unreachable → exit non-zero | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C3.u1 | Missing `--server` → CLI usage error exit 1 | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C4.h | Self-signed server cert + `--thumbprint <fingerprint>` pin → handshake succeeds | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C4.u1 | Wrong `--thumbprint` → handshake rejects with "thumbprint mismatch" | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C4.u2 | No `--thumbprint`, server cert untrusted → handshake fails with "untrusted issuer" | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C5.h | Config file persists at `PlatformPaths.GetInstanceConfigPath` for Default instance | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C5.h2 | Config file persists at per-instance path for `--instance Foo` | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C5.u1 | Config dir read-only → exit non-zero with permission error | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C6.h | Re-register over existing config → updates fields, preserves cert/subscription | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C7.h | Multiple `--role` args accumulate; multiple `--environment` accumulate | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C7.u1 | Empty role list → CLI rejects | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C8.h | `register` adds machine to InstanceRegistry | ✓ | ✓ | 12.I | ⚪ | 🟢 | |
-| C9.h | Linux: sudo register → ownership handover to `squid-tentacle` user | — | ✓ | 12.I | ⚪ | 🟢 | runs as root, asserts uid:gid post-register |
-| C9.u1 | Linux: register without sudo, default config dir → permission error | — | ✓ | 12.I | ⚪ | 🟢 | |
+| C1.h | Listening register against stub server → exit 0; config file persisted with thumbprint + server URL | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `Listening_HappyPath_PersistsConfigAndCallsServer` |
+| C1.u1 | Server responds 401 → exit non-zero with "API key rejected" | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `Listening_ServerReturns401_ExitsNonZero`; surfaces as HttpRequestException |
+| C1.u2 | Server unreachable → exit non-zero with "could not connect" | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `ServerUnreachable_ExitsNonZero` |
+| C2.h | Polling register with `--comms-url` → config file persisted; subscription ID created; cert thumbprint registered | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `Polling_HappyPath_PersistsConfigAndCallsServer` |
+| C2.u1 | `--comms-url` unreachable → exit non-zero | ✓ | ✓ | 12.I | ⚪ | 🟢 | shares unreachable-server failure mode with C1.u2 |
+| C3.u1 | Missing `--server` → CLI usage error exit 1 | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `NoServerUrl_ExitsWithUsageError` |
+| C4.h | Self-signed server cert + `--thumbprint <fingerprint>` pin → handshake succeeds | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | requires HTTPS stub; deferred to follow-up |
+| C4.u1 | Wrong `--thumbprint` → handshake rejects with "thumbprint mismatch" | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | requires HTTPS stub |
+| C4.u2 | No `--thumbprint`, server cert untrusted → handshake fails with "untrusted issuer" | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | requires HTTPS stub |
+| C5.h | Config file persists at `PlatformPaths.GetInstanceConfigPath` for Default instance | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered alongside C1.h (same code path) |
+| C5.h2 | Config file persists at per-instance path for `--instance Foo` | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `NamedInstance_PersistsConfigAtInstancePath` |
+| C5.u1 | Config dir read-only → exit non-zero with permission error | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | needs OS-specific read-only dir setup; deferred |
+| C6.h | Re-register over existing config → updates fields, preserves cert/subscription | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | needs cert reload edge-case wiring; deferred |
+| C7.h | `--role A,B,C` (comma-separated) accumulates; multiple `--environment` accumulates | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `CommaSeparatedRoles_AllPersistedInConfig` + regression-pin `RepeatedRoleFlags_OnlyLastValueWins_KnownBug` |
+| C7.u1 | Empty role list → CLI rejects | ✓ | ✓ | 12.I.2 | ⚪ | 🟢 | currently allowed by impl; verify desired contract first |
+| C8.h | `register` adds machine to InstanceRegistry | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `Register_AddsInstanceToRegistry` |
+| C-bonus | `--bearer-token` sets Authorization header (mutually exclusive with --api-key) | ✓ | ✓ | 12.I | 🟢 | 🟢 | covered as `BearerToken_AttachesAuthorizationHeader` |
+| C9.h | Linux: sudo register → ownership handover to `squid-tentacle` user | — | ✓ | 12.I.2 | ⚪ | 🟢 | runs as root, asserts uid:gid post-register; deferred to Linux phase |
+| C9.u1 | Linux: register without sudo, default config dir → permission error | — | ✓ | 12.I.2 | ⚪ | 🟢 | deferred to Linux phase |
 
 **Section C total: 18 scenarios**
 
