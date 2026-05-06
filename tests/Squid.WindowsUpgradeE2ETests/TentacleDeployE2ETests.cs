@@ -1,4 +1,5 @@
 using System.Text;
+using Halibut;
 using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Message.Contracts.Tentacle;
 using Squid.WindowsUpgradeE2ETests.Infrastructure;
@@ -411,6 +412,105 @@ public sealed class TentacleDeployE2ETests
             customMessage: $"parser MUST decode base64-encoded VALUE preserving every special char (apostrophes, double-quotes, semicolons, equals). Got: '{variables[varName].Value}'");
     }
 
+    // ========================================================================
+    // D6.h — File transfer: server attaches files to StartScriptCommand →
+    // agent writes them to workDir → script reads them
+    //
+    // Production path: deployment package is bundled as ScriptFile[] (e.g.
+    // Calamari + variables.json + sensitiveVariables.json). Halibut wires
+    // the byte stream over RPC; LocalScriptService.WriteAdditionalFiles
+    // unpacks them into the workspace before the script runs.
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_SingleFileTransfer_AgentWritesAndScriptReads()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string fileName = "input-marker.txt";
+        const string fileContent = "marker-AABBCC1234-from-server-to-agent";
+
+        var ticket = new ScriptTicket($"e2e-{Guid.NewGuid():N}");
+
+        // Read the file the server sent + echo its contents — proves the
+        // agent received + persisted the file before script execution.
+        var (scriptBody, scriptType) = OsScript.ReadFile(fileName);
+
+        var command = new StartScriptCommand(
+            ticket,
+            scriptBody,
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(1),
+            null,
+            Array.Empty<string>(),
+            ticket.TaskId,
+            TimeSpan.Zero,
+            new ScriptFile(fileName, DataStream.FromBytes(Encoding.UTF8.GetBytes(fileContent))))
+        {
+            ScriptSyntax = scriptType
+        };
+
+        var result = await server.DispatchAndObserveListeningAsync(agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"file-read script MUST exit 0 — proves file was present + readable. Logs:\n{result.AllText}");
+        result.AllText.ShouldContain(fileContent,
+            customMessage: $"echoed file content MUST match what server sent. Got:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // D6.h2 — Multiple files in single dispatch all transferred
+    //
+    // Mirrors the production deployment-package shape: Calamari +
+    // variables.json + sensitiveVariables.json (3+ files per dispatch).
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_MultipleFileTransfer_AllFilesAvailableToScript()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string nameA = "first-file.txt";
+        const string contentA = "first-content-FFAA";
+        const string nameB = "second-file.txt";
+        const string contentB = "second-content-EEBB";
+        const string nameC = "third-file.txt";
+        const string contentC = "third-content-DDCC";
+
+        var ticket = new ScriptTicket($"e2e-{Guid.NewGuid():N}");
+
+        var (scriptBody, scriptType) = OsScript.ReadMultipleFiles(nameA, nameB, nameC);
+
+        var command = new StartScriptCommand(
+            ticket,
+            scriptBody,
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(1),
+            null,
+            Array.Empty<string>(),
+            ticket.TaskId,
+            TimeSpan.Zero,
+            new ScriptFile(nameA, DataStream.FromBytes(Encoding.UTF8.GetBytes(contentA))),
+            new ScriptFile(nameB, DataStream.FromBytes(Encoding.UTF8.GetBytes(contentB))),
+            new ScriptFile(nameC, DataStream.FromBytes(Encoding.UTF8.GetBytes(contentC))))
+        {
+            ScriptSyntax = scriptType
+        };
+
+        var result = await server.DispatchAndObserveListeningAsync(agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"multi-file read script MUST exit 0. Logs:\n{result.AllText}");
+
+        result.AllText.ShouldContain(contentA, customMessage: $"file A content missing — file A wasn't transferred. Logs:\n{result.AllText}");
+        result.AllText.ShouldContain(contentB, customMessage: $"file B content missing — file B wasn't transferred. Logs:\n{result.AllText}");
+        result.AllText.ShouldContain(contentC, customMessage: $"file C content missing — file C wasn't transferred. Logs:\n{result.AllText}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -481,6 +581,35 @@ public sealed class TentacleDeployE2ETests
             => OperatingSystem.IsWindows()
                 ? ($"Start-Sleep -Seconds {seconds}; Write-Output '{text}'", ScriptType.PowerShell)
                 : ($"sleep {seconds}; echo '{text}'", ScriptType.Bash);
+
+        /// <summary>
+        /// Reads a file relative to the script's working directory and
+        /// echoes its contents to stdout. The agent writes additional
+        /// files to the script's workDir BEFORE script execution (per
+        /// <c>LocalScriptService.WriteAdditionalFiles</c>) so the file
+        /// is referencable by bare filename.
+        /// </summary>
+        public static (string body, ScriptType type) ReadFile(string fileName)
+            => OperatingSystem.IsWindows()
+                ? ($"Get-Content '{fileName}' -Raw", ScriptType.PowerShell)
+                : ($"cat '{fileName}'", ScriptType.Bash);
+
+        /// <summary>
+        /// Reads multiple files in sequence. Each file's content lands on
+        /// stdout. Used to verify that several <c>ScriptFile</c> attachments
+        /// in one dispatch all reach the agent's workDir.
+        /// </summary>
+        public static (string body, ScriptType type) ReadMultipleFiles(params string[] fileNames)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var ps = string.Join("\n", fileNames.Select(n => $"Get-Content '{n}' -Raw"));
+                return (ps, ScriptType.PowerShell);
+            }
+
+            var bash = string.Join("\n", fileNames.Select(n => $"cat '{n}'"));
+            return (bash, ScriptType.Bash);
+        }
 
         /// <summary>
         /// Emits a service-message line literally to stdout. Used for
