@@ -170,6 +170,116 @@ public sealed class TentacleDeployE2ETests
             customMessage: $"polling echo output MUST be captured. Got:\n{result.AllText}");
     }
 
+    // ========================================================================
+    // D9.h — Long-running script (sleep 3s) completes; full output captured
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_LongRunningScript_CompletesAndCapturesAllOutput()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        var (scriptBody, scriptType) = OsScript.SleepThenEcho(3, "after-3s-sleep");
+
+        var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType, observeTimeout: TimeSpan.FromSeconds(20));
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"long-running script MUST exit 0. Logs:\n{result.AllText}");
+        result.AllText.ShouldContain("after-3s-sleep",
+            customMessage: $"output emitted AFTER the 3s sleep MUST be captured — proves the status-poll loop kept polling and captured late logs. Got:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // D10.h — Concurrent dispatches to same agent are isolated by ticket
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_ConcurrentDispatches_OutputsIsolatedByTicket()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        // Three scripts dispatched in parallel. Each writes a unique
+        // marker. Assertions verify each result captures ONLY its own
+        // marker — no interleaving across tickets. NoIsolation isolation
+        // level lets them run concurrently agent-side; the per-ticket
+        // log isolation in LocalScriptService is what we're pinning.
+        var (bodyA, typeA) = OsScript.Echo("ticket-A-marker");
+        var (bodyB, typeB) = OsScript.Echo("ticket-B-marker");
+        var (bodyC, typeC) = OsScript.Echo("ticket-C-marker");
+
+        var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA);
+        var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB);
+        var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC);
+
+        await Task.WhenAll(taskA, taskB, taskC);
+
+        var resultA = await taskA;
+        var resultB = await taskB;
+        var resultC = await taskC;
+
+        resultA.ExitCode.ShouldBe(0);
+        resultB.ExitCode.ShouldBe(0);
+        resultC.ExitCode.ShouldBe(0);
+
+        // Each ticket's logs MUST contain ONLY its own marker, not the others.
+        resultA.AllText.ShouldContain("ticket-A-marker");
+        resultA.AllText.ShouldNotContain("ticket-B-marker",
+            customMessage: $"ticket A's logs MUST NOT contain ticket B's output — log isolation broken. A logs:\n{resultA.AllText}");
+        resultA.AllText.ShouldNotContain("ticket-C-marker",
+            customMessage: $"ticket A's logs MUST NOT contain ticket C's output. A logs:\n{resultA.AllText}");
+
+        resultB.AllText.ShouldContain("ticket-B-marker");
+        resultB.AllText.ShouldNotContain("ticket-A-marker");
+        resultB.AllText.ShouldNotContain("ticket-C-marker");
+
+        resultC.AllText.ShouldContain("ticket-C-marker");
+        resultC.AllText.ShouldNotContain("ticket-A-marker");
+        resultC.AllText.ShouldNotContain("ticket-B-marker");
+    }
+
+    // ========================================================================
+    // D13.h — Unicode output (CJK + em-dash) captured cleanly
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_UnicodeOutput_PreservedThroughHalibutAndShell()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        // Three classes of non-ASCII characters that have hit production
+        // before:
+        //   - CJK characters (Chinese/Japanese/Korean) — multi-byte UTF-8
+        //   - em-dash — round-2 P12.G fix territory; PowerShell 5.1 ANSI
+        //     decoder mangles these without UTF-8 BOM
+        //   - emoji — common in modern logs / PR descriptions
+        const string Marker = "hello-世界-—-🚀-end";  // hello-世界-—-🚀-end
+
+        var (scriptBody, scriptType) = OsScript.Echo(Marker);
+
+        var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"unicode echo script MUST exit 0. Logs:\n{result.AllText}");
+
+        // CJK preserved.
+        result.AllText.ShouldContain("世界",
+            customMessage: $"CJK chars (世界 = 'world' in Chinese) MUST be preserved through Halibut serialization + shell output capture. Got:\n{result.AllText}");
+
+        // Em-dash preserved (round-2 lesson — pwsh 5.1 default ANSI codepage corrupts this).
+        result.AllText.ShouldContain("—",
+            customMessage: $"em-dash (U+2014) MUST be preserved. Round-2 fix territory. Got:\n{result.AllText}");
+
+        // Emoji preserved (surrogate pair).
+        result.AllText.ShouldContain("🚀",
+            customMessage: $"emoji (rocket 🚀) MUST be preserved through UTF-8 encoding pipeline. Got:\n{result.AllText}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -179,7 +289,7 @@ public sealed class TentacleDeployE2ETests
     /// route through <see cref="StubSquidServer.DispatchAndObserveListeningAsync"/>
     /// or <c>DispatchAndObservePollingAsync</c>.
     /// </summary>
-    private static async Task<ObservedScriptResult> DispatchAndObserveAsync(StubSquidServer server, Uri agent, string agentThumbprint, string agentSubscriptionId, string scriptBody, ScriptType scriptType)
+    private static async Task<ObservedScriptResult> DispatchAndObserveAsync(StubSquidServer server, Uri agent, string agentThumbprint, string agentSubscriptionId, string scriptBody, ScriptType scriptType, TimeSpan? observeTimeout = null)
     {
         var ticket = new ScriptTicket($"e2e-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(ticket, scriptBody, ScriptIsolationLevel.NoIsolation, TimeSpan.FromMinutes(1), null, Array.Empty<string>(), ticket.TaskId, TimeSpan.Zero)
@@ -187,18 +297,20 @@ public sealed class TentacleDeployE2ETests
             ScriptSyntax = scriptType
         };
 
+        var timeout = observeTimeout ?? TimeSpan.FromSeconds(30);
+
         if (agent != null)
-            return await server.DispatchAndObserveListeningAsync(agent, agentThumbprint, command, TimeSpan.FromSeconds(30), CancellationToken.None);
+            return await server.DispatchAndObserveListeningAsync(agent, agentThumbprint, command, timeout, CancellationToken.None);
 
         if (agentSubscriptionId != null)
-            return await server.DispatchAndObservePollingAsync(agentSubscriptionId, agentThumbprint, command, TimeSpan.FromSeconds(30), CancellationToken.None);
+            return await server.DispatchAndObservePollingAsync(agentSubscriptionId, agentThumbprint, command, timeout, CancellationToken.None);
 
         throw new ArgumentException("Either agent (listening URI) or agentSubscriptionId (polling) must be supplied");
     }
 
     /// <summary>Listening-agent overload — convenience for the common case.</summary>
-    private static Task<ObservedScriptResult> DispatchAndObserveAsync(StubSquidServer server, Uri agentUri, string agentThumbprint, string scriptBody, ScriptType scriptType)
-        => DispatchAndObserveAsync(server, agentUri, agentThumbprint, agentSubscriptionId: null, scriptBody, scriptType);
+    private static Task<ObservedScriptResult> DispatchAndObserveAsync(StubSquidServer server, Uri agentUri, string agentThumbprint, string scriptBody, ScriptType scriptType, TimeSpan? observeTimeout = null)
+        => DispatchAndObserveAsync(server, agentUri, agentThumbprint, agentSubscriptionId: null, scriptBody, scriptType, observeTimeout);
 
     /// <summary>
     /// Per-OS script body builder. Tests use these to write OS-agnostic
@@ -233,5 +345,10 @@ public sealed class TentacleDeployE2ETests
             => OperatingSystem.IsWindows()
                 ? ($"[Console]::Error.WriteLine('{text}')", ScriptType.PowerShell)
                 : ($"echo '{text}' >&2", ScriptType.Bash);
+
+        public static (string body, ScriptType type) SleepThenEcho(int seconds, string text)
+            => OperatingSystem.IsWindows()
+                ? ($"Start-Sleep -Seconds {seconds}; Write-Output '{text}'", ScriptType.PowerShell)
+                : ($"sleep {seconds}; echo '{text}'", ScriptType.Bash);
     }
 }
