@@ -426,6 +426,13 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
                 # avoids the race.
                 $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(2))
 
+                # EndBoundary is REQUIRED in V2 task XML when DeleteExpiredTaskAfter
+                # is used. New-ScheduledTaskTrigger doesn't expose -EndBoundary, so
+                # we set it directly. Format MUST be ISO 8601 (yyyy-MM-ddTHH:mm:ss);
+                # without this, Register-ScheduledTask fails with "The task XML is
+                # missing a required element or attribute" on Windows Server 2022.
+                $trigger.EndBoundary = (Get-Date).AddHours(1).ToString('yyyy-MM-ddTHH:mm:ss')
+
                 # SYSTEM identity, RunLevel Highest = elevated by default. Same
                 # privilege level as the LocalSystem service tree the wrapper
                 # runs in; Phase B's Stop-Service / Move-Item / Start-Service

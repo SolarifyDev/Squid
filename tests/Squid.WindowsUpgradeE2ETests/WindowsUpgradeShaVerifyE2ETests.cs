@@ -343,6 +343,13 @@ exit 0
                     if (Routes.TryGetValue(path, out var route))
                     {
                         ctx.Response.StatusCode = route.status;
+                        // CRITICAL: Set Content-Type explicitly. Without it, PowerShell 5.1's
+                        // Invoke-WebRequest may auto-detect octet-stream and return .Content
+                        // as byte[] instead of string. The .ps1's `-split '\s+'` then operates
+                        // on a byte[] and produces no usable hex token → the regex fails →
+                        // "non-hex / wrong length" path executes when the test expected the
+                        // valid-SHA path. text/plain forces string interpretation.
+                        ctx.Response.ContentType = "text/plain; charset=utf-8";
                         var bytes = Encoding.UTF8.GetBytes(route.body);
                         ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
                     }

@@ -102,7 +102,30 @@ public sealed class WindowsServiceFixture : IDisposable
         TryDeleteService(_serviceName);
 
         Directory.CreateDirectory(_installDir);
-        File.Copy(testServiceExeSourcePath, ServiceExePath, overwrite: true);
+
+        // Copy the ENTIRE source directory (not just the .exe). A framework-
+        // dependent .NET 9 service exe is just an apphost shim; it needs its
+        // sibling files (.dll, .runtimeconfig.json, .deps.json, dependent
+        // assemblies like System.ServiceProcess.ServiceController.dll) in the
+        // SAME directory to resolve the managed entry point. SCM-spawned
+        // processes get a minimal env, so PATH/probing tricks don't help —
+        // the only reliable path is "co-locate everything".
+        // Without this, apphost launches → tries to load the managed DLL →
+        // can't find runtimeconfig.json → exits silently before calling
+        // ServiceBase.Run → SCM times out → "[SC] StartService FAILED 1053:
+        // The service did not respond to the start or control request in a
+        // timely fashion." Caught the first time the fixture ran on a real
+        // windows-latest GHA runner.
+        var sourceDir = Path.GetDirectoryName(testServiceExeSourcePath)
+            ?? throw new InvalidOperationException($"Test service source path has no directory: {testServiceExeSourcePath}");
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, sourceFile);
+            var destFile = Path.Combine(_installDir, relativePath);
+            var destDir = Path.GetDirectoryName(destFile);
+            if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+            File.Copy(sourceFile, destFile, overwrite: true);
+        }
 
         // Test service reads version.txt on Start; pre-populate it with the
         // caller's initial version so the marker file content is predictable.
