@@ -109,4 +109,13 @@ public static class WindowsUpgradeE2ECategories
     /// outcome mapper surfaces here.</para>
     /// </summary>
     public const string TentacleUpgrade = "TentacleUpgradeE2E";
+
+    /// <summary>
+    /// Phase 12.L E2E coverage for multi-instance scenarios — two or
+    /// more Windows services installed concurrently on the same SCM
+    /// without collision; uninstalling one preserves the others.
+    /// Tier 🟢 high-fidelity — drives real <see cref="Squid.Tentacle.ServiceHost.WindowsServiceHost"/>
+    /// against real sc.exe. Windows-only (uses sc.exe).
+    /// </summary>
+    public const string TentacleMultiInstance = "TentacleMultiInstanceE2E";
 }
