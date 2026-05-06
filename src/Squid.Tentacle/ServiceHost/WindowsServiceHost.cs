@@ -237,14 +237,25 @@ public sealed class WindowsServiceHost : IServiceHost
             ? DefaultServiceUser
             : request.RunAsUser;
 
+        // sc.exe expects each `key=` and its value as TWO SEPARATE argv tokens.
+        // Microsoft docs show the COMMAND-LINE form `binPath= "value"` (one space-
+        // separated token + one quoted-value token), but when a host packs both
+        // into ONE ProcessStartInfo.ArgumentList element, .NET escapes the whole
+        // thing as a single quoted argv → sc.exe receives `binPath= "value"` as
+        // one token and bails with "Invalid <next-key>= field" on the FOLLOWING
+        // option (because its parser is now mis-aligned). Splitting key/value
+        // produces the wire shape sc.exe actually parses correctly.
+        // Pinned by tests/Squid.WindowsUpgradeE2ETests/Infrastructure/WindowsServiceFixture
+        // E2E (real sc.exe on windows-latest) — 1.6.2's fixture-shape was the same as
+        // production's; both fail identically without this fix.
         return new[]
         {
             "create",
             request.ServiceName,
-            $"binPath= {binPathValue}",
-            $"DisplayName= {displayName}",
-            "start= auto",
-            $"obj= {runAsUser}"
+            "binPath=", binPathValue,
+            "DisplayName=", displayName,
+            "start=", "auto",
+            "obj=", runAsUser
         };
     }
 
@@ -293,12 +304,14 @@ public sealed class WindowsServiceHost : IServiceHost
 
         var actionsValue = string.Join('/', actionTokens);
 
+        // Same key/value-split argv shape as BuildScCreateArgs — see the
+        // comment there for why packing `key= value` into one argv breaks sc.exe.
         return new[]
         {
             "failure",
             serviceName,
-            $"reset= {resetSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            $"actions= {actionsValue}"
+            "reset=", resetSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "actions=", actionsValue
         };
     }
 

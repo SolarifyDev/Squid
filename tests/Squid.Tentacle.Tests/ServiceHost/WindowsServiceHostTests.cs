@@ -9,17 +9,18 @@ namespace Squid.Tentacle.Tests.ServiceHost;
 /// pin the <c>sc.exe</c> argv contract for Windows Service
 /// install/uninstall/start/stop/status.
 ///
-/// <para><b>Why this exists</b>:  the <see cref="WindowsServiceHost"/>
-/// was a stub that always returned exit code 2 with "not yet implemented".
-///  ships the real impl shelling out to <c>sc.exe</c>; these tests
-/// pin the EXACT argv shape so any drift (dropped <c>start= auto</c>, missing
-/// space after <c>=</c>, reordered args) is compile/test-time visible
-/// before hitting a real Windows runner.</para>
-///
-/// <para><b>sc.exe argv quirk</b>: every option is one argv element of the
-/// form <c>"key= value"</c> with a MANDATORY single space after <c>=</c>.
-/// Without the space, sc.exe treats it as a positional arg and the create
-/// fails with a confusing usage error. The tests pin the literal space.</para>
+/// <para><b>sc.exe argv shape (CORRECTED)</b>: each option is delivered as
+/// <b>TWO separate argv tokens</b>: a key with trailing <c>=</c> (e.g.
+/// <c>"binPath="</c>) followed by the value (e.g. <c>"\"C:\\path\\to.exe\" run"</c>).
+/// The Microsoft docs example <c>sc.exe create NewService binPath= "..."</c>
+/// is a COMMAND-LINE form — when parsed by Windows CommandLineToArgvW the
+/// key and value become two separate argvs. Earlier versions of this builder
+/// packed both into a single argv (<c>"binPath= ..."</c>) which .NET then
+/// quoted-as-one-token, causing sc.exe to read the WHOLE thing as the binPath
+/// value and bail on the next option with <c>ERROR: Invalid type= field</c>.
+/// The bug was caught the first time the production argv shape ran against
+/// real <c>sc.exe</c> on a windows-latest runner via
+/// <c>WindowsServiceFixture</c> in the upgrade-pipeline E2E suite.</para>
 /// </summary>
 [Trait("Category", TentacleTestCategories.Core)]
 public sealed class WindowsServiceHostTests
@@ -38,26 +39,30 @@ public sealed class WindowsServiceHostTests
             WorkingDirectory = @"C:\Program Files\Squid Tentacle"
         });
 
-        args.Length.ShouldBe(6);
+        // 10 elements = 2 verb/name + 4 key/value pairs.
+        args.Length.ShouldBe(10);
         args[0].ShouldBe("create");
         args[1].ShouldBe("squid-tentacle");
 
-        // binPath= must have:
-        //  - mandatory space after =
-        //  - exe path wrapped in escaped double quotes (defends against
-        //    spaces in install path: "C:\Program Files\…")
-        //  - args appended after the closing quote, space-separated
-        args[2].ShouldBe(@"binPath= ""C:\Program Files\Squid Tentacle\Squid.Tentacle.exe"" run");
+        // binPath= and its value are TWO separate argvs.
+        // The value: exe path wrapped in escaped double quotes (defends
+        // against spaces in install path: "C:\Program Files\…") + args
+        // appended after the closing quote, space-separated.
+        args[2].ShouldBe("binPath=");
+        args[3].ShouldBe(@"""C:\Program Files\Squid Tentacle\Squid.Tentacle.exe"" run");
 
-        args[3].ShouldBe("DisplayName= Squid Tentacle Agent (Default)");
+        args[4].ShouldBe("DisplayName=");
+        args[5].ShouldBe("Squid Tentacle Agent (Default)");
 
-        // start= auto means the SCM auto-starts the service at boot. Dropping
-        // this would leave the service installed but not running on reboot.
-        args[4].ShouldBe("start= auto");
+        // start= auto — SCM auto-starts the service at boot. Dropping this
+        // would leave the service installed but not running on reboot.
+        args[6].ShouldBe("start=");
+        args[7].ShouldBe("auto");
 
         // obj= LocalSystem is the explicit equivalent of sc.exe's default;
         // pinning it here makes the contract visible in audit logs.
-        args[5].ShouldBe("obj= LocalSystem");
+        args[8].ShouldBe("obj=");
+        args[9].ShouldBe("LocalSystem");
     }
 
     [Fact]
@@ -65,7 +70,7 @@ public sealed class WindowsServiceHostTests
     {
         // ExecArgs is empty → binPath value is just the quoted exe with no
         // trailing whitespace. Defends against an empty trailing arg that
-        // would confuse sc.exe's parser ("binPath= "C:\foo.exe" ").
+        // would confuse sc.exe's parser.
         var args = WindowsServiceHost.BuildScCreateArgs(new ServiceInstallRequest
         {
             ServiceName = "squid-tentacle",
@@ -74,7 +79,8 @@ public sealed class WindowsServiceHostTests
             ExecArgs = Array.Empty<string>()
         });
 
-        args[2].ShouldBe(@"binPath= ""C:\Program Files\Squid\foo.exe""");
+        args[2].ShouldBe("binPath=");
+        args[3].ShouldBe(@"""C:\Program Files\Squid\foo.exe""");
     }
 
     [Fact]
@@ -89,7 +95,8 @@ public sealed class WindowsServiceHostTests
             ExecArgs = null!
         });
 
-        args[2].ShouldBe(@"binPath= ""C:\foo.exe""");
+        args[2].ShouldBe("binPath=");
+        args[3].ShouldBe(@"""C:\foo.exe""");
     }
 
     [Fact]
@@ -103,7 +110,8 @@ public sealed class WindowsServiceHostTests
             ExecArgs = new[] { "run", "--instance", "named-instance" }
         });
 
-        args[2].ShouldBe(@"binPath= ""C:\bin\foo.exe"" run --instance named-instance");
+        args[2].ShouldBe("binPath=");
+        args[3].ShouldBe(@"""C:\bin\foo.exe"" run --instance named-instance");
     }
 
     [Fact]
@@ -119,7 +127,8 @@ public sealed class WindowsServiceHostTests
             ExecStart = @"C:\foo.exe"
         });
 
-        args[3].ShouldBe("DisplayName= squid-tentacle");
+        args[4].ShouldBe("DisplayName=");
+        args[5].ShouldBe("squid-tentacle");
     }
 
     [Fact]
@@ -132,7 +141,8 @@ public sealed class WindowsServiceHostTests
             ExecStart = @"C:\foo.exe"
         });
 
-        args[3].ShouldBe("DisplayName= squid-tentacle");
+        args[4].ShouldBe("DisplayName=");
+        args[5].ShouldBe("squid-tentacle");
     }
 
     [Fact]
@@ -148,7 +158,8 @@ public sealed class WindowsServiceHostTests
             RunAsUser = ""
         });
 
-        args[5].ShouldBe("obj= LocalSystem");
+        args[8].ShouldBe("obj=");
+        args[9].ShouldBe("LocalSystem");
     }
 
     [Fact]
@@ -162,7 +173,8 @@ public sealed class WindowsServiceHostTests
             RunAsUser = null
         });
 
-        args[5].ShouldBe("obj= LocalSystem");
+        args[8].ShouldBe("obj=");
+        args[9].ShouldBe("LocalSystem");
     }
 
     [Fact]
@@ -179,7 +191,8 @@ public sealed class WindowsServiceHostTests
             RunAsUser = @".\squid-tentacle"
         });
 
-        args[5].ShouldBe(@"obj= .\squid-tentacle");
+        args[8].ShouldBe("obj=");
+        args[9].ShouldBe(@".\squid-tentacle");
     }
 
     // ── Trivial argv builders — pin the verbs ──────────────────────────────────
@@ -221,20 +234,16 @@ public sealed class WindowsServiceHostTests
         // restarts, 24h stable-runtime reset window. Mirrors systemd's
         // Restart=on-failure + RestartSec=10 + StartLimitBurst=3 trio.
         //
-        // sc failure argv shape:
-        //   sc failure <name> reset= <seconds> actions= restart/<ms>/restart/<ms>/...
-        //
-        // The mandatory single space after `reset=` and `actions=` is the
-        // SAME sc.exe quirk as BuildScCreateArgs — drop the space and sc
-        // parses the option as a positional arg → confusing usage error.
+        // sc failure argv shape: each `key=` and value as TWO argvs, same
+        // contract as BuildScCreateArgs.
         var args = WindowsServiceHost.BuildScFailureArgs("squid-tentacle");
 
         args.ShouldBe(new[]
         {
             "failure",
             "squid-tentacle",
-            "reset= 86400",
-            "actions= restart/10000/restart/10000/restart/10000"
+            "reset=", "86400",
+            "actions=", "restart/10000/restart/10000/restart/10000"
         });
     }
 
@@ -269,7 +278,8 @@ public sealed class WindowsServiceHostTests
         // systemd's StartLimitBurst=3 + StartLimitAction=none semantics.
         var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount, 10_000, 86_400);
 
-        args[3].ShouldBe($"actions= {expectedActionsTail}");
+        args[4].ShouldBe("actions=");
+        args[5].ShouldBe(expectedActionsTail);
     }
 
     [Fact]
@@ -277,11 +287,12 @@ public sealed class WindowsServiceHostTests
     {
         // The same delay is applied to every restart in the actions list — sc
         // failure doesn't support per-action delays (a real limitation vs
-        // systemd's `RestartSteps`/`RestartMaxDelaySec` for backoff). For
-        //  scope, fixed delay matches systemd's `RestartSec=10`.
+        // systemd's `RestartSteps`/`RestartMaxDelaySec` for backoff). Scope
+        // is fixed delay matching systemd's `RestartSec=10`.
         var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount: 3, restartDelayMs: 30_000, resetSeconds: 86_400);
 
-        args[3].ShouldBe("actions= restart/30000/restart/30000/restart/30000");
+        args[4].ShouldBe("actions=");
+        args[5].ShouldBe("restart/30000/restart/30000/restart/30000");
     }
 
     [Fact]
@@ -289,24 +300,28 @@ public sealed class WindowsServiceHostTests
     {
         var args = WindowsServiceHost.BuildScFailureArgs("svc", restartCount: 3, restartDelayMs: 10_000, resetSeconds: 600);
 
-        args[2].ShouldBe("reset= 600");
+        args[2].ShouldBe("reset=");
+        args[3].ShouldBe("600");
     }
 
     [Fact]
-    public void BuildScFailureArgs_PreservesMandatorySpaceAfterEquals()
+    public void BuildScFailureArgs_KeyValuePairs_AreSeparateArgvs()
     {
-        // Reverse-verify guard: if a future refactor accidentally normalises
-        // "key= value" to "key=value", sc.exe would silently parse it as a
-        // positional arg and `sc failure` would emit a usage error at runtime
-        // — the install would then succeed (sc create + sc start both OK)
-        // but the failure policy would be silently absent. Pinned by exact
-        // string match here so the drift is compile/test-time visible.
+        // Reverse-verify guard: if a future refactor accidentally re-packs
+        // `"key="` and value back into one `"key= value"` token, sc.exe would
+        // bail with "Invalid type= field" / similar on the NEXT option. Pin
+        // the per-token shape so any drift is compile/test-time visible.
         var args = WindowsServiceHost.BuildScFailureArgs("svc");
 
-        args[2].ShouldStartWith("reset= ");
-        args[3].ShouldStartWith("actions= ");
-        args[2].ShouldNotContain("reset=8");
-        args[3].ShouldNotContain("actions=r");
+        // Each key has trailing '=' AND no embedded space (= ends the key token).
+        args[2].ShouldBe("reset=");
+        args[2].ShouldNotContain(" ", customMessage: "key token must NOT carry the value — sc.exe expects key and value as separate argvs");
+        args[4].ShouldBe("actions=");
+        args[4].ShouldNotContain(" ");
+
+        // Values are bare strings — no embedded `key=` prefix.
+        args[3].ShouldNotStartWith("reset");
+        args[5].ShouldNotStartWith("actions");
     }
 
     [Theory]

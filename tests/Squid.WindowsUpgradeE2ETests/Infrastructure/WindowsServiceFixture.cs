@@ -108,15 +108,21 @@ public sealed class WindowsServiceFixture : IDisposable
         // caller's initial version so the marker file content is predictable.
         File.WriteAllText(VersionFilePath, initialVersion);
 
-        // sc.exe create — same shape as production WindowsServiceHost in
-        //  (start= auto, type= own). LocalSystem identity by
-        // default, no RunAsUser specified.
+        // sc.exe create — same shape as production WindowsServiceHost.
+        // CRITICAL: each `key=` and its value MUST be SEPARATE argv tokens
+        // (NOT packed into one `"key= value"` string). When .NET packs
+        // `"binPath= \"...\" --service"` as a single ArgumentList element,
+        // it gets quoted-as-one-token → sc.exe consumes the whole quoted
+        // chunk as the binPath value and bails with "Invalid type= field"
+        // on the NEXT option. The split-token form below matches what
+        // CommandLineToArgvW produces from the documented command-line
+        // example `sc.exe create NewService binPath= "..." type= own`.
         RunScExpectingSuccess(
             "/Create failed",
             "create", _serviceName,
-            $"binPath= \"{ServiceExePath}\" --service",
-            "type= own",
-            "start= demand"   // demand-start — test controls start/stop explicitly
+            "binPath=", $"\"{ServiceExePath}\" --service",
+            "type=", "own",
+            "start=", "demand"   // demand-start — test controls start/stop explicitly
         );
         _installed = true;
 
