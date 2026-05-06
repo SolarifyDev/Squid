@@ -210,10 +210,13 @@ Server-side capabilities probe + tentacle's `/healthz` endpoint.
 
 | ID | Scenario | Win | Lin | Phase | Status | Tier | Notes |
 |---|---|---|---|---|---|---|---|
-| F1.h | Server probes capabilities → tentacle returns version + supported syntaxes + flavor | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
+| F1.h | Listening probe returns agent version + supported services | ✓ | ✓ | 12.J.E.2 | 🟢 | 🟢 | `Listening_CapabilitiesProbe_ReturnsAgentReportedVersion` (PR #195) |
+| F1.h2 | Polling probe returns agent version | ✓ | ✓ | 12.J.E.2 | 🟢 | 🟢 | `Polling_CapabilitiesProbe_ReturnsAgentReportedVersion` |
+| F1.metadata | Probe response carries Metadata dictionary (os/flavor) | ✓ | ✓ | 12.J.E.2 | 🟢 | 🟢 | `Listening_CapabilitiesResponse_CarriesMetadataDictionary` |
 | F1.u1 | Tentacle process down → probe returns "agent unreachable" | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
 | F2.u1 | Probe times out → mapped to "agent unresponsive" | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
-| F3.h | Tentacle reports version newer than server cache → server invalidates cache | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
+| F3.cache | Repeated probes within 60s TTL return CACHED response (`[CacheResponse(60)]` honored) | ✓ | ✓ | 12.J.E.2 | 🟢 | 🟢 | `Listening_RepeatedProbes_WithinCacheTtl_ReturnCachedResponse` |
+| F3.h | Cache invalidates after 60s TTL → fresh probe shows new version | ✓ | ✓ | 12.L | ⚪ | 🟢 | needs >60s test (slow) |
 | F4.h | `/healthz` 200 OK after service start | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
 | F4.u1 | `/healthz` returns 503 during startup → server retries, eventually green | ✓ | ✓ | 12.L | ⚪ | 🟢 | |
 
@@ -268,10 +271,10 @@ Edge cases that bit operators in production.
 | C — Registration | 18 | 18 | 9 (Phase 12.I) |
 | D — Deployment execution | 26 | 52 | 13 (Phase 12.J.D.1-4) |
 | E — Upgrade flow | 32 | 52 | 6 (3 wrapper E2E from Phase 12.G + 3 J.E.1 dispatch tests) |
-| F — Health & capabilities | 6 | 12 | 0 |
+| F — Health & capabilities | 6 | 12 | 4 (J.E.2 capabilities probe via PR #195, P0-unblocked) |
 | G — Multi-instance | 6 | 8 | 0 |
 | H — Boundary cases | 10 | 16 | 0 |
-| **Total** | **141 unique scenarios** | **≈201 tests** | **66 (33% covered)** |
+| **Total** | **141 unique scenarios** | **≈201 tests** | **75 (37% covered)** |
 
 ---
 
@@ -288,8 +291,12 @@ Edge cases that bit operators in production.
 | 12.J.D.2 | D — long-running, concurrent, unicode | ✅ Verified | +3 | 58 |
 | 12.J.D.3 | D — output variables | ✅ Verified | +3 | 61 |
 | 12.J.D.4 | D — file transfer | ✅ Verified | +2 | 63 |
-| 12.J.E.1 | E — `UpgradeAsync` dispatch round-trip | ✅ Verified | +3 | **66** |
-| 12.J.E.2 | E — capabilities probe + last-upgrade.json + release mirror | ⚪ Planned | ~12 | ~78 |
+| 12.J.E.1 | E — `UpgradeAsync` dispatch round-trip | ✅ Verified | +3 | 66 |
+| 12.K.1 | A — install-tentacle.ps1 E2E + production em-dash fix | ✅ Verified (PR #192) | +3 | 69 |
+| 12.L.1 | G — multi-instance Windows | ✅ Verified (PR #193) | +2 | 71 |
+| **P0 fix** | **🐛 Halibut cache-key bug** — every health check + liveness probe was silently broken | ✅ Verified (PR #194) | **+0 production tests, but 3 fix-pin** | 71 (+3 fix-pin) |
+| 12.J.E.2 | F — capabilities probe (UNBLOCKED by P0) | ✅ Verified (PR #195) | +4 | **75** |
+| 12.J.E.3+ | E — full upgrade lifecycle (download + Phase B + last-upgrade.json) | ⚪ Planned | ~10-15 | ~85-90 |
 | 12.J.E.3+ | E — upgrade methods (zip/apt/dnf) + rollback + lock | ⚪ Planned | ~30 | ~108 |
 | 12.J.D.5 | D — Calamari + variable substitution + cancellation | ⚪ Planned | ~10 | ~118 |
 | 12.K | A (install scripts) + H (boundary) | ⚪ Planned | ~40 | ~158 |
