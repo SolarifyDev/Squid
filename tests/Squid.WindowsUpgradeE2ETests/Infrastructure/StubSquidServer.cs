@@ -209,9 +209,12 @@ public sealed class StubSquidServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(command);
 
         var pollingEndpoint = new ServiceEndPoint(new Uri($"poll://{agentSubscriptionId}/"), agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
-        var asyncClient = _runtime.CreateAsyncClient<IScriptService, IScriptServiceAsync>(pollingEndpoint);
+        var asyncClient = _runtime.CreateAsyncClient<IScriptService, IAsyncScriptService>(pollingEndpoint);
 
-        return await asyncClient.StartScriptAsync(command, ct).ConfigureAwait(false);
+        // IAsyncScriptService methods don't take CancellationToken (Halibut
+        // contract — see IAsyncScriptService doc-comment). Caller's ct is
+        // honored at the await level via CancellationToken.None on the RPC.
+        return await asyncClient.StartScriptAsync(command).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -225,9 +228,87 @@ public sealed class StubSquidServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(command);
 
         var listeningEndpoint = new ServiceEndPoint(agentUri, agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
-        var asyncClient = _runtime.CreateAsyncClient<IScriptService, IScriptServiceAsync>(listeningEndpoint);
+        var asyncClient = _runtime.CreateAsyncClient<IScriptService, IAsyncScriptService>(listeningEndpoint);
 
-        return await asyncClient.StartScriptAsync(command, ct).ConfigureAwait(false);
+        return await asyncClient.StartScriptAsync(command).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Full StartScript → observe → CompleteScript round-trip to a Listening
+    /// agent. Mirrors what
+    /// <c>HalibutMachineExecutionStrategy.ObserveAndCompleteAsync</c> does
+    /// in production: poll <c>GetStatusAsync</c> every 200ms until the
+    /// agent reports <see cref="ProcessState.Complete"/>, then call
+    /// <c>CompleteScriptAsync</c> for the final logs + exit code.
+    /// </summary>
+    /// <param name="timeout">Hard cap on the observation loop. Default is
+    /// 30 seconds; tests with long scripts should pass a larger value.</param>
+    public async Task<ObservedScriptResult> DispatchAndObserveListeningAsync(Uri agentUri, string agentThumbprint, StartScriptCommand command, TimeSpan timeout, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(agentUri);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+        ArgumentNullException.ThrowIfNull(command);
+
+        var endpoint = new ServiceEndPoint(agentUri, agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        var client = _runtime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+        var startResponse = await client.StartScriptAsync(command).ConfigureAwait(false);
+
+        return await ObserveToCompletionAsync(client, command.ScriptTicket, startResponse, timeout, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Polling counterpart to <see cref="DispatchAndObserveListeningAsync"/>.
+    /// Same flow but the endpoint is <c>poll://&lt;sub-id&gt;/</c> for an
+    /// agent that previously dialled in to <see cref="PollingUri"/>.
+    /// </summary>
+    public async Task<ObservedScriptResult> DispatchAndObservePollingAsync(string agentSubscriptionId, string agentThumbprint, StartScriptCommand command, TimeSpan timeout, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentSubscriptionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+        ArgumentNullException.ThrowIfNull(command);
+
+        var endpoint = new ServiceEndPoint(new Uri($"poll://{agentSubscriptionId}/"), agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        var client = _runtime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
+
+        var startResponse = await client.StartScriptAsync(command).ConfigureAwait(false);
+
+        return await ObserveToCompletionAsync(client, command.ScriptTicket, startResponse, timeout, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<ObservedScriptResult> ObserveToCompletionAsync(IAsyncScriptService client, ScriptTicket ticket, ScriptStatusResponse startResponse, TimeSpan timeout, CancellationToken ct)
+    {
+        var allLogs = new List<ProcessOutput>(startResponse.Logs);
+        var nextSeq = startResponse.NextLogSequence;
+        var state = startResponse.State;
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (state != ProcessState.Complete && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200, ct).ConfigureAwait(false);
+
+            var status = await client.GetStatusAsync(new ScriptStatusRequest(ticket, nextSeq)).ConfigureAwait(false);
+            allLogs.AddRange(status.Logs);
+            nextSeq = status.NextLogSequence;
+            state = status.State;
+        }
+
+        if (state != ProcessState.Complete)
+            throw new TimeoutException(
+                $"script {ticket.TaskId} did not reach ProcessState.Complete within {timeout}. " +
+                $"Final state: {state}. Logs so far:\n" +
+                string.Join("\n", allLogs.Select(l => $"[{l.Source}] {l.Text}")));
+
+        var completeResponse = await client.CompleteScriptAsync(new CompleteScriptCommand(ticket, nextSeq)).ConfigureAwait(false);
+        allLogs.AddRange(completeResponse.Logs);
+
+        return new ObservedScriptResult
+        {
+            ExitCode = completeResponse.ExitCode,
+            State = state,
+            AllLogs = allLogs,
+            AllText = string.Join("\n", allLogs.Select(l => l.Text))
+        };
     }
 
     public async ValueTask DisposeAsync()
@@ -429,6 +510,28 @@ public enum RegistrationKind
 {
     Polling,
     Listening
+}
+
+/// <summary>
+/// Outcome of a full StartScript → observe → CompleteScript round-trip.
+/// <see cref="State"/> is <see cref="ProcessState.Complete"/> on success;
+/// the observation helper throws TimeoutException if the agent never
+/// reaches Complete within the supplied window, so callers don't need a
+/// "still Running" branch.
+/// </summary>
+public sealed class ObservedScriptResult
+{
+    /// <summary>Final exit code from the agent's script process.</summary>
+    public int ExitCode { get; init; }
+
+    /// <summary>Process state — always Complete; included for symmetry with production result types.</summary>
+    public ProcessState State { get; init; }
+
+    /// <summary>All log lines from StartScript + every GetStatus poll + CompleteScript, in order received.</summary>
+    public List<ProcessOutput> AllLogs { get; init; }
+
+    /// <summary>Concatenated newline-joined text of every log line — for substring assertions.</summary>
+    public string AllText { get; init; }
 }
 
 /// <summary>

@@ -78,4 +78,17 @@ public static class WindowsUpgradeE2ECategories
     /// in the Linux phase.
     /// </summary>
     public const string TentacleRegister = "TentacleRegisterE2E";
+
+    /// <summary>
+    /// Phase 12.J E2E coverage for the deployment-execution round-trip:
+    /// server (<see cref="Infrastructure.StubSquidServer"/>) →
+    /// agent (<see cref="Infrastructure.StubAgent"/> wrapping the
+    /// production <c>LocalScriptService</c>) → real shell execution
+    /// (PowerShell on Windows / bash on Linux+macOS) → results back
+    /// over Halibut RPC. Tier 🟢 high-fidelity — every component except
+    /// the upstream Squid server is production code. Cross-platform
+    /// (runs on Windows / Linux / macOS) via per-OS script-syntax
+    /// branches in each test method.
+    /// </summary>
+    public const string TentacleDeploy = "TentacleDeployE2E";
 }
