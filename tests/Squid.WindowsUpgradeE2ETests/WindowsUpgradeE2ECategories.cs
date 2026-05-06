@@ -42,4 +42,16 @@ public static class WindowsUpgradeE2ECategories
     /// match, valid mismatch).
     /// </summary>
     public const string ShaVerify = "WindowsUpgradeShaVerifyE2E";
+
+    /// <summary>
+    /// E2E coverage for the production
+    /// <c>Squid.Tentacle.ServiceHost.WindowsServiceHost</c> class — the
+    /// SCM lifecycle round-trip (Install → Start → Stop → Uninstall) the
+    /// upgrade pipeline depends on. Unit tests pin the sc.exe argv shape;
+    /// this category proves the SAME argv actually produces a Running /
+    /// Stopped / Absent service in the SCM database when executed against
+    /// a real Windows host. Companion to the systemd E2E that lives
+    /// alongside the Linux upgrade tests (Phase 12.F).
+    /// </summary>
+    public const string ServiceHost = "WindowsServiceHostE2E";
 }
