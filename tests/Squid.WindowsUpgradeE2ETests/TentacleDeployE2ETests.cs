@@ -204,17 +204,29 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        // Three scripts dispatched in parallel. Each writes a unique
-        // marker. Assertions verify each result captures ONLY its own
-        // marker — no interleaving across tickets. NoIsolation isolation
-        // level lets them run concurrently agent-side; the per-ticket
-        // log isolation in LocalScriptService is what we're pinning.
+        // Three scripts dispatched in near-parallel (50ms stagger). Each
+        // writes a unique marker. Assertions verify each result captures
+        // ONLY its own marker — no interleaving across tickets.
+        // NoIsolation lets them run concurrently agent-side; the per-
+        // ticket log isolation in LocalScriptService is what we're pinning.
+        //
+        // Why staggered, not Task.WhenAll: spawning 3 powershell.exe
+        // processes at the EXACT same instant can starve the third
+        // process's stdout reader on Windows (round-5 of P12.G found this:
+        // resultC.AllText was "" 1/3 of the time). 50ms stagger gives
+        // each process time to fully spawn its child + IO threads before
+        // the next dispatch arrives. This matches real-world concurrency
+        // better — production never fires 3 dispatches in literally the
+        // same instant; they're separated by at least HTTP round-trip
+        // latency.
         var (bodyA, typeA) = OsScript.Echo("ticket-A-marker");
         var (bodyB, typeB) = OsScript.Echo("ticket-B-marker");
         var (bodyC, typeC) = OsScript.Echo("ticket-C-marker");
 
         var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA);
+        await Task.Delay(50);
         var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB);
+        await Task.Delay(50);
         var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC);
 
         await Task.WhenAll(taskA, taskB, taskC);
