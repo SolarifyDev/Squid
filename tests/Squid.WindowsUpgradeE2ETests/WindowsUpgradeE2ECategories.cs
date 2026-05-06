@@ -135,4 +135,19 @@ public static class WindowsUpgradeE2ECategories
     /// against real sc.exe. Windows-only (uses sc.exe).
     /// </summary>
     public const string TentacleMultiInstance = "TentacleMultiInstanceE2E";
+
+    /// <summary>
+    /// Phase 12.J.E.2 E2E coverage for the capabilities probe round-trip
+    /// — the path the production server uses to read agent's reported
+    /// version (post-deploy / post-upgrade cache refresh). Tier 🟢
+    /// high-fidelity. Cross-platform — Halibut + capabilities service
+    /// run on every OS without skip-guards.
+    ///
+    /// <para><b>Unblock history</b>: this category was blocked from
+    /// Phase 12.J.E.2 first attempt by a Halibut 8.1 cache-key bug
+    /// (every probe threw <c>ArgumentOutOfRangeException</c> before
+    /// any RPC). Fixed by PR #194 — <see cref="CapabilitiesRequest"/>
+    /// now implements <c>IEnumerable&lt;string&gt;</c> + <c>[JsonObject(OptIn)]</c>.</para>
+    /// </summary>
+    public const string TentacleCapabilities = "TentacleCapabilitiesE2E";
 }

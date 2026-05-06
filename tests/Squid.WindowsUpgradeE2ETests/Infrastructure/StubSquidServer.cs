@@ -266,6 +266,42 @@ public sealed class StubSquidServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// Probes the agent's <see cref="ICapabilitiesService"/> via Halibut.
+    /// Mirrors what production
+    /// <c>HalibutClientFactory.CreateCapabilitiesClient</c> +
+    /// <c>BackwardsCompatibleCapabilitiesClient</c> do in the deploy /
+    /// upgrade health-check flow.
+    ///
+    /// <para>Returns the agent's reported <see cref="CapabilitiesResponse"/>
+    /// — version, supported services, metadata. The exercise of this
+    /// method is the post-fix verification that the Halibut cache-key
+    /// bug (PR #194) is gone — pre-fix, this would throw
+    /// <c>ArgumentOutOfRangeException</c> before any RPC.</para>
+    /// </summary>
+    public async Task<CapabilitiesResponse> ProbeCapabilitiesListeningAsync(Uri agentUri, string agentThumbprint, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(agentUri);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+
+        var endpoint = new ServiceEndPoint(agentUri, agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        var client = _runtime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+
+        return await client.GetCapabilitiesAsync(new CapabilitiesRequest()).ConfigureAwait(false);
+    }
+
+    /// <summary>Polling counterpart to <see cref="ProbeCapabilitiesListeningAsync"/>.</summary>
+    public async Task<CapabilitiesResponse> ProbeCapabilitiesPollingAsync(string agentSubscriptionId, string agentThumbprint, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentSubscriptionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+
+        var endpoint = new ServiceEndPoint(new Uri($"poll://{agentSubscriptionId}/"), agentThumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+        var client = _runtime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+
+        return await client.GetCapabilitiesAsync(new CapabilitiesRequest()).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Polling counterpart to <see cref="DispatchAndObserveListeningAsync"/>.
     /// Same flow but the endpoint is <c>poll://&lt;sub-id&gt;/</c> for an
     /// agent that previously dialled in to <see cref="PollingUri"/>.

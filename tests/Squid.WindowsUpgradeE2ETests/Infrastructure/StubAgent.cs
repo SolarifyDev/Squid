@@ -57,10 +57,32 @@ public sealed class StubAgent : IAsyncDisposable
     private readonly X509Certificate2 _agentCert;
     private readonly HalibutRuntime _runtime;
     private readonly LocalScriptService _scriptService;
+    private readonly StubCapabilitiesService _capabilitiesService;
     private bool _disposed;
 
     /// <summary>SHA-1 thumbprint of the stub agent's self-signed cert.</summary>
     public string Thumbprint { get; }
+
+    /// <summary>
+    /// Agent version reported via the capabilities probe. Default is
+    /// "1.6.0-stub". Tests that simulate post-upgrade state flip this to
+    /// the new version mid-test, then re-probe to assert the fresh value
+    /// reaches the server.
+    /// </summary>
+    public string AgentVersion
+    {
+        get => _capabilitiesService.AgentVersion;
+        set => _capabilitiesService.AgentVersion = value;
+    }
+
+    /// <summary>
+    /// Convenience setter for <see cref="AgentVersion"/>. Common pattern:
+    /// probe → assert v1 → SetAgentVersion(v2) → probe → assert v2.
+    /// </summary>
+    public void SetAgentVersion(string version)
+    {
+        _capabilitiesService.AgentVersion = version;
+    }
 
     /// <summary>
     /// The agent's Halibut listening URI (Listening mode only). Format:
@@ -75,11 +97,12 @@ public sealed class StubAgent : IAsyncDisposable
     /// <summary>The polling subscription ID (Polling mode only — null in Listening mode).</summary>
     public string SubscriptionId { get; }
 
-    private StubAgent(X509Certificate2 cert, HalibutRuntime runtime, LocalScriptService scriptService, int listeningPort, string subscriptionId)
+    private StubAgent(X509Certificate2 cert, HalibutRuntime runtime, LocalScriptService scriptService, StubCapabilitiesService capabilitiesService, int listeningPort, string subscriptionId)
     {
         _agentCert = cert;
         _runtime = runtime;
         _scriptService = scriptService;
+        _capabilitiesService = capabilitiesService;
 
         Thumbprint = cert.Thumbprint;
         ListeningPort = listeningPort;
@@ -99,7 +122,8 @@ public sealed class StubAgent : IAsyncDisposable
 
         var cert = CreateSelfSignedCert();
         var scriptService = new LocalScriptService();
-        var runtime = BuildRuntime(cert, scriptService);
+        var capsService = new StubCapabilitiesService();
+        var runtime = BuildRuntime(cert, scriptService, capsService);
 
         runtime.Trust(serverThumbprint);
 
@@ -107,7 +131,7 @@ public sealed class StubAgent : IAsyncDisposable
         // is just a hint). Re-read for the canonical URI (Rule 12.8).
         var assignedPort = runtime.Listen(GetEphemeralPort());
 
-        return Task.FromResult(new StubAgent(cert, runtime, scriptService, assignedPort, subscriptionId: null));
+        return Task.FromResult(new StubAgent(cert, runtime, scriptService, capsService, assignedPort, subscriptionId: null));
     }
 
     /// <summary>
@@ -130,7 +154,8 @@ public sealed class StubAgent : IAsyncDisposable
 
         var cert = CreateSelfSignedCert();
         var scriptService = new LocalScriptService();
-        var runtime = BuildRuntime(cert, scriptService);
+        var capsService = new StubCapabilitiesService();
+        var runtime = BuildRuntime(cert, scriptService, capsService);
 
         runtime.Trust(serverThumbprint);
 
@@ -139,7 +164,7 @@ public sealed class StubAgent : IAsyncDisposable
             new ServiceEndPoint(serverPollingUri, serverThumbprint, HalibutTimeoutsAndLimits.RecommendedValues()),
             CancellationToken.None);
 
-        return Task.FromResult(new StubAgent(cert, runtime, scriptService, listeningPort: 0, subscriptionId));
+        return Task.FromResult(new StubAgent(cert, runtime, scriptService, capsService, listeningPort: 0, subscriptionId));
     }
 
     public async ValueTask DisposeAsync()
@@ -153,12 +178,14 @@ public sealed class StubAgent : IAsyncDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static HalibutRuntime BuildRuntime(X509Certificate2 cert, LocalScriptService scriptService)
+    private static HalibutRuntime BuildRuntime(X509Certificate2 cert, LocalScriptService scriptService, StubCapabilitiesService capsService)
     {
-        var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
+        var asyncScriptAdapter = new AsyncScriptServiceAdapter(scriptService);
+        var asyncCapsAdapter = new AsyncCapabilitiesServiceAdapter(capsService);
 
         var serviceFactory = new DelegateServiceFactory();
-        serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
+        serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncScriptAdapter);
+        serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => asyncCapsAdapter);
 
         return new HalibutRuntimeBuilder()
             .WithServiceFactory(serviceFactory)
@@ -213,5 +240,47 @@ public sealed class StubAgent : IAsyncDisposable
 
         public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command, CancellationToken ct)
             => Task.FromResult(_inner.CancelScript(command));
+    }
+
+    /// <summary>
+    /// Stub <see cref="ICapabilitiesService"/> that responds to server-side
+    /// capabilities probes. <see cref="AgentVersion"/> is settable so tests
+    /// can simulate a tentacle that has upgraded mid-test (probe before →
+    /// "1.6.0"; SetAgentVersion("1.7.0"); probe again → "1.7.0").
+    ///
+    /// <para>Note: <see cref="CapabilitiesRequest"/> implements
+    /// <c>IEnumerable&lt;string&gt;</c> per the P0 fix in commit 9ce39b9.
+    /// Without that fix, every probe through this stub would throw
+    /// <c>ArgumentOutOfRangeException</c> from Halibut's cache-key
+    /// generator BEFORE reaching this method. Tests in
+    /// <c>HalibutCacheKeyBugReproductionTests</c> pin that the fix
+    /// stays in place.</para>
+    /// </summary>
+    private sealed class StubCapabilitiesService : ICapabilitiesService
+    {
+        public string AgentVersion { get; set; } = "1.6.0-stub";
+
+        public CapabilitiesResponse GetCapabilities(CapabilitiesRequest request)
+            => new()
+            {
+                AgentVersion = AgentVersion,
+                SupportedServices = new List<string> { "IScriptService", "ICapabilitiesService" },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["flavor"] = "stub-tentacle-agent",
+                    ["os"] = Environment.OSVersion.Platform.ToString()
+                }
+            };
+    }
+
+    /// <summary>Sync → async adapter for capabilities, mirroring the script-service adapter.</summary>
+    private sealed class AsyncCapabilitiesServiceAdapter : ICapabilitiesServiceAsync
+    {
+        private readonly ICapabilitiesService _inner;
+
+        public AsyncCapabilitiesServiceAdapter(ICapabilitiesService inner) => _inner = inner;
+
+        public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request, CancellationToken ct)
+            => Task.FromResult(_inner.GetCapabilities(request));
     }
 }
