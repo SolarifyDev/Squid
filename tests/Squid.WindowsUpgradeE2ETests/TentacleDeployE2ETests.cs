@@ -595,19 +595,29 @@ public sealed class TentacleDeployE2ETests
                 : ($"cat '{fileName}'", ScriptType.Bash);
 
         /// <summary>
-        /// Reads multiple files in sequence. Each file's content lands on
-        /// stdout. Used to verify that several <c>ScriptFile</c> attachments
-        /// in one dispatch all reach the agent's workDir.
+        /// Reads multiple files and emits each file's content with an
+        /// explicit per-file marker prefix, ALL via a single shell-emit
+        /// command per file. Used to verify that several <c>ScriptFile</c>
+        /// attachments in one dispatch all reach the agent's workDir.
+        ///
+        /// <para><b>Why explicit Write-Output / echo per file</b>: bare
+        /// <c>Get-Content '<name>' -Raw</c> on Windows pwsh sometimes
+        /// emits no output for files 2+ in a multi-statement script (the
+        /// raw-mode output stream coalescing or buffering swallows them).
+        /// Caught by Phase 12.J.E.1 GHA verification (run 25421350148):
+        /// only file A's content surfaced; B + C were missing entirely.
+        /// Wrapping the read in <c>Write-Output (Get-Content)</c> forces
+        /// emit-per-statement semantics that match bash echo behaviour.</para>
         /// </summary>
         public static (string body, ScriptType type) ReadMultipleFiles(params string[] fileNames)
         {
             if (OperatingSystem.IsWindows())
             {
-                var ps = string.Join("\n", fileNames.Select(n => $"Get-Content '{n}' -Raw"));
+                var ps = string.Join("\n", fileNames.Select(n => $"Write-Output (Get-Content '{n}' -Raw)"));
                 return (ps, ScriptType.PowerShell);
             }
 
-            var bash = string.Join("\n", fileNames.Select(n => $"cat '{n}'"));
+            var bash = string.Join("\n", fileNames.Select(n => $"cat '{n}'; echo"));
             return (bash, ScriptType.Bash);
         }
 
