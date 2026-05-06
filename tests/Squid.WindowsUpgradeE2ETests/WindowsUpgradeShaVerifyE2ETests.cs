@@ -61,8 +61,8 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
             "-UseBasicParsing",             // no IE-engine dep on Server Core
             "-TimeoutSec",                  // bounded fetch
             "'^[0-9a-f]{64}$'",             // 64-hex validation regex
-            "Get-FileHash",                 // local-side hash compute
-            "-Algorithm SHA256",            // explicit algorithm
+            "[System.Security.Cryptography.SHA256]",  // direct .NET hash compute (Get-FileHash auto-loader was unreliable on some Windows runner images — see J.E.3.1 fix in upgrade-windows-tentacle.ps1)
+            "ComputeHash",                  // hash invocation
             "exit 7",                       // documented mismatch exit code
         };
 

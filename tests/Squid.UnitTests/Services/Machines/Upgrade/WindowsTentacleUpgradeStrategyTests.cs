@@ -341,6 +341,60 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         }
     }
 
+    // ========================================================================
+    // J.E.3.1 — production-bug pin #2
+    //
+    // The .ps1's SHA256 verification MUST use direct .NET API, NOT the
+    // `Get-FileHash` cmdlet. The cmdlet lives in `Microsoft.PowerShell.Utility`
+    // and is loaded via the auto-loader; on some Windows runner images +
+    // stripped-down PowerShell installations the auto-loader fails to find
+    // `Get-FileHash` even when `Invoke-WebRequest` (same module) loads
+    // fine — root cause likely a partial module-cache state under
+    // `$ErrorActionPreference = 'Stop'` + `Set-StrictMode -Version Latest`.
+    // Direct .NET (`[System.Security.Cryptography.SHA256]::Create()`) avoids
+    // the auto-loader entirely AND is faster on large archives.
+    //
+    // Caught J.E.3.1 first attempt by the high-fidelity E2E tests; pre-J.E.3
+    // no test actually ran the rendered .ps1 through to the verify step.
+    // ========================================================================
+
+    [Fact]
+    public void RenderInnerScript_ShaVerifyUsesDirectDotNetApi_NotGetFileHashCmdlet()
+    {
+        var asm = typeof(WindowsTentacleUpgradeStrategy).Assembly;
+        using var stream = asm.GetManifestResourceStream("Squid.Core.Resources.Upgrade.upgrade-windows-tentacle.ps1")
+            ?? throw new System.IO.InvalidDataException("embedded template not found");
+        using var reader = new System.IO.StreamReader(stream);
+        var template = reader.ReadToEnd();
+
+        // Positive pins: the direct-.NET API markers MUST be present.
+        template.ShouldContain("[System.Security.Cryptography.SHA256]",
+            customMessage: "SHA256 verification MUST use direct .NET API. If this assertion fails, the .ps1 reverted to the cmdlet — re-introducing the auto-loader brittleness that bit the windows-latest runner in J.E.3.1.");
+        template.ShouldContain("ComputeHash",
+            customMessage: "MUST invoke ComputeHash on the SHA256 instance — produces the actual digest");
+        template.ShouldContain("[System.IO.File]::ReadAllBytes",
+            customMessage: "MUST read the archive bytes directly via System.IO.File — no PowerShell file cmdlet abstraction layer");
+
+        // Negative pin: the cmdlet form MUST NOT come back. A future polish
+        // that "simplifies" the SHA block by reverting to Get-FileHash would
+        // re-introduce the J.E.3.1 production bug.
+        template.ShouldNotContain("Get-FileHash",
+            customMessage: "Get-FileHash cmdlet usage REGRESSED. " +
+                          "Root cause was: on some Windows runner images, `Get-FileHash` auto-loading from " +
+                          "`Microsoft.PowerShell.Utility` fails with `CommandNotFoundException` even when " +
+                          "`Invoke-WebRequest` (same module) loads fine — likely a partial module-cache state " +
+                          "interaction with `$ErrorActionPreference = 'Stop'` + `Set-StrictMode -Version Latest`. " +
+                          "FIX: revert to the direct-.NET form: " +
+                          "`$sha256 = [System.Security.Cryptography.SHA256]::Create(); $bytes = [System.IO.File]::ReadAllBytes($archivePath); $hash = $sha256.ComputeHash($bytes); $sha256.Dispose(); $actualSha = ([System.BitConverter]::ToString($hash) -replace '-','').ToLower()`. " +
+                          "Detected by J.E.3 high-fidelity E2E.");
+
+        // Bonus pin: the renderer MUST inject this code into the inner so
+        // the agent runs the bug-free version.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+        inner.ShouldContain("[System.Security.Cryptography.SHA256]");
+        inner.ShouldNotContain("Get-FileHash");
+    }
+
     [Fact]
     public void RenderInnerScript_TargetVersionInjected_AppearsExactly()
     {
