@@ -35,15 +35,15 @@ esac
 # `linux-musl-x64` is .NET's officially-supported RID for musl builds.
 #
 # Three-stage detection (audit D.4 fix, 1.6.x):
-#   1. Env var override — SQUID_LIBC=musl|glibc  (explicit operator wins)
-#   2. `ldd --version` output grep — works when ldd is installed
+#   1. Env var override - SQUID_LIBC=musl|glibc  (explicit operator wins)
+#   2. `ldd --version` output grep - works when ldd is installed
 #      (Alpine's has `musl libc (x86_64) ...` on stderr; glibc prints
 #      `ldd (GNU libc) ...` or `... GLIBC ...`)
-#   3. File-existence fallback — `/lib/ld-musl-*` presence. Works on
+#   3. File-existence fallback - `/lib/ld-musl-*` presence. Works on
 #      minimal / distroless containers that strip ldd but keep the
 #      dynamic linker itself. Catches Void + Wolfi + Chimera, which
 #      D3's CI matrix can't easily smoke-test today.
-# If none of the three says "musl", default to glibc — the majority case.
+# If none of the three says "musl", default to glibc - the majority case.
 LIBC="${SQUID_LIBC:-}"
 
 if [ -z "$LIBC" ]; then
@@ -53,7 +53,7 @@ if [ -z "$LIBC" ]; then
 fi
 
 if [ -z "$LIBC" ]; then
-    # File-glob fallback — compgen avoids bash-ism; a simple for-loop
+    # File-glob fallback - compgen avoids bash-ism; a simple for-loop
     # over /lib/ld-musl-* works in POSIX sh too. If any match exists,
     # we're on musl.
     for ld_musl in /lib/ld-musl-* /usr/lib/ld-musl-*; do
@@ -110,7 +110,7 @@ install_runtime_deps() {
     elif command -v apk >/dev/null 2>&1; then
         apk add --no-cache --quiet icu-libs ca-certificates
     else
-        echo "Warning: couldn't detect package manager — install libicu manually."
+        echo "Warning: couldn't detect package manager - install libicu manually."
         return 1
     fi
 }
@@ -122,11 +122,11 @@ install_runtime_deps || true
 #   squid-tentacle-${VERSION}-${RID}.tar.gz     (versioned)
 #   squid-tentacle-${RID}.tar.gz                (unversioned "latest" copy)
 #
-# For "latest", use GitHub's /releases/latest/download redirect — always resolves.
+# For "latest", use GitHub's /releases/latest/download redirect - always resolves.
 # For a specific version, try the tag as-given first; if that 404s, fall back to "v"-prefixed.
 SQUID_BASE_URL="${SQUID_BASE_URL:-https://squid.solarifyai.com}"
 
-# ── Optimistic package-manager install (Phase 2 Part 2 symmetry) ─────────────
+# -- Optimistic package-manager install (Phase 2 Part 2 symmetry) -------------
 # Try our signed APT/RPM repo BEFORE falling back to a direct GitHub Releases
 # tarball download. squid.solarifyai.com is Cloudflare-fronted so CN/slow-region
 # clients are 5-10x faster via the package manager than via github.com/releases.
@@ -134,7 +134,7 @@ SQUID_BASE_URL="${SQUID_BASE_URL:-https://squid.solarifyai.com}"
 # apt → yum → tarball.
 #
 # Only attempted for VERSION=latest because our reprepro config keeps a single
-# version per (package, arch) — `apt install squid-tentacle=1.3.8` fails if
+# version per (package, arch) - `apt install squid-tentacle=1.3.8` fails if
 # stable currently has 1.4.1. Explicit --version installs keep going through
 # tarball which is tag-pinned on GitHub Releases (retained per-tag forever).
 #
@@ -143,7 +143,7 @@ SQUID_BASE_URL="${SQUID_BASE_URL:-https://squid.solarifyai.com}"
 PKG_INSTALL_DONE=0
 if [ "$VERSION" = "latest" ] && [ "${NO_PKG_INSTALL:-0}" != "1" ]; then
     if command -v apt-get >/dev/null 2>&1; then
-        echo "Attempting install via Squid APT repo (${SQUID_BASE_URL}/apt) — typically faster than GitHub direct..."
+        echo "Attempting install via Squid APT repo (${SQUID_BASE_URL}/apt) - typically faster than GitHub direct..."
 
         install -m 0755 -d /etc/apt/keyrings
         if curl -fL --connect-timeout 15 --max-time 60 "${SQUID_BASE_URL}/public.key" 2>/dev/null \
@@ -158,10 +158,10 @@ if [ "$VERSION" = "latest" ] && [ "${NO_PKG_INSTALL:-0}" != "1" ]; then
                 echo "Installed ${BINARY_NAME} via APT"
                 PKG_INSTALL_DONE=1
             else
-                echo "APT install failed — falling back to tarball from GitHub Releases"
+                echo "APT install failed - falling back to tarball from GitHub Releases"
             fi
         else
-            echo "Failed to fetch ${SQUID_BASE_URL}/public.key — APT repo unavailable, falling back to tarball"
+            echo "Failed to fetch ${SQUID_BASE_URL}/public.key - APT repo unavailable, falling back to tarball"
             rm -f /etc/apt/sources.list.d/squid.list /etc/apt/keyrings/squid.gpg 2>/dev/null
         fi
     elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
@@ -174,14 +174,14 @@ if [ "$VERSION" = "latest" ] && [ "${NO_PKG_INSTALL:-0}" != "1" ]; then
                 echo "Installed ${BINARY_NAME} via $YUM_BIN"
                 PKG_INSTALL_DONE=1
             else
-                echo "$YUM_BIN install failed — falling back to tarball"
+                echo "$YUM_BIN install failed - falling back to tarball"
                 rm -f /etc/yum.repos.d/squid-tentacle.repo 2>/dev/null
             fi
         fi
     fi
 fi
 
-# ── Tarball fallback — only if no package manager did the install ────────────
+# -- Tarball fallback - only if no package manager did the install ------------
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -189,13 +189,13 @@ ARCHIVE_PATH="$TMP_DIR/tentacle.tar.gz"
 
 # curl options for robustness against slow cross-border routes (China ↔
 # GitHub can easily run 30-60s for a fresh connection + CDN handoff):
-#   --connect-timeout 15  — cap TLS handshake (separate from --max-time)
-#   --max-time 300        — 5 min overall budget per attempt (65 MB tarball
+#   --connect-timeout 15  - cap TLS handshake (separate from --max-time)
+#   --max-time 300        - 5 min overall budget per attempt (65 MB tarball
 #                           over a slow link can take 2-3 min)
 #   --retry 3 --retry-delay 5 --retry-all-errors
-#                         — retry on network errors + 4xx + 5xx (default
+#                         - retry on network errors + 4xx + 5xx (default
 #                           retry only covers transient network failures)
-# Stderr is NOT silenced anymore — the previous `2>/dev/null` hid the real
+# Stderr is NOT silenced anymore - the previous `2>/dev/null` hid the real
 # reason for failure (TLS timeout, DNS, cert, ...) behind a generic
 # "Failed to download" message.
 download_ok() {
@@ -246,7 +246,7 @@ if [ "$PKG_INSTALL_DONE" != "1" ]; then
         fi
     fi
 
-    # Extract (tar contents are flat — no wrapper dir)
+    # Extract (tar contents are flat - no wrapper dir)
     mkdir -p "$INSTALL_DIR"
     tar xzf "$ARCHIVE_PATH" -C "$INSTALL_DIR"
 fi
@@ -299,7 +299,7 @@ fi
 WORKSPACE_DIR="${WORKSPACE_DIR:-/squid/work}"
 mkdir -p "$WORKSPACE_DIR"
 
-# Upgrade state directory — consumed by upgrade-linux-tentacle.sh which writes
+# Upgrade state directory - consumed by upgrade-linux-tentacle.sh which writes
 # /var/lib/squid-tentacle/last-upgrade.json on every upgrade attempt. Server
 # reads this file on the next health check to learn the upgrade's outcome
 # after the Halibut connection dies mid-restart. Pre-creating with correct
@@ -315,7 +315,7 @@ chmod 755 "$STATE_DIR"
 # downloads the snapshot runs AS $SERVICE_USER (non-root), so the directory
 # MUST be writable by that user. If we skip this and let the runtime sudo
 # `mkdir -p` create it on first upgrade, the dir ends up root:root 0755 and
-# curl fails with "(23) Failure writing output" — auto-rollback silently
+# curl fails with "(23) Failure writing output" - auto-rollback silently
 # disabled for every upgrade.
 mkdir -p "$STATE_DIR/rollback"
 
@@ -325,11 +325,11 @@ if getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
     echo "Ownership set to ${SERVICE_USER}: ${CONFIG_DIR}, ${WORKSPACE_DIR}, ${INSTALL_DIR}, ${STATE_DIR}"
 fi
 
-# ── Auto-configure APT/RPM repo for in-UI upgrade method dispatch ──────────
+# -- Auto-configure APT/RPM repo for in-UI upgrade method dispatch ----------
 # Phase 2 Part 2: the upgrade bash script tries `apt-get install` and
 # `dnf install` BEFORE falling back to direct tarball download. For those
 # methods to actually match, our Squid repo must be configured here.
-# Idempotent — re-running install-tentacle.sh will overwrite with current
+# Idempotent - re-running install-tentacle.sh will overwrite with current
 # repo state, picking up GPG key rotations etc.
 SQUID_BASE_URL="${SQUID_BASE_URL:-https://squid.solarifyai.com}"
 
@@ -349,7 +349,7 @@ if command -v apt-get >/dev/null 2>&1; then
         # apt-get slow to ~90 KB/s while raw curl to the same host pulls at
         # 1.5+ MB/s. apt respects Acquire::http::Proxy system-wide, so the
         # proxy grabs every request. Scope the override to the exact host
-        # derived from SQUID_BASE_URL — no impact on any other repo.
+        # derived from SQUID_BASE_URL - no impact on any other repo.
         SQUID_HOST=$(echo "${SQUID_BASE_URL}" | sed -E 's,^https?://([^/]+).*,\1,')
         cat > /etc/apt/apt.conf.d/99-squid-direct.conf <<APT_EOF
 // Auto-generated by install-tentacle.sh. Forces DIRECT for the Squid APT
@@ -360,7 +360,7 @@ Acquire::https::Proxy::${SQUID_HOST} "DIRECT";
 APT_EOF
         echo "Configured proxy bypass: /etc/apt/apt.conf.d/99-squid-direct.conf (${SQUID_HOST} → DIRECT)"
     else
-        echo "Warning: failed to fetch ${SQUID_BASE_URL}/public.key — APT repo NOT configured."
+        echo "Warning: failed to fetch ${SQUID_BASE_URL}/public.key - APT repo NOT configured."
         echo "  In-UI upgrades will fall back to direct tarball download (still works)."
         rm -f /etc/apt/keyrings/squid.gpg.tmp
     fi
@@ -372,13 +372,13 @@ if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
         mv /etc/yum.repos.d/squid-tentacle.repo.tmp /etc/yum.repos.d/squid-tentacle.repo
         echo "Configured Squid RPM repo: /etc/yum.repos.d/squid-tentacle.repo"
     else
-        echo "Warning: failed to fetch ${SQUID_BASE_URL}/rpm/squid-tentacle.repo — RPM repo NOT configured."
+        echo "Warning: failed to fetch ${SQUID_BASE_URL}/rpm/squid-tentacle.repo - RPM repo NOT configured."
         echo "  In-UI upgrades will fall back to direct tarball download (still works)."
         rm -f /etc/yum.repos.d/squid-tentacle.repo.tmp
     fi
 fi
 
-# ── Sudoers rule for the upgrade flow ────────────────────────────────────────
+# -- Sudoers rule for the upgrade flow ----------------------------------------
 # The upgrade bash script runs as the service user. It needs to escalate for:
 #   1. systemd-run --scope        (the scope-detach trick from Phase 1)
 #   2. apt-get install / dnf install   (Phase 2 Part 2 method dispatch)
@@ -400,12 +400,12 @@ if getent passwd "$SERVICE_USER" >/dev/null 2>&1 && [ -d /etc/sudoers.d ]; then
 # resolves to /usr/bin/ on these systems. We list BOTH paths so the rules
 # work pre- and post-usrmerge.
 
-# (1) Scope detach — the single hard privilege. Everything inside the scope
+# (1) Scope detach - the single hard privilege. Everything inside the scope
 # inherits root from this sudo, so post-scope ops don't need sudoers entries.
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemd-run --scope --collect --quiet *
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/systemd-run --scope --collect --quiet *
 
-# (2) Phase 2 Part 2 — package-manager install methods. Pinned to package
+# (2) Phase 2 Part 2 - package-manager install methods. Pinned to package
 # name 'squid-tentacle' to prevent the service user installing anything else.
 # The targeted apt-get update form is the preferred one (scoped to our
 # source file only, immune to broken third-party repos). The plain forms
@@ -415,7 +415,7 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get update -qq
 # IMPORTANT: this heredoc is UNQUOTED (<<SUDOERS_EOF not <<'SUDOERS_EOF') so
 # bash can expand \${SERVICE_USER} / \${STATE_DIR}. That same unquoted mode
 # makes bash interpret backticks as command substitution inside comments.
-# Do NOT use backticks anywhere between here and SUDOERS_EOF — use plain
+# Do NOT use backticks anywhere between here and SUDOERS_EOF - use plain
 # text only. A rogue backtick sequence (e.g. a subshell of apt-get update)
 # will inject its output into the generated sudoers file mid-stream,
 # producing a syntactically invalid file and silently disabling upgrades.
@@ -428,11 +428,11 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/apt-get install -y --allow-downgra
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/dnf install -y squid-tentacle-*
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/yum install -y squid-tentacle-*
 
-# (3) Pre-scope status file writes — write_status() helper runs before scope
+# (3) Pre-scope status file writes - write_status() helper runs before scope
 # entry so it can log IN_PROGRESS / FAILED before the scope even starts.
 # Both /bin and /usr/bin paths listed for usrmerge compat (see note above).
 # The mv source path is fixed to /tmp/squid-upgrade-status.* by the bash
-# helper — deterministic prefix so this rule matches exactly.
+# helper - deterministic prefix so this rule matches exactly.
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mkdir -p ${STATE_DIR}
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir -p ${STATE_DIR}
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/mv /tmp/squid-upgrade-status.* ${STATE_DIR}/last-upgrade.json
@@ -446,11 +446,11 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_U
 # restore. Path is wildcarded (squid-tentacle_*_*.deb) but locked to
 # our state dir so the service user can't dpkg -i an arbitrary file.
 #
-# HEREDOC SAFETY NOTE — quoting commands above without the usual
+# HEREDOC SAFETY NOTE - quoting commands above without the usual
 # backtick/doublequote style is DELIBERATE. The enclosing heredoc is
 # unquoted (<<SUDOERS_EOF, not <<'SUDOERS_EOF') because we need
 # ${SERVICE_USER}/${STATE_DIR} to expand. Side effect: bash ALSO runs
-# command substitution on any backtick pair — even inside comment
+# command substitution on any backtick pair - even inside comment
 # lines. A previous commit wrote the example dpkg command wrapped in
 # backticks here; install-tentacle.sh then tried to execute that dpkg
 # command at install time, printing "cannot access archive" mid-run
@@ -460,7 +460,7 @@ ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chown ${SERVICE_USER}\:${SERVICE_U
 # → visudo -c rejects → sudoers file not installed → in-UI upgrade
 # silently disabled fleet-wide. Rules of thumb for this block:
 #   1. Do NOT use backtick-style command quoting anywhere between the
-#      heredoc start and SUDOERS_EOF — use the angle-bracket form
+#      heredoc start and SUDOERS_EOF - use the angle-bracket form
 #      (<example>) or drop the example entirely.
 #   2. The InstallTentacleSudoersTests regression suite has a test that
 #      fails on any backticks in the heredoc body. If you're reading
@@ -488,9 +488,9 @@ SUDOERS_EOF
     # visudo -c validates the file; if it rejects, we skip install rather
     # than corrupt sudoers (a broken sudoers locks out root on strict configs).
     # Capture stderr so operators can diagnose a template bug (don't swallow
-    # silently — that hid a `::` escape bug for an entire release cycle).
+    # silently - that hid a `::` escape bug for an entire release cycle).
     # `if VAR=$(...); then` is the ONLY form that exempts the assignment from
-    # `set -e` — a plain `VAR=$(failing); if [ $? ...` aborts the script.
+    # `set -e` - a plain `VAR=$(failing); if [ $? ...` aborts the script.
     if VISUDO_OUTPUT=$(visudo -c -f "${SUDOERS_FILE}.tmp" 2>&1); then
         chmod 440 "${SUDOERS_FILE}.tmp"
         mv "${SUDOERS_FILE}.tmp" "${SUDOERS_FILE}"
@@ -503,7 +503,7 @@ SUDOERS_EOF
     fi
 fi
 
-# Verify binary is runnable (use the `help` subcommand — `--help` is routed to RunCommand in Program.cs).
+# Verify binary is runnable (use the `help` subcommand - `--help` is routed to RunCommand in Program.cs).
 if command -v ${BINARY_NAME} >/dev/null 2>&1; then
     if ${BINARY_NAME} help >/dev/null 2>&1; then
         echo "Verified: ${BINARY_NAME} executable"
@@ -518,7 +518,7 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Next steps:"
-# `sudo` on register is required — without it the persisted config lands in
+# `sudo` on register is required - without it the persisted config lands in
 # ~/.config/squid-tentacle/... (invoking user's home), but the systemd unit
 # runs as the dedicated squid-tentacle system user, which reads from
 # /etc/squid-tentacle/... Mismatch → service crash-loops on
