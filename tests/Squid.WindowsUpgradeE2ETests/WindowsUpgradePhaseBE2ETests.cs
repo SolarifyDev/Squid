@@ -231,7 +231,10 @@ exit 0
     {
         var script = BuildPhaseBScript(serviceName, installDir, extractDir);
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-upgrade-phaseb-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(tempScript, script, new UTF8Encoding(false));
+        // UTF-8 WITH BOM — Windows PowerShell 5.1 parses BOM-less UTF-8 as ANSI
+        // codepage and mangles non-ASCII (em-dashes / arrows etc.) → parse error.
+        // Mirrors production LocalScriptService.WriteScriptFile's encoder choice.
+        File.WriteAllText(tempScript, script, new UTF8Encoding(true));
 
         try
         {

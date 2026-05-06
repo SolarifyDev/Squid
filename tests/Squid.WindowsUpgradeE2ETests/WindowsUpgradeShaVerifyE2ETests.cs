@@ -239,7 +239,12 @@ exit 0
     {
         var script = BuildFetchAndExtractScript(downloadUrl);
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-sha-fetch-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(tempScript, script, new UTF8Encoding(false));
+        // UTF-8 WITH BOM — Windows PowerShell 5.1 parses BOM-less UTF-8 as ANSI
+        // codepage by default, mangling non-ASCII (em-dashes, Chinese, emoji)
+        // into "?" or invalid chars and triggering parse errors. Production
+        // LocalScriptService.WriteScriptFile uses encoderShouldEmitUTF8Identifier
+        // = true for the same reason.
+        File.WriteAllText(tempScript, script, new UTF8Encoding(true));
 
         try
         {

@@ -374,6 +374,19 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
         // C# 11 raw-string interpolation with $$ — wrap interpolations in {{ }}
         // (two each side) so PowerShell's literal `{` and `}` braces don't
         // need escaping. Result is operator-readable plain PowerShell.
+        //
+        // History (why we DON'T use schtasks.exe directly):
+        //   The earlier wrapper used `schtasks.exe /Create /SC ONCE /Z` which
+        //   on Windows Server 2022 fails with `(41,4):EndBoundary:` + "task
+        //   XML missing required element or attribute". The /Z (auto-delete-
+        //   after-run) flag with /SC ONCE causes schtasks's internal V2-XML
+        //   generator to require an EndBoundary element which it doesn't
+        //   auto-compute from /ST alone. The fix is to use the Register-
+        //   ScheduledTask cmdlet which generates a complete + valid V2 task
+        //   XML (StartBoundary + ExecutionTimeLimit + DeleteExpiredTaskAfter
+        //   = the auto-cleanup story without a malformed XML edge case).
+        //   Caught the first time the wrapper ran on a real windows-latest
+        //   GHA runner via WindowsUpgradeWrapperE2ETests.
         return $$"""
             $ErrorActionPreference = 'Stop'
             Set-StrictMode -Version Latest
@@ -394,35 +407,54 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             Write-Host "[upgrade-wrapper] Inner script written to $DispatchPath ($($InnerScript.Length) chars)"
 
             # Task Scheduler one-shot — SYSTEM identity, GUID-suffixed name
-            # for cross-dispatch uniqueness, /Z auto-deletes after run.
-            # /SC ONCE /ST is a schtasks formality; /Run immediately overrides.
+            # for cross-dispatch uniqueness. Cleanup mechanism:
+            #   - DeleteExpiredTaskAfter = task auto-deletes 1 minute after expiry
+            #   - ExecutionTimeLimit (1h) bounds Phase A + Phase B end-to-end
+            # Replaces the legacy `schtasks.exe /Z` flag which fails on Server 2022
+            # with a malformed-XML error (see comment block above this string).
             $TaskName = "SquidTentacleUpgrade_$([guid]::NewGuid().ToString('N'))"
-            $createArgs = @(
-                '/Create',
-                '/TN', $TaskName,
-                '/TR', "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$DispatchPath`"",
-                '/SC', 'ONCE',
-                '/ST', '23:59',
-                '/RU', 'SYSTEM',
-                '/F',
-                '/Z'
-            )
 
-            $null = & schtasks.exe @createArgs
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "::error:: schtasks /Create failed for task '$TaskName' (exit $LASTEXITCODE)"
+            try {
+                $action = New-ScheduledTaskAction `
+                    -Execute 'powershell.exe' `
+                    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$DispatchPath`""
+
+                # Trigger NOW+2s — task fires almost immediately. We deliberately
+                # don't use Start-ScheduledTask after registration because some
+                # Windows configurations have a brief lag between Register and
+                # the task being eligible for Start; an immediate -At trigger
+                # avoids the race.
+                $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(2))
+
+                # SYSTEM identity, RunLevel Highest = elevated by default. Same
+                # privilege level as the LocalSystem service tree the wrapper
+                # runs in; Phase B's Stop-Service / Move-Item / Start-Service
+                # rights all apply.
+                $principal = New-ScheduledTaskPrincipal `
+                    -UserId 'SYSTEM' `
+                    -LogonType ServiceAccount `
+                    -RunLevel Highest
+
+                $settings = New-ScheduledTaskSettingsSet `
+                    -DeleteExpiredTaskAfter (New-TimeSpan -Minutes 1) `
+                    -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
+                    -AllowStartIfOnBatteries `
+                    -DontStopIfGoingOnBatteries `
+                    -StartWhenAvailable
+
+                Register-ScheduledTask `
+                    -TaskName $TaskName `
+                    -Action $action `
+                    -Trigger $trigger `
+                    -Principal $principal `
+                    -Settings $settings `
+                    -Force | Out-Null
+            } catch {
+                Write-Host "::error:: Register-ScheduledTask failed for task '$TaskName': $($_.Exception.Message)"
                 exit 1
             }
 
-            Write-Host "[upgrade-wrapper] Task '$TaskName' registered (RU=SYSTEM, /Z auto-deletes after run)"
-
-            $null = & schtasks.exe /Run /TN $TaskName
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "::error:: schtasks /Run failed for task '$TaskName' (exit $LASTEXITCODE)"
-                & schtasks.exe /Delete /TN $TaskName /F 2>&1 | Out-Null
-                exit 1
-            }
-
+            Write-Host "[upgrade-wrapper] Task '$TaskName' registered (UserId=SYSTEM, auto-deletes 1min after expiry)"
             Write-Host "[upgrade-wrapper] Task '$TaskName' triggered; Phase A+B run detached as SYSTEM. Outcome via last-upgrade.json on next health check."
             exit 0
             """;

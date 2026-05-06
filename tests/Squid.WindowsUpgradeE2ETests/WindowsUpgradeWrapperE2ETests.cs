@@ -312,7 +312,10 @@ exit 0
     private (int exitCode, string stdout) RunWrapper(string wrapperScript, TimeSpan timeout)
     {
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-upgrade-e2e-outer-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(tempScript, wrapperScript, new UTF8Encoding(false));
+        // UTF-8 WITH BOM — Windows PowerShell 5.1 parses BOM-less UTF-8 as ANSI
+        // codepage and mangles non-ASCII (em-dashes etc.) → parse error → exit 1.
+        // Mirrors production LocalScriptService.WriteScriptFile's encoder choice.
+        File.WriteAllText(tempScript, wrapperScript, new UTF8Encoding(true));
         _tempScriptsToCleanup.Add(tempScript);
 
         var psi = new ProcessStartInfo

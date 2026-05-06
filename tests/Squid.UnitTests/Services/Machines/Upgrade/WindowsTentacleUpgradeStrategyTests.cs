@@ -334,29 +334,49 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         // finishes — every upgrade would corrupt the install dir.
         var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
 
-        script.ShouldContain("schtasks.exe",
-            customMessage: "outer wrapper must invoke schtasks to detach Phase B from the squid-tentacle service tree");
-        script.ShouldContain("$InnerBase64",
-            customMessage: "outer wrapper must embed the inner via base64 to dodge here-string lexer corner cases");
-        script.ShouldContain("FromBase64String",
-            customMessage: "outer wrapper must decode the embedded inner before writing it to disk");
+        script.ShouldContain("Register-ScheduledTask", customMessage:
+            "outer wrapper must register a detached Task Scheduler task to isolate Phase B from the squid-tentacle service tree");
+        script.ShouldContain("$InnerBase64", customMessage:
+            "outer wrapper must embed the inner via base64 to dodge here-string lexer corner cases");
+        script.ShouldContain("FromBase64String", customMessage:
+            "outer wrapper must decode the embedded inner before writing it to disk");
     }
 
     [Fact]
     public void BuildScript_OuterWrapper_RegistersTaskWithSystemIdentityAndAutoDelete()
     {
-        // /RU SYSTEM = SYSTEM identity (squid-tentacle service runs as
-        // LocalSystem so it has the rights to schedule this).
-        // /Z = task auto-deletes after run, no Task Scheduler library accumulation.
-        // /F = force overwrite if a stale task with the same name exists.
+        // SYSTEM identity (squid-tentacle service runs as LocalSystem so it
+        // has the rights to schedule this) + auto-cleanup via DeleteExpired-
+        // TaskAfter (replaces the legacy `/Z` flag which generates malformed
+        // V2 task XML on Windows Server 2022 — see comment block in
+        // BuildOuterWrapper).
         var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
 
-        script.ShouldContain("'/RU', 'SYSTEM'",
-            customMessage: "outer wrapper must register the task with SYSTEM identity so Phase B has Stop-Service / Move-Item rights");
-        script.ShouldContain("'/Z'",
-            customMessage: "outer wrapper must use /Z so the Task Scheduler library doesn't accumulate stale upgrade tasks");
-        script.ShouldContain("'/F'",
-            customMessage: "outer wrapper must use /F so a partially-deleted previous task can't block re-registration");
+        script.ShouldContain("-UserId 'SYSTEM'", customMessage:
+            "outer wrapper must register the task with SYSTEM identity so Phase B has Stop-Service / Move-Item rights");
+        script.ShouldContain("-LogonType ServiceAccount", customMessage:
+            "SYSTEM identity requires ServiceAccount logon type; without it Register-ScheduledTask refuses the principal");
+        script.ShouldContain("-RunLevel Highest", customMessage:
+            "task must run elevated so Phase B's sc.exe operations succeed under UAC");
+        script.ShouldContain("DeleteExpiredTaskAfter", customMessage:
+            "outer wrapper must auto-cleanup expired tasks so Task Scheduler library doesn't accumulate stale upgrade entries (replaces legacy /Z flag)");
+        script.ShouldContain("-Force", customMessage:
+            "Register-ScheduledTask must use -Force so a partially-deleted previous task with the same name can't block re-registration");
+    }
+
+    [Fact]
+    public void BuildScript_OuterWrapper_DoesNotUseLegacySchtasksZFlag()
+    {
+        // Reverse-verify guard: a future refactor that goes back to schtasks.exe
+        // /Z would re-introduce the (41,4):EndBoundary: malformed-XML error on
+        // Server 2022. Pin the absence of /Z + schtasks /Create here so the
+        // regression is compile/test-time visible.
+        var script = WindowsTentacleUpgradeStrategy.BuildScript("1.6.0");
+
+        script.ShouldNotContain("'/Z'", customMessage:
+            "/Z + /SC ONCE generates malformed task XML on Server 2022; we use Register-ScheduledTask + DeleteExpiredTaskAfter instead");
+        script.ShouldNotContain("schtasks.exe /Create", customMessage:
+            "switched away from schtasks.exe direct invocation — Register-ScheduledTask cmdlet generates valid V2 task XML");
     }
 
     [Fact]
