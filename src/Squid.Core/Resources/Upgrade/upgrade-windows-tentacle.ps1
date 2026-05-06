@@ -187,9 +187,17 @@ try {
     }
 
     # ── INSTALL_METHODS dispatch (server-injected) ──────────────────────────
-    # The server replaces {{INSTALL_METHODS}} with the concatenated snippets
+    # The server replaces the placeholder below with the concatenated snippets
     # from each IWindowsUpgradeMethod's RenderDetectAndInstall.
     # ships zip-marker only;  will add chocolatey + MSI.
+    #
+    # IMPORTANT: do NOT mention the placeholder name verbatim anywhere except
+    # the actual substitution site below. WindowsTentacleUpgradeStrategy uses
+    # String.Replace which matches every occurrence — a comment-line mention
+    # would be rewritten too, splicing multi-line PowerShell into a `#`-prefixed
+    # line and producing parse errors that ONLY surface at agent-side Task
+    # Scheduler invocation (operator sees Initiated, no upgrade actually runs).
+    # Pinned by `WindowsTentacleUpgradeStrategyTests.RenderInnerScript_PlaceholderTokens_AppearExactlyOnceInTemplate`.
     $INSTALL_OK = $false
     $INSTALL_METHOD = ''
 

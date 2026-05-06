@@ -1,3 +1,4 @@
+using System.Linq;
 using Halibut;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -256,10 +257,88 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         inner.ShouldNotContain("{{HEALTHCHECK_URL}}");
         inner.ShouldNotContain("{{INSTALL_METHODS}}");
 
-        // Catch-all: any `{{ALL_CAPS_TOKEN}}` left is a stale placeholder.
-        var stalePlaceholderPattern = new System.Text.RegularExpressions.Regex(@"\{\{[A-Z_]+\}\}");
+        // Catch-all: any `{{ALL_CAPS_OR_DIGIT_TOKEN}}` left is a stale placeholder.
+        // Charset MUST include digits — pre-J.E.3.1 used [A-Z_]+ which silently
+        // missed EXPECTED_SHA256 (digits in the placeholder name). The narrow
+        // regex meant a future polish-introduced numeric placeholder could
+        // ship un-substituted without detection.
+        var stalePlaceholderPattern = new System.Text.RegularExpressions.Regex(@"\{\{[A-Z0-9_]+\}\}");
         stalePlaceholderPattern.IsMatch(inner).ShouldBeFalse(
             customMessage: "an unsubstituted '{{ALL_CAPS}}' placeholder ships a broken inner script — add a per-placeholder check above when introducing new placeholders");
+    }
+
+    // ========================================================================
+    // J.E.3.1 — production-bug pin
+    //
+    // Each `{{PLACEHOLDER}}` token MUST appear EXACTLY ONCE in the template.
+    // A duplicate occurrence (e.g. inside a `#`-prefixed comment that mentions
+    // the placeholder name) gets `String.Replace`'d alongside the real one,
+    // which splices multi-line PowerShell into a single-line comment and
+    // produces parse errors that ONLY surface at agent-side Task Scheduler
+    // invocation. The wrapper exits 0 (its work was done — schtasks
+    // registered the task), the strategy maps to MachineUpgradeStatus.Initiated,
+    // and the operator sees "Initiated" in the UI — but no actual upgrade
+    // happens and last-upgrade.json is never written.
+    //
+    // Caught J.E.3 first attempt by the high-fidelity E2E tests in
+    // TentacleUpgradeLifecycleE2ETests on the Windows runner. PR #197 fixed
+    // the `{{INSTALL_METHODS}}` comment occurrence; this test pins so a future
+    // polish doesn't reintroduce the same class of bug for a different
+    // placeholder.
+    // ========================================================================
+
+    [Fact]
+    public void RenderInnerScript_PlaceholderTokens_AppearExactlyOnceInTemplate()
+    {
+        // Read the embedded template directly via the same resource manifest
+        // path the strategy uses. We assert against the *raw template* (pre-
+        // substitution) because once Replace runs, ALL occurrences are gone
+        // — the bug is invisible after substitution.
+        var asm = typeof(WindowsTentacleUpgradeStrategy).Assembly;
+        using var stream = asm.GetManifestResourceStream("Squid.Core.Resources.Upgrade.upgrade-windows-tentacle.ps1")
+            ?? throw new System.IO.InvalidDataException("embedded template not found");
+        using var reader = new System.IO.StreamReader(stream);
+        var template = reader.ReadToEnd();
+
+        // Pull every {{TOKEN}} occurrence — charset includes digits to cover
+        // EXPECTED_SHA256 + future numeric-suffixed placeholders.
+        var matches = System.Text.RegularExpressions.Regex.Matches(template, @"\{\{([A-Z0-9_]+)\}\}");
+        var occurrencesByName = matches
+            .Cast<System.Text.RegularExpressions.Match>()
+            .GroupBy(m => m.Groups[1].Value)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // Sanity: every placeholder the strategy substitutes is also present
+        // in the template (drift detector — strategy can't substitute a
+        // placeholder that doesn't exist).
+        var strategySubstituted = new[]
+        {
+            "TARGET_VERSION", "DOWNLOAD_URL", "EXPECTED_SHA256",
+            "INSTALL_DIR", "SERVICE_NAME", "HEALTHCHECK_URL", "INSTALL_METHODS"
+        };
+
+        foreach (var name in strategySubstituted)
+        {
+            occurrencesByName.ContainsKey(name).ShouldBeTrue(
+                customMessage: $"strategy substitutes '{{{{{name}}}}}' but the template doesn't contain it. " +
+                              $"Either the strategy renamed without updating the .ps1 OR the .ps1 dropped the placeholder. Either way the rendered inner has a hole.");
+
+            occurrencesByName[name].ShouldBe(1,
+                customMessage: $"placeholder '{{{{{name}}}}}' appears {occurrencesByName[name]} times in upgrade-windows-tentacle.ps1 — MUST be exactly once. " +
+                              $"String.Replace substitutes EVERY occurrence, so a comment-line mention of the placeholder name gets rewritten too. " +
+                              $"For multi-line substitutions (e.g. INSTALL_METHODS → if-block), this splices PowerShell code into a `#`-prefixed comment line — " +
+                              $"PowerShell parses the FIRST line as comment but treats subsequent lines as orphan code, producing 'Try statement is missing its Catch or Finally' / 'Unexpected token' errors. " +
+                              $"The wrapper still exits 0 (schtasks registered the task), strategy maps to Initiated, but the agent's inner script parse-fails and last-upgrade.json is never written. " +
+                              $"FIX: edit upgrade-windows-tentacle.ps1 to remove the duplicate occurrence (typically a comment-line mention of the placeholder by name).");
+        }
+
+        // Catch-all: ANY placeholder appearing more than once is the same bug.
+        // Includes future placeholders the strategy doesn't yet substitute.
+        foreach (var (name, count) in occurrencesByName)
+        {
+            count.ShouldBe(1,
+                customMessage: $"placeholder '{{{{{name}}}}}' appears {count} times in template. See above customMessage for full diagnosis — same root cause whether or not the strategy currently substitutes it.");
+        }
     }
 
     [Fact]
