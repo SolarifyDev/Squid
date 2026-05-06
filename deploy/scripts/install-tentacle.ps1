@@ -7,7 +7,7 @@
     extracts it to the install dir, and registers it as a Windows service
     via `squid-tentacle service install` (Phase-12.C / sc.exe under the hood).
 
-    Companion to deploy/scripts/install-tentacle.sh — same one-liner UX,
+    Companion to deploy/scripts/install-tentacle.sh - same one-liner UX,
     same arg shape (--version maps to -Version), same env-var override
     points (TENTACLE_VERSION → -Version, INSTALL_DIR → -InstallDir,
     DOWNLOAD_BASE → -DownloadBase). Per Phase-12.E analysis, Octopus's
@@ -17,7 +17,7 @@
     surface the in-UI upgrade flow will eventually reuse.
 
 .PARAMETER Version
-    Tentacle version to install (e.g. 1.6.0). Defaults to "latest" — uses
+    Tentacle version to install (e.g. 1.6.0). Defaults to "latest" - uses
     GitHub's /releases/latest/download redirect. Override via env var
     TENTACLE_VERSION.
 
@@ -28,17 +28,17 @@
 .PARAMETER DownloadBase
     Base URL for the GitHub Releases. Defaults to
     "https://github.com/SolarifyDev/Squid/releases". Override via env var
-    DOWNLOAD_BASE — useful for air-gapped operators pointing at a private
+    DOWNLOAD_BASE - useful for air-gapped operators pointing at a private
     mirror that copies the GitHub release tree.
 
 .PARAMETER ServiceName
     Windows service name. Defaults to "squid-tentacle" (mirrors the Linux
-    systemd unit name). Pinned per Rule 8 — operator runbooks reference
+    systemd unit name). Pinned per Rule 8 - operator runbooks reference
     this literal.
 
 .PARAMETER NoServiceInstall
     Skip the `squid-tentacle service install` step. Use when bootstrapping
-    a base VM image that will be cloned — the service install MUST happen
+    a base VM image that will be cloned - the service install MUST happen
     AFTER the image is cloned, otherwise every clone shares the same
     SCM-registered service identity. Same caveat as Octopus's "do not
     complete the configuration wizard before snapshotting".
@@ -70,7 +70,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── Defaults (Rule 8 — pinned literals) ──────────────────────────────────────
+# -- Defaults (Rule 8 - pinned literals) --------------------------------------
 # Renaming any of these breaks operator runbooks, MDM playbooks, and the
 # in-UI upgrade flow's expectations.
 $DefaultVersion       = 'latest'
@@ -83,9 +83,9 @@ if ([string]::IsNullOrWhiteSpace($Version))      { $Version = $DefaultVersion }
 if ([string]::IsNullOrWhiteSpace($InstallDir))   { $InstallDir = $DefaultInstallDir }
 if ([string]::IsNullOrWhiteSpace($DownloadBase)) { $DownloadBase = $DefaultDownloadBase }
 
-# ── Arch detection ──────────────────────────────────────────────────────────
+# -- Arch detection ----------------------------------------------------------
 # $env:PROCESSOR_ARCHITECTURE on a 64-bit OS is "AMD64" (x64) or "ARM64".
-# 32-bit Windows is intentionally NOT supported — Phase-12.E analysis
+# 32-bit Windows is intentionally NOT supported - Phase-12.E analysis
 # (per Octopus docs review) concluded x86 has no real audience in 2026.
 function Resolve-Rid {
     param([string] $Arch)
@@ -94,7 +94,7 @@ function Resolve-Rid {
         'AMD64' { return 'win-x64' }
         'ARM64' { return 'win-arm64' }
         default {
-            throw "Unsupported architecture: $Arch. Squid Tentacle ships for win-x64 and win-arm64 only — 32-bit Windows is not supported."
+            throw "Unsupported architecture: $Arch. Squid Tentacle ships for win-x64 and win-arm64 only - 32-bit Windows is not supported."
         }
     }
 }
@@ -109,7 +109,7 @@ if ([string]::IsNullOrWhiteSpace($arch)) {
 
 $rid = Resolve-Rid -Arch $arch
 
-# ── Elevation guard ─────────────────────────────────────────────────────────
+# -- Elevation guard ---------------------------------------------------------
 # Default install dir is under %ProgramFiles% which requires Admin to write
 # to. Skip the check when the operator overrode -InstallDir to a user-owned
 # path (e.g. "C:\Users\me\squid-tentacle" for dev/test).
@@ -138,7 +138,7 @@ Write-Host "Arch:     $rid"
 Write-Host "Install:  $InstallDir"
 Write-Host ''
 
-# ── Download URL resolution ─────────────────────────────────────────────────
+# -- Download URL resolution -------------------------------------------------
 # Mirrors install-tentacle.sh's two-path logic:
 #   latest        → /releases/latest/download/squid-tentacle-{rid}.zip
 #                   (GitHub redirects this to the highest non-prerelease tag)
@@ -198,13 +198,13 @@ Possible causes:
         exit 1
     }
 
-    # ── Extract ──────────────────────────────────────────────────────────────
+    # -- Extract --------------------------------------------------------------
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
     Write-Host "Extracting to $InstallDir..."
-    # -Force overwrites an existing install — same idempotent re-run UX as
+    # -Force overwrites an existing install - same idempotent re-run UX as
     # install-tentacle.sh (tar xzf overwrites). The Tentacle service should
     # be stopped first if upgrading; the in-UI upgrade flow handles that
     # via the upgrade PowerShell script. For a manual re-install, the
@@ -222,12 +222,12 @@ Possible causes:
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ── Firewall rule for Listening Tentacle ────────────────────────────────────
+# -- Firewall rule for Listening Tentacle ------------------------------------
 # Idempotent: New-NetFirewallRule throws if the rule already exists, so
 # Get-NetFirewallRule first. Same defensive pattern Octopus's automation
 # docs use (`netsh advfirewall firewall add rule`). Phase-12.E.0 ships
 # the rule unconditionally because the operator can't easily know yet
-# whether they'll register as Listening or Polling — adding it always is
+# whether they'll register as Listening or Polling - adding it always is
 # cheap (one inbound TCP allow) and saves a separate operator step.
 function Add-ListeningFirewallRule {
     param(
@@ -238,7 +238,7 @@ function Add-ListeningFirewallRule {
     $existing = Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue
 
     if ($existing) {
-        Write-Host "Firewall rule '$RuleName' already exists — skipping."
+        Write-Host "Firewall rule '$RuleName' already exists - skipping."
         return
     }
 
@@ -259,7 +259,7 @@ try {
     Write-Warning "Failed to add firewall rule: $($_.Exception.Message). For Listening Tentacle, manually run: New-NetFirewallRule -DisplayName 'Squid Tentacle' -Direction Inbound -Protocol TCP -LocalPort $ListeningPort -Action Allow"
 }
 
-# ── Service install (Phase 12.C path) ───────────────────────────────────────
+# -- Service install (Phase 12.C path) ---------------------------------------
 # `squid-tentacle service install` routes through WindowsServiceHost (Phase
 # 12.C) → BuildScCreateArgs → sc create + sc failure (Phase 12.D) + sc start.
 # The service installs as LocalSystem by default (Phase 12.C contract). LSA
@@ -267,7 +267,7 @@ try {
 # followup scope.
 if ($NoServiceInstall) {
     Write-Host ''
-    Write-Host '-NoServiceInstall set — skipping service install.'
+    Write-Host '-NoServiceInstall set - skipping service install.'
     Write-Host "To install the service later, run:"
     Write-Host "  & '$binaryPath' service install --instance Default --service-name $ServiceName"
     Write-Host ''
@@ -276,7 +276,7 @@ if ($NoServiceInstall) {
     Write-Host "Installing Windows service '$ServiceName'..."
 
     # ServiceCommand.Install internally derives the SCM Description as
-    # "Squid Tentacle Agent ({instance})" — no --display-name flag exposed.
+    # "Squid Tentacle Agent ({instance})" - no --display-name flag exposed.
     # The instance name argument is positional after `--instance`, defaulting
     # to "Default" when omitted (which yields service name "squid-tentacle"
     # via ServiceCommand's default-instance branch). Pass it explicitly so the
@@ -292,14 +292,14 @@ if ($NoServiceInstall) {
     Write-Host ''
 }
 
-# ── Next-step hints ─────────────────────────────────────────────────────────
+# -- Next-step hints ---------------------------------------------------------
 # Squid CLI shape:
-#   register        — registers the agent with the Squid server, persists config
-#   --server URL    — Squid server URL
-#   --api-key KEY   — issued by the Squid server admin under User → API Keys
-#   --role ROLE     — target tag (single value; pass --role multiple times for several tags)
-#   --environment   — environment name (same multi-value pattern as --role)
-#   --comms-url URL — set for Polling agents (where the agent dials Squid back)
+#   register        - registers the agent with the Squid server, persists config
+#   --server URL    - Squid server URL
+#   --api-key KEY   - issued by the Squid server admin under User → API Keys
+#   --role ROLE     - target tag (single value; pass --role multiple times for several tags)
+#   --environment   - environment name (same multi-value pattern as --role)
+#   --comms-url URL - set for Polling agents (where the agent dials Squid back)
 # The Listening vs Polling distinction is implicit in whether --comms-url
 # is set. There's no Octopus-style `--comms-style TentaclePassive/Active`.
 Write-Host '=== Next steps ==='

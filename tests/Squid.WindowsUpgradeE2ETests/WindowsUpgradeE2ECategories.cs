@@ -109,4 +109,21 @@ public static class WindowsUpgradeE2ECategories
     /// outcome mapper surfaces here.</para>
     /// </summary>
     public const string TentacleUpgrade = "TentacleUpgradeE2E";
+
+    /// <summary>
+    /// Phase 12.K E2E coverage for the production
+    /// <c>deploy/scripts/install-tentacle.{sh,ps1}</c> install scripts.
+    /// Drives the actual scripts via real <c>powershell.exe</c> / <c>bash</c>
+    /// against a <see cref="Infrastructure.LocalReleaseMirror"/> serving
+    /// fake zip / tarball downloads. Tier 🟢 high-fidelity — every
+    /// component except the upstream GitHub Releases CDN is real
+    /// (real shell, real script, real Expand-Archive / tar xzf, real
+    /// install-dir IO).
+    ///
+    /// <para><b>OS scope</b>: install-tentacle.ps1 is Windows-only (uses
+    /// <c>Expand-Archive</c>, <c>New-NetFirewallRule</c>); install-tentacle.sh
+    /// is Linux-only (uses <c>apt</c>/<c>dnf</c>/<c>useradd</c>/<c>tar</c>).
+    /// Each test method skip-guards on its target OS.</para>
+    /// </summary>
+    public const string TentacleInstallScript = "TentacleInstallScriptE2E";
 }
