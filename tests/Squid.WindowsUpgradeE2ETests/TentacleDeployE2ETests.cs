@@ -163,9 +163,14 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        var (scriptBody, scriptType) = OsScript.Echo("hello-from-polling-deploy");
+        // Round 9 fix: SleepThenEcho instead of bare Echo. Bare echo
+        // finishes in <100ms; on stressed Windows runners pwsh.exe spawn
+        // can take longer than that, leaving the stdout reader unattached
+        // when the script's emit fires → output lost. Same root cause +
+        // mitigation as Round 8 for the concurrent test.
+        var (scriptBody, scriptType) = OsScript.SleepThenEcho(1, "hello-from-polling-deploy");
 
-        var result = await DispatchAndObserveAsync(server, agent: null, agentThumbprint: agent.Thumbprint, agentSubscriptionId: agent.SubscriptionId, scriptBody, scriptType);
+        var result = await DispatchAndObserveAsync(server, agent: null, agentThumbprint: agent.Thumbprint, agentSubscriptionId: agent.SubscriptionId, scriptBody, scriptType, observeTimeout: TimeSpan.FromSeconds(15));
 
         result.ExitCode.ShouldBe(0,
             customMessage: $"polling echo script MUST exit 0. Logs:\n{result.AllText}");
@@ -223,15 +228,21 @@ public sealed class TentacleDeployE2ETests
         // since each script then sleeps 1s, all three are simultaneously
         // running for ~700ms — real concurrent overlap, real isolation
         // test.
-        var (bodyA, typeA) = OsScript.SleepThenEcho(1, "ticket-A-marker");
-        var (bodyB, typeB) = OsScript.SleepThenEcho(1, "ticket-B-marker");
-        var (bodyC, typeC) = OsScript.SleepThenEcho(1, "ticket-C-marker");
+        // Round 9: bumped sleep from 1s to 2s. Round 8's 1s was passing
+        // most runs but flaked under heavy Windows runner load (run
+        // 25434695568 — resultA empty even with SleepThenEcho-1s). 2s
+        // gives the stdout reader more guaranteed attached time before
+        // emit, at the cost of an extra second per run. Acceptable
+        // trade-off for stability.
+        var (bodyA, typeA) = OsScript.SleepThenEcho(2, "ticket-A-marker");
+        var (bodyB, typeB) = OsScript.SleepThenEcho(2, "ticket-B-marker");
+        var (bodyC, typeC) = OsScript.SleepThenEcho(2, "ticket-C-marker");
 
-        var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA, observeTimeout: TimeSpan.FromSeconds(15));
+        var taskA = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyA, typeA, observeTimeout: TimeSpan.FromSeconds(20));
         await Task.Delay(100);
-        var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB, observeTimeout: TimeSpan.FromSeconds(15));
+        var taskB = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyB, typeB, observeTimeout: TimeSpan.FromSeconds(20));
         await Task.Delay(100);
-        var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC, observeTimeout: TimeSpan.FromSeconds(15));
+        var taskC = DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, bodyC, typeC, observeTimeout: TimeSpan.FromSeconds(20));
 
         await Task.WhenAll(taskA, taskB, taskC);
 
