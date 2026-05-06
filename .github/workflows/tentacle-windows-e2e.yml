@@ -25,7 +25,7 @@ on:
       upgrade_test_filter:
         description: "xUnit --filter for the Squid.WindowsUpgradeE2ETests step (defaults to wrapper + service categories)"
         required: false
-        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E"
+        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E"
 
 permissions:
   contents: read
@@ -76,7 +76,7 @@ jobs:
       - name: Run Squid.WindowsUpgradeE2ETests
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E" }
+          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E" }
           dotnet test tests/Squid.WindowsUpgradeE2ETests/Squid.WindowsUpgradeE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
