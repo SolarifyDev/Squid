@@ -167,31 +167,31 @@ Server → tentacle wrapper → Phase A (download) → Phase B (binary swap + re
 | E1.h-dispatch | Win: `WindowsTentacleUpgradeStrategy.UpgradeAsync` happy path → returns Initiated; wrapper dispatched + observed | ✓ | — | 12.J.E.1 | 🟢 | 🟢 | `Listening_UpgradeAsync_HappyPath_ReturnsInitiatedAndDispatchesWrapper` |
 | E1.h-unreachable | UpgradeAsync against unreachable agent → returns Failed (NOT Initiated) | ✓ | — | 12.J.E.1 | 🟢 | 🟢 | `UpgradeAsync_AgentUnreachable_ReturnsFailed` |
 | E1.h-noversion | UpgradeAsync with empty target version → ValidateRequest rejects pre-dispatch | ✓ | — | 12.J.E.1 | 🟢 | 🟢 | `UpgradeAsync_EmptyTargetVersion_ReturnsFailedWithoutDispatch` |
-| E1.h | Win zip method: server dispatches upgrade → Phase A downloads → Phase B swaps + restarts → new version reported | ✓ | — | 12.J.E.2 | ⚪ | 🟢 | needs release-mirror HTTP fixture |
+| E1.h | Win zip method: server dispatches upgrade → Phase A downloads → Phase B swaps + restarts → new version reported | ✓ | — | 12.J.E.3 | ✅ | 🟢 | `E1h_FullLifecycle_HappyPath_WritesSuccessStatusAndSwapsBinary` (drives prod .ps1 against LocalReleaseMirror + WindowsServiceFixture; isolates `$env:ProgramData`) |
 | E1.h2 | Linux tarball method: same flow with .tar.gz | — | ✓ | 12.J | ⚪ | 🟢 | |
-| E1.u1 | Download URL 404 → status reports Failed with download-error detail | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
+| E1.u1 | Download URL 404 → status reports Failed with download-error detail | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E1u1_DownloadVersionNotFound_ExitsTwoAndWritesFailedStatusWithDownloadDetail` (Win); Lin pending (12.J Linux phase) |
 | E2.h | Linux apt method: package installed via `apt-get install -y squid-tentacle=1.6.0` | — | ✓ | 12.J | ⚪ | 🟢 | docker fixture with stub apt repo |
 | E2.u1 | apt lock contention → wait + retry; eventually succeeds | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E2.u2 | apt repo missing → fallback to tarball method | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E3.h | Linux dnf method: `dnf install -y squid-tentacle-1.6.0-1.x86_64` | — | ✓ | 12.J | ⚪ | 🟢 | docker fixture with stub yum repo |
 | E3.u1 | dnf repo unreachable → fallback to tarball | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E4.h | Already at target version → wrapper short-circuits, no Phase B | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
-| E5.u1 | Target version not in release index → wrapper fails with "version not found" | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
+| E5.u1 | Target version not in release index → wrapper fails with "version not found" | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | covered alongside E1.u1 — `LocalReleaseMirror.ConfigureNotFoundForVersion` 404s the version → exit 2 + FAILED |
 | E6.h | Phase B Stop-Service → Move-Item swap → Start-Service → marker reports new version | ✓ | — | 12.G | ✅ | 🟡 | inline mirror; drift detector exists; promote to high-fidelity by running real .ps1 |
 | E6.h2 | Linux Phase B: stop systemd → swap binary → start systemd → reports new version | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E6.u1 | Phase B mid-flight crash → .bak rollback restores old version → status reports Failed-with-rollback | ✓ | ✓ | 12.J | ⚪ | 🟢 | inject failure between Move-Item swap and Start-Service |
 | E7.h | After successful upgrade, service auto-restart picks up new binary on next reboot too | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E7.u1 | New binary's OnStart crashes → SCM 1053 → status reports Failed → rollback restores old binary | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
-| E8.h | `last-upgrade.json` written with success outcome → server reads on next capabilities probe | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
-| E8.h2 | `last-upgrade.json` written with failure outcome → server reads → operator sees in UI | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
-| E8.u1 | `last-upgrade.json` corrupt → server treats as "no recent upgrade", logs warning | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
+| E8.h | `last-upgrade.json` written with success outcome → server reads on next capabilities probe | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E8h_LastUpgradeJson_AfterSuccess_RoundTripsViaCapabilitiesProbe` — pins schema v2 contract (status/targetVersion/installMethod/scriptPid/startedAt) end-to-end through `UpgradeStatusPayload.TryParse` |
+| E8.h2 | `last-upgrade.json` written with failure outcome → server reads → operator sees in UI | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | covered by `E1u1_*` + `E12u1_*` — both write FAILED status with detail; format-side parse is pinned by `UpgradeStatusPayload.TryParse` test ladder |
+| E8.u1 | `last-upgrade.json` corrupt → server treats as "no recent upgrade", logs warning | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E8u1_CorruptLastUpgradeJson_ParseReturnsNullWithoutThrow` — six corrupt shapes (empty / whitespace / non-JSON / truncated / wrong-shape array / HTML error page) all return null without throwing |
 | E9.h | Capabilities probe after upgrade reports new version → server cache refreshes | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E9.u1 | Capabilities probe times out → server retries; eventually marks Unreachable | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E10.u1 | Concurrent server-side upgrade dispatches → Redis lock prevents dual; second returns "already in progress" | ✓ | ✓ | 12.J | ⚪ | 🟡 | unit-tested; promote to E2E |
 | E11.u1 | Concurrent agent-side dispatches (rare — operator + scheduled together) → tentacle lock file prevents dual; second is no-op | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E11.u2 | Stale tentacle lock file (from crashed process) → next dispatch detects + breaks the lock | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E12.h | SHA companion file fetch + hash verification → matching SHA accepts | ✓ | — | 12.G | ✅ | 🟡 | covered by `WindowsUpgradeShaVerifyE2ETests` |
-| E12.u1 | SHA mismatch → reject + log + status Failed with "checksum failed" | ✓ | ✓ | 12.J | ⚪ | 🟢 | inject corrupt zip |
+| E12.u1 | SHA mismatch → reject + log + status Failed with "checksum failed" | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithChecksumDetail` — `LocalReleaseMirror.StageSha256Override` injects deliberately-wrong digest; reverse-asserts service stayed at v1 (Phase B aborted, swap did NOT proceed despite corrupt download) |
 | E12.u2 | SHA companion 404 → opportunistic fetch falls through, install proceeds (current behaviour) | ✓ | — | 12.G | ✅ | 🟢 | |
 | E13.h | Custom `SQUID_TARGET_*_DOWNLOAD_BASE_URL` env → uses mirror; HTTPS warning absent for HTTPS URL | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E13.u1 | Custom URL non-HTTPS → warning logged, install still proceeds | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
@@ -270,11 +270,11 @@ Edge cases that bit operators in production.
 | B — Service lifecycle | 19 | 19 | 12 (G.2 + G.5) |
 | C — Registration | 18 | 18 | 9 (Phase 12.I) |
 | D — Deployment execution | 26 | 52 | 13 (Phase 12.J.D.1-4) |
-| E — Upgrade flow | 32 | 52 | 6 (3 wrapper E2E from Phase 12.G + 3 J.E.1 dispatch tests) |
+| E — Upgrade flow | 32 | 52 | 12 (3 wrapper E2E from 12.G + 3 J.E.1 dispatch + 6 J.E.3 lifecycle/SHA/last-upgrade.json) |
 | F — Health & capabilities | 6 | 12 | 4 (J.E.2 capabilities probe via PR #195, P0-unblocked) |
 | G — Multi-instance | 6 | 8 | 0 |
 | H — Boundary cases | 10 | 16 | 0 |
-| **Total** | **141 unique scenarios** | **≈201 tests** | **75 (37% covered)** |
+| **Total** | **141 unique scenarios** | **≈201 tests** | **81 (40% covered)** |
 
 ---
 
@@ -295,9 +295,9 @@ Edge cases that bit operators in production.
 | 12.K.1 | A — install-tentacle.ps1 E2E + production em-dash fix | ✅ Verified (PR #192) | +3 | 69 |
 | 12.L.1 | G — multi-instance Windows | ✅ Verified (PR #193) | +2 | 71 |
 | **P0 fix** | **🐛 Halibut cache-key bug** — every health check + liveness probe was silently broken | ✅ Verified (PR #194) | **+0 production tests, but 3 fix-pin** | 71 (+3 fix-pin) |
-| 12.J.E.2 | F — capabilities probe (UNBLOCKED by P0) | ✅ Verified (PR #195) | +4 | **75** |
-| 12.J.E.3+ | E — full upgrade lifecycle (download + Phase B + last-upgrade.json) | ⚪ Planned | ~10-15 | ~85-90 |
-| 12.J.E.3+ | E — upgrade methods (zip/apt/dnf) + rollback + lock | ⚪ Planned | ~30 | ~108 |
+| 12.J.E.2 | F — capabilities probe (UNBLOCKED by P0) | ✅ Verified (PR #195) | +4 | 75 |
+| 12.J.E.3 | E — full upgrade lifecycle (download + SHA verify + Phase B + last-upgrade.json round-trip) | ✅ Verified (PR #196) | +6 | **81** |
+| 12.J.E.4+ | E — upgrade methods (apt/dnf) + rollback + lock + already-up-to-date | ⚪ Planned | ~25 | ~106 |
 | 12.J.D.5 | D — Calamari + variable substitution + cancellation | ⚪ Planned | ~10 | ~118 |
 | 12.K | A (install scripts) + H (boundary) | ⚪ Planned | ~40 | ~158 |
 | 12.L | B (lifecycle remainder) + F (health) + G (multi-instance) | ⚪ Planned | ~28 | ~186 |

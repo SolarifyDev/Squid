@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Squid.WindowsUpgradeE2ETests.Infrastructure;
@@ -55,6 +56,34 @@ public sealed class LocalReleaseMirror : IDisposable
     private byte[] _stagedBinary;
     private string _stagedBinaryFileName;
     private readonly HashSet<string> _notFoundVersions = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Per-archive byte cache. <see cref="ZipArchive"/> + GZipStream both
+    /// embed timestamps in entry headers, so a fresh build for the
+    /// <c>.zip</c> request and a separate fresh build for the <c>.sha256</c>
+    /// companion request would produce different bytes → SHA mismatch
+    /// false-positive in the production .ps1's verify step. Cache by URL
+    /// path so every consumer of the same archive sees identical bytes
+    /// (and the companion's hash matches).
+    /// </summary>
+    private readonly Dictionary<string, byte[]> _archiveBytesCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _archiveCacheLock = new();
+    /// <summary>
+    /// Override for the <c>.sha256</c> companion content. When set, the
+    /// mirror serves THIS string as the companion body instead of computing
+    /// the actual SHA256 of the served archive. Used by the SHA-mismatch
+    /// E2E test (J.E.3 / E12.u1) to inject a deliberately-wrong digest so
+    /// the .ps1's <c>Get-FileHash</c> compare path triggers an exit 7.
+    /// Null = serve the real computed SHA (happy-path coverage).
+    /// </summary>
+    private string _sha256Override;
+    /// <summary>
+    /// When true, the mirror returns 404 for every <c>.sha256</c> path even
+    /// if the underlying archive is staged. Tests the production .ps1's
+    /// "skip-with-warning" fallback for older releases / private mirrors that
+    /// haven't replicated companion files yet (J.E.3 / E12.u2 — not in this
+    /// PR but the toggle is here for future use).
+    /// </summary>
+    private bool _suppressSha256;
     private bool _disposed;
 
     /// <summary>The mirror's base URL. Pass this as <c>--DownloadBase</c>
@@ -120,6 +149,34 @@ public sealed class LocalReleaseMirror : IDisposable
         _notFoundVersions.Add(version);
     }
 
+    /// <summary>
+    /// Overrides the <c>.sha256</c> companion body. The mirror normally
+    /// computes the real SHA256 of the staged archive on each request; this
+    /// override forces a fixed string instead so tests can inject a
+    /// deliberately-wrong hash to exercise the production .ps1's exit-7
+    /// (checksum failed) path.
+    ///
+    /// <para><b>Format mirrors <c>sha256sum</c></b>: <c>"&lt;64 hex&gt;  &lt;filename&gt;"</c>.
+    /// The .ps1's parser splits on whitespace and takes the first token, so
+    /// the suffix is cosmetic — but matching the canonical format keeps the
+    /// fixture realistic for any future test that asserts on the wire body
+    /// shape.</para>
+    /// </summary>
+    public void StageSha256Override(string sha256Body)
+    {
+        _sha256Override = sha256Body;
+    }
+
+    /// <summary>
+    /// When set, every <c>.sha256</c> URL returns 404 regardless of what's
+    /// staged for the underlying archive. Exercises the .ps1's
+    /// skip-with-warning fallback (release without companion file).
+    /// </summary>
+    public void SuppressSha256Companion()
+    {
+        _suppressSha256 = true;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -172,7 +229,15 @@ public sealed class LocalReleaseMirror : IDisposable
 
         // Serve a zip / tarball depending on the URL extension. The
         // install-tentacle.{sh,ps1} scripts hit different URLs for
-        // Windows (zip) and Linux (tar.gz).
+        // Windows (zip) and Linux (tar.gz). Companion `.sha256` files
+        // are served alongside (production upgrade-windows-tentacle.ps1's
+        // opportunistic verification path appends `.sha256` to DOWNLOAD_URL).
+        if (path.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
+        {
+            ServeSha256(ctx, path);
+            return;
+        }
+
         if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
             ServeZip(ctx);
@@ -190,12 +255,65 @@ public sealed class LocalReleaseMirror : IDisposable
         ctx.Response.OutputStream.Close();
     }
 
+    /// <summary>
+    /// Serves the SHA256 companion for the underlying archive. Production
+    /// upgrade-windows-tentacle.ps1 fetches <c>$DOWNLOAD_URL.sha256</c>
+    /// after a successful zip download; the body must be in
+    /// <c>sha256sum</c> format (<c>"&lt;64-hex&gt;  &lt;filename&gt;"</c>).
+    /// </summary>
+    private void ServeSha256(HttpListenerContext ctx, string companionPath)
+    {
+        if (_suppressSha256)
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.OutputStream.Close();
+            return;
+        }
+
+        // The companion's SHA target is the path with `.sha256` stripped —
+        // mirror computes the SHA of whatever archive WOULD be served at
+        // that path. Routed through the same cache the zip/tar.gz handlers
+        // use so the digest matches byte-for-byte what the .ps1 just
+        // downloaded (timestamps in archive headers are non-deterministic
+        // across separate builds).
+        var archivePath = companionPath.Substring(0, companionPath.Length - ".sha256".Length);
+        var archiveFileName = Path.GetFileName(archivePath);
+
+        if (!archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) &&
+            !archivePath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.OutputStream.Close();
+            return;
+        }
+
+        string body;
+        if (_sha256Override != null)
+        {
+            // Override path — used by SHA-mismatch tests to inject a
+            // deliberately-wrong digest. Body still mimics sha256sum
+            // format so the .ps1's parser handles it identically.
+            body = _sha256Override;
+        }
+        else
+        {
+            var archiveBytes = GetOrBuildArchiveBytes(archivePath);
+            var hash = SHA256.HashData(archiveBytes);
+            var hex = Convert.ToHexString(hash).ToLowerInvariant();
+            body = $"{hex}  {archiveFileName}\n";
+        }
+
+        var bodyBytes = Encoding.ASCII.GetBytes(body);
+        ctx.Response.ContentType = "text/plain; charset=ascii";
+        ctx.Response.ContentLength64 = bodyBytes.Length;
+        ctx.Response.OutputStream.Write(bodyBytes, 0, bodyBytes.Length);
+        ctx.Response.OutputStream.Close();
+    }
+
     private void ServeZip(HttpListenerContext ctx)
     {
-        var binaryName = _stagedBinaryFileName ?? "Squid.Tentacle.exe";
-        var binaryContent = _stagedBinary ?? DefaultBinaryShim();
-
-        var zipBytes = BuildZip(binaryName, binaryContent);
+        var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+        var zipBytes = GetOrBuildArchiveBytes(path);
 
         ctx.Response.ContentType = "application/zip";
         ctx.Response.ContentLength64 = zipBytes.Length;
@@ -205,15 +323,50 @@ public sealed class LocalReleaseMirror : IDisposable
 
     private void ServeTarGz(HttpListenerContext ctx)
     {
-        var binaryName = _stagedBinaryFileName ?? "squid-tentacle";
-        var binaryContent = _stagedBinary ?? DefaultBinaryShim();
-
-        var tarGzBytes = BuildTarGz(binaryName, binaryContent);
+        var path = ctx.Request.Url?.AbsolutePath ?? string.Empty;
+        var tarGzBytes = GetOrBuildArchiveBytes(path);
 
         ctx.Response.ContentType = "application/gzip";
         ctx.Response.ContentLength64 = tarGzBytes.Length;
         ctx.Response.OutputStream.Write(tarGzBytes, 0, tarGzBytes.Length);
         ctx.Response.OutputStream.Close();
+    }
+
+    /// <summary>
+    /// Returns the cached bytes for a given archive URL path, building on
+    /// first request. Caching is required because ZipArchive + GZipStream
+    /// embed timestamps in entry headers — a separate build for the .zip
+    /// request and the .sha256 companion request would produce different
+    /// bytes and fail the production .ps1's hash verify.
+    /// </summary>
+    private byte[] GetOrBuildArchiveBytes(string archivePath)
+    {
+        lock (_archiveCacheLock)
+        {
+            if (_archiveBytesCache.TryGetValue(archivePath, out var cached))
+                return cached;
+
+            var binaryContent = _stagedBinary ?? DefaultBinaryShim();
+            byte[] bytes;
+
+            if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var binaryName = _stagedBinaryFileName ?? "Squid.Tentacle.exe";
+                bytes = BuildZip(binaryName, binaryContent);
+            }
+            else if (archivePath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+            {
+                var binaryName = _stagedBinaryFileName ?? "squid-tentacle";
+                bytes = BuildTarGz(binaryName, binaryContent);
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unsupported archive path: {archivePath}");
+            }
+
+            _archiveBytesCache[archivePath] = bytes;
+            return bytes;
+        }
     }
 
     // ── Archive builders ────────────────────────────────────────────────────

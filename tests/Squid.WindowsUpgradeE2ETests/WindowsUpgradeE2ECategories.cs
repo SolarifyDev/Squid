@@ -150,4 +150,42 @@ public static class WindowsUpgradeE2ECategories
     /// now implements <c>IEnumerable&lt;string&gt;</c> + <c>[JsonObject(OptIn)]</c>.</para>
     /// </summary>
     public const string TentacleCapabilities = "TentacleCapabilitiesE2E";
+
+    /// <summary>
+    /// Phase 12.J.E.3 E2E coverage for the FULL Windows upgrade lifecycle
+    /// — drives the production <c>upgrade-windows-tentacle.ps1</c> end-to-
+    /// end against a real <see cref="Infrastructure.LocalReleaseMirror"/>
+    /// (zip + SHA256 companion) + a real
+    /// <see cref="Infrastructure.WindowsServiceFixture"/>-installed Windows
+    /// service. Verifies Phase A (download + SHA verify + extract) AND
+    /// Phase B (Stop → swap → Start) AND <c>last-upgrade.json</c> writeback
+    /// — the round-trip operator UI relies on for post-upgrade status.
+    ///
+    /// <para><b>Tier</b>: 🟢 High-fidelity (Rule 12). Production .ps1
+    /// loaded from disk verbatim, real <c>Invoke-WebRequest</c> +
+    /// <c>Get-FileHash</c> + <c>Expand-Archive</c> + <c>Stop-Service</c> +
+    /// <c>Move-Item</c> + <c>Start-Service</c> — only the upstream GitHub
+    /// Releases CDN is replaced (LocalReleaseMirror) and <c>$env:ProgramData</c>
+    /// is redirected to a test-isolated dir so <c>last-upgrade.json</c> /
+    /// <c>upgrade.lock</c> / <c>upgrade.log</c> writes don't pollute the
+    /// host machine.</para>
+    ///
+    /// <para><b>Coverage delta vs <c>WindowsUpgradeServiceE2E</c>
+    /// (PhaseB)</b>: that category exercises only the Phase B mechanics
+    /// (Stop / Move-Item / Start) via an inline mirror with a drift
+    /// detector — medium-fidelity. This category exercises the full Phase
+    /// A + Phase B template against a real running service, covering the
+    /// HTTP download, SHA256 fetch + verify, archive extract, AND swap +
+    /// restart sequence, AND asserts on the resulting
+    /// <c>last-upgrade.json</c> payload (the operator-visible outcome).
+    /// Catches regressions invisible to PhaseB tests: download URL
+    /// construction, SHA companion fetch, Expand-Archive layout
+    /// assumptions, status JSON schema.</para>
+    ///
+    /// <para><b>Windows-only</b>: uses sc.exe-installed service +
+    /// PowerShell-only cmdlets (<c>Stop-Service</c>, <c>Start-Service</c>,
+    /// <c>Expand-Archive</c>, <c>Get-FileHash</c>). Skip-guards on
+    /// non-Windows dev hosts.</para>
+    /// </summary>
+    public const string TentacleUpgradeLifecycle = "TentacleUpgradeLifecycleE2E";
 }
