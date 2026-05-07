@@ -331,4 +331,113 @@ public sealed class TentacleLinuxInstallScriptE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // A8.h-Linux — Re-running the installer is idempotent (must not fail
+    //               on existing state)
+    //
+    // Production scenarios this pins:
+    //   - Operator runs install-tentacle.sh twice to "refresh" or after a
+    //     transient network failure
+    //   - Fleet automation re-runs the installer on every machine boot
+    //     (common pattern: cloud-init / Ansible / Salt invokes the
+    //     installer; subsequent boots re-invoke for self-healing)
+    //   - Operator pins a specific version, then re-runs to verify
+    //     installation correctness
+    //
+    // Without this pin, regressions in idempotency ship silently:
+    //   - Future polish adds an "already installed, error" check → fleet
+    //     automation breaks on every machine after the first boot
+    //   - tar xzf fails with EEXIST on a non-empty INSTALL_DIR → re-runs
+    //     to repair partial installs become impossible
+    //   - ln -sf regression → second run leaves stale symlink pointing
+    //     to gone INSTALL_DIR
+    //   - mkdir -p regression (someone changes to plain mkdir) → second
+    //     run errors on existing /etc/squid-tentacle dir
+    //
+    // The .sh's design IS idempotent today (per code inspection):
+    //   - mkdir -p (idempotent)
+    //   - tar xzf (overwrites existing files)
+    //   - chmod +x (overwrites)
+    //   - ln -sf (overwrites symlink — `f` flag forces replace)
+    //   - install_runtime_deps (idempotent — ldconfig pre-check short-circuits)
+    //   - install -m 0755 -d /etc/apt/keyrings (idempotent)
+    //
+    // This test PINS that contract end-to-end so any future change that
+    // accidentally breaks one of these idempotency invariants triggers a
+    // CI failure.
+    //
+    // Test mechanism: stage tarball, run install twice in succession, assert:
+    //   - Both runs exit 0
+    //   - Both runs print "Verified: ... executable" (binary still functional)
+    //   - Final state (binary + symlinks + dirs) matches single-install
+    //   - No spurious error messages between runs
+    //
+    // Tier: 🟢 H. Reuses J.M.L.A.2 fixture + tarball builder; only adds
+    // the second sequential RunInstallScript call.
+    //
+    // Expected runtime: ~2x J.M.L.A.2 (~1-2s; .sh is fast on warm cache).
+    // ========================================================================
+
+    [Fact]
+    public void A8h_RerunInstaller_IdempotentlySucceeds()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+
+        const string version = "1.6.0-rerun";
+        var tarball = ctx.BuildInstallTarGz(version);
+        ctx.Mirror.StagePreBuiltArchive(tarball);
+
+        // ── Run 1: clean install ────────────────────────────────────────────
+        var (exit1, output1) = ctx.RunInstallScript(version);
+
+        exit1.ShouldBe(0,
+            customMessage: $"first install run MUST succeed before idempotency can be tested. Got exit {exit1}.\noutput tail:\n{(output1.Length > 1000 ? "..." + output1.Substring(output1.Length - 1000) : output1)}");
+
+        output1.ShouldContain("Verified: squid-tentacle executable",
+            customMessage: "first run MUST log verification — sanity check before re-run.");
+
+        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue("first run MUST install binary");
+        File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue("first run MUST create PATH symlink");
+
+        // ── Run 2: re-run on existing state ────────────────────────────────
+        // No cleanup between runs — the .sh's idempotency contract MUST
+        // handle: existing INSTALL_DIR, existing symlinks, existing
+        // /etc/squid-tentacle, existing /var/lib/squid-tentacle, existing
+        // /etc/apt/keyrings.
+        var (exit2, output2) = ctx.RunInstallScript(version);
+
+        exit2.ShouldBe(0,
+            customMessage: $"SECOND install run MUST succeed (idempotent contract). Got exit {exit2}. " +
+                          $"If 1: regression in idempotency — likely tar xzf fails on existing files, OR ln -sf regressed to ln -s, OR a mkdir somewhere lost the -p flag. " +
+                          $"If 2: arg parsing introduced a 'detect already installed' check that errors instead of proceeding. " +
+                          $"output tail:\n{(output2.Length > 2000 ? "..." + output2.Substring(output2.Length - 2000) : output2)}");
+
+        output2.ShouldContain("Verified: squid-tentacle executable",
+            customMessage: "second run MUST also log verification — proves the binary is still runnable after re-extract. " +
+                          "If absent: post-install verification step regressed OR the binary got corrupted by re-extraction.");
+
+        // Reverse-assert: no obvious "already installed, abort" error.
+        // Several common-but-bad regression patterns produce these strings.
+        output2.ShouldNotContain("already installed",
+            customMessage: "second run stdout MUST NOT contain 'already installed' — that signal indicates a regression where idempotency was broken by adding an error-on-existing-state check. " +
+                          "Re-runs are a critical operator workflow (refresh, repair, fleet automation); they must succeed silently.");
+
+        output2.ShouldNotContain("Error: install dir not empty",
+            customMessage: "second run MUST NOT error on non-empty INSTALL_DIR. The .sh uses tar xzf which overwrites existing files; a regression to 'fail-if-not-empty' breaks every fleet refresh.");
+
+        // Final state assertions — same as single-install.
+        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
+            customMessage: $"binary MUST still exist at {ctx.InstallDir}/Squid.Tentacle after re-install. If absent: re-extract failed silently OR rm-then-extract pattern dropped the binary mid-flight.");
+
+        File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
+            customMessage: "/usr/local/bin/squid-tentacle MUST still exist after re-install. ln -sf overwrites; if symlink is gone, ln -sf regressed to plain ln (fails on existing target).");
+
+        Directory.Exists("/etc/squid-tentacle").ShouldBeTrue("CONFIG_DIR persists across re-installs");
+        Directory.Exists("/var/lib/squid-tentacle").ShouldBeTrue("STATE_DIR persists across re-installs");
+
+        ctx.MarkClean();
+    }
 }
