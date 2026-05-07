@@ -105,7 +105,24 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         //    framework-dependent .NET exe needs sibling runtime files
         //    co-located or the new service won't start).
         var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
-        ctx.Mirror.StageBinary("squid-tentacle-bundle.zip", v2Bundle);
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Wire-shape sanity: the bundle MUST contain Squid.Tentacle.exe at
+        // the top level. Pre-J.E.3.1 fix, the test used StageBinary which
+        // double-wrapped the bundle inside another zip, leaving the .ps1's
+        // existence-check ($extractDir\Squid.Tentacle.exe) failing with
+        // exit 3. This assertion catches the same bug class if a future
+        // setup accidentally regresses to StageBinary OR a future BuildV2
+        // bundle change drops the placeholder.
+        using (var bundleMs = new MemoryStream(v2Bundle))
+        using (var bundleZip = new System.IO.Compression.ZipArchive(bundleMs, System.IO.Compression.ZipArchiveMode.Read))
+        {
+            bundleZip.GetEntry("Squid.Tentacle.exe").ShouldNotBeNull(
+                customMessage: "v2Bundle MUST contain Squid.Tentacle.exe at the top level. " +
+                              "If null: BuildV2BundleZip dropped the placeholder OR the test wired the bundle through StageBinary " +
+                              "(which auto-wraps content in a fresh zip — caller's pre-built zip becomes a single inner entry, " +
+                              "no top-level Squid.Tentacle.exe after Expand-Archive runs on the agent).");
+        }
 
         // 3. Render production .ps1 with placeholders pointed at our fixtures.
         var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
@@ -235,7 +252,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         // Stage a v2 zip — it'll download successfully but the companion
         // SHA we serve will NOT match, so verify-step rejects it.
         var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
-        ctx.Mirror.StageBinary("squid-tentacle-bundle.zip", v2Bundle);
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
 
         // Inject a wrong (but well-formed) SHA. Production .ps1's parser:
         //   - takes first whitespace-delimited token
@@ -305,7 +322,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
 
         var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.5.0-roundtrip");
-        ctx.Mirror.StageBinary("squid-tentacle-bundle.zip", v2Bundle);
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
 
         var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.5.0-roundtrip");
         var (exitCode, _) = ctx.RunUpgradeScript(script);

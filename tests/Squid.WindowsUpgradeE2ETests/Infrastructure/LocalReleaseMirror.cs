@@ -55,6 +55,19 @@ public sealed class LocalReleaseMirror : IDisposable
     private readonly Task _loopTask;
     private byte[] _stagedBinary;
     private string _stagedBinaryFileName;
+    /// <summary>
+    /// Pre-built archive bytes staged directly. When set, the mirror serves
+    /// THESE bytes verbatim for every <c>.zip</c> / <c>.tar.gz</c> request
+    /// — bypasses the auto-wrap-single-binary path that <see cref="StageBinary"/>
+    /// follows. Used by full-bundle tests (e.g. J.E.3 upgrade lifecycle) that
+    /// need to supply a multi-entry archive (binary tree + version files +
+    /// `Squid.Tentacle.exe` placeholder) mirroring the production GitHub
+    /// release zip's shape. <see cref="StageBinary"/> would double-wrap such
+    /// content because it treats the supplied bytes as a single file inside
+    /// a fresh zip — this field is the explicit "no wrapping, this IS the
+    /// archive" seam.
+    /// </summary>
+    private byte[] _preBuiltArchive;
     private readonly HashSet<string> _notFoundVersions = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// Per-archive byte cache. <see cref="ZipArchive"/> + GZipStream both
@@ -137,6 +150,34 @@ public sealed class LocalReleaseMirror : IDisposable
     {
         _stagedBinaryFileName = binaryFileName;
         _stagedBinary = content;
+    }
+
+    /// <summary>
+    /// Stages a PRE-BUILT archive that the mirror serves verbatim — no
+    /// auto-wrapping. Use this when a test needs the served zip / tarball
+    /// to contain MULTIPLE entries (e.g. a full binary tree + version
+    /// files + canonical exe placeholder mirroring the production GitHub
+    /// release zip's shape).
+    ///
+    /// <para><b>Why a separate API from <see cref="StageBinary"/></b>: the
+    /// existing <see cref="StageBinary"/> API was designed for the install-
+    /// script E2E tests where a single binary file inside the archive
+    /// suffices. The upgrade-lifecycle E2E (12.J.E.3) requires a
+    /// realistic full bundle (recursive copy of a service exe's runtime
+    /// tree + a top-level <c>Squid.Tentacle.exe</c> the .ps1 existence-
+    /// check expects). Passing such a pre-built zip via <see cref="StageBinary"/>
+    /// would double-wrap it (the mirror would treat the bytes as a single
+    /// file content + auto-create a fresh zip wrapper). This API is the
+    /// explicit "no auto-wrap, these bytes ARE the archive" seam.</para>
+    ///
+    /// <para>SHA256 companion responses still work — they hash the pre-
+    /// built bytes (cached per URL path so the .zip and .sha256 stay in
+    /// sync byte-for-byte; same cache the auto-wrap path uses).</para>
+    /// </summary>
+    public void StagePreBuiltArchive(byte[] preBuiltArchiveBytes)
+    {
+        ArgumentNullException.ThrowIfNull(preBuiltArchiveBytes);
+        _preBuiltArchive = preBuiltArchiveBytes;
     }
 
     /// <summary>
@@ -346,22 +387,34 @@ public sealed class LocalReleaseMirror : IDisposable
             if (_archiveBytesCache.TryGetValue(archivePath, out var cached))
                 return cached;
 
-            var binaryContent = _stagedBinary ?? DefaultBinaryShim();
             byte[] bytes;
 
-            if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            // Pre-built archive takes precedence — caller supplied a fully-
+            // shaped multi-entry zip / tarball. Serve verbatim, no wrapping.
+            if (_preBuiltArchive != null)
             {
-                var binaryName = _stagedBinaryFileName ?? "Squid.Tentacle.exe";
-                bytes = BuildZip(binaryName, binaryContent);
-            }
-            else if (archivePath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
-            {
-                var binaryName = _stagedBinaryFileName ?? "squid-tentacle";
-                bytes = BuildTarGz(binaryName, binaryContent);
+                bytes = _preBuiltArchive;
             }
             else
             {
-                throw new InvalidOperationException($"Unsupported archive path: {archivePath}");
+                // Auto-wrap-single-binary path (StageBinary). The default
+                // when only a single file's content has been staged.
+                var binaryContent = _stagedBinary ?? DefaultBinaryShim();
+
+                if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    var binaryName = _stagedBinaryFileName ?? "Squid.Tentacle.exe";
+                    bytes = BuildZip(binaryName, binaryContent);
+                }
+                else if (archivePath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+                {
+                    var binaryName = _stagedBinaryFileName ?? "squid-tentacle";
+                    bytes = BuildTarGz(binaryName, binaryContent);
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Unsupported archive path: {archivePath}");
+                }
             }
 
             _archiveBytesCache[archivePath] = bytes;

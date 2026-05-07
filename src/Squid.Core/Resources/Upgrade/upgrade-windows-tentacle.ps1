@@ -187,9 +187,17 @@ try {
     }
 
     # ── INSTALL_METHODS dispatch (server-injected) ──────────────────────────
-    # The server replaces {{INSTALL_METHODS}} with the concatenated snippets
+    # The server replaces the placeholder below with the concatenated snippets
     # from each IWindowsUpgradeMethod's RenderDetectAndInstall.
     # ships zip-marker only;  will add chocolatey + MSI.
+    #
+    # IMPORTANT: do NOT mention the placeholder name verbatim anywhere except
+    # the actual substitution site below. WindowsTentacleUpgradeStrategy uses
+    # String.Replace which matches every occurrence — a comment-line mention
+    # would be rewritten too, splicing multi-line PowerShell into a `#`-prefixed
+    # line and producing parse errors that ONLY surface at agent-side Task
+    # Scheduler invocation (operator sees Initiated, no upgrade actually runs).
+    # Pinned by `WindowsTentacleUpgradeStrategyTests.RenderInnerScript_PlaceholderTokens_AppearExactlyOnceInTemplate`.
     $INSTALL_OK = $false
     $INSTALL_METHOD = ''
 
@@ -265,7 +273,29 @@ try {
             if (-not [string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
                 Append-UpgradeLog "[upgrade-method:zip] Verifying SHA256"
 
-                $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+                # Direct .NET API for SHA256 computation (intentionally NOT the
+                # PowerShell cmdlet form). The cmdlet lives in
+                # `Microsoft.PowerShell.Utility` and is loaded via the module
+                # auto-loader; some Windows runner images + stripped-down
+                # PowerShell installations have observed the auto-loader fail
+                # with `CommandNotFoundException` for the SHA cmdlet even when
+                # `Invoke-WebRequest` (same module) loads fine — likely a
+                # partial module-cache state under the combination of
+                # `$ErrorActionPreference = 'Stop'` and
+                # `Set-StrictMode -Version Latest`. Direct .NET avoids the
+                # auto-loader entirely (PS 5.1's host already has the BCL
+                # types loaded) AND is ~5x faster on ~10 MB archives. Same
+                # digest, more portable.
+                # Pinned by `WindowsTentacleUpgradeStrategyTests.RenderInnerScript_ShaVerifyUsesDirectDotNetApi_NotGetFileHashCmdlet`.
+                $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($archivePath)
+                    $hashBytes = $sha256.ComputeHash($bytes)
+                    $actualSha = ([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLower()
+                }
+                finally {
+                    $sha256.Dispose()
+                }
                 $expectedSha = $EXPECTED_SHA256.ToLower()
 
                 if ($actualSha -ne $expectedSha) {
