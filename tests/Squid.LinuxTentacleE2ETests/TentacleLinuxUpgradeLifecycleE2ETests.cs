@@ -96,4 +96,65 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // E12.u1-Linux — SHA256 mismatch → exit 7 + FAILED with mismatch detail
+    //
+    // Linux analog of Windows E12u1. The .sh's tarball verify-step (line
+    // 437-445):
+    //   ACTUAL_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+    //   if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then exit 7; fi
+    //
+    // Test mechanism: LocalReleaseMirror serves the actual tarball
+    // (default shim content — extract logic never runs since SHA verify
+    // fires first) AND serves a deliberately-wrong .sha256 companion via
+    // StageSha256Override(). The .sh's opportunistic .sha256 fetch
+    // (line 426-435) populates $EXPECTED_SHA256 from our wrong digest;
+    // local sha256sum on the actual tarball gives a real digest that
+    // doesn't match → exit 7.
+    //
+    // Why this matters operationally: SHA verification is the integrity
+    // gate against MITM-tampered downloads + corrupted air-gap mirror
+    // copies. Without this test exercising the full curl→fetch→compare→
+    // exit chain, a regression in any of those steps could silently allow
+    // tampered binaries through. Reverse-asserts: status MUST be FAILED
+    // (not silently succeed by skipping the check) AND detail MUST name
+    // the mismatch (not just "FAILED" with no diagnosis).
+    // ========================================================================
+
+    [Fact]
+    public void E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithMismatchDetail()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage wrong .sha256 — 64 zeros is a valid hex format that the
+        // .sh's regex (`^[0-9a-fA-F]{64}$`) accepts. Real tarball's SHA
+        // can't possibly be 64 zeros → mismatch.
+        ctx.Mirror.StageSha256Override("0000000000000000000000000000000000000000000000000000000000000000  squid-tentacle.tar.gz\n");
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "1.6.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(7,
+            customMessage: $"SHA256 mismatch MUST produce exit 7 (documented in upgrade-linux-tentacle.sh header — '7 — SHA256 mismatch'). " +
+                          $"Got exit {exitCode}. " +
+                          (exitCode == 6 ? "Got exit 6 (download not reachable) — mirror didn't serve the tarball correctly. " : "") +
+                          (exitCode == 0 ? "Got exit 0 — SHA verify SKIPPED entirely. SECURITY REGRESSION: integrity gate disabled. " : "") +
+                          (exitCode == 3 ? "Got exit 3 (extract missing binary) — SHA verify passed when it shouldn't have. " : "") +
+                          $"\noutput:\n{output}");
+
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: $"last-upgrade.json MUST be written on SHA-mismatch path — operators see WHY upgrade was rejected. Path: {ctx.StatusFilePath}");
+
+        statusPayload.Status.ShouldBe("FAILED",
+            customMessage: $"SHA-mismatch status MUST be 'FAILED'. Got: '{statusPayload.Status}'");
+
+        statusPayload.Detail.ShouldContain("SHA256 mismatch",
+            customMessage: $"detail MUST name 'SHA256 mismatch' so operators distinguish integrity failure from generic 'unknown' (which would lead them to re-trigger the upgrade pointlessly). Got: '{statusPayload.Detail}'");
+
+        ctx.MarkClean();
+    }
 }
