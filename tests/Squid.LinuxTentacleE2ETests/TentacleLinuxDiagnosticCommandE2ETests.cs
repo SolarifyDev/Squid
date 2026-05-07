@@ -271,6 +271,148 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // D3.h-Linux — `show-config` after register returns the values register
+    //               persisted (operator's config-verification round-trip)
+    //
+    // Operator scenario this pins: an operator runs register, then wants
+    // to verify the persisted config matches what they typed. Or a fleet
+    // automation pipeline runs:
+    //
+    //   sudo squid-tentacle register --role X --environment Y --listening-port P
+    //   sudo squid-tentacle show-config | grep "Roles:"        → assert X
+    //   sudo squid-tentacle show-config | grep "Environments:" → assert Y
+    //   sudo squid-tentacle show-config | grep "ListeningPort:" → assert P
+    //
+    // The contract: PersistInstanceConfig (RegisterCommand.cs ~lines
+    // 158-203) writes to the JSON config file; show-config reads via
+    // TentacleApp.LoadTentacleSettings → LoadTentacleSettings reads from
+    // IConfiguration which is composed from the persisted file. The
+    // round-trip MUST yield the original values.
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - PersistInstanceConfig serializes to a different key name than
+    //     LoadTentacleSettings expects (e.g. 'Tentacle:Roles' vs
+    //     'Tentacle.Roles') → show-config sees defaults instead of
+    //     operator's input
+    //   - JSON serializer config drift (camelCase ↔ PascalCase) → values
+    //     persist but are unreadable on next load
+    //   - show-config's output format regresses (e.g. label rename
+    //     'ServerUrl:' → 'Server URL:') → operator scripts that grep
+    //     this output break silently
+    //   - Tentacle:Mode detection regresses (e.g. always reports 'Polling')
+    //
+    // Test mechanism:
+    //   1. Register Default with specific role / environment / listening
+    //      port (GUID-suffixed values to disambiguate from any leftover
+    //      state)
+    //   2. Run `show-config`
+    //   3. Assert exit 0
+    //   4. Assert stdout contains the persisted ServerUrl, Roles,
+    //      Environments, ListeningPort
+    //   5. Assert "Detected Mode: Listening" (since no --comms-url)
+    //   6. Assert the labels operators grep on are present (output-format
+    //      pin)
+    //
+    // Tier: 🟢 H. Real binary + real /etc/squid-tentacle/ + real
+    // config round-trip + real stub HTTP register.
+    //
+    // Expected runtime: ~3-5s (register + show-config + assertions).
+    // ========================================================================
+
+    [Fact]
+    public void D3h_ShowConfigAfterRegister_ReturnsPersistedValues()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+
+        using var ctx = new DiagnosticTestContext();
+
+        // GUID-suffixed unique values so we know what we're asserting on
+        // is THIS test's data, not leftover from a previous run.
+        var role = $"d3-role-{Guid.NewGuid():N}";
+        var environment = $"d3-env-{Guid.NewGuid():N}";
+        const int listeningPort = 51960;
+
+        // ── Step 1: register against stub ─────────────────────────────────
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-D3-SHOW-CONFIG",
+            "--name", ctx.MachineName,
+            "--role", role,
+            "--environment", environment,
+            "--flavor", "LinuxTentacle",
+            "--listening-port", listeningPort.ToString(CultureInfo.InvariantCulture));
+
+        regExit.ShouldBe(0,
+            customMessage: $"D3h precondition: register MUST succeed before show-config can be exercised. Got {regExit}.\noutput:\n{regOutput}");
+
+        // ── Step 2: run show-config ────────────────────────────────────────
+        var (showExit, showOutput) = ctx.Binary.SudoRun("show-config");
+
+        showExit.ShouldBe(0,
+            customMessage: $"`show-config` MUST exit 0 after register. Got {showExit}.\noutput:\n{showOutput}");
+
+        // ── Assertions: persisted values appear in show-config output ─────
+        // ServerUrl: persisted by register, label "ServerUrl:" comes from
+        // ShowConfigCommand line 19. Operator scripts grep this label.
+        var stubUrl = ctx.Stub.BaseUrl.ToString().TrimEnd('/');
+        showOutput.ShouldContain(stubUrl,
+            customMessage: $"show-config MUST contain the registered ServerUrl '{stubUrl}'. " +
+                          "If absent: PersistInstanceConfig didn't persist Tentacle:ServerUrl OR show-config reads from a stale source. " +
+                          $"\noutput:\n{showOutput}");
+
+        showOutput.ShouldContain("ServerUrl:",
+            customMessage: "show-config MUST contain 'ServerUrl:' label — operators grep this literal. " +
+                          "If absent: output-format regression renamed the label.");
+
+        // Roles: persisted via Tentacle:Roles. The GUID-suffixed value
+        // makes accidental match against leftover state impossible.
+        showOutput.ShouldContain(role,
+            customMessage: $"show-config MUST contain the registered role '{role}'. " +
+                          "If absent: register's --role flag wasn't persisted OR show-config doesn't read Tentacle:Roles. " +
+                          $"\noutput:\n{showOutput}");
+
+        showOutput.ShouldContain("Roles:",
+            customMessage: "show-config MUST contain 'Roles:' label.");
+
+        // Environments: same round-trip as Roles.
+        showOutput.ShouldContain(environment,
+            customMessage: $"show-config MUST contain the registered environment '{environment}'. Same root-cause space as Roles.");
+
+        showOutput.ShouldContain("Environments:",
+            customMessage: "show-config MUST contain 'Environments:' label.");
+
+        // ListeningPort: persisted as int, printed as int.
+        showOutput.ShouldContain(listeningPort.ToString(CultureInfo.InvariantCulture),
+            customMessage: $"show-config MUST contain ListeningPort '{listeningPort}'. " +
+                          "If absent: --listening-port wasn't persisted OR show-config doesn't read Tentacle:ListeningPort.");
+
+        showOutput.ShouldContain("ListeningPort:",
+            customMessage: "show-config MUST contain 'ListeningPort:' label.");
+
+        // Detected Mode: ShowConfigCommand line 30-32 derives mode from
+        // ServerCommsUrl + ServerCommsAddresses being empty. We didn't
+        // pass --comms-url, so mode MUST be Listening. Catches a regression
+        // where the mode-detection logic flipped (always reports Polling).
+        showOutput.ShouldContain("Detected Mode:        Listening",
+            customMessage: "show-config MUST report 'Detected Mode:        Listening' when no --comms-url was passed. " +
+                          "If 'Polling': mode-detection regressed (LinuxTentacleFlavor.ResolveCommunicationMode logic broke). " +
+                          $"\noutput:\n{showOutput}");
+
+        // Reverse-pin: the cert-error fallback path MUST NOT fire on the
+        // happy path. ShowConfigCommand catches exceptions when loading
+        // the cert and prints "Certificate:         Error — ..." (line
+        // 52). If that fires, the cert path resolution is broken AND the
+        // operator's identity lookup is broken.
+        showOutput.ShouldNotContain("Certificate:         Error",
+            customMessage: "show-config MUST NOT print 'Certificate:         Error — ...' on the happy path. " +
+                          "If present: TentacleCertificateManager threw on LoadOrCreateCertificate (cert path resolution failure, " +
+                          "ownership issue). The operator can't see their thumbprint and can't add the agent to the trust list.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
