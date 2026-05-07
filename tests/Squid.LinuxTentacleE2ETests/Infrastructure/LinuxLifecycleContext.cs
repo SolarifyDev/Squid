@@ -185,9 +185,37 @@ public sealed class LinuxLifecycleContext : IDisposable
     ///         to prove the swap actually landed.</item>
     /// </list>
     /// </summary>
-    public byte[] BuildV2BundleTarGz(string targetVersion)
+    public byte[] BuildV2BundleTarGz(string targetVersion, bool failHealthz = false)
     {
         var serviceScriptBytes = File.ReadAllBytes(TestServiceScript);
+
+        // J.L.E.9: optional surgical mutation that flips the embedded
+        // python3 healthz responder's success code (200) to a 5xx (503),
+        // so .sh's Phase B `curl -fsS` against /healthz fails (-f rejects
+        // 5xx as exit 22). HEALTH_OK stays 0 → retry loop exhausts →
+        // rollback path fires. Same script binds the same port, returns
+        // a real HTTP response — just an unhealthy one.
+        //
+        // Why not a separate v2 script: the .sh's Phase B mv-swap would
+        // work either way, but a separate file means the test infra has
+        // to maintain two service scripts. A surgical 1-call swap on a
+        // SINGLE script keeps the contract clean: same script, optional
+        // failure mode toggled per build. Mirrors Windows' `crashOnStart`
+        // parameter on `BuildV2BundleZip`.
+        if (failHealthz)
+        {
+            var script = Encoding.UTF8.GetString(serviceScriptBytes);
+            const string healthyResponse = "self.send_response(200)";
+            const string unhealthyResponse = "self.send_response(503)";
+
+            if (!script.Contains(healthyResponse))
+                throw new InvalidOperationException(
+                    $"Cannot inject failHealthz mutation: test service script does not contain expected sentinel '{healthyResponse}'. " +
+                    "If the script's healthz responder was rewritten, update this mutation site to match the new sentinel.");
+
+            script = script.Replace(healthyResponse, unhealthyResponse, StringComparison.Ordinal);
+            serviceScriptBytes = Encoding.UTF8.GetBytes(script);
+        }
 
         // version.txt content is the FULL target version (NOT stripped)
         // because the .sh's Phase B post-restart sanity check compares
