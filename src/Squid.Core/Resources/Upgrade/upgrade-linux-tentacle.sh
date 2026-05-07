@@ -65,6 +65,12 @@ INSTALL_DIR="{{INSTALL_DIR}}"
 SERVICE_NAME="{{SERVICE_NAME}}"
 SERVICE_USER="{{SERVICE_USER}}"
 HEALTHCHECK_URL="{{HEALTHCHECK_URL}}"
+# Post-restart healthcheck poll count — server-substituted from
+# LinuxTentacleUpgradeStrategy.ResolveHealthcheckRetries (default 90 ×
+# 1s = 90s window). Operator override via
+# SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_RETRIES. J.L.E.6 parity with
+# Windows J.E.5 hardening.
+HEALTHCHECK_RETRIES={{HEALTHCHECK_RETRIES}}
 
 # State directory — server-substituted from LinuxTentacleUpgradeStrategy.
 # Default `/var/lib/squid-tentacle` matches what install-tentacle.sh
@@ -619,7 +625,7 @@ timeout 90 sudo systemctl restart "$SERVICE_NAME" || {
 
 # ── Health check loop ────────────────────────────────────────────────────────
 if [ "$START_OK" = "1" ]; then
-  for i in $(seq 1 90); do
+  for i in $(seq 1 "$HEALTHCHECK_RETRIES"); do
     if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
       if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
         HEALTH_OK=1
@@ -630,7 +636,7 @@ if [ "$START_OK" = "1" ]; then
     sleep 1
   done
   if [ "$HEALTH_OK" != "1" ]; then
-    emit_event B healthz-fail "Service did not become healthy within 90s"
+    emit_event B healthz-fail "Service did not become healthy within ${HEALTHCHECK_RETRIES}s"
   fi
 fi
 

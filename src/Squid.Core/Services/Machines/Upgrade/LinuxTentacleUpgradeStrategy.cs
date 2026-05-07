@@ -89,6 +89,26 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// </summary>
     public const string StateDirEnvVar = "SQUID_TARGET_LINUX_TENTACLE_STATE_DIR";
 
+    /// <summary>
+    /// Operator override for the post-restart healthcheck poll count.
+    /// Default <see cref="DefaultHealthcheckRetries"/> (90 × 1s sleep =
+    /// 90s wait window) — matches the existing pre-J.L.E.6 behaviour.
+    /// Tests override to 1 to bypass the wait when the test service
+    /// has its python3 healthz responder ready by the time .sh polls.
+    ///
+    /// <para><b>Operator value</b>: deployments with slow-starting
+    /// agents (heavy plugin enumeration, JIT cold start) get false
+    /// rollbacks on every upgrade today. Setting this to 180 (3 min)
+    /// gives those environments room without changing default behaviour.
+    /// Direct parity with Windows
+    /// <c>WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar</c>
+    /// (J.E.5).</para>
+    ///
+    /// <para>Pinned per Rule 8 by
+    /// <c>LinuxTentacleUpgradeStrategyTests.HealthcheckRetriesEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string HealthcheckRetriesEnvVar = "SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_RETRIES";
+
     private const string DefaultDownloadBaseUrl = "https://github.com/SolarifyDev/Squid/releases/download";
     private const string DefaultHealthcheckUrl = "http://127.0.0.1:8080/healthz";
 
@@ -98,6 +118,14 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// <see cref="StateDirEnvVar"/>.
     /// </summary>
     internal const string DefaultStateDir = "/var/lib/squid-tentacle";
+
+    /// <summary>
+    /// Default post-restart healthcheck poll count. 90 × 1s sleep = 90s
+    /// wait window. Matches the existing hardcoded value from before
+    /// J.L.E.6. Operators with heavyweight agents override via
+    /// <see cref="HealthcheckRetriesEnvVar"/>.
+    /// </summary>
+    internal const int DefaultHealthcheckRetries = 90;
 
     /// <summary>
     /// Wall-clock cap for a single upgrade script dispatch. Must stay
@@ -381,6 +409,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
             .Replace("{{STATE_DIR}}", ResolveStateDir(), StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_RETRIES}}", ResolveHealthcheckRetries().ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
@@ -395,6 +424,32 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         var baseUrl = ResolveDownloadBaseUrl();
 
         return $"{baseUrl}/{version}/squid-tentacle-{version}-{rid}.tar.gz";
+    }
+
+    /// <summary>
+    /// Resolves the post-restart healthcheck poll count. Defaults to
+    /// <see cref="DefaultHealthcheckRetries"/> (90 × 1s sleep = 90s window).
+    /// Invalid values fall back to default — operator-friendly: a typo'd
+    /// env var doesn't break upgrades, just uses the safe default.
+    /// </summary>
+    internal static int ResolveHealthcheckRetries()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(HealthcheckRetriesEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultHealthcheckRetries;
+
+        if (!int.TryParse(raw.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            || parsed < 1)
+        {
+            Log.Warning(
+                "[Upgrade] {EnvVar} is set to an invalid value ('{Value}'). " +
+                "Must be a positive integer (number of 1-second poll attempts). " +
+                "Falling back to default of {Default}.",
+                HealthcheckRetriesEnvVar, raw, DefaultHealthcheckRetries);
+            return DefaultHealthcheckRetries;
+        }
+
+        return parsed;
     }
 
     /// <summary>

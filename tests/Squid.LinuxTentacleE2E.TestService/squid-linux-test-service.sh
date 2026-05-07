@@ -35,6 +35,34 @@ INSTALL_DIR="${INSTALL_DIR:-$(dirname "$(readlink -f "$0")")}"
 VERSION_FILE="$INSTALL_DIR/version.txt"
 MARKER_FILE="$INSTALL_DIR/service-running.marker"
 
+# Optional healthz endpoint for J.L.E.6+ full-lifecycle tests. The .sh's
+# Phase B healthcheck loop curls $HEALTHCHECK_URL (default
+# http://127.0.0.1:8080/healthz) — without an actual responder the
+# upgrade always rolls back. python3 ships on every modern Linux distro
+# (and on the GHA ubuntu-latest runner) — use it to spawn a tiny HTTP
+# server in the background that returns 200/OK.
+#
+# Opt-in via SQUID_TEST_SERVICE_HEALTHZ=1 — when unset (default),
+# the script behaves as before (no HTTP listener). The fixture sets the
+# env var via the systemd unit's Environment= directive when needed.
+HEALTHZ_PID=""
+if [ "${SQUID_TEST_SERVICE_HEALTHZ:-0}" = "1" ] && command -v python3 >/dev/null 2>&1; then
+    HEALTHZ_PORT="${SQUID_TEST_SERVICE_HEALTHZ_PORT:-8080}"
+    python3 -c "
+import http.server, socketserver, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK\n')
+    def log_message(self, *args, **kwargs): pass
+with socketserver.TCPServer(('127.0.0.1', $HEALTHZ_PORT), H) as httpd:
+    httpd.serve_forever()
+" &
+    HEALTHZ_PID=$!
+fi
+
 read_version() {
     if [ -f "$VERSION_FILE" ]; then
         cat "$VERSION_FILE" | tr -d '[:space:]'
@@ -45,6 +73,9 @@ read_version() {
 
 cleanup() {
     rm -f "$MARKER_FILE" 2>/dev/null || true
+    if [ -n "$HEALTHZ_PID" ] && kill -0 "$HEALTHZ_PID" 2>/dev/null; then
+        kill "$HEALTHZ_PID" 2>/dev/null || true
+    fi
     exit 0
 }
 
