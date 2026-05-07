@@ -185,7 +185,7 @@ public sealed class LinuxLifecycleContext : IDisposable
     ///         to prove the swap actually landed.</item>
     /// </list>
     /// </summary>
-    public byte[] BuildV2BundleTarGz(string targetVersion, bool failHealthz = false)
+    public byte[] BuildV2BundleTarGz(string targetVersion, bool failHealthz = false, bool omitSquidTentacleBinary = false)
     {
         var serviceScriptBytes = File.ReadAllBytes(TestServiceScript);
 
@@ -236,12 +236,28 @@ public sealed class LinuxLifecycleContext : IDisposable
         // this placeholder isn't actually invoked as a service.
         var squidTentacleBytes = serviceScriptBytes;
 
-        var entries = new (string Name, byte[] Content)[]
-        {
-            ("Squid.Tentacle", squidTentacleBytes),
-            ("squid-linux-test-service.sh", serviceScriptBytes),
-            ("version.txt", versionTxtBytes)
-        };
+        // J.L.E.15: optional release-pipeline regression mode. The .sh's
+        // Phase A line 458 checks `[ -f "$NEW_BIN" ]` after extraction
+        // and exits 3 if the Squid.Tentacle binary is absent. Real-world:
+        // a botched build/release pipeline could ship an empty/incomplete
+        // tarball — operators see exit 3 + "Missing binary" detail
+        // immediately, no half-state. This mode constructs that exact
+        // tarball shape so we can pin the contract.
+        var entries = omitSquidTentacleBinary
+            ? new (string Name, byte[] Content)[]
+            {
+                // No "Squid.Tentacle" entry — only the script + version.txt.
+                // Phase A's extract succeeds; Phase A's `[ -f $NEW_BIN ]`
+                // check fails; exit 3 fires.
+                ("squid-linux-test-service.sh", serviceScriptBytes),
+                ("version.txt", versionTxtBytes)
+            }
+            : new (string Name, byte[] Content)[]
+            {
+                ("Squid.Tentacle", squidTentacleBytes),
+                ("squid-linux-test-service.sh", serviceScriptBytes),
+                ("version.txt", versionTxtBytes)
+            };
 
         return BuildTarGz(entries);
     }
