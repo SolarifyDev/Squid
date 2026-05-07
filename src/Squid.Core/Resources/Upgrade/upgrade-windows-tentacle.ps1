@@ -59,6 +59,7 @@
 #   5   — insufficient disk space
 #   7   — SHA256 mismatch (only when EXPECTED_SHA256 is non-empty)
 #   8   — Start-Service post-swap failed → rollback fired (J.E.6)
+#   9   — Healthcheck timeout in FATAL mode → rollback fired (J.E.7)
 #   12  — Windows version too old (PowerShell 5.0+ required, Server 2016+)
 #   13  — failed to acquire upgrade lock (concurrent upgrade in progress)
 #   14  — no install method succeeded (zip + future chocolatey/MSI all skipped or failed)
@@ -111,6 +112,12 @@ $HEALTHCHECK_URL  = '{{HEALTHCHECK_URL}}'
 # would fail on a quoted-and-cast empty string if the placeholder ever
 # defaults to empty.
 $HEALTHCHECK_RETRIES = {{HEALTHCHECK_RETRIES}}
+# Healthcheck failure mode. Substituted by the strategy as `$true` /
+# `$false` (PowerShell boolean literals — no quotes) so this assignment
+# is type-safe regardless of operator's env var format. Default `$false`
+# = warning + proceed (matches Octopus Tentacle); `$true` = strict =
+# rollback on timeout. See WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar.
+$HEALTHCHECK_FATAL = {{HEALTHCHECK_FATAL}}
 
 #  contract: %ProgramData%\Squid\Tentacle\upgrade\
 $STATUS_DIR  = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'
@@ -262,10 +269,53 @@ function Invoke-Rollback {
 # Single per-host lock (NOT per-target-version) so two concurrent operator
 # clicks targeting different versions can't race the SCM Stop-Service +
 # Move-Item swap + Start-Service sequence. Mirrors the Linux flock layout.
+#
+# J.E.7 stale-lock detection: a crashed dispatch (host reboot mid-upgrade,
+# OOM kill, etc.) leaves the lock file with a dead PID. Pre-J.E.7 every
+# subsequent upgrade dispatch on that host failed with exit 13 forever
+# until manual lock-file deletion. Now: if the recorded PID isn't a live
+# process, log + break the stale lock + proceed. A live PID still wins
+# (real concurrent dispatch is correctly rejected). Pinned by
+# `WindowsTentacleUpgradeStrategyTests.RenderInnerScript_StaleLockBreak_PinnedStructurally`
+# + `TentacleUpgradeLifecycleE2ETests.E11u2_StaleLockWithDeadPid_BrokenAndDispatchProceeds`.
 if (Test-Path $LOCK_FILE) {
-    $existing = Get-Content $LOCK_FILE -ErrorAction SilentlyContinue
-    Append-UpgradeLog "::error:: Upgrade lock $LOCK_FILE already held (held by PID $existing) — refusing concurrent upgrade dispatch"
-    exit 13
+    $existing = (Get-Content $LOCK_FILE -ErrorAction SilentlyContinue | Out-String).Trim()
+
+    # Regex-parse PID. Avoids `[int]::TryParse([ref])` which has fragile
+    # PowerShell binding behaviour. Empty / non-numeric / negative content
+    # leaves $existingPid at 0 → falls through the > 0 guard → treated
+    # as stale (correct: a non-numeric lock file is corrupt and should
+    # be broken).
+    $existingPid = 0
+    if ($existing -match '^\d+$') {
+        $existingPid = [int]$existing
+    }
+
+    $holderAlive = $false
+    if ($existingPid -gt 0) {
+        # Get-Process throws if PID is not a live process. -ErrorAction
+        # SilentlyContinue + null check lets us distinguish "alive" (returns
+        # process) from "dead" (returns $null) cleanly.
+        $proc = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+        if ($null -ne $proc) {
+            $holderAlive = $true
+        }
+    }
+
+    if ($holderAlive) {
+        Append-UpgradeLog "::error:: Upgrade lock $LOCK_FILE held by LIVE PID $existingPid — refusing concurrent upgrade dispatch"
+        exit 13
+    }
+
+    # Stale lock — log + break + proceed. Operator-visible recovery from
+    # a previously-crashed dispatch that left the lock orphaned.
+    Append-UpgradeLog "::warning:: Upgrade lock $LOCK_FILE held by stale PID '$existing' (no live process) — breaking lock to recover from a previously-crashed dispatch"
+    try { Remove-Item -Path $LOCK_FILE -Force -ErrorAction Stop } catch {
+        # Couldn't break the lock (permissions / IO error). Operator must
+        # intervene; surface the failure clearly.
+        Append-UpgradeLog "::error:: Couldn't break stale lock at $LOCK_FILE`: $($_.Exception.Message). Operator must manually delete the lock file to recover."
+        exit 13
+    }
 }
 
 Set-Content -Path $LOCK_FILE -Value "$PID" -Force
@@ -570,7 +620,19 @@ try {
     }
 
     if (-not $healthOk) {
-        Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s — proceeding anyway, server will retry on next health probe"
+        if ($HEALTHCHECK_FATAL) {
+            # Strict mode (J.E.7): operator opted in to treat healthcheck
+            # timeout as a deal-breaker. Roll back to the previous binary
+            # rather than leave the operator with a Stopped+swapped service
+            # that the next capabilities probe will report as broken anyway.
+            # Exit 9 is the documented "healthcheck timeout (FATAL mode)
+            # → rollback fired" code.
+            Invoke-Rollback -Reason "Healthcheck didn't respond within ${totalWaitSeconds}s and SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true (strict mode)" -ExitCode 9
+        }
+
+        # Default mode (matches Octopus Tentacle): warning + proceed.
+        # Capabilities probe will detect a dead agent on the next probe.
+        Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s — proceeding anyway, server will retry on next health probe (set SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true to roll back instead)"
     }
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
