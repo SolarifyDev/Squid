@@ -171,11 +171,17 @@ public sealed class LinuxLifecycleContext : IDisposable
     {
         var serviceScriptBytes = File.ReadAllBytes(TestServiceScript);
 
-        // version.txt content is what test service reads on Start →
-        // writes to the marker. Strip pre-release suffix so marker
-        // assertions compare cleanly (e.g. "2.0.0-test" → "2.0.0").
-        var serviceVersion = targetVersion.Split('-')[0];
-        var versionTxtBytes = Encoding.UTF8.GetBytes(serviceVersion);
+        // version.txt content is the FULL target version (NOT stripped)
+        // because the .sh's Phase B post-restart sanity check compares
+        // EXACT match between the running binary's `version` subcommand
+        // output AND TARGET_VERSION:
+        //   if [ "$RUNNING_VERSION" != "$TARGET_VERSION" ]; then rollback; fi
+        // J.L.E.7.5 runner caught this — pre-release "2.0.0-test" in
+        // TARGET_VERSION mismatched stripped "2.0.0" in version.txt →
+        // Phase B treated mismatch as failure → rolled back. Real
+        // Squid.Tentacle's version output IS the full InformationalVersion
+        // (includes pre-release suffix); production parity needs same.
+        var versionTxtBytes = Encoding.UTF8.GetBytes(targetVersion);
 
         // Squid.Tentacle placeholder: just a copy of the test service
         // script (an executable bash file). chmod +x at .sh line 591
