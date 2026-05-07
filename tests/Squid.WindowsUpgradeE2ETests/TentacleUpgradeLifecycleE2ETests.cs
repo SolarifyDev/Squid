@@ -568,13 +568,16 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
         ctx.Mirror.StagePreBuiltArchive(v2Bundle);
 
-        // Pre-stage the lock file with a fake "first dispatch" PID. The .ps1
-        // reads $LOCK_FILE BEFORE writing $STATUS_DIR (no, wait — STATUS_DIR
-        // is created first; the lock check happens AFTER). The .ps1 ensures
-        // STATUS_DIR exists at line 116-118 then immediately reads the lock.
+        // Pre-stage the lock file with a guaranteed-LIVE PID. Post-J.E.7
+        // the .ps1 distinguishes stale (dead PID, breaks + proceeds) vs
+        // live (real concurrent dispatch, exits 13). We need a live one
+        // here to exercise the concurrent-dispatch-rejection path. The
+        // current test process itself is guaranteed alive throughout the
+        // test → use its PID. Pre-J.E.7 this test used a magic 99999
+        // which (correctly) gets treated as stale by the new detection.
         Directory.CreateDirectory(ctx.StatusDir);
         var lockFilePath = Path.Combine(ctx.StatusDir, "upgrade.lock");
-        const string firstDispatchPid = "99999";   // fake PID for the "first" dispatch
+        var firstDispatchPid = Process.GetCurrentProcess().Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
         File.WriteAllText(lockFilePath, firstDispatchPid);
 
         var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
