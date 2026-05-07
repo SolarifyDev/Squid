@@ -44,4 +44,20 @@ public static class LinuxTentacleE2ECategories
     /// configured. GHA <c>ubuntu-latest</c> runner has both.</para>
     /// </summary>
     public const string ServiceFixture = "LinuxServiceFixtureE2E";
+
+    /// <summary>
+    /// Phase 12.M.L.A.1+ E2E coverage for the production
+    /// <c>deploy/scripts/install-tentacle.sh</c> bootstrap installer.
+    /// Tier 🟢 high-fidelity — drives the real <c>.sh</c> against a real
+    /// <see cref="Infrastructure.LocalReleaseMirror"/> + real bash + real
+    /// curl + real sudo. Linux-only; skip-guards on macOS/Windows.
+    ///
+    /// <para>Pollution surface managed via env-var overrides:
+    /// <c>INSTALL_DIR</c>=test-private temp dir, <c>NO_PKG_INSTALL=1</c>
+    /// (skips APT/RPM repo writes), <c>CREATE_USER=no</c> (skips useradd
+    /// for the system user). Tests that DO need the full pollution
+    /// matrix (happy-path install with systemd unit + sudoers) handle
+    /// cleanup via the fixture's IDisposable per Rule 12.3.</para>
+    /// </summary>
+    public const string InstallScript = "LinuxTentacleInstallScriptE2E";
 }
