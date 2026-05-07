@@ -188,4 +188,23 @@ public static class WindowsUpgradeE2ECategories
     /// non-Windows dev hosts.</para>
     /// </summary>
     public const string TentacleUpgradeLifecycle = "TentacleUpgradeLifecycleE2E";
+
+    /// <summary>
+    /// Phase 12.M.W.D E2E coverage for the operator-tailed diagnostic
+    /// commands (<c>show-thumbprint</c>, <c>list-instances</c>,
+    /// <c>show-config</c>, <c>new-certificate</c>) on Windows — mirrors
+    /// the Linux Section D pinned by
+    /// <c>TentacleLinuxDiagnosticCommandE2ETests</c>.
+    ///
+    /// <para>Why this matters cross-platform: when an agent fails to poll,
+    /// the operator's documented debug recipe is "run show-thumbprint /
+    /// show-config / list-instances and verify against server-side state".
+    /// If any of these lie or break silently on Windows, the trust-list
+    /// debug experience differs from Linux and confuses every operator
+    /// running mixed fleets. Tier 🟢 high-fidelity — drives the
+    /// production command classes (<c>ShowThumbprintCommand.ExecuteAsync</c>
+    /// etc.) directly with real cert manager + real config IO + real
+    /// stub HTTP exchange (D1h round-trip).</para>
+    /// </summary>
+    public const string TentacleDiagnostic = "TentacleDiagnosticE2E";
 }
