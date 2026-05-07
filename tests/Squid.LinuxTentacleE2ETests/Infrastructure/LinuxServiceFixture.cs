@@ -237,19 +237,36 @@ public sealed class LinuxServiceFixture : IDisposable
     }
 
     /// <summary>
-    /// Runs <c>sudo &lt;command&gt;</c> via a shell, throws on non-zero
-    /// exit code with stderr captured. Uses bash -c so the command can
-    /// be a multi-token expression (e.g. systemctl args).
+    /// Runs <c>sudo &lt;command&gt;</c> via bash -c, throws on non-zero exit
+    /// with stderr captured. Uses ArgumentList (NOT the Arguments string)
+    /// so each argv entry passes verbatim through .NET's Process.Start
+    /// without Linux argv quoting trouble.
+    ///
+    /// <para><b>Why ArgumentList not Arguments</b>: J.L.E.3's first Linux
+    /// runner attempt failed with `bash: line 1: unexpected EOF while
+    /// looking for matching '\''` because the previous implementation
+    /// bash-quoted the command string and passed it via Arguments —
+    /// but .NET's Linux argv parser doesn't understand bash-style
+    /// single quotes (it uses CommandLineToArgvW-style rules,
+    /// double-quotes only). ArgumentList passes each string as a
+    /// SEPARATE argv entry, no parsing → bash -c receives the command
+    /// verbatim. Same fix pattern catches similar bugs in any
+    /// cross-platform Process.Start scenario where shell metacharacters
+    /// matter.</para>
     /// </summary>
     private static void RunSudo(string command)
     {
-        var psi = new ProcessStartInfo("sudo", "-n bash -c " + Quote(command))
+        var psi = new ProcessStartInfo("sudo")
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(command);
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException($"failed to launch sudo for: {command}");
@@ -272,13 +289,17 @@ public sealed class LinuxServiceFixture : IDisposable
     {
         try
         {
-            var psi = new ProcessStartInfo("sudo", "-n bash -c " + Quote(command))
+            var psi = new ProcessStartInfo("sudo")
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(command);
 
             using var proc = Process.Start(psi);
             if (proc == null) return null;
@@ -294,8 +315,13 @@ public sealed class LinuxServiceFixture : IDisposable
     }
 
     /// <summary>
-    /// Single-quote a string for safe inclusion in a bash -c command line.
-    /// Escapes embedded single quotes via the standard <c>'\''</c> idiom.
+    /// Bash single-quote a string for safe inclusion INSIDE a bash -c
+    /// command (where the quoting matters to bash, not to .NET's argv
+    /// parser). Used when constructing multi-token bash commands that
+    /// already contain spaces / special chars in arguments. Each
+    /// individual ArgumentList entry doesn't need quoting (verbatim
+    /// argv); but commands that bash itself parses (e.g.
+    /// "cp /a /b" inside bash -c) need bash-quoted args.
     /// </summary>
     private static string Quote(string value)
         => "'" + value.Replace("'", "'\\''") + "'";
