@@ -133,10 +133,27 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         showExit.ShouldBe(0,
             customMessage: $"`show-thumbprint` MUST exit 0 after register. Got exit {showExit}.\noutput:\n{showOutput}");
 
-        // show-thumbprint's stdout is JUST the thumbprint (Console.WriteLine
-        // single line). Trim is required because Run wraps stderr appended
-        // with NewLine.
-        var showThumbprint = showOutput.Trim();
+        // show-thumbprint's output contains the 40-char hex thumbprint
+        // PLUS Serilog INF log lines emitted by TentacleCertificateManager
+        // when loading the existing cert ("Loading existing tentacle
+        // certificate from ..."). Stdout is therefore something like:
+        //
+        //   [13:17:55 INF] Loading existing tentacle certificate from /etc/...
+        //   1E67120B09AAEF4F928AF6BD20706017B9FC2AA5
+        //
+        // We extract the last 40-char hex match — the thumbprint itself.
+        // Defensive against future log additions that might inject text
+        // around the thumbprint.
+        //
+        // (Separate operator UX concern: show-thumbprint's stdout leaks
+        // Serilog log lines, breaking pipelines like
+        // `THUMBPRINT=$(squid-tentacle show-thumbprint)`. Tracked as a
+        // separate fix candidate.)
+        var thumbprintMatches = Regex.Matches(showOutput, @"\b[0-9A-Fa-f]{40}\b");
+        thumbprintMatches.Count.ShouldBeGreaterThan(0,
+            customMessage: $"show-thumbprint output MUST contain at least one 40-char hex thumbprint. Got:\n{showOutput}");
+
+        var showThumbprint = thumbprintMatches[^1].Value;
 
         // ── Step 4: round-trip assertion ──────────────────────────────────
         // The PIN: show-thumbprint's output MATCHES the thumbprint the
