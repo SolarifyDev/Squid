@@ -200,6 +200,64 @@ public sealed class UpgradeLinuxScriptE2ETests
         }
     }
 
+    // ========================================================================
+    // J.L.E.9 fix-pin — Phase B MUST restore BASELINE_VERSION from
+    //                    SQUID_UPGRADE_BASELINE_VERSION env var
+    //
+    // Phase A captures BASELINE_VERSION (current binary's `version` output)
+    // and propagates it to the scoped Phase B via:
+    //   --setenv=SQUID_UPGRADE_BASELINE_VERSION="$BASELINE_VERSION"
+    //
+    // Phase B's rollback success path references `$BASELINE_VERSION` directly
+    // (not `$SQUID_UPGRADE_BASELINE_VERSION`) in the rollback-ok event + the
+    // ROLLED_BACK status detail. Because the .sh runs `set -euo pipefail`,
+    // a bare unbound reference triggers bash exit 1 BEFORE write_status
+    // "ROLLED_BACK" runs, BEFORE `exit 4`.
+    //
+    // Operator-visible failure mode (without restoration):
+    //   - .bak rollback ACTUALLY succeeds (mv ran, v1 service active)
+    //   - But last-upgrade.json stays at "ROLLING_BACK" forever — the
+    //     ROLLED_BACK write_status never executes
+    //   - .sh exits 1 instead of documented 4
+    //   - Server's UI shows the upgrade hung mid-rollback even though
+    //     the agent is fine
+    //
+    // The fix (in upgrade-linux-tentacle.sh, next to BASELINE_HEALTHZ_PRE):
+    //   BASELINE_VERSION="${SQUID_UPGRADE_BASELINE_VERSION:-unknown}"
+    //
+    // Caught by the J.L.E.9 E2E test E1uRollback_PhaseBHealthcheckFails_*.
+    // This unit test pins the FIX so a future polish can't silently drop
+    // the restoration line — the regression would otherwise only surface
+    // on a healthz-failing upgrade in production.
+    // ========================================================================
+
+    [Fact]
+    public void LinuxScript_PhaseB_RestoresBaselineVersionFromEnv_OrSetUWillKillRollback()
+    {
+        var template = File.ReadAllText(LocateLinuxTemplate());
+
+        // The exact restoration line. Drop the trailing `unknown` if you have
+        // a real-environment reason — but you must use `:-something` (not bare
+        // expansion), because `set -u` enforces SOMETHING-must-be-set semantics.
+        const string requiredRestoration = "BASELINE_VERSION=\"${SQUID_UPGRADE_BASELINE_VERSION:-unknown}\"";
+
+        template.ShouldContain(requiredRestoration,
+            customMessage: $"upgrade-linux-tentacle.sh MUST contain '{requiredRestoration}' " +
+                          $"to restore Phase A's BASELINE_VERSION across the systemd-run scope re-exec. " +
+                          $"Without it, ANY rollback-success path triggers `set -u` exit 1 BEFORE write_status " +
+                          $"\"ROLLED_BACK\" runs — operator sees last-upgrade.json stuck at ROLLING_BACK forever " +
+                          $"despite the rollback actually succeeding. Caught by J.L.E.9 (PR #219).");
+
+        // Also pin: BASELINE_HEALTHZ_PRE has the same shape (precedent
+        // we mirrored). If it ever diverges from the BASELINE_VERSION
+        // restoration we just pinned, the inconsistency would suggest a
+        // refactor is in flight and someone should re-check whether both
+        // need the same treatment.
+        template.ShouldContain("BASELINE_HEALTHZ_PRE=\"${SQUID_UPGRADE_BASELINE_HEALTHZ:-unknown}\"",
+            customMessage: "BASELINE_HEALTHZ_PRE restoration must remain present (the precedent BASELINE_VERSION mirrors). " +
+                          "If you're refactoring baseline propagation, update BOTH restorations together.");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static string LocateLinuxTemplate()
