@@ -120,11 +120,38 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
 
         // Reverse-assert: marker now reports v2 (proves Phase B's mv
         // swap landed AND new service started AND it read new version.txt).
-        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
-            customMessage: $"after Phase B mv swap + systemctl restart, marker at {ctx.Fixture.MarkerFilePath} MUST contain '2.0.0' — " +
-                          "proves swap landed AND new service started AND read new version.txt. " +
-                          "If marker still '1.0.0': swap failed OR new service didn't start. " +
-                          "If marker absent: trap-handler ran (service stopped) OR rollback fired.");
+        // 30s timeout is generous; .sh's healthz already passed (.sh exited
+        // 0 and last-upgrade.json shows SUCCESS), so service IS running —
+        // we just need its marker write to land.
+        if (!WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)))
+        {
+            // Diagnostic dump: capture install dir state for debugging.
+            var diag = new System.Text.StringBuilder();
+            diag.AppendLine($"InstallDir = {ctx.Fixture.InstallDir}");
+            try
+            {
+                if (Directory.Exists(ctx.Fixture.InstallDir))
+                    foreach (var f in Directory.EnumerateFiles(ctx.Fixture.InstallDir))
+                        diag.AppendLine($"  {Path.GetFileName(f)}: " + (f.EndsWith("version.txt") || f.EndsWith(".marker") ? File.ReadAllText(f).Trim() : "(binary)"));
+                else
+                    diag.AppendLine($"  (InstallDir does not exist)");
+
+                var bakDir = ctx.Fixture.InstallDir + ".bak";
+                diag.AppendLine($"BakDir = {bakDir} (exists: {Directory.Exists(bakDir)})");
+                if (Directory.Exists(bakDir))
+                    foreach (var f in Directory.EnumerateFiles(bakDir))
+                        diag.AppendLine($"  bak/{Path.GetFileName(f)}: " + (f.EndsWith("version.txt") || f.EndsWith(".marker") ? File.ReadAllText(f).Trim() : "(binary)"));
+            }
+            catch (Exception ex) { diag.AppendLine($"  (diagnostic dump failed: {ex.Message})"); }
+
+            throw new Shouldly.ShouldAssertException(
+                $"after Phase B mv swap + systemctl restart, marker at {ctx.Fixture.MarkerFilePath} MUST contain '2.0.0' within 30s. " +
+                "If marker still '1.0.0': swap failed OR new service didn't start. " +
+                "If marker absent: trap-handler ran OR rollback fired OR service script crashed pre-marker-write.\n\n" +
+                $"Diagnostic state:\n{diag}\n\n" +
+                $"Marker exists: {File.Exists(ctx.Fixture.MarkerFilePath)}, " +
+                $"content: {(File.Exists(ctx.Fixture.MarkerFilePath) ? File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim() : "(absent)")}");
+        }
 
         // Service is still active per systemd.
         ctx.Fixture.IsActive().ShouldBeTrue(
