@@ -259,7 +259,127 @@ public sealed class LinuxInstallScriptContext : IDisposable
         TrySudoRm("/etc/sudoers.d/squid-tentacle-upgrade");
         TrySudoRm("/etc/systemd/system/squid-tentacle.service");
 
+        // J.M.L.A.5: tests that enable CREATE_USER=yes leave the
+        // squid-tentacle system user behind. userdel'ing on Dispose
+        // keeps host state clean across test runs (otherwise subsequent
+        // CI runs see the user as pre-existing → useradd idempotent
+        // skips, but state pollution accumulates and could mask
+        // useradd regressions).
+        TrySudoUserDel("squid-tentacle");
+
         try { Mirror.Dispose(); } catch { /* best-effort */ }
+    }
+
+    /// <summary>
+    /// Sudo-wrapped <c>test -f</c>. Returns true if the file exists.
+    /// Use this for paths under restricted system dirs (<c>/etc/sudoers.d/</c>,
+    /// <c>/etc/squid-tentacle/</c>) — the test process runs as a non-root
+    /// user and cannot <c>stat</c> files under <c>0750 root:root</c>
+    /// directories. <see cref="File.Exists"/> would return FALSE even
+    /// when the file actually exists, producing false-negative
+    /// assertions. Caught by J.M.L.A.5.3 first runner where the .sh
+    /// successfully installed the sudoers file but File.Exists couldn't
+    /// see it.
+    /// </summary>
+    public static bool SudoFileExists(string path)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("test");
+        psi.ArgumentList.Add("-f");
+        psi.ArgumentList.Add(path);
+
+        using var proc = Process.Start(psi);
+        proc?.WaitForExit(5_000);
+        return proc?.ExitCode == 0;
+    }
+
+    /// <summary>
+    /// Sudo-wrapped <c>cat</c>. Returns the file's content as a string,
+    /// or empty string on read failure. Same permission-boundary
+    /// rationale as <see cref="SudoFileExists"/>.
+    /// </summary>
+    public static string SudoReadAllText(string path)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("cat");
+        psi.ArgumentList.Add(path);
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return string.Empty;
+        var stdout = proc.StandardOutput.ReadToEnd();
+        proc.WaitForExit(5_000);
+        return proc.ExitCode == 0 ? stdout : string.Empty;
+    }
+
+    /// <summary>
+    /// Sudo-wrapped <c>stat -c %a</c>. Returns the file's mode as an
+    /// octal string (e.g. <c>"440"</c>, <c>"755"</c>), or empty on
+    /// failure. Used for sudoers-file mode pinning where the file lives
+    /// under <c>/etc/sudoers.d/</c> (root-only readable).
+    /// </summary>
+    public static string SudoFileMode(string path)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("stat");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("%a");
+        psi.ArgumentList.Add(path);
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return string.Empty;
+        var stdout = proc.StandardOutput.ReadToEnd().Trim();
+        proc.WaitForExit(5_000);
+        return proc.ExitCode == 0 ? stdout : string.Empty;
+    }
+
+    private static void TrySudoUserDel(string username)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sudo",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("userdel");
+            psi.ArgumentList.Add(username);
+
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5_000);
+        }
+        catch
+        {
+            // Best-effort. user may not exist (most tests skip CREATE_USER);
+            // userdel returns 6 in that case which is fine.
+        }
     }
 
     private static void TrySudoRm(string path)
