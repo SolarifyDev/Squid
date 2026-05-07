@@ -876,6 +876,130 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uSystemdVersionTooOld — Pre-flight rejects systemd <v239 (exit 12)
+    //
+    // The .sh's transient scope handoff (Phase A → Phase B via `systemd-run
+    // --scope --collect`) requires systemd v239+ (`--collect` was added in
+    // v236, `--scope` reliability around v239). Older systemd hosts get a
+    // clear error + exit 12 BEFORE any Phase A work — no half-state.
+    //
+    // Production reality this protects:
+    //   - RHEL 7   = systemd v219  → would reach exit 12
+    //   - Ubuntu 18.04 = systemd v237 → reach exit 12
+    //   - RHEL 8 / Ubuntu 22.04+ = systemd ≥v239 → pass
+    //
+    // Without this exit-12 check, older-systemd hosts would proceed to
+    // Phase A (download + extract) successfully, then fail at the
+    // `systemd-run --scope` handoff with a confusing error — leaving
+    // operators thinking the upgrade is broken when it's actually a
+    // host-platform constraint. The early exit + clear error is the
+    // operator-actionable contract.
+    //
+    // Test mechanism: PATH-prepend a fake `systemctl` that returns
+    // "systemd 200" for `systemctl --version`. The .sh's probe at
+    // line 255 reads that, line 256 sees "200 < 239", exit 12 + error
+    // fires immediately at line 258.
+    //
+    // Why PATH-prepend works: the .sh's probe is `systemctl --version`
+    // (unqualified). Bash's PATH search picks up our fake first. Sudo-
+    // invoked systemctls later in the .sh use secure_path → unaffected,
+    // but exit 12 fires BEFORE any sudo lines so this scoping is fine.
+    //
+    // No InstallAndStart needed — exit 12 fires BEFORE flock + Phase A.
+    // Service installation would be wasted effort + slow the test for
+    // no coverage gain.
+    //
+    // Tier: 🟢 H (Rule 12.4 — real prod .sh + real bash + real PATH-
+    // injection; the only "fake" is a 5-line shim shell script returning
+    // a hardcoded version string, which is exactly the systemd v200
+    // boundary the production check exists to detect).
+    //
+    // Expected runtime: <1s (no Phase A, no Phase B, just probe + exit).
+    // ========================================================================
+
+    [Fact]
+    public void E1uSystemdVersionTooOld_ExitsTwelveWithSystemdVersionError()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage a fake systemctl in a private temp dir.
+        // `systemctl --version` returns "systemd 200" (below v239 threshold).
+        // For any other args (none should be reached pre-exit-12), the fake
+        // exec's the real /usr/bin/systemctl so error reporting is sane if
+        // the test invariant breaks.
+        var fakeBinDir = Path.Combine(Path.GetTempPath(), $"squid-fake-systemctl-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(fakeBinDir);
+        var fakeSystemctl = Path.Combine(fakeBinDir, "systemctl");
+
+        try
+        {
+            File.WriteAllText(fakeSystemctl,
+                "#!/bin/bash\n" +
+                "# Test shim: returns systemd v200 for --version probe (below .sh's v239 threshold).\n" +
+                "# Any other invocation defers to the real systemctl so failures surface clearly\n" +
+                "# instead of looking like our shim is broken.\n" +
+                "if [ \"$1\" = \"--version\" ]; then\n" +
+                "  echo \"systemd 200\"\n" +
+                "  echo \"+PAM +AUDIT -SELINUX (test shim)\"\n" +
+                "  exit 0\n" +
+                "fi\n" +
+                "exec /usr/bin/systemctl \"$@\"\n");
+            File.SetUnixFileMode(fakeSystemctl,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+            // Render an upgrade script. Mirror still serves a v2 tarball
+            // (would-be download) but exit 12 fires before Phase A even
+            // tries to download.
+            var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+            ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+            var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+            var (exitCode, output) = ctx.RunUpgradeScript(script, prependPath: fakeBinDir);
+
+            // Exit 12 = "systemd v239+ required" per .sh line 258.
+            exitCode.ShouldBe(12,
+                customMessage: $"systemd v200 (below v239 threshold) MUST trigger exit 12 (per .sh line 258). " +
+                              $"Got exit {exitCode}. " +
+                              $"If 0: PATH override didn't take effect — fake systemctl wasn't picked up. " +
+                              $"If 1 or other non-zero: a different .sh error fired before the version check (e.g. arch detect failure). " +
+                              $"output tail (last 1k chars):\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+            // Operator-visible error MUST mention systemd version + the v239 minimum.
+            // Without this, operators on older systemd see "exit 12" and have no
+            // idea what to do.
+            output.ShouldContain("systemd v239+ required",
+                customMessage: $"stdout MUST contain 'systemd v239+ required' so operators know exactly which kernel/init constraint blocks the upgrade. " +
+                              $"output tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+            // The probed version MUST appear so operators see what their host actually has.
+            output.ShouldContain("v200",
+                customMessage: $"error MUST echo the probed version (v200) so operators can verify the .sh's read matches their `systemctl --version` output. " +
+                              $"output tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+            // Reverse-assert: NO Phase A activity. The .sh exited at line 258 BEFORE
+            // the "=== Squid Tentacle upgrade ===" banner (line 298) and BEFORE the
+            // download probe.
+            output.ShouldNotContain("=== Squid Tentacle upgrade ===",
+                customMessage: "Phase A's banner MUST NOT appear — exit 12 fires BEFORE the .sh prints the run header. " +
+                              "If banner appeared: the systemd version check was bypassed, .sh proceeded to Phase A despite the v200 host (regression).");
+
+            output.ShouldNotContain("Pre-flight: probing",
+                customMessage: "Phase A's tarball pre-flight probe MUST NOT run — exit 12 fires before any download attempt. " +
+                              "If probe ran: the version check is no longer the first guard, contract has shifted.");
+
+            ctx.MarkClean();
+        }
+        finally
+        {
+            try { Directory.Delete(fakeBinDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)

@@ -538,7 +538,7 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// (download, SHA verify, extract, ldd check) is bash-only and runs
     /// fine on macOS too.
     /// </summary>
-    public (int exitCode, string output) RunUpgradeScript(string script)
+    public (int exitCode, string output) RunUpgradeScript(string script, string prependPath = null)
     {
         var tempScript = Path.Combine(Path.GetTempPath(), $"squid-linux-lifecycle-{Guid.NewGuid():N}.sh");
         File.WriteAllText(tempScript, script);
@@ -556,6 +556,19 @@ public sealed class LinuxLifecycleContext : IDisposable
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+
+            // Optional PATH prefix — used by E1.uSystemdVersionTooOld
+            // to inject a fake `systemctl` returning v200 (below the
+            // .sh's v239 threshold). The .sh's first systemctl probe
+            // is unqualified (`systemctl --version`), so PATH-prepend
+            // controls which binary it resolves to. Sudo-invoked
+            // systemctls inside the .sh use secure_path → unaffected,
+            // but exit 12 fires BEFORE any sudo lines so this matters.
+            if (!string.IsNullOrEmpty(prependPath))
+            {
+                var existing = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+                psi.Environment["PATH"] = $"{prependPath}{Path.PathSeparator}{existing}";
+            }
 
             using var proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to launch bash for .sh execution");
