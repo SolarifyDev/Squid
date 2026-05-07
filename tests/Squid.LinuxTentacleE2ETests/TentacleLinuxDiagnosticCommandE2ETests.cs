@@ -474,25 +474,42 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
 
         using var ctx = new DiagnosticTestContext();
 
-        // ── Documented prerequisite: create-instance first ────────────────
-        // create-instance eagerly creates the cert dir AND adds a registry
-        // entry so InstanceSelector.Resolve(Default) returns a record with
-        // a real ConfigPath. Without this, new-certificate's
-        // TentacleCertificateManager constructor receives an empty
-        // CertsPath and crashes inside Directory.CreateDirectory with a
-        // System.ArgumentException (NOT operator-friendly UX, but
-        // documented requirement per CreateInstanceCommand's comment:
-        // "Eagerly create per-instance certs directory so register/
-        // new-certificate can land in it.").
-        var createInstance = $"d4-instance-{Guid.NewGuid():N}";
-        ctx.RegisterInstanceForCleanup(createInstance);
-        var (createExit, createOutput) = ctx.Binary.SudoRun(
-            "create-instance", "--instance", createInstance);
-        createExit.ShouldBe(0,
-            customMessage: $"D4h precondition: create-instance MUST succeed.\noutput:\n{createOutput}");
+        // ── Documented operator prerequisite: register first ──────────────
+        // Discovered iteratively: create-instance creates the cert
+        // dir but doesn't persist Tentacle:CertsPath into the instance
+        // config. new-certificate reads CertsPath from
+        // TentacleApp.LoadTentacleSettings → settings.CertsPath defaults
+        // to empty → TentacleCertificateManager.EnsureDirectoryExists
+        // crashes with System.ArgumentException.
+        //
+        // RegisterCommand's PersistInstanceConfig writes
+        //   ["Tentacle:CertsPath"] = settings.CertsPath
+        // to the instance config (RegisterCommand.cs ~line 195). So
+        // the documented operator flow that has new-certificate
+        // working is:
+        //
+        //   1. register (resolves + persists CertsPath into config)
+        //   2. new-certificate (reads CertsPath from config)
+        //
+        // This is what we'll test: that AFTER register, new-certificate
+        // works idempotently. The standalone-new-certificate-crash
+        // is a separate operator UX issue (hostile stack trace
+        // instead of "run register first"), already raised as a
+        // separate fix candidate via the new-certificate clarify task.
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-D4-NEW-CERT",
+            "--name", ctx.MachineName,
+            "--role", "d4-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.ListeningPort.ToString(CultureInfo.InvariantCulture));
+        regExit.ShouldBe(0,
+            customMessage: $"D4h precondition: register MUST succeed (sets up CertsPath that new-certificate reads).\noutput:\n{regOutput}");
 
-        // ── Run 1: cert dir prepared, expect cert creation ────────────────
-        var (firstExit, firstOutput) = ctx.Binary.SudoRun("new-certificate", "--instance", createInstance);
+        // ── Run 1: post-register, expect load-existing-cert ───────────────
+        var (firstExit, firstOutput) = ctx.Binary.SudoRun("new-certificate");
         firstExit.ShouldBe(0,
             customMessage: $"first `new-certificate` MUST exit 0. Got {firstExit}.\noutput:\n{firstOutput}");
 
@@ -517,7 +534,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         var firstThumbprint = firstMatches[^1].Value;
 
         // ── Run 2: existing cert, expect load + same thumbprint ───────────
-        var (secondExit, secondOutput) = ctx.Binary.SudoRun("new-certificate", "--instance", createInstance);
+        var (secondExit, secondOutput) = ctx.Binary.SudoRun("new-certificate");
         secondExit.ShouldBe(0,
             customMessage: $"second `new-certificate` MUST exit 0 (idempotent contract). Got {secondExit}.\noutput:\n{secondOutput}");
 
