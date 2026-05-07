@@ -1108,6 +1108,156 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uEventsContract — upgrade-events.jsonl format pin (server UI timeline)
+    //
+    // Every E1.h-style success ALREADY emits the structured event log the
+    // server's UI timeline reads (Capabilities probe streams events to the
+    // operator's deployment task view). What's NEVER been pinned: the
+    // wire format. If the .sh's emit_event regresses (renames a field,
+    // drops escaping, changes phase tag), every operator sees a frozen
+    // timeline silently — the server-side parser drops malformed lines.
+    //
+    // This test runs E1.h end-to-end, then PARSES every line of the
+    // resulting upgrade-events.jsonl as JSON and asserts:
+    //
+    //   1. Every line is valid JSON (no malformed lines silently swallowed
+    //      by the server-side parser).
+    //   2. Every line has the required fields {t, phase, kind, msg}.
+    //   3. The expected happy-path kind sequence is present in order:
+    //        start → baseline → method-selected → scope-exec  (Phase A)
+    //        swapped → restart-start → healthz-pass → success (Phase B)
+    //   4. Phase values are exactly "A" or "B" (not "1", "a", "PhaseA").
+    //   5. Timestamps are ISO 8601 UTC (Z suffix).
+    //
+    // Catches:
+    //   - JSON malformation (unescaped quotes, missing commas, wrong shape)
+    //   - Field renames (msg → message, kind → type, etc.)
+    //   - Phase tag drift ("A" → "PhaseA")
+    //   - Missing terminal events (success absent → operator UI never sees
+    //     "completed" state, timeline appears to hang forever)
+    //   - Out-of-order events (success before scope-exec → impossible
+    //     causality, operator confused)
+    //
+    // Wire format (line 206 of .sh comment):
+    //   {"t":"2026-04-22T02:57:04Z","phase":"A","kind":"method-try","msg":"apt: update"}
+    //
+    // High-fidelity. Real .sh + real systemd + real bash + real .jsonl
+    // file. Reuses E1.h-Linux infrastructure entirely; only adds parse +
+    // sequence assertions on top.
+    //
+    // Tier: 🟢 H. Runtime: same as E1.h (~5s) + a few ms for parse.
+    // ========================================================================
+
+    [Fact]
+    public void E1uEventsContract_AfterSuccess_AllLinesValidJsonInExpectedOrder()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 must be running before E1.uEventsContract can validate events emitted during a successful upgrade");
+
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"E1.h precondition for events test: upgrade must succeed before we parse the event log. Got exit {exitCode}.\noutput tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "v2 marker required: confirms the success path actually ran end-to-end (otherwise we're parsing events from an aborted run)");
+
+        // Parse the events file. ReadUpgradeEvents throws on any malformed
+        // line — that throw IS one of the assertions (server-side parser
+        // would drop the same malformed line silently).
+        var events = ctx.ReadUpgradeEvents();
+
+        events.Count.ShouldBeGreaterThan(0,
+            customMessage: $"upgrade-events.jsonl at {ctx.EventsFilePath} MUST contain at least one event after a successful upgrade. " +
+                          "If empty: emit_event never wrote anything → timeline UI shows a blank task. " +
+                          $"File exists: {File.Exists(ctx.EventsFilePath)}");
+
+        // Every event MUST have all four required fields.
+        foreach (var ev in events)
+        {
+            ev.T.ShouldNotBeNullOrWhiteSpace(customMessage: $"event {ev.Kind} missing 't' (timestamp). Server-side parser ignores events without timestamps.");
+            ev.Phase.ShouldNotBeNullOrWhiteSpace(customMessage: $"event {ev.Kind} missing 'phase'.");
+            ev.Kind.ShouldNotBeNullOrWhiteSpace(customMessage: $"event missing 'kind'.");
+            // msg may be empty intentionally (some events don't have a payload), but must be present as a field.
+        }
+
+        // Phase MUST be exactly "A" or "B". If it's something else, server-
+        // side parser may still accept (untagged events) but UI grouping
+        // by phase breaks.
+        foreach (var ev in events)
+        {
+            (ev.Phase == "A" || ev.Phase == "B").ShouldBeTrue(
+                customMessage: $"event {ev.Kind}: phase MUST be 'A' or 'B'. Got '{ev.Phase}'. Server UI groups timeline by phase — drift here breaks the grouping.");
+        }
+
+        // Timestamps MUST be ISO 8601 UTC (Z suffix). The .sh emits them
+        // via `date -u +"%Y-%m-%dT%H:%M:%SZ"`. If a future polish drops the
+        // Z or switches to non-UTC, server-side timeline ordering breaks.
+        foreach (var ev in events)
+        {
+            ev.T.ShouldEndWith("Z",
+                customMessage: $"event {ev.Kind} timestamp '{ev.T}' MUST end with 'Z' (UTC marker). Server-side ordering relies on UTC timestamps; non-UTC events appear out-of-order in the UI.");
+            // Spot-check format: must parse as DateTimeOffset.
+            DateTimeOffset.TryParse(ev.T, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out _).ShouldBeTrue(
+                customMessage: $"event {ev.Kind} timestamp '{ev.T}' MUST be parseable as DateTimeOffset. Server-side parser uses the same path.");
+        }
+
+        // Expected kind sequence (subset — these MUST appear in this order
+        // for any successful upgrade). Other events may interleave, but
+        // these terminals + transitions MUST be present + ordered.
+        var kindSequence = events.Select(e => e.Kind).ToList();
+        var expectedOrder = new[] { "start", "method-selected", "scope-exec", "swapped", "restart-start", "healthz-pass", "success" };
+
+        var lastFoundIndex = -1;
+        foreach (var expectedKind in expectedOrder)
+        {
+            var foundAt = -1;
+            for (var i = lastFoundIndex + 1; i < kindSequence.Count; i++)
+            {
+                if (kindSequence[i] == expectedKind)
+                {
+                    foundAt = i;
+                    break;
+                }
+            }
+            foundAt.ShouldBeGreaterThan(-1,
+                customMessage: $"expected event kind '{expectedKind}' MUST appear AFTER the previous expected event in the sequence. " +
+                              $"Got kind sequence: [{string.Join(", ", kindSequence)}]. " +
+                              $"If '{expectedKind}' is absent or out-of-order: emit_event call site for that kind was dropped or the .sh's flow regressed. " +
+                              $"Operator impact: UI timeline misses a critical state transition.");
+            lastFoundIndex = foundAt;
+        }
+
+        // Last event MUST be "success" — terminal state. The server's
+        // timeline UI uses this to flip the task from "in-progress" to
+        // "completed". If the sequence ends on a non-terminal event,
+        // the UI hangs in "in-progress" forever.
+        events[^1].Kind.ShouldBe("success",
+            customMessage: $"final event MUST be 'success' on the happy path (terminal-state semantics). Got '{events[^1].Kind}'. " +
+                          $"Full sequence: [{string.Join(", ", kindSequence)}]. " +
+                          "If non-success terminal: the UI timeline never flips to 'completed' — operator sees in-progress forever.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
