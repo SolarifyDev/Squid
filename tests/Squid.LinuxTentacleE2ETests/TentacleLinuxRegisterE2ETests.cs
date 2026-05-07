@@ -602,7 +602,9 @@ public sealed class TentacleLinuxRegisterE2ETests
         ctx.Stub.ReceivedRegistrations.Count.ShouldBe(2,
             customMessage: $"stub MUST have received EXACTLY 2 register calls (one per CLI invocation). Got {ctx.Stub.ReceivedRegistrations.Count}. " +
                           $"If 1: client-side skip regression — second register's role/environment changes would never reach the server. " +
-                          $"If >2: a retry loop fired (C1.u1 no-retry contract broken).");
+                          $"If >2: a retry loop fired (C1.u1 no-retry contract broken). " +
+                          $"\n\n=== first register output ===\n{firstOutput}" +
+                          $"\n\n=== second register output ===\n{secondOutput}");
 
         // ── Assertion (THE PIN): thumbprint preserved across re-register ──
         // TentacleCertificateManager.LoadOrCreateCertificate must LOAD the
