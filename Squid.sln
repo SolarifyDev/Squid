@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2ETest
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2E.TestService", "tests\Squid.WindowsUpgradeE2E.TestService\Squid.WindowsUpgradeE2E.TestService.csproj", "{C73A5594-231B-42E2-A42C-2D1EB786D82E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2E.VersionStampedShim", "tests\Squid.WindowsUpgradeE2E.VersionStampedShim\Squid.WindowsUpgradeE2E.VersionStampedShim.csproj", "{70B61BAD-F3FC-4A47-9201-3ECB4936B091}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -197,6 +199,18 @@ Global
 		{C73A5594-231B-42E2-A42C-2D1EB786D82E}.Release|x64.Build.0 = Release|Any CPU
 		{C73A5594-231B-42E2-A42C-2D1EB786D82E}.Release|x86.ActiveCfg = Release|Any CPU
 		{C73A5594-231B-42E2-A42C-2D1EB786D82E}.Release|x86.Build.0 = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|x64.Build.0 = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Debug|x86.Build.0 = Debug|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|x64.ActiveCfg = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|x64.Build.0 = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|x86.ActiveCfg = Release|Any CPU
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -215,6 +229,7 @@ Global
 		{120D728C-76EF-4D81-BE20-781D4F5C9BB0} = {75759C27-8B18-4FB5-97A8-570BBE311C6B}
 		{60B2E9F3-4C01-4C34-AB04-C33B980D0306} = {39D26C72-1BD3-4793-A455-F651830208E7}
 		{C73A5594-231B-42E2-A42C-2D1EB786D82E} = {39D26C72-1BD3-4793-A455-F651830208E7}
+		{70B61BAD-F3FC-4A47-9201-3ECB4936B091} = {39D26C72-1BD3-4793-A455-F651830208E7}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {60CBA761-5D3C-4D33-B808-977512C7E6ED}

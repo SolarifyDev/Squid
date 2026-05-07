@@ -751,6 +751,105 @@ public sealed class TentacleUpgradeLifecycleE2ETests
     }
 
     // ========================================================================
+    // E4.h — Already-up-to-date short-circuit (no Phase B, no service restart)
+    //
+    // Operator double-clicks "upgrade" on a machine that's already running
+    // the target version. The .ps1's short-circuit at line ~330 reads the
+    // staged Squid.Tentacle.exe's Win32 VERSIONINFO ProductVersion via
+    // `(Get-Item).VersionInfo.ProductVersion` and compares to TARGET_VERSION.
+    // If equal → emit SUCCESS "Already on target X (no-op)" + exit 0
+    // BEFORE Phase A download or Phase B Stop/Swap/Start.
+    //
+    // Operator value: spurious operator clicks don't trigger a 60s+
+    // service restart cycle. Critical for fleets where idempotent dispatch
+    // is the norm (deploy automation hits "upgrade" on every roll-out
+    // regardless of actual version state).
+    //
+    // Test mechanism (J.E.9): the version-stamped shim project at
+    // tests/Squid.WindowsUpgradeE2E.VersionStampedShim ships an .exe with
+    // a fixed Win32 VERSIONINFO ProductVersion stamp. The test stages
+    // that .exe at INSTALL_DIR\Squid.Tentacle.exe + sets TARGET_VERSION
+    // to the same stamp → expect short-circuit.
+    //
+    // Reverse-asserts: the .ps1 took the early-exit path AND not the
+    // Phase B path:
+    //   - .bak directory MUST NOT exist (Move-Item never ran)
+    //   - LocalReleaseMirror.ReceivedRequests is empty (Phase A
+    //     Invoke-WebRequest never ran)
+    //   - last-upgrade.json reports "Already on target ... (no-op)"
+    // ========================================================================
+
+    [Fact]
+    public void E4h_AlreadyOnTargetVersion_ShortCircuitsBeforePhaseB()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        // Stage the version-stamped shim AT INSTALL_DIR\Squid.Tentacle.exe
+        // — but DO NOT install/start a real service. The .ps1's short-
+        // circuit reads VersionInfo from the file on disk; no SCM
+        // involvement needed for this scenario. The fixture's installDir
+        // is created by the shim staging.
+        Directory.CreateDirectory(ctx.Fixture.InstallDir);
+        File.Copy(ctx.StampedShimExePath, Path.Combine(ctx.Fixture.InstallDir, "Squid.Tentacle.exe"), overwrite: true);
+
+        // The mirror is staged with a v2 bundle that the test EXPECTS NOT
+        // to be downloaded — the short-circuit should fire BEFORE Phase A
+        // hits the mirror. ReceivedRequests staying empty is the proof.
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "9.99.0-test-not-downloaded");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Render with TARGET_VERSION = the shim's literal stamp. This is
+        // the trigger condition for the short-circuit: the .ps1 reads the
+        // staged exe's ProductVersion ("1.0.0-shim-stamped") and compares
+        // it to TARGET_VERSION ("1.0.0-shim-stamped" — literally same).
+        const string stampedVersion = "1.0.0-shim-stamped";
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: stampedVersion);
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"already-on-target dispatch MUST exit 0 via short-circuit. Got exit {exitCode}. " +
+                          $"stdout:\n{stdout}");
+
+        // last-upgrade.json reports SUCCESS with the no-op detail.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "short-circuit MUST still write last-upgrade.json so operator UI shows 'no-op success' rather than stale state");
+
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"already-up-to-date status MUST be SUCCESS. Got: '{statusPayload.Status}'");
+
+        statusPayload.Detail.ShouldContain("Already on target",
+            customMessage: $"detail MUST identify the no-op path so operators can audit. Got: '{statusPayload.Detail}'");
+
+        statusPayload.Detail.ShouldContain("(no-op)",
+            customMessage: "detail MUST mark the dispatch as a no-op so server-side staleness detection treats it as terminal-success, not in-progress");
+
+        // Reverse-assert #1: Phase A never ran. Mirror should have received
+        // ZERO download requests. If the .ps1 reached Phase A, it would
+        // hit DOWNLOAD_URL → mirror would log the request.
+        ctx.Mirror.ReceivedRequests.ShouldBeEmpty(
+            customMessage: $"short-circuit MUST fire BEFORE Phase A's Invoke-WebRequest. " +
+                          $"Mirror received: [{string.Join(", ", ctx.Mirror.ReceivedRequests)}]. " +
+                          "If non-empty: the short-circuit didn't fire → operator's no-op click triggered a download (waste of bandwidth + agent IO).");
+
+        // Reverse-assert #2: Phase B never ran. .bak directory MUST NOT exist.
+        var bakDir = Path.Combine(Path.GetDirectoryName(ctx.Fixture.InstallDir)!, Path.GetFileName(ctx.Fixture.InstallDir) + ".bak");
+        Directory.Exists(bakDir).ShouldBeFalse(
+            customMessage: $".bak dir at {bakDir} MUST NOT exist after short-circuit — Phase B's Move-Item never ran. " +
+                          "If present: short-circuit failed → service was unnecessarily Stop/Swap/Start'd → operator's no-op click caused a 60s+ outage.");
+
+        // Reverse-assert #3: the original Squid.Tentacle.exe is still in place
+        // (NOT moved to .bak, NOT replaced). Short-circuit means INSTALL_DIR
+        // is touched zero times.
+        File.Exists(Path.Combine(ctx.Fixture.InstallDir, "Squid.Tentacle.exe")).ShouldBeTrue(
+            "INSTALL_DIR should be untouched after short-circuit — the original Squid.Tentacle.exe still there");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // E11.u2 — Stale lock file with dead PID is broken + dispatch proceeds
     //
     // Pre-J.E.7 a crashed dispatch (host reboot mid-upgrade, OOM kill)
@@ -1013,6 +1112,18 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         public string TestServiceExe { get; }
 
         /// <summary>
+        /// Path to the version-stamped Squid.Tentacle.exe shim built by
+        /// <c>Squid.WindowsUpgradeE2E.VersionStampedShim</c>. Used by E4.h
+        /// (already-up-to-date short-circuit test) — staged at
+        /// <c>$INSTALL_DIR\Squid.Tentacle.exe</c> so the .ps1's
+        /// <c>(Get-Item).VersionInfo.ProductVersion</c> reads the shim's
+        /// fixed Win32 VERSIONINFO stamp ("1.0.0-shim-stamped"). The
+        /// shim does NOT replace the test service binary in any other
+        /// scenario — it's a different exe, separate concern.
+        /// </summary>
+        public string StampedShimExePath { get; }
+
+        /// <summary>
         /// Test-isolated <c>$env:ProgramData</c> override. The .ps1 derives
         /// <c>$STATUS_DIR = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'</c>
         /// from this — so redirecting it sends last-upgrade.json + upgrade.lock
@@ -1038,6 +1149,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             Fixture = new WindowsServiceFixture(serviceName, installDir);
             Mirror = LocalReleaseMirror.Start();
             TestServiceExe = LocateTestServiceExe();
+            StampedShimExePath = LocateStampedShimExe();
 
             ProgramDataOverride = Path.Combine(Path.GetTempPath(), $"squid-upgrade-lifecycle-pd-{unique}");
             Directory.CreateDirectory(ProgramDataOverride);
@@ -1304,6 +1416,26 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         }
 
         private static string LocateTestServiceExe()
+            => LocateSiblingTestProjectExe("Squid.WindowsUpgradeE2E.TestService", "SquidUpgradeE2ETestService.exe");
+
+        /// <summary>
+        /// Locates the version-stamped shim built by
+        /// <c>Squid.WindowsUpgradeE2E.VersionStampedShim</c>. The shim's
+        /// AssemblyName is <c>Squid.Tentacle</c> so the filename is
+        /// <c>Squid.Tentacle.exe</c>. Pinned by the project's csproj
+        /// <c>&lt;AssemblyName&gt;</c> property + the cross-reference doc-comment
+        /// on the project itself.
+        /// </summary>
+        private static string LocateStampedShimExe()
+            => LocateSiblingTestProjectExe("Squid.WindowsUpgradeE2E.VersionStampedShim", "Squid.Tentacle.exe");
+
+        /// <summary>
+        /// Shared sibling-project exe locator. Walks up from the test
+        /// assembly's bin directory to <c>tests/</c>, then constructs the
+        /// canonical bin path. Centralises the path-resolution discipline
+        /// so adding a third sibling project doesn't duplicate the walk.
+        /// </summary>
+        private static string LocateSiblingTestProjectExe(string projectName, string exeFileName)
         {
             var thisAssemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
             var configDir = Path.GetDirectoryName(thisAssemblyDir)!;
@@ -1313,12 +1445,12 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             var configName = Path.GetFileName(configDir);
             var tfmName = Path.GetFileName(thisAssemblyDir);
 
-            var candidate = Path.Combine(testsDir, "Squid.WindowsUpgradeE2E.TestService", "bin", configName, tfmName, "SquidUpgradeE2ETestService.exe");
+            var candidate = Path.Combine(testsDir, projectName, "bin", configName, tfmName, exeFileName);
 
             if (!File.Exists(candidate))
                 throw new FileNotFoundException(
-                    $"test-service exe not found at expected location: {candidate}. " +
-                    "If running locally, build the Squid.WindowsUpgradeE2E.TestService project first.");
+                    $"sibling test project exe '{exeFileName}' not found at expected location: {candidate}. " +
+                    $"If running locally, build the {projectName} project first.");
 
             return candidate;
         }
