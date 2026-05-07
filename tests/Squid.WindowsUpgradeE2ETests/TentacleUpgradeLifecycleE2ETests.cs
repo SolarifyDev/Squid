@@ -937,6 +937,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             "INSTALL_DIR",
             "INSTALL_METHODS",
             "SERVICE_NAME",
+            "SERVICE_TIMEOUT_SECONDS",
             "TARGET_VERSION"
         };
 
@@ -1100,6 +1101,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 .Replace("{{HEALTHCHECK_URL}}", healthcheckUrl, StringComparison.Ordinal)
                 .Replace("{{HEALTHCHECK_RETRIES}}", healthcheckRetries, StringComparison.Ordinal)
                 .Replace("{{HEALTHCHECK_FATAL}}", healthcheckFatal ? "$true" : "$false", StringComparison.Ordinal)
+                .Replace("{{SERVICE_TIMEOUT_SECONDS}}", "30", StringComparison.Ordinal)
                 .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
         }
 
@@ -1269,6 +1271,15 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             // Always-runs cleanup, even on test-failure paths (Rule 12.3).
             // Order: stop service → delete service → delete .bak → delete
             // installdir → delete program-data override → dispose mirror.
+
+            // Diagnostic breadcrumb: if Dispose runs without MarkClean
+            // having fired, the test exited via assertion / exception
+            // BEFORE its happy-path completion. Surfacing this in stdout
+            // helps disambiguate "test passed but cleanup failed" from
+            // "test failed → MarkClean never reached" when reading CI
+            // logs. No-op when _clean = true (happy path).
+            if (!_clean)
+                Console.WriteLine($"[UpgradeLifecycleContext] Dispose called without MarkClean — test for service '{Fixture.ServiceName}' failed before its happy-path conclusion. Cleanup will still attempt all artefacts best-effort.");
 
             try { Fixture.Dispose(); } catch { /* best-effort */ }
 

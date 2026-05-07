@@ -47,6 +47,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     private readonly string _previousHealthcheckUrlOverride;
     private readonly string _previousHealthcheckRetriesOverride;
     private readonly string _previousHealthcheckFatalOverride;
+    private readonly string _previousServiceTimeoutOverride;
 
     public WindowsTentacleUpgradeStrategyTests()
     {
@@ -54,11 +55,13 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         _previousHealthcheckUrlOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar);
         _previousHealthcheckRetriesOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar);
         _previousHealthcheckFatalOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar);
+        _previousServiceTimeoutOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar);
 
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, null);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar, null);
     }
 
     public void Dispose()
@@ -67,6 +70,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, _previousHealthcheckUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, _previousHealthcheckRetriesOverride);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, _previousHealthcheckFatalOverride);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar, _previousServiceTimeoutOverride);
     }
 
     // ========================================================================
@@ -178,6 +182,92 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         // back to the safe 30-attempt default with a Serilog warning so
         // operators see the typo on their next dispatch.
         WindowsTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(30);
+    }
+
+    // ── J.E.8: ServiceTimeoutSecondsEnvVar pins ────────────────────────────
+
+    [Fact]
+    public void ServiceTimeoutSecondsEnvVar_ConstantNamePinned()
+    {
+        // Renaming this constant breaks operators who tuned `WaitForStatus`
+        // upper bounds for slow-startup agents. Hard-pin the literal.
+        WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar
+            .ShouldBe("SQUID_TARGET_WINDOWS_TENTACLE_SERVICE_TIMEOUT_SECONDS");
+    }
+
+    [Fact]
+    public void ResolveServiceTimeoutSeconds_NoEnvVar_ReturnsDefault30()
+    {
+        // 30s default = stock-agent boot (3-5s) × 6 margin. Pin the
+        // default — a polish that "tightens" or "loosens" without operator
+        // notice would mass-break heavyweight-agent deployments.
+        WindowsTentacleUpgradeStrategy.ResolveServiceTimeoutSeconds().ShouldBe(30);
+    }
+
+    [Theory]
+    [InlineData("60", 60)]                // typical "moderate slow agent" (1 min)
+    [InlineData("180", 180)]              // very slow agent (3 min, plugin enumeration heavy)
+    [InlineData("3600", 3600)]            // 1h — extreme but allowed (e.g., AV scanning huge bundle)
+    [InlineData("  120  ", 120)]          // whitespace tolerant
+    public void ResolveServiceTimeoutSeconds_ValidValue_RoundTripsAsInteger(string envValue, int expected)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar, envValue);
+
+        WindowsTentacleUpgradeStrategy.ResolveServiceTimeoutSeconds().ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("0")]                     // 0 is invalid (would skip the wait → race conditions)
+    [InlineData("-30")]                   // negative is invalid
+    [InlineData("30s")]                   // operator wrote "30s" instead of "30" — surprisingly common
+    [InlineData("not-a-number")]
+    [InlineData("")]
+    public void ResolveServiceTimeoutSeconds_InvalidValue_FallsBackToDefault30(string envValue)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar, envValue);
+
+        // Operator-friendly: invalid values fall back to 30s + Serilog warning.
+        // A typo'd env var doesn't accidentally pass 0 to WaitForStatus
+        // (which would race mid-Stop and cause Phase B to crash mid-swap).
+        WindowsTentacleUpgradeStrategy.ResolveServiceTimeoutSeconds().ShouldBe(30);
+    }
+
+    [Fact]
+    public void RenderInnerScript_ServiceTimeoutSecondsPlaceholder_SubstitutedFromEnv()
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.ServiceTimeoutSecondsEnvVar, "120");
+
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        // Direct substitution: the placeholder gets the resolved integer.
+        inner.ShouldContain("$SERVICE_TIMEOUT_SECONDS = 120",
+            customMessage: "RenderInnerScript MUST substitute the env-resolved timeout into the script. " +
+                          "If this fails: the placeholder wasn't wired through Replace, OR the .ps1 dropped the variable assignment line.");
+
+        // Hardcoded '00:00:30' literals MUST be gone from the rendered script
+        // — every WaitForStatus call now uses $SERVICE_TIMEOUT_SPAN.
+        inner.ShouldNotContain("'00:00:30'",
+            customMessage: "stale '00:00:30' literal in the rendered .ps1 — should reference $SERVICE_TIMEOUT_SPAN dynamically. " +
+                          "If present: a WaitForStatus call still uses the hardcoded 30s upper bound, ignoring the operator's env var. " +
+                          "Heavy-agent operators would see false-rollback timeouts despite setting the override.");
+    }
+
+    [Fact]
+    public void RenderInnerScript_ServiceTimeoutSpanIsTimeSpanInstance()
+    {
+        // Pin the .ps1's variable shape — `$SERVICE_TIMEOUT_SPAN =
+        // [TimeSpan]::FromSeconds($SERVICE_TIMEOUT_SECONDS)` — so a future
+        // polish that "simplifies" by passing the integer directly to
+        // WaitForStatus (which expects TimeSpan) doesn't break Stop/Start
+        // synchronisation across the .ps1.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("[TimeSpan]::FromSeconds($SERVICE_TIMEOUT_SECONDS)",
+            customMessage: "TimeSpan construction REGRESSED — WaitForStatus expects TimeSpan, passing int causes runtime cast errors");
+        inner.ShouldContain("WaitForStatus('Running', $SERVICE_TIMEOUT_SPAN)",
+            customMessage: "Start-Service WaitForStatus REGRESSED — must use $SERVICE_TIMEOUT_SPAN");
+        inner.ShouldContain("WaitForStatus('Stopped', $SERVICE_TIMEOUT_SPAN)",
+            customMessage: "Stop-Service WaitForStatus REGRESSED — must use $SERVICE_TIMEOUT_SPAN");
     }
 
     // ── J.E.7: HealthcheckFatalEnvVar pins ──────────────────────────────────
@@ -511,7 +601,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         {
             "TARGET_VERSION", "DOWNLOAD_URL", "EXPECTED_SHA256",
             "INSTALL_DIR", "SERVICE_NAME", "HEALTHCHECK_URL", "HEALTHCHECK_RETRIES",
-            "HEALTHCHECK_FATAL", "INSTALL_METHODS"
+            "HEALTHCHECK_FATAL", "SERVICE_TIMEOUT_SECONDS", "INSTALL_METHODS"
         };
 
         foreach (var name in strategySubstituted)
