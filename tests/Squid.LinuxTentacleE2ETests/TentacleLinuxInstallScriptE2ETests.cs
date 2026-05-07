@@ -549,13 +549,36 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                               "If non-zero: useradd silently failed (likely missing on the host, OR --system flag rejected). " +
                               "Production impact: agent runs as root instead of the dedicated system user — privilege containment broken.");
 
-            // System user MUST be `--no-create-home` (no /home/squid-tentacle).
-            // getent passwd output: name:passwd:uid:gid:gecos:home:shell
-            // Sanity: home should NOT be /home/squid-tentacle.
-            getentStdout.ShouldNotContain("/home/squid-tentacle",
-                customMessage: $"squid-tentacle MUST be a `--no-create-home` system user. getent shows /home/squid-tentacle home dir, suggesting useradd's --no-create-home flag regressed. " +
+            // Operator-meaningful flags from useradd's invocation:
+            //   --shell /usr/sbin/nologin → prevents interactive login as
+            //     the service user (security-critical: a compromised
+            //     script payload can't pivot to interactive shell).
+            //   --no-create-home → prevents /home/<user> dir CREATION on
+            //     disk (NOT the home FIELD in /etc/passwd, which still
+            //     defaults to /home/<user> per useradd convention).
+            //
+            // J.M.L.A.5 first runner caught the test asserting the WRONG
+            // contract: I'd asserted home FIELD wasn't /home/squid-tentacle,
+            // but useradd DOES set that field to the default; only the
+            // directory creation is suppressed by --no-create-home. The
+            // operator-meaningful check is the directory's absence.
+            getentStdout.ShouldContain("/usr/sbin/nologin",
+                customMessage: $"squid-tentacle's shell MUST be /usr/sbin/nologin (per .sh's `useradd --shell /usr/sbin/nologin`). " +
+                              $"This is the security-critical flag — interactive login as the service user must be impossible. " +
+                              $"If absent: --shell flag regressed → compromised payload could pivot to interactive shell. " +
                               $"getent stdout: {getentStdout.Trim()}");
         }
+
+        // --no-create-home actual contract: the /home/squid-tentacle
+        // DIRECTORY must not be created on disk. The home FIELD in
+        // /etc/passwd defaults to /home/<user> regardless (separate
+        // useradd convention). Operator impact of broken --no-create-home:
+        // /home/squid-tentacle gets created (default mode 0700), polluting
+        // /home/, and potentially confusing operators who think the
+        // service user has an actual home.
+        Directory.Exists("/home/squid-tentacle").ShouldBeFalse(
+            customMessage: "/home/squid-tentacle directory MUST NOT exist after install (per useradd's `--no-create-home` flag). " +
+                          "If present: --no-create-home flag regressed in install-tentacle.sh → fleet pollution + operator confusion.");
 
         // Operator-visible "Created system user" log MUST appear (proves
         // useradd actually ran in this invocation, not idempotent skip).
