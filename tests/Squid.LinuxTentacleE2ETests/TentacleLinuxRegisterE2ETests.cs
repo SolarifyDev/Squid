@@ -340,6 +340,140 @@ public sealed class TentacleLinuxRegisterE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // C2.h-Linux — Polling Tentacle register: separate endpoint, separate
+    //               code path, separate payload shape
+    //
+    // Operator workflow for polling tentacles (server can't dial in due to
+    // firewall / NAT, so agent dials OUT to server):
+    //
+    //   sudo squid-tentacle register \
+    //     --server https://server.acme.internal:7078 \
+    //     --comms-url https://server.acme.internal:10943 \
+    //     --api-key API-XXXX \
+    //     --role web-server \
+    //     --environment Production \
+    //     --flavor LinuxTentacle
+    //
+    // Key differences from C1.h Listening:
+    //   - --comms-url present → LinuxTentacleFlavor.ResolveCommunicationMode
+    //     returns Polling (line 50-54)
+    //   - Different registrar: TentaclePollingRegistrar wraps
+    //     TentacleRegistrationClient (vs Listening's bespoke HTTP code)
+    //   - Different endpoint: /api/machines/register/tentacle-polling
+    //   - Different payload: includes subscriptionId, no `uri`
+    //   - Different validation: TentacleRegistrationClient HAS
+    //     EnsureRegistrationPayloadComplete (the validation Listening
+    //     lacks per J.M.L.C.2's discovery)
+    //
+    // Without this E2E pin, regressions in any of the polling-specific
+    // pieces ship silently:
+    //   - Mode resolution flips so --comms-url is ignored → operator
+    //     gets Listening flow when they wanted Polling
+    //   - Endpoint path drift (e.g. /tentacle-polling → /poll) → server
+    //     returns 404, operators puzzled
+    //   - subscriptionId field renamed → server can't correlate dispatches
+    //
+    // Test mechanism: stub's existing /api/machines/register/* path matcher
+    // routes both flavors to the same handler — assert the path the binary
+    // actually hit matches the polling-specific endpoint.
+    //
+    // Tier: 🟢 H. Same fixture as C1.h; differs in args (--comms-url) and
+    // expected stub path.
+    //
+    // Expected runtime: ~1-2s.
+    // ========================================================================
+
+    [Fact]
+    public void C2h_RegisterPolling_HitsPollingEndpointAndPersistsConfig()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // Polling mode requires --comms-url to be set (any value; agent
+        // doesn't actually poll during register, just reports its
+        // listen/comms address). Use a dummy poll URL — register doesn't
+        // open the polling channel here.
+        var (exitCode, output) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--comms-url", "poll://stub-polling-host/",
+            "--api-key", "API-STUB-POLLING-1234",
+            "--role", "polling-agent",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+
+        exitCode.ShouldBe(0,
+            customMessage: $"polling register MUST exit 0. Got exit {exitCode}. " +
+                          $"If 1: TentacleRegistrationClient threw (URL unreachable, payload validation failed, or response shape mismatch). " +
+                          $"output:\n{output}");
+
+        // Stub recorded exactly one register call — TentacleRegistrationClient
+        // doesn't retry on success-2xx (only on transient/5xx errors).
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBe(1,
+            customMessage: $"stub MUST have received exactly 1 register call. Got {ctx.Stub.ReceivedRegistrations.Count}.");
+
+        var register = ctx.Stub.ReceivedRegistrations[0];
+
+        // Path correctness — Polling flavor must hit the polling endpoint.
+        // J.M.L.C.1 confirmed the listening path; this confirms the polling
+        // path. Together they pin both flavor branches.
+        register.Path.ShouldBe("/api/machines/register/tentacle-polling",
+            customMessage: $"register endpoint path MUST be /api/machines/register/tentacle-polling for the Polling flavor. " +
+                          $"Got '{register.Path}'. " +
+                          $"If '/api/machines/register/tentacle-listening': mode resolution flipped — --comms-url was ignored. " +
+                          $"If different: TentaclePollingRegistrar's hardcoded path drifted.");
+
+        // X-API-KEY auth header propagation (same contract as Listening).
+        register.Headers["X-API-KEY"].ShouldBe("API-STUB-POLLING-1234",
+            customMessage: $"X-API-KEY header MUST equal --api-key arg. Got '{register.Headers.GetValueOrDefault("X-API-KEY", "(missing)")}'.");
+
+        // Payload shape (Polling differs from Listening): TentacleRegistrationClient
+        // line 90-102 sends {machineName, thumbprint, subscriptionId, ...}.
+        // Notably has subscriptionId (Listening doesn't); doesn't have `uri`.
+        using var bodyDoc = JsonDocument.Parse(register.Body);
+        var body = bodyDoc.RootElement;
+
+        body.TryGetProperty("machineName", out var machineName).ShouldBeTrue("polling body MUST contain machineName");
+        machineName.GetString().ShouldNotBeNullOrEmpty();
+
+        body.TryGetProperty("thumbprint", out var thumbprint).ShouldBeTrue("polling body MUST contain thumbprint");
+        thumbprint.GetString().ShouldNotBeNullOrEmpty();
+
+        // Polling-specific: subscriptionId distinguishes this from Listening.
+        // Listening sends {uri: ...} instead.
+        body.TryGetProperty("subscriptionId", out var subscriptionId).ShouldBeTrue(
+            customMessage: "polling body MUST contain subscriptionId (Polling-specific field — distinguishes from Listening which sends `uri` instead). " +
+                          "If absent: TentacleRegistrationClient.SendRegistrationAsync regression OR field rename → server can't correlate dispatches to this agent.");
+        subscriptionId.GetString().ShouldNotBeNullOrEmpty(
+            customMessage: "subscriptionId MUST be non-empty (TentacleCertificateManager.LoadOrCreateSubscriptionId generates it).");
+
+        body.TryGetProperty("roles", out var roles).ShouldBeTrue();
+        roles.GetString().ShouldBe("polling-agent",
+            customMessage: $"roles MUST equal --role arg. Got '{roles.GetString()}'.");
+
+        // Reverse-assert: polling body does NOT have `uri` (that's Listening's
+        // field — would indicate flavor confusion).
+        body.TryGetProperty("uri", out var uri).ShouldBeFalse(
+            customMessage: "polling body MUST NOT contain `uri` field — that's Listening-specific. " +
+                          "If present: TentaclePollingRegistrar accidentally calls Listening payload builder OR Listening fields leaked into Polling.");
+
+        // Config persistence at expected path.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            customMessage: $"config MUST be persisted at {configPath} after polling register. " +
+                          "Same persistence mechanism as Listening (RegisterCommand.PersistInstanceConfig).");
+
+        var configContent = LinuxInstallScriptContext.SudoReadAllText(configPath);
+        configContent.ShouldContain(ctx.Stub.ServerThumbprint,
+            customMessage: $"persisted config MUST contain stub's ServerThumbprint '{ctx.Stub.ServerThumbprint}'. " +
+                          "Polling agent uses this for TLS pinning when polling out.");
+
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Per-test context: owns the stub server + binary fixture + cleanup.
     /// </summary>
