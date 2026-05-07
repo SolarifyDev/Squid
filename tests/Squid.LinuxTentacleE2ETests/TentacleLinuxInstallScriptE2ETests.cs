@@ -606,7 +606,13 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           $"If absent: SERVICE_USER squid-tentacle wasn't created upstream OR /etc/sudoers.d doesn't exist. " +
                           $"FULL .sh stdout:\n{output}");
 
-        File.Exists(sudoersPath).ShouldBeTrue(
+        // Use sudo-wrapped existence check: /etc/sudoers.d/ is mode 0750
+        // root:root, so the test process (non-root) can't stat files
+        // under it via File.Exists. J.M.L.A.5.3 first runner caught this:
+        // .sh's stdout said "Installed upgrade sudoers rule" but
+        // File.Exists returned false because the runner user couldn't
+        // traverse /etc/sudoers.d/.
+        LinuxInstallScriptContext.SudoFileExists(sudoersPath).ShouldBeTrue(
             customMessage: $"sudoers file MUST exist at {sudoersPath} after install with SERVICE_USER created. " +
                           "If absent: visudo -c rejected the generated content (template bug — operator-visible 'Warning: generated sudoers rule failed validation' should appear in stdout). " +
                           "Production impact: in-UI upgrades hang on password prompt forever." +
@@ -627,18 +633,24 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           "Production impact: agent's first upgrade hangs on password prompt because sudoers file is absent.");
 
         // Mode 0440 is required by visudo to load the file. .sh's `chmod
-        // 440 ${SUDOERS_FILE}.tmp` sets this before mv. Verify the final
-        // file's mode.
-        var sudoersInfo = new FileInfo(sudoersPath);
-        sudoersInfo.UnixFileMode.ShouldBe(System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.GroupRead,
-            customMessage: $"sudoers file mode MUST be 0440 (user-read + group-read, no execute, no other). Got {sudoersInfo.UnixFileMode}. " +
+        // 440 ${SUDOERS_FILE}.tmp` sets this before mv. Same permission-
+        // boundary issue as File.Exists — must use sudo wrapper to read
+        // the mode under /etc/sudoers.d/.
+        var sudoersMode = LinuxInstallScriptContext.SudoFileMode(sudoersPath);
+        sudoersMode.ShouldBe("440",
+            customMessage: $"sudoers file mode MUST be 0440 (user-read + group-read, no execute, no other). Got '{sudoersMode}'. " +
                           "If wrong: visudo at runtime ignores the file (logs 'unsafe permissions' warning) and the rule has no effect. " +
                           "Operator impact: in-UI upgrade hangs on password prompt despite the file being on disk.");
 
         // Sanity: file content has expected sudoers rule prefix. The full
         // shape is unit-tested by InstallTentacleSudoersTests; here we
         // just confirm the heredoc rendered SOME plausible sudoers content.
-        var sudoersContent = File.ReadAllText(sudoersPath);
+        // Same permission-boundary fix: use sudo cat instead of File.ReadAllText.
+        var sudoersContent = LinuxInstallScriptContext.SudoReadAllText(sudoersPath);
+        sudoersContent.ShouldNotBeNullOrEmpty(
+            customMessage: $"sudo cat of {sudoersPath} returned empty content. Either file is empty (heredoc rendered nothing) OR sudo wrapper failed. " +
+                          $"FULL .sh stdout:\n{output}");
+
         sudoersContent.ShouldContain("squid-tentacle ALL=(root) NOPASSWD:",
             customMessage: $"sudoers file content MUST contain at least one 'squid-tentacle ALL=(root) NOPASSWD:' rule. " +
                           $"If absent: heredoc didn't expand SERVICE_USER, OR template regressed. " +
