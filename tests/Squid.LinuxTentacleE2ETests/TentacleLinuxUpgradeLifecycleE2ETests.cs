@@ -36,6 +36,104 @@ namespace Squid.LinuxTentacleE2ETests;
 public sealed class TentacleLinuxUpgradeLifecycleE2ETests
 {
     // ========================================================================
+    // E1.h-Linux — Full lifecycle happy path (Phase A + Phase B)
+    //
+    // The most operationally critical Linux test: drive .sh end-to-end
+    // against a real systemd service + real LocalReleaseMirror tarball
+    // + real curl + real systemctl restart + real /healthz responder.
+    //
+    // Mirrors Windows E1.h structure exactly:
+    //   1. Stage v1 service via LinuxServiceFixture (with healthz enabled)
+    //   2. Build v2 tarball via LinuxLifecycleContext.BuildV2BundleTarGz
+    //   3. Stage tarball at mirror
+    //   4. Render .sh (HEALTHCHECK_RETRIES=1, tarball-only methods,
+    //      state-dir override)
+    //   5. Run via bash (Phase A: download/SHA-skip/extract; Phase B:
+    //      systemd-run --scope → systemctl restart → healthz curl →
+    //      version probe → SUCCESS)
+    //   6. Assertions:
+    //      - exit 0
+    //      - last-upgrade.json reports SUCCESS, target version, tarball method
+    //      - service marker file content swapped from "1.0.0" to "2.0.0"
+    //      - service is still running on systemctl is-active
+    //
+    // High-fidelity. No mocks at any layer — production .sh + real
+    // mirror + real systemd + real bash + real python3 healthz.
+    //
+    // Expected runtime: ~5-10s (Phase A download instant from local
+    // mirror; retries=1 cuts the previous 90s healthz wait to 1s).
+    // ========================================================================
+
+    [Fact]
+    public void E1h_FullLifecycle_HappyPath_WritesSuccessAndSwapsBinary()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage v1 service with healthz responder ENABLED. The .sh's Phase B
+        // healthz curl will hit our python3 listener → 200 OK → HEALTH_OK=1.
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        // Sanity: marker file confirms v1 is running.
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before E1.h-Linux can validate the swap");
+
+        // Build v2 tarball (tarball method, multi-entry: Squid.Tentacle
+        // placeholder + script + version.txt). Mirror serves it raw.
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"full lifecycle MUST exit 0 on happy path. Got exit {exitCode}. " +
+                          (exitCode == 6 ? "Got exit 6 (download not reachable) — mirror config issue. " : "") +
+                          (exitCode == 7 ? "Got exit 7 (SHA mismatch) — mirror staged with mismatched SHA companion. " : "") +
+                          (exitCode == 13 ? "Got exit 13 (systemd-run --scope failed) — sudo / systemd missing or scope creation race. " : "") +
+                          (exitCode == 14 ? "Got exit 14 (no install method succeeded) — apt/yum probes intervened. " : "") +
+                          $"\noutput tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // last-upgrade.json reports SUCCESS — operator-visible outcome.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: $"last-upgrade.json MUST be written by .sh after Phase B success. Path: {ctx.StatusFilePath}. " +
+                          "If null: status atomic-write failed OR Phase B exited before reaching write_status SUCCESS.");
+
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"last-upgrade.json status MUST be 'SUCCESS' on happy path. Got: '{statusPayload.Status}'. " +
+                          $"Detail: {statusPayload.Detail}");
+
+        statusPayload.TargetVersion.ShouldBe("2.0.0-test",
+            customMessage: $"targetVersion MUST echo what strategy passed. Got: '{statusPayload.TargetVersion}'");
+
+        statusPayload.InstallMethod.ShouldBe("tarball",
+            customMessage: $"installMethod MUST be 'tarball' (we passed [TarballUpgradeMethod()] only). Got: '{statusPayload.InstallMethod}'");
+
+        // Reverse-assert: marker now reports v2 (proves Phase B's mv
+        // swap landed AND new service started AND it read new version.txt).
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            customMessage: $"after Phase B mv swap + systemctl restart, marker at {ctx.Fixture.MarkerFilePath} MUST contain '2.0.0' — " +
+                          "proves swap landed AND new service started AND read new version.txt. " +
+                          "If marker still '1.0.0': swap failed OR new service didn't start. " +
+                          "If marker absent: trap-handler ran (service stopped) OR rollback fired.");
+
+        // Service is still active per systemd.
+        ctx.Fixture.IsActive().ShouldBeTrue(
+            customMessage: "service MUST still be active after upgrade — proves systemctl restart picked up the new binary cleanly");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // E1.u1-Linux — Download URL 404 → exit 6 + FAILED status with download detail
     //
     // Linux analog of Windows E1u1. The .sh's tarball-download HEAD probe
@@ -156,5 +254,26 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
             customMessage: $"detail MUST name 'SHA256 mismatch' so operators distinguish integrity failure from generic 'unknown' (which would lead them to re-trigger the upgrade pointlessly). Got: '{statusPayload.Detail}'");
 
         ctx.MarkClean();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    var actual = File.ReadAllText(path).Trim();
+                    if (actual == expectedContent) return true;
+                }
+            }
+            catch { /* mid-write, retry */ }
+            Thread.Sleep(200);
+        }
+        return false;
     }
 }

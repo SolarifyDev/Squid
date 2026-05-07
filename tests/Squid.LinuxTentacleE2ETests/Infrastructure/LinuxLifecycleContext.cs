@@ -74,13 +74,18 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// </summary>
     public string RenderProductionScriptForVersion(string targetVersion)
     {
-        // Set env vars for resolver-driven placeholders. Strategy reads
-        // SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL + the new
-        // SQUID_TARGET_LINUX_TENTACLE_STATE_DIR (12.L.E.2). HEALTHCHECK_URL
-        // also resolver-driven; default is fine because the test service
-        // doesn't expose HTTP and we want the "warning + proceed" path.
+        // Set env vars for resolver-driven placeholders. Strategy reads:
+        //   - DownloadBaseUrl → mirror's HTTP listener
+        //   - StateDir       → test-isolated per-test dir (12.L.E.2)
+        //   - HealthcheckRetries → 1 attempt for fast tests (12.L.E.6)
         Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, Mirror.BaseUri.ToString().TrimEnd('/'));
         Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, StateDirOverride);
+
+        // retries=1 cuts the .sh's 90s healthz wait down to 1s. With the
+        // test service's python3 healthz responder (SQUID_TEST_SERVICE_HEALTHZ=1
+        // set in systemd unit Environment), the responder is up by the
+        // time .sh's curl probe runs → HEALTH_OK=1 → success path.
+        Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, "1");
 
         // Tarball-only method order. Skips apt+yum probes which would
         // otherwise slow tests + introduce host-config sensitivity (apt's
@@ -89,6 +94,134 @@ public sealed class LinuxLifecycleContext : IDisposable
         var tarballOnly = new ILinuxUpgradeMethod[] { new TarballUpgradeMethod() };
 
         return LinuxTentacleUpgradeStrategy.BuildScript(targetVersion, tarballOnly);
+    }
+
+    /// <summary>
+    /// Builds a multi-entry tar.gz mirroring the production GitHub
+    /// release tarball's shape — what the .sh's Phase A extracts +
+    /// Phase B swaps into INSTALL_DIR. Used by full-lifecycle tests
+    /// (J.L.E.7+) where the .sh's existence check
+    /// (<c>NEW_BIN="$EXTRACT/Squid.Tentacle"</c>) + the symlink chain +
+    /// the post-restart healthz poll all need a properly-shaped
+    /// payload.
+    ///
+    /// <para>Contents:</para>
+    /// <list type="bullet">
+    ///   <item><c>Squid.Tentacle</c> — placeholder shim (a copy of the
+    ///         test service script, chmod +x'd by .ps1 line 591).
+    ///         The .sh creates symlinks <c>squid-tentacle</c> → this,
+    ///         and global <c>/usr/local/bin/squid-tentacle</c>. Real
+    ///         systemd unit's ExecStart points at the bash script
+    ///         below — Squid.Tentacle is just for the .sh's
+    ///         existence-check + symlink chain.</item>
+    ///   <item><c>squid-linux-test-service.sh</c> — the actual systemd
+    ///         ExecStart target. After swap, INSTALL_DIR has this file
+    ///         and the systemd unit's restart picks it up.</item>
+    ///   <item><c>version.txt</c> — the test service reads on Start;
+    ///         the marker file's content is what tests assert against
+    ///         to prove the swap actually landed.</item>
+    /// </list>
+    /// </summary>
+    public byte[] BuildV2BundleTarGz(string targetVersion)
+    {
+        var serviceScriptBytes = File.ReadAllBytes(TestServiceScript);
+
+        // version.txt content is what test service reads on Start →
+        // writes to the marker. Strip pre-release suffix so marker
+        // assertions compare cleanly (e.g. "2.0.0-test" → "2.0.0").
+        var serviceVersion = targetVersion.Split('-')[0];
+        var versionTxtBytes = Encoding.UTF8.GetBytes(serviceVersion);
+
+        // Squid.Tentacle placeholder: just a copy of the test service
+        // script (an executable bash file). chmod +x at .sh line 591
+        // works on any bash file. Symlink chain works. The systemd
+        // unit's ExecStart points elsewhere (the .sh script below) so
+        // this placeholder isn't actually invoked as a service.
+        var squidTentacleBytes = serviceScriptBytes;
+
+        var entries = new (string Name, byte[] Content)[]
+        {
+            ("Squid.Tentacle", squidTentacleBytes),
+            ("squid-linux-test-service.sh", serviceScriptBytes),
+            ("version.txt", versionTxtBytes)
+        };
+
+        return BuildTarGz(entries);
+    }
+
+    /// <summary>
+    /// Hand-rolled multi-entry POSIX tar + gzip. <see cref="LocalReleaseMirror"/>
+    /// has a single-file BuildTarGz; this helper handles multiple files
+    /// (the J.L.E.7+ full-bundle case).
+    /// </summary>
+    private static byte[] BuildTarGz((string Name, byte[] Content)[] entries)
+    {
+        // Build uncompressed tar first (each entry's 512-byte header +
+        // content padded to 512 + 1024-byte trailer).
+        using var tarMs = new MemoryStream();
+        foreach (var entry in entries)
+        {
+            var header = BuildTarHeader(entry.Name, entry.Content.Length);
+            tarMs.Write(header, 0, header.Length);
+            tarMs.Write(entry.Content, 0, entry.Content.Length);
+            // Pad to 512-byte block
+            var pad = (512 - (entry.Content.Length % 512)) % 512;
+            if (pad > 0) tarMs.Write(new byte[pad], 0, pad);
+        }
+        // 1024-byte zero terminator
+        tarMs.Write(new byte[1024], 0, 1024);
+
+        // gzip-wrap
+        using var gzMs = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(gzMs, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        {
+            var tarBytes = tarMs.ToArray();
+            gz.Write(tarBytes, 0, tarBytes.Length);
+        }
+        return gzMs.ToArray();
+    }
+
+    private static byte[] BuildTarHeader(string fileName, long size)
+    {
+        var header = new byte[512];
+
+        // Name (100 bytes, NUL-terminated)
+        var nameBytes = Encoding.ASCII.GetBytes(fileName);
+        Array.Copy(nameBytes, header, Math.Min(nameBytes.Length, 100));
+
+        // Mode 0755 — chmod-x ready (for Squid.Tentacle + the script)
+        WriteOctal(header, offset: 100, length: 8, value: 0x1ED);
+        WriteOctal(header, 108, 8, 0);   // uid
+        WriteOctal(header, 116, 8, 0);   // gid
+        WriteOctal(header, 124, 12, size);
+        WriteOctal(header, 136, 12, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        // Checksum field initially space-filled (for the checksum sum
+        // calculation below); type flag '0' = regular file.
+        for (var i = 148; i < 156; i++) header[i] = (byte)' ';
+        header[156] = (byte)'0';
+
+        // Magic "ustar" + version "00"
+        var ustar = Encoding.ASCII.GetBytes("ustar");
+        Array.Copy(ustar, 0, header, 257, ustar.Length);
+        header[263] = (byte)'0';
+        header[264] = (byte)'0';
+
+        // Checksum
+        var checksum = 0;
+        foreach (var b in header) checksum += b;
+        WriteOctal(header, 148, 7, checksum);
+        header[155] = 0;
+
+        return header;
+    }
+
+    private static void WriteOctal(byte[] buffer, int offset, int length, long value)
+    {
+        var s = Convert.ToString(value, 8).PadLeft(length - 1, '0');
+        var bytes = Encoding.ASCII.GetBytes(s);
+        Array.Copy(bytes, 0, buffer, offset, Math.Min(bytes.Length, length - 1));
+        buffer[offset + length - 1] = 0;
     }
 
     /// <summary>
@@ -191,6 +324,7 @@ public sealed class LinuxLifecycleContext : IDisposable
         // strictly needed (test process exits) but clean.
         try { Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null); } catch { }
         try { Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, null); } catch { }
+        try { Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, null); } catch { }
     }
 
     private static string LocateTestServiceScript()
