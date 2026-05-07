@@ -114,8 +114,14 @@ public sealed class LinuxServiceFixture : IDisposable
     /// supplied initial version, write a systemd unit file referencing
     /// it, daemon-reload + start, polling until the service reaches
     /// active(running) state OR the timeout expires.
+    ///
+    /// <para>Optional <paramref name="extraEnvironment"/> entries are
+    /// added as additional <c>Environment=KEY=VALUE</c> lines in the
+    /// systemd unit. Used by J.L.E.7+ full-lifecycle tests to set
+    /// <c>SQUID_TEST_SERVICE_HEALTHZ=1</c> so the test service spawns
+    /// its python3 healthz responder.</para>
     /// </summary>
-    public void InstallAndStart(string testServiceScriptSourcePath, string initialVersion, TimeSpan startTimeout)
+    public void InstallAndStart(string testServiceScriptSourcePath, string initialVersion, TimeSpan startTimeout, IReadOnlyDictionary<string, string> extraEnvironment = null)
     {
         if (!IsAvailable) throw new PlatformNotSupportedException("LinuxServiceFixture only runs on Linux with passwordless sudo");
 
@@ -135,13 +141,21 @@ public sealed class LinuxServiceFixture : IDisposable
         // ExecStart command (the bash script itself, which sleeps forever).
         // KillMode=mixed sends SIGTERM to main process + SIGKILL to children
         // so our trap-handler runs cleanly on stop.
-        var unitContent = new StringBuilder()
+        var unitBuilder = new StringBuilder()
             .AppendLine("[Unit]")
             .AppendLine($"Description=Squid Linux Tentacle E2E Test Service — {_serviceName}")
             .AppendLine()
             .AppendLine("[Service]")
             .AppendLine("Type=simple")
-            .AppendLine($"Environment=INSTALL_DIR={_installDir}")
+            .AppendLine($"Environment=INSTALL_DIR={_installDir}");
+
+        if (extraEnvironment != null)
+        {
+            foreach (var kvp in extraEnvironment)
+                unitBuilder.AppendLine($"Environment={kvp.Key}={kvp.Value}");
+        }
+
+        var unitContent = unitBuilder
             .AppendLine($"ExecStart=/usr/bin/env bash {ServiceScriptPath}")
             .AppendLine("KillMode=mixed")
             .AppendLine("Restart=no")
