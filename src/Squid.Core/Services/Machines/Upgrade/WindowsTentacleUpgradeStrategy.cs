@@ -96,8 +96,37 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// </summary>
     public const string HealthcheckUrlEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_URL";
 
+    /// <summary>
+    /// Operator override for the post-restart healthcheck poll count.
+    /// Default <see cref="DefaultHealthcheckRetries"/> (30) × 2s sleep =
+    /// 60s wait window; tests override to 1 to bypass the death-wait
+    /// (<see cref="LocalReleaseMirror"/> healthcheck endpoint is intentionally
+    /// unreachable in the lifecycle E2E since the test service doesn't
+    /// expose HTTP — every Phase B run currently sits in the 60s loop
+    /// before the .ps1's "::warning::" + proceed path fires).
+    ///
+    /// <para><b>Air-gap operator value</b>: deployments with slow-starting
+    /// services (e.g. heavy plugin enumeration on first run, &gt;60s) get
+    /// false-warnings every upgrade today; setting this to 90 (3 min) makes
+    /// the post-restart wait realistic for those environments without
+    /// changing default behaviour.</para>
+    ///
+    /// <para>Pinned per Rule 8 by
+    /// <c>WindowsTentacleUpgradeStrategyTests.HealthcheckRetriesEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string HealthcheckRetriesEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_RETRIES";
+
     private const string DefaultDownloadBaseUrl = "https://github.com/SolarifyDev/Squid/releases/download";
     private const string DefaultHealthcheckUrl = "http://127.0.0.1:8080/healthz";
+
+    /// <summary>
+    /// Default healthcheck poll count. 30 × 2s sleep per attempt = 60s
+    /// total wait window after Start-Service. Generous enough for stock
+    /// agent boot (~3-5s) plus runtime / plugin warmup (~10-30s) on
+    /// reasonable hardware. Operators with slower starts override via
+    /// <see cref="HealthcheckRetriesEnvVar"/>.
+    /// </summary>
+    internal const int DefaultHealthcheckRetries = 30;
 
     /// <summary>
     /// Wall-clock cap for a single upgrade dispatch. Mirrors Linux's
@@ -351,6 +380,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{INSTALL_DIR}}", DefaultInstallDir, StringComparison.Ordinal)
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_RETRIES}}", ResolveHealthcheckRetries().ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
@@ -540,6 +570,33 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
         var raw = System.Environment.GetEnvironmentVariable(HealthcheckUrlEnvVar);
 
         return string.IsNullOrWhiteSpace(raw) ? DefaultHealthcheckUrl : raw.Trim().TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Resolves the post-restart healthcheck poll count. Defaults to
+    /// <see cref="DefaultHealthcheckRetries"/> (30 × 2s = 60s window).
+    /// Invalid values (negative, non-numeric) silently fall back to default
+    /// — operator-friendly: a typo'd env var doesn't break upgrades, just
+    /// uses the safe default.
+    /// </summary>
+    internal static int ResolveHealthcheckRetries()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(HealthcheckRetriesEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultHealthcheckRetries;
+
+        if (!int.TryParse(raw.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            || parsed < 1)
+        {
+            Log.Warning(
+                "[Upgrade] {EnvVar} is set to an invalid value ('{Value}'). " +
+                "Must be a positive integer (number of 2-second poll attempts). " +
+                "Falling back to default of {Default}.",
+                HealthcheckRetriesEnvVar, raw, DefaultHealthcheckRetries);
+            return DefaultHealthcheckRetries;
+        }
+
+        return parsed;
     }
 
     // ── Embedded script loading ──────────────────────────────────────────────

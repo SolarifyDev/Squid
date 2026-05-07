@@ -689,6 +689,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         {
             "DOWNLOAD_URL",
             "EXPECTED_SHA256",
+            "HEALTHCHECK_RETRIES",
             "HEALTHCHECK_URL",
             "INSTALL_DIR",
             "INSTALL_METHODS",
@@ -836,6 +837,17 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             // healthcheck never responds).
             var healthcheckUrl = "http://127.0.0.1:1/healthz";
 
+            // HEALTHCHECK_RETRIES: 1 attempt (= 2s wait) for tests. Default
+            // 30 attempts × 2s = 60s wait window in production; tests don't
+            // need to exercise the wait itself, just that the .ps1 proceeds
+            // past the warning. Cuts ~58s per test → CI runtime drops from
+            // 2m+ per lifecycle test to ~30s. Pinned by the
+            // `RenderInnerScript_HealthcheckRetriesPlaceholder_*` unit test.
+            // Substituted as a numeric literal (matches the .ps1's
+            // `$HEALTHCHECK_RETRIES = {{HEALTHCHECK_RETRIES}}` line — no
+            // quotes / no [int] cast).
+            const string healthcheckRetries = "1";
+
             return template
                 .Replace("{{TARGET_VERSION}}", targetVersion, StringComparison.Ordinal)
                 .Replace("{{DOWNLOAD_URL}}", downloadUrl, StringComparison.Ordinal)
@@ -843,6 +855,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 .Replace("{{INSTALL_DIR}}", Fixture.InstallDir, StringComparison.Ordinal)
                 .Replace("{{SERVICE_NAME}}", Fixture.ServiceName, StringComparison.Ordinal)
                 .Replace("{{HEALTHCHECK_URL}}", healthcheckUrl, StringComparison.Ordinal)
+                .Replace("{{HEALTHCHECK_RETRIES}}", healthcheckRetries, StringComparison.Ordinal)
                 .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
         }
 

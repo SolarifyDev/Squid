@@ -106,6 +106,10 @@ $EXPECTED_SHA256  = '{{EXPECTED_SHA256}}'
 $INSTALL_DIR      = '{{INSTALL_DIR}}'
 $SERVICE_NAME     = '{{SERVICE_NAME}}'
 $HEALTHCHECK_URL  = '{{HEALTHCHECK_URL}}'
+# Retry count substituted as a numeric literal (no quotes) — `[int]` cast
+# would fail on a quoted-and-cast empty string if the placeholder ever
+# defaults to empty.
+$HEALTHCHECK_RETRIES = {{HEALTHCHECK_RETRIES}}
 
 #  contract: %ProgramData%\Squid\Tentacle\upgrade\
 $STATUS_DIR  = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'
@@ -415,11 +419,21 @@ try {
     }
 
     # ── Health check ────────────────────────────────────────────────────────
-    Append-UpgradeLog "[upgrade] Waiting for healthcheck $HEALTHCHECK_URL"
+    # Retry count is server-substituted per dispatch (default 30 attempts ×
+    # 2s sleep = 60s wait window, see WindowsTentacleUpgradeStrategy.DefaultHealthcheckRetries).
+    # Operator override via SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_RETRIES
+    # env var on the SERVER side: deployments with slow-starting agents
+    # (heavy plugin enumeration, >60s) set this to 90 (3 min) so the wait
+    # is realistic for their environment without changing default behaviour.
+    # Tests set retries=1 to bypass the wait entirely (the test service
+    # doesn't expose HTTP, so every poll attempt 404s and the wait is pure
+    # cost). Pinned by `WindowsTentacleUpgradeStrategyTests.HealthcheckRetriesEnvVar_*`.
+    $totalWaitSeconds = $HEALTHCHECK_RETRIES * 2
+    Append-UpgradeLog "[upgrade] Waiting for healthcheck $HEALTHCHECK_URL (max $HEALTHCHECK_RETRIES attempts × 2s = ${totalWaitSeconds}s)"
 
     $healthOk = $false
 
-    for ($i = 0; $i -lt 30; $i++) {
+    for ($i = 0; $i -lt $HEALTHCHECK_RETRIES; $i++) {
         Start-Sleep -Seconds 2
 
         try {
@@ -436,7 +450,7 @@ try {
     }
 
     if (-not $healthOk) {
-        Append-UpgradeLog "::warning:: Healthcheck didn't respond within 60s — proceeding anyway, server will retry on next health probe"
+        Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s — proceeding anyway, server will retry on next health probe"
     }
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"

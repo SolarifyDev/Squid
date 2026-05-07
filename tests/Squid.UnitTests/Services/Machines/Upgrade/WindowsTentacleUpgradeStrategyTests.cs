@@ -45,20 +45,24 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
 {
     private readonly string _previousBaseUrlOverride;
     private readonly string _previousHealthcheckUrlOverride;
+    private readonly string _previousHealthcheckRetriesOverride;
 
     public WindowsTentacleUpgradeStrategyTests()
     {
         _previousBaseUrlOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar);
         _previousHealthcheckUrlOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar);
+        _previousHealthcheckRetriesOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar);
 
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, null);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, null);
     }
 
     public void Dispose()
     {
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, _previousBaseUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, _previousHealthcheckUrlOverride);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, _previousHealthcheckRetriesOverride);
     }
 
     // ========================================================================
@@ -124,6 +128,71 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     {
         WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar
             .ShouldBe("SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_URL");
+    }
+
+    [Fact]
+    public void HealthcheckRetriesEnvVar_ConstantNamePinned()
+    {
+        // Renaming this constant breaks every air-gapped operator who pinned
+        // a slow-startup retry count via env. Hard-pin the literal.
+        WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar
+            .ShouldBe("SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_RETRIES");
+    }
+
+    [Fact]
+    public void ResolveHealthcheckRetries_NoEnvVar_ReturnsDefault30()
+    {
+        // Default 30 attempts × 2s = 60s wait window. Pin the default so a
+        // future polish that "tightens" or "loosens" the wait surfaces in
+        // review (operator-impacting change → must be intentional).
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(30);
+    }
+
+    [Theory]
+    [InlineData("1", 1)]                 // tests use this to bypass the wait
+    [InlineData("90", 90)]               // air-gap operator with slow-starting plugin host
+    [InlineData("  45  ", 45)]           // whitespace tolerant
+    [InlineData("3600", 3600)]           // 2h wait — extreme but allowed
+    public void ResolveHealthcheckRetries_ValidValue_RoundTripsAsInteger(string envValue, int expected)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, envValue);
+
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("0")]                    // 0 is invalid (would skip the wait entirely on a logical level — not what operators mean)
+    [InlineData("-1")]                   // negative is invalid
+    [InlineData("not-a-number")]         // typo
+    [InlineData("3.14")]                 // non-integer
+    [InlineData("inf")]                  // float-special
+    public void ResolveHealthcheckRetries_InvalidValue_FallsBackToDefault(string envValue)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, envValue);
+
+        // Operator-friendly: a typo'd env var must NOT break upgrades; falls
+        // back to the safe 30-attempt default with a Serilog warning so
+        // operators see the typo on their next dispatch.
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(30);
+    }
+
+    [Fact]
+    public void RenderInnerScript_HealthcheckRetriesPlaceholder_SubstitutedFromEnv()
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, "5");
+
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        // Direct substitution: the placeholder gets the resolved value as
+        // a numeric literal (no quotes / no [int] cast — see .ps1 comment).
+        inner.ShouldContain("$HEALTHCHECK_RETRIES = 5",
+            customMessage: "RenderInnerScript MUST substitute the env-resolved retry count into the script. " +
+                          "If this fails: the placeholder wasn't wired through Replace, OR the .ps1 dropped the variable assignment line.");
+
+        // The previously-hardcoded 60s wait message should NOT remain in
+        // the inner — the new dynamic wait message uses the variable.
+        inner.ShouldNotContain("within 60s",
+            customMessage: "stale '60s' literal in the .ps1 — should reference $HEALTHCHECK_RETRIES * 2 dynamically so air-gap operators with retries=90 see the correct wait window");
     }
 
     [Fact]
@@ -314,7 +383,8 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var strategySubstituted = new[]
         {
             "TARGET_VERSION", "DOWNLOAD_URL", "EXPECTED_SHA256",
-            "INSTALL_DIR", "SERVICE_NAME", "HEALTHCHECK_URL", "INSTALL_METHODS"
+            "INSTALL_DIR", "SERVICE_NAME", "HEALTHCHECK_URL", "HEALTHCHECK_RETRIES",
+            "INSTALL_METHODS"
         };
 
         foreach (var name in strategySubstituted)
