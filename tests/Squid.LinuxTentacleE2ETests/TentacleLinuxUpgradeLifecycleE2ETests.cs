@@ -1258,6 +1258,126 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uEventsTruncate — Phase A truncates upgrade-events.jsonl (regression
+    //                      pin against accumulation-then-cap silent-drop)
+    //
+    // Real production regression history this pins: the .sh's docstring at
+    // lines 186-192 documents a prior bug where Phase A's truncate used
+    // `sudo tee` + `sudo chown`, neither of which were in the sudoers
+    // allowlist. Both calls failed silently, `|| true` swallowed the error,
+    // and the events file was NEVER truncated. Events accumulated across
+    // runs until the EVENTS_MAX=50 cap fired, then every subsequent
+    // emit_event became a no-op. Operator UI symptom: after N upgrades
+    // the timeline froze mid-upgrade at whatever event pushed the count
+    // past 50.
+    //
+    // Without this pin, the exact same regression can ship again (e.g.
+    // someone "tidies up" by re-introducing sudo to the truncate, or
+    // changes EVENTS_MAX semantics, or drops the truncate entirely).
+    //
+    // Test mechanism: run E1.h-style upgrade TWICE (re-dispatch). After
+    // the second run, count events with kind=="start". Phase A's truncate
+    // means each run produces exactly one "start" event in a fresh-truncated
+    // file → after run-2 the count must be 1 (run-2's start), NOT 2 (run-1
+    // accumulated + run-2 appended).
+    //
+    // Why two runs of same target version (idempotent re-dispatch) vs two
+    // different versions: same-version is simpler infrastructure-wise (one
+    // mirror tarball, no v3 build path) AND the count-of-start signal is
+    // version-agnostic. The second run does run Phase A+B fully (no
+    // already-up-to-date short-circuit on Linux currently) so we get two
+    // genuine truncate-then-emit cycles to test against.
+    //
+    // Tier: 🟢 H (Rule 12.4 — real prod .sh + real systemd + real bash +
+    // real append-only file with real truncate at start of each Phase A).
+    //
+    // Expected runtime: ~10s (2× E1.h ≈ 2×~5s).
+    // ========================================================================
+
+    [Fact]
+    public void E1uEventsTruncate_TwoSequentialUpgrades_PhaseATruncatesBetween()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 must be running before E1.uEventsTruncate can sequence two upgrades");
+
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+
+        // ── Run 1 ────────────────────────────────────────────────────────────
+        var (exit1, out1) = ctx.RunUpgradeScript(script);
+        exit1.ShouldBe(0,
+            customMessage: $"first upgrade must succeed before truncation can be tested. Got exit {exit1}.\noutput tail:\n{(out1.Length > 1000 ? "..." + out1.Substring(out1.Length - 1000) : out1)}");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "v2 marker after run-1 confirms first upgrade fully completed");
+
+        var run1Events = ctx.ReadUpgradeEvents();
+        var run1StartCount = run1Events.Count(e => e.Kind == "start");
+        run1StartCount.ShouldBe(1,
+            customMessage: $"run-1 alone MUST produce exactly 1 'start' event. Got {run1StartCount}. " +
+                          $"If 0: emit_event 'start' wasn't called. If >1: Phase A's start emitter is firing repeatedly within one run (separate bug).");
+
+        var run1Total = run1Events.Count;
+
+        // ── Run 2 (re-dispatch, same target version) ────────────────────────
+        // The mirror still serves the same v2 tarball. The .sh's Phase B will
+        // mv current INSTALL_DIR (v2) → .bak, mv staged (v2) → INSTALL_DIR.
+        // Idempotent end-to-end: marker stays at 2.0.0-test, status SUCCESS.
+        var (exit2, out2) = ctx.RunUpgradeScript(script);
+        exit2.ShouldBe(0,
+            customMessage: $"second (re-dispatch) upgrade must also succeed for the truncate signal to be measurable. Got exit {exit2}.\noutput tail:\n{(out2.Length > 1000 ? "..." + out2.Substring(out2.Length - 1000) : out2)}");
+
+        var run2Events = ctx.ReadUpgradeEvents();
+
+        // ── Truncation pin ──────────────────────────────────────────────────
+        // After Phase A's truncate, events file should contain ONLY run-2's events.
+        // Specifically: kind=="start" must appear exactly ONCE (run-2's start),
+        // NOT twice (run-1 accumulated + run-2).
+        var startCount = run2Events.Count(e => e.Kind == "start");
+        startCount.ShouldBe(1,
+            customMessage: $"after a second sequential upgrade, events file MUST contain exactly 1 'start' event (run-2's). " +
+                          $"Got {startCount}. " +
+                          $"If 2: Phase A's truncate (line 195: `: > \"$EVENTS_FILE\"`) regressed — events accumulating across runs. " +
+                          $"This was the exact prior production bug documented in the .sh's lines 186-192 comment block. " +
+                          $"Without truncation, after ~5-6 upgrades the EVENTS_MAX=50 cap fires and every subsequent emit_event becomes a no-op. " +
+                          $"Operator UI symptom: timeline froze mid-upgrade. " +
+                          $"\n\nFull run-2 events kind sequence: [{string.Join(", ", run2Events.Select(e => e.Kind))}]");
+
+        // Strengthen: run-2's total event count should be APPROXIMATELY equal
+        // to run-1's, not 2x. If accumulation slipped past the start-count
+        // check (e.g. multiple `start` events deduplicated but other kinds
+        // accumulate), this catches it.
+        var run2Total = run2Events.Count;
+        run2Total.ShouldBeLessThan(run1Total + 5,
+            customMessage: $"run-2's event count ({run2Total}) MUST be ≈ run-1's ({run1Total}), NOT 2× — accumulation would roughly double the count. " +
+                          $"Tolerance of +5 absorbs minor variability (e.g. 1-iteration vs 2-iteration healthz retry timing). " +
+                          $"If actual count is 2×: events accumulating across runs (truncate-regression).");
+
+        // Sanity: run-2 also has its own terminal "success" event (proves
+        // Phase B fully completed).
+        run2Events[^1].Kind.ShouldBe("success",
+            customMessage: $"run-2's final event MUST be 'success' (terminal). Got '{run2Events[^1].Kind}' — run-2 didn't complete fully, " +
+                          "which would invalidate the truncate signal (we'd be comparing partial vs full event counts).");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
