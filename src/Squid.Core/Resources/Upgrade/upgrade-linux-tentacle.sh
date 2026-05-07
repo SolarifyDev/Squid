@@ -66,7 +66,13 @@ SERVICE_NAME="{{SERVICE_NAME}}"
 SERVICE_USER="{{SERVICE_USER}}"
 HEALTHCHECK_URL="{{HEALTHCHECK_URL}}"
 
-STATUS_DIR="/var/lib/squid-tentacle"
+# State directory — server-substituted from LinuxTentacleUpgradeStrategy.
+# Default `/var/lib/squid-tentacle` matches what install-tentacle.sh
+# creates + chowns. Operator override via SQUID_TARGET_LINUX_TENTACLE_STATE_DIR
+# for FHS-strict deployments / container volume mounts / E2E test isolation.
+# Pinned by `LinuxTentacleUpgradeStrategyTests.StateDirEnvVar_*` + the .sh
+# placeholder drift detector in Squid.LinuxTentacleE2ETests.
+STATUS_DIR="{{STATE_DIR}}"
 STATUS_FILE="$STATUS_DIR/last-upgrade.json"
 # Lock file lives in the service-user-owned state dir (NOT /tmp) so a stale
 # root-owned lock left by a previous debug session / failed scope run can't
