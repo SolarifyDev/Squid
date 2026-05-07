@@ -245,6 +245,96 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         LinuxTentacleUpgradeStrategy.BuildDownloadUrl(version, rid).ShouldBe(expected);
     }
 
+    // ========================================================================
+    // J.L.E.12 — E13.h-Linux env-var → rendered .sh propagation
+    //
+    // BuildDownloadUrl_EnvOverride above pins the env-var → URL chain in
+    // isolation. The full chain into the rendered .sh template is:
+    //
+    //   env var → ResolveDownloadBaseUrl → BuildDownloadUrl → BuildScript
+    //          → template substitution → rendered DOWNLOAD_URL= line
+    //
+    // If ANY link breaks, air-gap operators silently see github.com URLs
+    // in the rendered script even with the env var set — the upgrade
+    // hits the public mirror (DNS / connectivity fail) and surfaces as
+    // exit-6 download failure instead of using the configured mirror.
+    //
+    // This test pins the FULL CHAIN. If a refactor splits BuildScript
+    // from BuildDownloadUrl (e.g. caches the URL too eagerly, or uses
+    // a different env-var path), this test fires immediately with a
+    // clear "rendered script doesn't honour env override" message.
+    //
+    // Why this is unit-level not E2E: BuildScript hardcodes INSTALL_DIR /
+    // SERVICE_NAME from production defaults, which would conflict with
+    // E2E fixtures' GUID-suffixed paths. Test what we can at this layer
+    // (the env-var → URL → template path); the existing E1.h-Linux E2E
+    // tests the URL-substitution path via direct (non-env-var) injection.
+    // ========================================================================
+
+    [Fact]
+    public void BuildScript_EnvOverride_RenderedDownloadUrlPointsAtOperatorMirror()
+    {
+        const string operatorMirror = "https://mirror.acme.internal/squid";
+        const string version = "1.6.0";
+
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, operatorMirror);
+
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript(version);
+
+        // Pin the FULL DOWNLOAD_URL= bash assignment line. Surgical match
+        // (vs substring on URL alone) — the .sh has unrelated mentions
+        // of github.com (firewall hint comment, apt-rollback URL) that
+        // would noise a broader reverse-assert.
+        //
+        // The {RID} marker is the script's runtime arch placeholder
+        // ($RID is the bash variable resolved from the `case "$ARCH"`
+        // block at script start).
+        var expectedDownloadUrlLine = $"DOWNLOAD_URL=\"{operatorMirror}/{version}/squid-tentacle-{version}-$RID.tar.gz\"";
+
+        rendered.ShouldContain(expectedDownloadUrlLine,
+            customMessage: $"rendered .sh MUST contain operator-mirror DOWNLOAD_URL line '{expectedDownloadUrlLine}'. " +
+                          $"If absent: env-var → BuildScript chain regressed (most likely: BuildScript stopped going through " +
+                          $"BuildDownloadUrl, OR ResolveDownloadBaseUrl was bypassed at one of the substitution sites). " +
+                          $"Air-gap operator impact: every upgrade hits github.com instead of the configured mirror — exit 6 download fail.");
+
+        // Reverse-assert: the active DOWNLOAD_URL line MUST NOT contain
+        // github.com. Surgical: matches the assignment line pattern, not
+        // any github.com mention anywhere in the script (comment + apt
+        // rollback URL legitimately reference github.com).
+        rendered.ShouldNotContain("DOWNLOAD_URL=\"https://github.com",
+            customMessage: "rendered .sh's DOWNLOAD_URL= line contains github.com despite env override being set. " +
+                          "BuildScript ignored the env override at the substitution site — air-gap operators would " +
+                          "still hit github.com on every upgrade.");
+    }
+
+    [Fact]
+    public void BuildScript_NoEnvOverride_RenderedDownloadUrlDefaultsToGitHub()
+    {
+        // Counterpart to the override test above: when the env var is
+        // UNSET, the rendered DOWNLOAD_URL must default to the public
+        // github.com release path. Without this dual pin, the override
+        // test alone could pass while the default path silently broke
+        // (e.g. someone hardcoded the operator mirror as the new default,
+        // breaking every non-air-gap deployment).
+        //
+        // Default base URL pattern (per DefaultDownloadBaseUrl):
+        //   https://github.com/SolarifyDev/Squid/releases/download
+        // Resolved into:
+        //   https://github.com/SolarifyDev/Squid/releases/download/<version>/squid-tentacle-<version>-$RID.tar.gz
+        // (No `v<version>` tag prefix — the version is the path segment.)
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
+
+        const string version = "1.6.0";
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript(version);
+
+        var expectedDownloadUrlLine = $"DOWNLOAD_URL=\"https://github.com/SolarifyDev/Squid/releases/download/{version}/squid-tentacle-{version}-$RID.tar.gz\"";
+
+        rendered.ShouldContain(expectedDownloadUrlLine,
+            customMessage: $"rendered .sh's default DOWNLOAD_URL line must be '{expectedDownloadUrlLine}' when no env override is set. " +
+                          "If absent: the default base URL was changed without updating this test — confirm the change is intentional " +
+                          "(not a copy-paste regression) and update the expected literal.");
+    }
+
     [Fact]
     public void ResolveDownloadBaseUrl_StripsTrailingSlash_ToPreventDoubleSlashInUrl()
     {
