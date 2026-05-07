@@ -46,16 +46,19 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     private readonly string _previousBaseUrlOverride;
     private readonly string _previousHealthcheckUrlOverride;
     private readonly string _previousHealthcheckRetriesOverride;
+    private readonly string _previousHealthcheckFatalOverride;
 
     public WindowsTentacleUpgradeStrategyTests()
     {
         _previousBaseUrlOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar);
         _previousHealthcheckUrlOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar);
         _previousHealthcheckRetriesOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar);
+        _previousHealthcheckFatalOverride = SystemEnvironment.GetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar);
 
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, null);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, null);
     }
 
     public void Dispose()
@@ -63,6 +66,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, _previousBaseUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckUrlEnvVar, _previousHealthcheckUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, _previousHealthcheckRetriesOverride);
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, _previousHealthcheckFatalOverride);
     }
 
     // ========================================================================
@@ -174,6 +178,129 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         // back to the safe 30-attempt default with a Serilog warning so
         // operators see the typo on their next dispatch.
         WindowsTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(30);
+    }
+
+    // ── J.E.7: HealthcheckFatalEnvVar pins ──────────────────────────────────
+
+    [Fact]
+    public void HealthcheckFatalEnvVar_ConstantNamePinned()
+    {
+        // Renaming this constant breaks every operator who pinned strict-mode
+        // healthcheck behaviour via env. Hard-pin the literal.
+        WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar
+            .ShouldBe("SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL");
+    }
+
+    [Fact]
+    public void ResolveHealthcheckFatal_NoEnvVar_ReturnsFalse()
+    {
+        // Default (env unset) MUST be false — matches Octopus Tentacle's
+        // permissive default. A polish that flips the default to true would
+        // mean every existing deployment with a slow-starting agent suddenly
+        // starts auto-rolling-back after upgrade.
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckFatal().ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("TRUE", true)]
+    [InlineData("1", true)]
+    [InlineData("yes", true)]
+    [InlineData("on", true)]
+    [InlineData("  yes  ", true)]   // whitespace tolerant
+    [InlineData("false", false)]
+    [InlineData("FALSE", false)]
+    [InlineData("0", false)]
+    [InlineData("no", false)]
+    [InlineData("off", false)]
+    public void ResolveHealthcheckFatal_RecognisedValue_ParsesCorrectly(string envValue, bool expected)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, envValue);
+
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckFatal().ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("strict")]               // operator might think this is the strict-mode flag value
+    [InlineData("enabled")]              // operator-friendly synonym we don't recognise
+    [InlineData("YES_PLEASE")]           // typo with an obvious intent
+    [InlineData("fatal")]                // ironic — looks like the variable but isn't recognised
+    [InlineData("")]                     // empty-after-trim is treated as unset above
+    public void ResolveHealthcheckFatal_UnrecognisedValue_FallsBackToFalseWithWarning(string envValue)
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, envValue);
+
+        // Operator-friendly: a typo doesn't accidentally enable strict mode
+        // (which would surprise them with auto-rollbacks). Falls back to
+        // permissive default; warning surfaces the typo in logs.
+        WindowsTentacleUpgradeStrategy.ResolveHealthcheckFatal().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void RenderInnerScript_HealthcheckFatalPlaceholder_SubstitutedAsPowerShellBoolean()
+    {
+        SystemEnvironment.SetEnvironmentVariable(WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar, "true");
+
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        // Strategy substitutes `$true` / `$false` (PowerShell boolean
+        // literals — no quotes) so the .ps1's `$HEALTHCHECK_FATAL = ...`
+        // assignment is type-safe regardless of operator's env var format.
+        inner.ShouldContain("$HEALTHCHECK_FATAL = $true",
+            customMessage: "RenderInnerScript MUST substitute $true (PowerShell boolean literal) when env-resolved fatal mode is on. " +
+                          "Quoted form ($HEALTHCHECK_FATAL = 'true') would make the variable a non-empty string, which is truthy in `if ($HEALTHCHECK_FATAL)` checks " +
+                          "→ FATAL=false would BEHAVE like FATAL=true. Safety regression. Pin the literal substitution shape.");
+
+        // The healthcheck loop MUST consult the variable.
+        inner.ShouldContain("if ($HEALTHCHECK_FATAL)",
+            customMessage: "healthcheck-fatal branch REGRESSED — operator opt-in is no-op without the if-check.");
+    }
+
+    [Fact]
+    public void RenderInnerScript_HealthcheckFatal_DefaultsToFalseLiteralInRender()
+    {
+        // No env var set → default false → strategy substitutes $false literal.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("$HEALTHCHECK_FATAL = $false",
+            customMessage: "default render MUST inject $false — operators not-using-strict-mode see no behaviour change");
+        inner.ShouldNotContain("$HEALTHCHECK_FATAL = $true",
+            customMessage: "default render leaked strict-mode literal — every dispatch would trigger rollback on healthcheck timeout");
+    }
+
+    // ── J.E.7: stale-lock structural pin ───────────────────────────────────
+
+    [Fact]
+    public void RenderInnerScript_StaleLockBreak_PinnedStructurally()
+    {
+        // Pre-J.E.7 a crashed dispatch (host reboot mid-upgrade, OOM kill,
+        // etc.) left the lock file with a dead PID. Every subsequent
+        // upgrade dispatch failed with exit 13 forever until manual lock-
+        // file deletion. Pin the recovery contract:
+        //   1. Read the existing PID from the lock
+        //   2. Probe via Get-Process to determine alive vs dead
+        //   3. Live PID → keep exit 13 (real concurrent dispatch rejected)
+        //   4. Dead PID → log warning + Remove-Item + fall through
+        var asm = typeof(WindowsTentacleUpgradeStrategy).Assembly;
+        using var stream = asm.GetManifestResourceStream("Squid.Core.Resources.Upgrade.upgrade-windows-tentacle.ps1")
+            ?? throw new System.IO.InvalidDataException("embedded template not found");
+        using var reader = new System.IO.StreamReader(stream);
+        var template = reader.ReadToEnd();
+
+        // The Get-Process probe is the heart of stale detection.
+        template.ShouldContain("Get-Process -Id $existingPid",
+            customMessage: "stale-lock detection REGRESSED — without Get-Process probe, every previously-crashed dispatch leaves the lock orphaned forever");
+
+        // Stale-detected branch: warning + Remove-Item.
+        template.ShouldContain("breaking lock to recover",
+            customMessage: "stale-lock recovery log message REGRESSED — operators looking for 'lock broken' in upgrade.log won't find it");
+        template.ShouldContain("Remove-Item -Path $LOCK_FILE",
+            customMessage: "stale-lock break REGRESSED — Get-Process detected dead PID but didn't actually delete the orphan file");
+
+        // Live-PID branch still exits 13 (concurrent-dispatch protection intact).
+        template.ShouldContain("held by LIVE PID",
+            customMessage: "live-PID detection REGRESSED — concurrent real dispatches no longer differentiated from stale ones in logs");
     }
 
     [Fact]
@@ -384,7 +511,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         {
             "TARGET_VERSION", "DOWNLOAD_URL", "EXPECTED_SHA256",
             "INSTALL_DIR", "SERVICE_NAME", "HEALTHCHECK_URL", "HEALTHCHECK_RETRIES",
-            "INSTALL_METHODS"
+            "HEALTHCHECK_FATAL", "INSTALL_METHODS"
         };
 
         foreach (var name in strategySubstituted)

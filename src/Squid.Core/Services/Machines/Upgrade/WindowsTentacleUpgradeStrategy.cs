@@ -129,6 +129,32 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     internal const int DefaultHealthcheckRetries = 30;
 
     /// <summary>
+    /// Operator override for the post-restart healthcheck failure mode.
+    /// Default behaviour (`false`) is "warning + proceed" — matching
+    /// Octopus Tentacle's permissive policy where the capabilities probe
+    /// detects a non-responsive new binary on the next health probe and
+    /// reports it server-side. Setting this env var to `true` enables
+    /// strict mode: a healthcheck timeout triggers <c>Invoke-Rollback</c>
+    /// + restores the previous binary.
+    ///
+    /// <para><b>When to enable</b>: production fleets where the agent's
+    /// <c>/healthz</c> endpoint is the canonical liveness contract — if
+    /// it doesn't respond, the agent is functionally dead and rolling
+    /// back to the previous-known-working version is preferred over
+    /// leaving the operator with a Stopped service. Air-gap fleets where
+    /// the upgrade is the only restart-eligible window.</para>
+    ///
+    /// <para><b>When to leave default</b>: deployments where new agents
+    /// take a variable time to come up healthy (heavy plugin enumeration,
+    /// startup migrations) and a temporary timeout shouldn't trigger a
+    /// rollback that disrupts a successful upgrade.</para>
+    ///
+    /// <para>Pinned per Rule 8 by
+    /// <c>WindowsTentacleUpgradeStrategyTests.HealthcheckFatalEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string HealthcheckFatalEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL";
+
+    /// <summary>
     /// Wall-clock cap for a single upgrade dispatch. Mirrors Linux's
     /// 5-minute cap — must stay strictly less than
     /// <c>MachineUpgradeService.LockExpiry</c> (7 min) so an abandoned
@@ -381,6 +407,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_RETRIES}}", ResolveHealthcheckRetries().ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_FATAL}}", ResolveHealthcheckFatal() ? "$true" : "$false", StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
@@ -570,6 +597,36 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
         var raw = System.Environment.GetEnvironmentVariable(HealthcheckUrlEnvVar);
 
         return string.IsNullOrWhiteSpace(raw) ? DefaultHealthcheckUrl : raw.Trim().TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Resolves the post-restart healthcheck failure mode. Default
+    /// (env unset / empty) is <c>false</c> — warning + proceed (matches
+    /// Octopus Tentacle). When the env var parses as a recognised
+    /// truthy value (case-insensitive: <c>true</c> / <c>1</c> /
+    /// <c>yes</c> / <c>on</c>), strict mode is enabled — healthcheck
+    /// timeout triggers Invoke-Rollback. Any other value falls back to
+    /// the default with a structured warning so operator typos surface
+    /// in logs.
+    /// </summary>
+    internal static bool ResolveHealthcheckFatal()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(HealthcheckFatalEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        var normalized = raw.Trim().ToLowerInvariant();
+
+        if (normalized is "true" or "1" or "yes" or "on") return true;
+        if (normalized is "false" or "0" or "no" or "off") return false;
+
+        Log.Warning(
+            "[Upgrade] {EnvVar} is set to an unrecognised value ('{Value}'). " +
+            "Recognised truthy: 'true' / '1' / 'yes' / 'on'. " +
+            "Recognised falsy:  'false' / '0' / 'no' / 'off'. " +
+            "Falling back to default (false — warning + proceed on healthcheck timeout).",
+            HealthcheckFatalEnvVar, raw);
+        return false;
     }
 
     /// <summary>

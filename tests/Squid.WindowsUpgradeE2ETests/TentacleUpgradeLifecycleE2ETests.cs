@@ -748,6 +748,159 @@ public sealed class TentacleUpgradeLifecycleE2ETests
     }
 
     // ========================================================================
+    // E11.u2 — Stale lock file with dead PID is broken + dispatch proceeds
+    //
+    // Pre-J.E.7 a crashed dispatch (host reboot mid-upgrade, OOM kill)
+    // left the lock file with a dead PID. Every subsequent dispatch on
+    // that machine failed with exit 13 forever until manual intervention.
+    // Now: the .ps1 reads the recorded PID, probes via Get-Process, and
+    // breaks the lock if the holder isn't alive.
+    //
+    // Test mechanism: spawn-and-die pattern. Start cmd.exe, wait for it to
+    // exit, capture its PID. The OS will recycle that PID slot eventually,
+    // but during the test window it's guaranteed dead → .ps1 detects stale
+    // → breaks lock → upgrade proceeds.
+    //
+    // Reverse-assert: marker file goes from v1 to v2 (proves Phase B
+    // actually ran, not just the lock check).
+    // ========================================================================
+
+    [Fact]
+    public void E11u2_StaleLockWithDeadPid_BrokenAndDispatchProceeds()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
+
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Capture a guaranteed-dead PID via spawn-and-die. Spawn cmd.exe
+        // that immediately exits, wait for the process to terminate
+        // synchronously, then use the (now dead) PID as the stale lock
+        // value. More realistic than a fixed magic number — mirrors the
+        // crashed-dispatch scenario exactly (an upgrade .ps1 wrote its
+        // PID, then the process died for any reason).
+        int deadPid;
+        var psi = new ProcessStartInfo("cmd.exe", "/c exit 0")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            CreateNoWindow = true
+        };
+        using (var transient = Process.Start(psi))
+        {
+            transient.ShouldNotBeNull("cmd.exe must spawn for the spawn-and-die PID capture");
+            transient!.WaitForExit(5_000).ShouldBeTrue("cmd.exe /c exit 0 must terminate within 5s");
+            deadPid = transient.Id;
+        }
+
+        // Pre-stage the stale lock with the now-dead PID.
+        Directory.CreateDirectory(ctx.StatusDir);
+        var lockFilePath = Path.Combine(ctx.StatusDir, "upgrade.lock");
+        File.WriteAllText(lockFilePath, deadPid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"stale lock with dead PID {deadPid} MUST be broken + upgrade proceeds (exit 0). " +
+                          $"Got exit {exitCode}. " +
+                          (exitCode == 13 ? "Stale-lock detection broken: .ps1 still treats dead-PID lock as live → operator must manually delete lock file forever after any crash." : "Other failure path; check stdout for diagnosis.") +
+                          $"\nstdout:\n{stdout}");
+
+        // The .ps1 logs a structured warning when breaking a stale lock.
+        stdout.ShouldContain("breaking lock to recover",
+            customMessage: "stale-lock recovery log message MUST appear so operators can audit when an automatic recovery happened (vs a manual intervention)");
+
+        // Reverse-assert: Phase B actually ran (marker now reads v2).
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: "post-upgrade marker MUST reflect v2 — proves the .ps1 didn't just break-the-lock-and-exit, it actually ran Phase A+B successfully after recovery");
+
+        // last-upgrade.json reports SUCCESS — recovery is invisible to the operator UI's status.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull();
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"after stale-lock recovery + clean upgrade, last-upgrade.json MUST be SUCCESS. Got: '{statusPayload.Status}'. " +
+                          "If 'FAILED': the recovery log was written but the actual Phase B failed downstream — different bug.");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // F.healthcheck-fatal — Healthcheck timeout in FATAL mode triggers rollback
+    //
+    // When SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true the .ps1
+    // treats a post-Start healthcheck timeout as a deal-breaker: roll
+    // back to the previous binary instead of proceeding with warning.
+    // For operators where the agent's /healthz endpoint IS the canonical
+    // liveness contract, this is preferable to leaving a Stopped+swapped
+    // service.
+    //
+    // Test mechanism: HEALTHCHECK_URL in test renders points at
+    // 127.0.0.1:1 (unreachable). With FATAL=true + retries=1, the post-
+    // Start polling exits the loop without success → healthcheck-fatal
+    // branch fires Invoke-Rollback → exit 9 + ROLLED_BACK status +
+    // marker back at v1.
+    //
+    // Reverse-assert: with FATAL=false (default), same setup must
+    // produce SUCCESS (covered by E1.h — proves the FATAL path is opt-in
+    // and doesn't accidentally trigger).
+    // ========================================================================
+
+    [Fact]
+    public void HealthcheckFatalMode_TimeoutTriggersAutoRollback()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
+
+        // Plain v2 bundle (no crash sentinel) — service WOULD start fine.
+        // The healthcheck timeout is the only failure mode.
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Render with HEALTHCHECK_FATAL=true. Same retries=1 + unreachable
+        // HEALTHCHECK_URL as default tests; only difference is the FATAL
+        // flag. With FATAL on, the .ps1 calls Invoke-Rollback after retries
+        // exhaust without 200.
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test", healthcheckFatal: true);
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(9,
+            customMessage: $"FATAL=true + healthcheck timeout MUST produce exit 9 (documented per .ps1 header — 'Healthcheck timeout in FATAL mode → rollback fired'). " +
+                          $"Got exit {exitCode}. " +
+                          (exitCode == 0 ? "FATAL flag was ignored — strict mode opt-in is broken." : "Other failure path; check stdout.") +
+                          $"\nstdout:\n{stdout}");
+
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull();
+        statusPayload.Status.ShouldBe("ROLLED_BACK",
+            customMessage: $"FATAL=true healthcheck-timeout-rollback MUST emit ROLLED_BACK status (so operator UI shows 'rolled back' instead of generic FAILED). Got: '{statusPayload.Status}'");
+        statusPayload.Detail.ShouldContain("HEALTHCHECK_FATAL=true",
+            customMessage: $"detail MUST mention the HEALTHCHECK_FATAL flag so operators can disambiguate this rollback path from the Start-Service-failed one. Got: '{statusPayload.Detail}'");
+
+        // Reverse-assert: marker back at v1 (proves rollback restored).
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: "post-rollback marker MUST be v1 — proves Invoke-Rollback restored .bak AND restarted v1 successfully");
+
+        // .failed dir holds the v2 binary.
+        var failedDir = Path.Combine(Path.GetDirectoryName(ctx.Fixture.InstallDir)!, Path.GetFileName(ctx.Fixture.InstallDir) + ".failed");
+        Directory.Exists(failedDir).ShouldBeTrue(
+            customMessage: ".failed dir MUST exist for operator post-mortem of the unhealthy v2 binary");
+
+        try { Directory.Delete(failedDir, recursive: true); } catch { /* best-effort */ }
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Drift detector — Pins the placeholder set this test substitutes against
     // the production .ps1's expected substitutions. New placeholders the
     // strategy adds without test-side rendering would silently leave
@@ -775,6 +928,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         {
             "DOWNLOAD_URL",
             "EXPECTED_SHA256",
+            "HEALTHCHECK_FATAL",
             "HEALTHCHECK_RETRIES",
             "HEALTHCHECK_URL",
             "INSTALL_DIR",
@@ -898,7 +1052,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         /// <para>Drift detector at class level pins this substitution map
         /// against the .ps1's actual placeholder set.</para>
         /// </summary>
-        public string RenderProductionScriptForVersion(string targetVersion)
+        public string RenderProductionScriptForVersion(string targetVersion, bool healthcheckFatal = false)
         {
             var template = File.ReadAllText(LocateProductionTemplate());
 
@@ -942,6 +1096,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 .Replace("{{SERVICE_NAME}}", Fixture.ServiceName, StringComparison.Ordinal)
                 .Replace("{{HEALTHCHECK_URL}}", healthcheckUrl, StringComparison.Ordinal)
                 .Replace("{{HEALTHCHECK_RETRIES}}", healthcheckRetries, StringComparison.Ordinal)
+                .Replace("{{HEALTHCHECK_FATAL}}", healthcheckFatal ? "$true" : "$false", StringComparison.Ordinal)
                 .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
         }
 
