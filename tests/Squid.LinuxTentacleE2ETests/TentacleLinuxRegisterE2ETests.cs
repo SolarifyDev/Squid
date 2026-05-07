@@ -474,6 +474,192 @@ public sealed class TentacleLinuxRegisterE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // C3.h-Linux — Re-register against the same server is idempotent (cert
+    //               reused, config updated in place, server gets 2 calls)
+    //
+    // Production scenario this pins: an operator changes their tentacle's
+    // configuration AFTER initial registration:
+    //
+    //   sudo squid-tentacle register --server X --role old-role ...     (1st)
+    //   <operator decides to add a role / change environment>
+    //   sudo squid-tentacle register --server X --role new-role ...     (2nd)
+    //
+    // Real-world drivers:
+    //   - Updating roles / environments without `delete-instance` first
+    //   - Switching to a different server (operator pointing the agent
+    //     at a new Squid server during migration / DR)
+    //   - Re-running register as part of fleet automation that idempotently
+    //     applies configuration on every Ansible/Salt run
+    //   - Recovering from a partial-register state after a crash
+    //
+    // The contract operators rely on:
+    //   - Re-register MUST exit 0 (no "already registered" error)
+    //   - Cert identity MUST be PRESERVED (same thumbprint after re-register).
+    //     If a new cert is generated on every register, the server's trust
+    //     list drifts every time → operator's trust-list management breaks.
+    //   - Config MUST be UPDATED in place (one config file, not two)
+    //   - Server MUST receive both register calls (no client-side
+    //     "skip if already registered" optimization that would silently
+    //     drop the second update from the server's machine table)
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - TentacleCertificateManager.LoadOrCreateCertificate regresses to
+    //     "always create new" → every re-register generates a fresh
+    //     thumbprint → server-side trust list bloats with stale entries
+    //   - RegisterCommand adds a "Tentacle:Registered=true → exit 0
+    //     without contacting server" optimization → operator's role
+    //     change never reaches the server
+    //   - PersistInstanceConfig appends instead of overwriting → config
+    //     file grows unbounded with each re-register, breaking JSON
+    //     parsing on the next run
+    //
+    // Test mechanism:
+    //   1. First register against stub
+    //   2. Capture: stub.ReceivedRegistrations[0].Body's thumbprint +
+    //      config-file size + content hash
+    //   3. Second register (same args, same stub) — RUNS THE EXACT
+    //      SAME COMMAND, no --force flag (would be a separate test if
+    //      one existed)
+    //   4. Assert exit 0
+    //   5. Assert stub recorded exactly 2 register calls (no client-
+    //      side skip)
+    //   6. Assert thumbprint in second call MATCHES first call (cert
+    //      reused, identity preserved)
+    //   7. Assert config file still readable + still contains expected
+    //      fields (no JSON corruption from append-instead-of-overwrite)
+    //
+    // Tier: 🟢 H. Real binary + real stub HTTP exchange + real config
+    // round-trip. Same fixture as C1h/C2h, no new infrastructure needed.
+    //
+    // Expected runtime: ~3-5s (2× register ~1s each + assertions).
+    // ========================================================================
+
+    [Fact]
+    public void C3h_Reregister_PreservesCertIdentityAndUpdatesConfigInPlace()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // ── Round 1: first register ───────────────────────────────────────
+        var (firstExit, firstOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-C3-FIRST-RUN",
+            "--role", "first-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", "51950");
+
+        firstExit.ShouldBe(0,
+            customMessage: $"first register MUST exit 0. Got {firstExit}.\noutput:\n{firstOutput}");
+
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBe(1,
+            customMessage: $"stub MUST have received exactly 1 register after first call. Got {ctx.Stub.ReceivedRegistrations.Count}.");
+
+        // Capture first-call thumbprint from stub's recorded body.
+        var firstBody = ctx.Stub.ReceivedRegistrations[0].Body;
+        using var firstBodyDoc = JsonDocument.Parse(firstBody);
+        firstBodyDoc.RootElement.TryGetProperty("thumbprint", out var firstThumbprint).ShouldBeTrue(
+            "C3h precondition: first register body MUST contain thumbprint field");
+        var firstThumbprintValue = firstThumbprint.GetString();
+        firstThumbprintValue.ShouldNotBeNullOrEmpty("C3h precondition: thumbprint must be non-empty");
+
+        // Capture config content + size for round-2 comparison.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            "C3h precondition: config file MUST exist after first register");
+
+        var firstConfigContent = LinuxInstallScriptContext.SudoReadAllText(configPath);
+        firstConfigContent.ShouldNotBeNullOrEmpty("C3h precondition: config must be non-empty");
+
+        // ── Round 2: re-register against the same stub ────────────────────
+        // Same command-line args (same role, same environment, same port).
+        // The contract: this MUST succeed, MUST NOT generate a new cert,
+        // MUST update config in place.
+        var (secondExit, secondOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-C3-SECOND-RUN",
+            "--role", "first-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", "51950");
+
+        secondExit.ShouldBe(0,
+            customMessage: $"SECOND `register` (re-register) MUST exit 0. Got exit {secondExit}. " +
+                          $"If non-zero: a regression added an 'already registered' check OR cert generation now fails when " +
+                          $"a previous cert exists OR PersistInstanceConfig refuses to overwrite. Operators changing roles/" +
+                          $"environments without `delete-instance` first would all see this error. " +
+                          $"\noutput:\n{secondOutput}");
+
+        // ── Assertion: stub MUST have received the second register call ──
+        // No client-side "already registered, skipping" optimization. The
+        // server needs the second call to update its machine record (e.g.
+        // role changes propagate through the register payload).
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBe(2,
+            customMessage: $"stub MUST have received EXACTLY 2 register calls (one per CLI invocation). Got {ctx.Stub.ReceivedRegistrations.Count}. " +
+                          $"If 1: client-side skip regression — second register's role/environment changes would never reach the server. " +
+                          $"If >2: a retry loop fired (C1.u1 no-retry contract broken).");
+
+        // ── Assertion (THE PIN): thumbprint preserved across re-register ──
+        // TentacleCertificateManager.LoadOrCreateCertificate must LOAD the
+        // existing cert (not regenerate). Otherwise every re-register
+        // generates a fresh identity, the server's trust list bloats with
+        // stale entries, and the agent's effective identity drifts.
+        var secondBody = ctx.Stub.ReceivedRegistrations[1].Body;
+        using var secondBodyDoc = JsonDocument.Parse(secondBody);
+        secondBodyDoc.RootElement.TryGetProperty("thumbprint", out var secondThumbprint).ShouldBeTrue(
+            "second register body MUST contain thumbprint field");
+        var secondThumbprintValue = secondThumbprint.GetString();
+
+        secondThumbprintValue.ShouldBe(firstThumbprintValue,
+            customMessage: $"thumbprint MUST be IDENTICAL across re-register. " +
+                          $"\n\nFirst call thumbprint:  {firstThumbprintValue}\n" +
+                          $"Second call thumbprint: {secondThumbprintValue}\n\n" +
+                          $"If different: TentacleCertificateManager.LoadOrCreateCertificate is regenerating a fresh cert " +
+                          $"on every register call. The server's trust list bloats with stale entries on every re-register, " +
+                          $"AND the agent's identity drifts (cert pinned in trust list ≠ cert agent presents next poll). " +
+                          $"This is the most catastrophic re-register regression — it breaks the agent's identity contract.");
+
+        // ── Assertion: config file still readable + sane ──────────────────
+        // PersistInstanceConfig must OVERWRITE the file, not append. An
+        // append regression would produce invalid JSON on the second run
+        // (two top-level objects concatenated). LoadOrCreateCertificate
+        // path may need a recompose, but config persistence is just a
+        // file write — which means the second-run config is the AUTHORITY.
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            "config file MUST still exist after re-register");
+
+        var secondConfigContent = LinuxInstallScriptContext.SudoReadAllText(configPath);
+        secondConfigContent.ShouldNotBeNullOrEmpty("config must be readable after re-register");
+
+        // The config must be parseable JSON — catches the append-instead-
+        // of-overwrite regression which would produce concatenated objects.
+        // We don't enforce specific size diffs (cert paths / timestamps may
+        // legitimately update); just structural validity.
+        Action parseAction = () => JsonDocument.Parse(secondConfigContent);
+        parseAction.ShouldNotThrow(
+            customMessage: $"config MUST still parse as valid JSON after re-register. " +
+                          $"If JsonException: PersistInstanceConfig appended instead of overwriting — config file is " +
+                          $"corrupted with two concatenated JSON objects. " +
+                          $"\nconfig content:\n{secondConfigContent}");
+
+        // Reverse-assert: server thumbprint is SAME (stub's thumbprint).
+        // Catches a regression where re-register wrote a different
+        // server-thumbprint somehow (e.g. read from arg cache rather than
+        // response). The stub returns the same canned thumbprint each
+        // call, so post-second-register config MUST contain it.
+        secondConfigContent.ShouldContain(ctx.Stub.ServerThumbprint,
+            customMessage: $"persisted config MUST contain stub's ServerThumbprint '{ctx.Stub.ServerThumbprint}' after re-register. " +
+                          "If absent: re-register's PersistInstanceConfig dropped the server thumbprint OR wrote a different value — " +
+                          "the agent would fail TLS pinning on next poll.");
+
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Per-test context: owns the stub server + binary fixture + cleanup.
     /// </summary>
