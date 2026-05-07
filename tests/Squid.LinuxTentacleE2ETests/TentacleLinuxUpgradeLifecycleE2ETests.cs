@@ -414,6 +414,123 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.u-rollback-Linux — Phase B healthcheck fails → .bak rollback → v1 restored
+    //
+    // Highest-severity unguarded path on Linux until this test landed.
+    // The .sh's rollback contract (lines ~620–720 of upgrade-linux-tentacle.sh):
+    //
+    //   1. systemctl restart $SERVICE  →  service goes active
+    //   2. for i in 1..HEALTHCHECK_RETRIES: curl -fsS $HEALTHCHECK_URL
+    //   3. if any curl returns 200: HEALTH_OK=1, exit 0 (SUCCESS)
+    //   4. else (this test):
+    //        - emit healthz-fail event
+    //        - systemctl stop $SERVICE
+    //        - rm -rf $INSTALL_DIR
+    //        - mv $BAK_DIR $INSTALL_DIR
+    //        - systemctl start $SERVICE  ← v1 service back up
+    //        - wait is-active up to 30s
+    //        - exit 4 + write_status ROLLED_BACK
+    //
+    // Without this test, a future polish that breaks rollback (e.g. typo
+    // in BAK_DIR path, missing sudo, wrong sequence) ships silently, and
+    // the next bad upgrade leaves the agent BINARYLESS (rm $INSTALL_DIR
+    // succeeded, mv .bak failed) → ROLLBACK_CRITICAL_FAILED → operator
+    // intervention required. Pin the rollback contract NOW.
+    //
+    // Test mechanism: BuildV2BundleTarGz(failHealthz: true) injects a
+    // surgical 200→503 swap in the embedded python3 healthz responder.
+    // Same script binds the same port, returns a real HTTP response,
+    // just an unhealthy one. .sh's `curl -fsS` rejects 5xx → HEALTH_OK
+    // stays 0 → retry loop exhausts → rollback path fires.
+    //
+    // Mirrors Windows E7.u1 (`E7u1_NewBinaryOnStartCrashes_TriggersAutoRollbackToV1`)
+    // but at the healthz-failure axis since Linux's systemctl-start
+    // behaviour differs from Windows' SCM Start-Service throw semantics.
+    //
+    // High-fidelity. Real prod .sh + real systemd + real bash + real
+    // mirror + real python3 returning 503 + real Phase B mv-rollback
+    // + real v1 systemctl start + real marker rewrite.
+    //
+    // Expected runtime: ~20-30s (Phase A ~2s + restart ~3s + 10s healthz
+    // retry exhaust + rollback ~3s + v1 start + marker write).
+    // ========================================================================
+
+    [Fact]
+    public void E1uRollback_PhaseBHealthcheckFails_RestoresV1FromBak()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage v1 with healthz responder ENABLED (so v1's healthz returns 200).
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before rollback test can validate v2's failed-healthz triggers .bak restoration");
+
+        // Build v2 with failHealthz=true → embedded healthz responder
+        // returns 503 instead of 200 post-mv-swap.
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test", failHealthz: true);
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        // Exit 4 is the documented "Phase B healthz failed AND tarball rollback succeeded" code.
+        exitCode.ShouldBe(4,
+            customMessage: $"Phase B healthz fail MUST trigger .bak rollback with exit 4 (per .sh header). " +
+                          $"Got exit {exitCode}. " +
+                          $"If 0: rollback didn't fire — broken v2 still in INSTALL_DIR (ship-blocking regression). " +
+                          $"If 9: rollback fired BUT failed (mv .bak → INSTALL_DIR errored OR v1 didn't restart) — agent in unknown state, separate failure mode. " +
+                          $"If 13: systemd-run --scope failed pre-Phase-B (sudo / systemd missing). " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // last-upgrade.json: ROLLED_BACK with operator-facing detail.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "last-upgrade.json MUST be written even on rollback path — operators need the UI to surface WHY the upgrade rolled back");
+
+        statusPayload.Status.ShouldBe("ROLLED_BACK",
+            customMessage: $"status MUST be 'ROLLED_BACK' after a successful auto-rollback. Got: '{statusPayload.Status}'. " +
+                          $"If 'FAILED': rollback never fired — broken state. " +
+                          $"If 'ROLLBACK_CRITICAL_FAILED': old binary couldn't restart either — separate failure. " +
+                          $"Detail: {statusPayload.Detail}");
+
+        statusPayload.Detail.ShouldContain("New binary failed health check",
+            customMessage: $"detail MUST surface why rollback fired so operators distinguish 'environmental healthz blip' from 'bad new binary'. Got: '{statusPayload.Detail}'");
+
+        // CRITICAL: marker MUST eventually report v1 again.
+        // After rollback:
+        //   1. v2 service is stopped → v2 trap rm's marker
+        //   2. mv .bak INSTALL_DIR → v1 files in place (version.txt = "1.0.0")
+        //   3. systemctl start v1 → v1 reads version.txt → writes marker = "1.0.0"
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: $"after auto-rollback, marker at {ctx.Fixture.MarkerFilePath} MUST contain '1.0.0' — " +
+                          "proves rollback restored v1's INSTALL_DIR AND v1 systemctl-started cleanly. " +
+                          "If marker absent: rollback restored .bak but v1 didn't start (or trap fired pre-marker). " +
+                          "If marker = '2.0.0-test': swap proceeded, healthz check NEVER fired rollback (ship-blocking regression).");
+
+        // Reverse-assert: .bak directory MUST be consumed by the rollback
+        // mv. If it still exists post-rollback, the .sh either skipped the
+        // mv step (rollback didn't actually run) OR there's a sequencing
+        // bug where the rm/mv pair didn't atomically consume .bak.
+        var bakDir = ctx.Fixture.InstallDir + ".bak";
+        Directory.Exists(bakDir).ShouldBeFalse(
+            customMessage: $".bak directory at {bakDir} MUST NOT exist after successful rollback — rollback's `mv $BAK_DIR $INSTALL_DIR` consumes it. " +
+                          "If .bak still exists: rollback path executed `rm -rf $INSTALL_DIR` but then either skipped the mv OR the mv failed silently. " +
+                          "Either way, agent is in an inconsistent state (binaryless OR has both INSTALL_DIR + .bak with old binary).");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)

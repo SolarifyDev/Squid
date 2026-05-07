@@ -679,6 +679,16 @@ echo "::error:: Upgrade failed: $SERVICE_NAME did not become healthy after resta
 # from chasing a phantom upgrade regression when the agent was actually
 # unhealthy beforehand.
 BASELINE_HEALTHZ_PRE="${SQUID_UPGRADE_BASELINE_HEALTHZ:-unknown}"
+# Phase A's BASELINE_VERSION (line ~349) is propagated through the scope
+# handoff via --setenv=SQUID_UPGRADE_BASELINE_VERSION=... — but the
+# scoped bash starts as a fresh process with `set -u` enabled, so a bare
+# `$BASELINE_VERSION` reference (used below in the rollback success
+# message + ROLLED_BACK status detail) is "unbound variable" → bash
+# exits 1, BEFORE write_status "ROLLED_BACK" runs, BEFORE `exit 4`.
+# Operator-visible failure mode: last-upgrade.json stays at
+# "ROLLING_BACK" forever even though the binary was actually restored.
+# Caught by J.L.E.9 (E1uRollback_PhaseBHealthcheckFails_RestoresV1FromBak).
+BASELINE_VERSION="${SQUID_UPGRADE_BASELINE_VERSION:-unknown}"
 if [ "$BASELINE_HEALTHZ_PRE" = "FAIL" ]; then
   emit_event B baseline-was-fail "Pre-upgrade healthz was already FAIL — failure may be environmental, not upgrade-caused"
 fi
