@@ -63,8 +63,41 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// </summary>
     public const string HealthcheckUrlEnvVar = "SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_URL";
 
+    /// <summary>
+    /// Operator override for the agent state directory — where the .sh
+    /// writes <c>last-upgrade.json</c>, <c>upgrade.lock</c>, and
+    /// <c>upgrade-events.jsonl</c>. Default
+    /// <c>/var/lib/squid-tentacle</c> matches what
+    /// <c>install-tentacle.sh</c> creates and chowns to the
+    /// <c>squid-tentacle</c> user. Operators with non-standard layouts
+    /// (FHS-3.0 strict deployments using <c>/srv/squid-tentacle</c>,
+    /// container deployments wanting state under a mounted volume,
+    /// E2E test harnesses needing per-test isolation) override here.
+    ///
+    /// <para><b>Why a state-dir env var (J.L.E.2)</b>: Linux .sh has no
+    /// equivalent of Windows .ps1's <c>$env:ProgramData</c> redirect (a
+    /// universal Windows env var that points at the analogous state
+    /// dir). Without an explicit override, the .sh's <c>STATUS_DIR</c>
+    /// is hardcoded to <c>/var/lib/squid-tentacle</c> — making test
+    /// isolation impossible without either running tests as root +
+    /// writing to a real <c>/var/lib</c> path, or running tests inside
+    /// containers. This env var is the test seam (and a real operator
+    /// option for non-standard layouts).</para>
+    ///
+    /// <para>Pinned per Rule 8 by
+    /// <c>LinuxTentacleUpgradeStrategyTests.StateDirEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string StateDirEnvVar = "SQUID_TARGET_LINUX_TENTACLE_STATE_DIR";
+
     private const string DefaultDownloadBaseUrl = "https://github.com/SolarifyDev/Squid/releases/download";
     private const string DefaultHealthcheckUrl = "http://127.0.0.1:8080/healthz";
+
+    /// <summary>
+    /// Default agent state directory. Matches what
+    /// <c>install-tentacle.sh</c> creates + chowns. Operators override via
+    /// <see cref="StateDirEnvVar"/>.
+    /// </summary>
+    internal const string DefaultStateDir = "/var/lib/squid-tentacle";
 
     /// <summary>
     /// Wall-clock cap for a single upgrade script dispatch. Must stay
@@ -347,6 +380,7 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{SERVICE_NAME}}", DefaultServiceName, StringComparison.Ordinal)
             .Replace("{{SERVICE_USER}}", DefaultServiceUser, StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
+            .Replace("{{STATE_DIR}}", ResolveStateDir(), StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
@@ -361,6 +395,25 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         var baseUrl = ResolveDownloadBaseUrl();
 
         return $"{baseUrl}/{version}/squid-tentacle-{version}-{rid}.tar.gz";
+    }
+
+    /// <summary>
+    /// Resolves the agent state directory. Defaults to
+    /// <see cref="DefaultStateDir"/> (<c>/var/lib/squid-tentacle</c>).
+    /// Trims trailing slashes — the .sh joins paths via <c>"$STATE_DIR/foo"</c>
+    /// and a double slash works on Linux but reads ugly in logs.
+    ///
+    /// <para>Empty / whitespace-only env values fall back to default —
+    /// operator-friendly: an unset-but-defined env var doesn't break the
+    /// upgrade flow with `bad path` errors.</para>
+    /// </summary>
+    internal static string ResolveStateDir()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(StateDirEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultStateDir;
+
+        return raw.Trim().TrimEnd('/');
     }
 
     internal static string ResolveDownloadBaseUrl()

@@ -67,6 +67,7 @@ public sealed class UpgradeLinuxScriptE2ETests
             "INSTALL_METHODS",
             "SERVICE_NAME",
             "SERVICE_USER",
+            "STATE_DIR",
             "TARGET_VERSION"
         };
 

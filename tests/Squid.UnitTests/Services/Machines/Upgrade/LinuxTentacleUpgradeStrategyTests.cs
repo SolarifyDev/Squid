@@ -39,20 +39,24 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
 {
     private readonly string _previousBaseUrlOverride;
     private readonly string _previousHealthcheckUrlOverride;
+    private readonly string _previousStateDirOverride;
 
     public LinuxTentacleUpgradeStrategyTests()
     {
         _previousBaseUrlOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar);
         _previousHealthcheckUrlOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar);
+        _previousStateDirOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar);
 
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar, null);
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, null);
     }
 
     public void Dispose()
     {
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, _previousBaseUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar, _previousHealthcheckUrlOverride);
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, _previousStateDirOverride);
     }
 
     [Fact]
@@ -61,6 +65,87 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         // Renaming this constant breaks every air-gapped operator who pinned
         // a private mirror via env. Hard-pin in test.
         LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar.ShouldBe("SQUID_TARGET_LINUX_TENTACLE_DOWNLOAD_BASE_URL");
+    }
+
+    // ── J.L.E.2: StateDirEnvVar pins ────────────────────────────────────────
+
+    [Fact]
+    public void StateDirEnvVar_ConstantNamePinned()
+    {
+        // Renaming this constant breaks operators with FHS-strict
+        // deployments / container volume mounts who tuned state path.
+        // Hard-pin in test.
+        LinuxTentacleUpgradeStrategy.StateDirEnvVar
+            .ShouldBe("SQUID_TARGET_LINUX_TENTACLE_STATE_DIR");
+    }
+
+    [Fact]
+    public void ResolveStateDir_NoEnvVar_ReturnsDefaultVarLibPath()
+    {
+        // Default `/var/lib/squid-tentacle` matches what install-tentacle.sh
+        // creates + chowns. Pin the default literally — a polish that
+        // changes this would mass-break every default-install deployment
+        // (last-upgrade.json wouldn't be findable by the existing agent
+        // CapabilitiesService that reads it).
+        LinuxTentacleUpgradeStrategy.ResolveStateDir().ShouldBe("/var/lib/squid-tentacle");
+    }
+
+    [Theory]
+    [InlineData("/srv/squid-tentacle", "/srv/squid-tentacle")]              // FHS-strict deployment
+    [InlineData("/data/squid-tentacle", "/data/squid-tentacle")]            // container volume mount
+    [InlineData("/tmp/test-isolated/squid-tentacle", "/tmp/test-isolated/squid-tentacle")]  // E2E test isolation
+    [InlineData("/var/lib/squid-tentacle/", "/var/lib/squid-tentacle")]     // trailing slash trimmed
+    [InlineData("  /custom/path  ", "/custom/path")]                        // whitespace trimmed
+    public void ResolveStateDir_OperatorOverride_NormalisesAndReturns(string envValue, string expected)
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, envValue);
+
+        LinuxTentacleUpgradeStrategy.ResolveStateDir().ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("")]                          // empty after trim
+    [InlineData("   ")]                       // whitespace-only
+    [InlineData("\t\n")]                      // other whitespace
+    public void ResolveStateDir_EmptyOrWhitespace_FallsBackToDefault(string envValue)
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, envValue);
+
+        // Empty/whitespace falls back to the safe default. Operator-friendly:
+        // an unset-but-defined env var (e.g. `export FOO=` in a parent shell)
+        // doesn't break the upgrade flow with bad-path errors.
+        LinuxTentacleUpgradeStrategy.ResolveStateDir().ShouldBe("/var/lib/squid-tentacle");
+    }
+
+    [Fact]
+    public void BuildScript_StateDirPlaceholder_SubstitutedFromEnv()
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, "/srv/test-isolated/state");
+
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript("1.6.0", LinuxTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        // Rendered .sh has the env-resolved path in STATUS_DIR assignment.
+        rendered.ShouldContain("STATUS_DIR=\"/srv/test-isolated/state\"",
+            customMessage: "BuildScript MUST substitute the env-resolved state dir into STATUS_DIR. " +
+                          "If this fails: the {{STATE_DIR}} placeholder wasn't wired through Replace, OR the .sh dropped the assignment line.");
+
+        // Hardcoded `/var/lib/squid-tentacle` literal MUST NOT remain in
+        // the assignment position. The string still appears in COMMENTS
+        // (which is fine — they're documentation of the default), but
+        // the actual STATUS_DIR=... assignment must use the substituted value.
+        rendered.ShouldNotContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
+            customMessage: "stale hardcoded STATUS_DIR literal in the rendered .sh — the env override is no-op if this is present");
+    }
+
+    [Fact]
+    public void BuildScript_StateDir_DefaultsToVarLibInRender()
+    {
+        // No env var set → render uses the literal default. Operators not
+        // overriding see no behaviour change.
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript("1.6.0", LinuxTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        rendered.ShouldContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
+            customMessage: "default render MUST inject /var/lib/squid-tentacle — operators not-overriding see pre-PR behaviour");
     }
 
     [Theory]
