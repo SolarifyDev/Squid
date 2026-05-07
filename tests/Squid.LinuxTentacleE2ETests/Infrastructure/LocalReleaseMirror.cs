@@ -85,6 +85,17 @@ public sealed class LocalReleaseMirror : IDisposable
     private byte[] _preBuiltArchive;
     private readonly HashSet<string> _notFoundVersions = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
+    /// Path-substring-based 404 list. Same matching shape as
+    /// <see cref="_notFoundVersions"/> but allows the caller to pass a
+    /// path-segment-aware string (e.g. <c>"/download/1.6.0/"</c>) that
+    /// won't match the v-prefixed sibling (<c>"/download/v1.6.0/"</c>) —
+    /// the leading-slash boundary character disambiguates. Used by
+    /// J.M.L.A.3 (A2.u2 v-prefix fallback) where we want to 404 ONLY
+    /// the plain-version URL form so the .sh's retry hits the
+    /// v-prefixed URL and succeeds.
+    /// </summary>
+    private readonly HashSet<string> _notFoundPaths = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
     /// Per-archive byte cache. <see cref="ZipArchive"/> + GZipStream both
     /// embed timestamps in entry headers, so a fresh build for the
     /// <c>.zip</c> request and a separate fresh build for the <c>.sha256</c>
@@ -206,6 +217,26 @@ public sealed class LocalReleaseMirror : IDisposable
     }
 
     /// <summary>
+    /// Configures the mirror to return 404 for any URL whose AbsolutePath
+    /// contains the given substring. Lower-level than
+    /// <see cref="ConfigureNotFoundForVersion"/>: lets the caller embed
+    /// path-segment boundary characters (leading <c>/</c>, trailing <c>/</c>)
+    /// to surgically 404 a single URL form without affecting siblings.
+    ///
+    /// <para>Use case: install-tentacle.sh's v-prefix fallback retry. The
+    /// .sh tries <c>/download/${VERSION}/...</c> first, then
+    /// <c>/download/v${VERSION}/...</c> on 404. To exercise the fallback
+    /// path, the test 404s the plain URL ONLY (e.g.
+    /// <c>ConfigureNotFoundForPath("/download/1.6.0/")</c>) — the leading
+    /// slash makes <c>/download/v1.6.0/...</c> NOT match (it has
+    /// <c>/download/v1.6.0/</c>, not <c>/download/1.6.0/</c>).</para>
+    /// </summary>
+    public void ConfigureNotFoundForPath(string pathSubstring)
+    {
+        _notFoundPaths.Add(pathSubstring);
+    }
+
+    /// <summary>
     /// Overrides the <c>.sha256</c> companion body. The mirror normally
     /// computes the real SHA256 of the staged archive on each request; this
     /// override forces a fixed string instead so tests can inject a
@@ -275,8 +306,12 @@ public sealed class LocalReleaseMirror : IDisposable
             _receivedRequests.Add(path);
         }
 
-        // 404 if the path mentions any of the configured "not found" versions.
-        if (_notFoundVersions.Any(v => path.Contains(v, StringComparison.OrdinalIgnoreCase)))
+        // 404 if the path mentions any of the configured "not found" versions
+        // OR matches any of the path-substring "not found" entries. Versions
+        // are coarse (substring of any URL); paths are surgical (used to 404
+        // the plain-version URL while letting the v-prefix sibling serve).
+        if (_notFoundVersions.Any(v => path.Contains(v, StringComparison.OrdinalIgnoreCase))
+            || _notFoundPaths.Any(p => path.Contains(p, StringComparison.OrdinalIgnoreCase)))
         {
             ctx.Response.StatusCode = 404;
             ctx.Response.OutputStream.Close();
