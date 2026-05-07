@@ -587,11 +587,30 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           $"If absent: useradd block skipped (perhaps user already existed pre-test, but cleanup matrix should have removed it).");
 
         // ── Sudoers assertions ─────────────────────────────────────────────
+        // Order matters: check the success/failure log lines BEFORE the
+        // file-existence check. If visudo rejected the generated content,
+        // the .sh emits a "Warning: ... failed validation" line + visudo
+        // stderr — the sudoers file is then absent, but the diagnostic
+        // tells us WHY. Asserting on stdout first surfaces the root cause
+        // rather than just "file missing".
         const string sudoersPath = "/etc/sudoers.d/squid-tentacle-upgrade";
+
+        // If the sudoers block was reached AT ALL, exactly one of these
+        // two log lines should appear. If neither: the block was skipped
+        // entirely (probably `[ -d /etc/sudoers.d ]` returned false, or
+        // SERVICE_USER didn't get created upstream).
+        var sudoersBlockRan = output.Contains("Installed upgrade sudoers rule")
+            || output.Contains("Warning: generated sudoers rule failed validation");
+        sudoersBlockRan.ShouldBeTrue(
+            customMessage: $"sudoers block MUST have run (block at .sh line 391). Neither success-log nor failure-warning appeared in stdout. " +
+                          $"If absent: SERVICE_USER squid-tentacle wasn't created upstream OR /etc/sudoers.d doesn't exist. " +
+                          $"FULL .sh stdout:\n{output}");
+
         File.Exists(sudoersPath).ShouldBeTrue(
             customMessage: $"sudoers file MUST exist at {sudoersPath} after install with SERVICE_USER created. " +
                           "If absent: visudo -c rejected the generated content (template bug — operator-visible 'Warning: generated sudoers rule failed validation' should appear in stdout). " +
-                          "Production impact: in-UI upgrades hang on password prompt forever.");
+                          "Production impact: in-UI upgrades hang on password prompt forever." +
+                          $"\n\nFULL .sh stdout (so we can see WHY visudo rejected):\n{output}");
 
         // Verify the visudo path actually fired SUCCESSFULLY — log line
         // distinguishes from the failure-mode message that .sh emits if
