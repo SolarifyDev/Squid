@@ -35,6 +35,24 @@ INSTALL_DIR="${INSTALL_DIR:-$(dirname "$(readlink -f "$0")")}"
 VERSION_FILE="$INSTALL_DIR/version.txt"
 MARKER_FILE="$INSTALL_DIR/service-running.marker"
 
+# `version` subcommand fast-path. The production upgrade-linux-tentacle.sh's
+# Phase B post-restart sanity check runs:
+#   timeout 5 "$INSTALL_DIR/squid-tentacle" version
+# which (via symlink chain) invokes THIS script with $1=version. Without
+# this fast-path, we'd fall into the sleep loop, hit the timeout at 5s,
+# receive SIGTERM, and our cleanup() trap would rm the marker file —
+# leaving the test asserting on an absent marker even though the service
+# itself wrote it correctly. Bug found by J.L.E.7.4 diagnostic dump
+# (Linux runner). Real Squid.Tentacle's CLI handles `version` similarly.
+if [ "${1:-}" = "version" ]; then
+    if [ -f "$VERSION_FILE" ]; then
+        cat "$VERSION_FILE" | tr -d '[:space:]'
+    else
+        echo "unknown"
+    fi
+    exit 0
+fi
+
 # Optional healthz endpoint for J.L.E.6+ full-lifecycle tests. The .sh's
 # Phase B healthcheck loop curls $HEALTHCHECK_URL (default
 # http://127.0.0.1:8080/healthz) — without an actual responder the
