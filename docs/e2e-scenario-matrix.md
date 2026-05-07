@@ -188,15 +188,15 @@ Server → tentacle wrapper → Phase A (download) → Phase B (binary swap + re
 | E9.h | Capabilities probe after upgrade reports new version → server cache refreshes | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E9.u1 | Capabilities probe times out → server retries; eventually marks Unreachable | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E10.u1 | Concurrent server-side upgrade dispatches → Redis lock prevents dual; second returns "already in progress" | ✓ | ✓ | 12.J | ⚪ | 🟡 | unit-tested; promote to E2E |
-| E11.u1 | Concurrent agent-side dispatches (rare — operator + scheduled together) → tentacle lock file prevents dual; second is no-op | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
+| E11.u1 | Concurrent agent-side dispatches (rare — operator + scheduled together) → tentacle lock file prevents dual; second is no-op | ✓ | ✓ | 12.J.E.4 | ✅ | 🟢 | `E11u1_ConcurrentDispatch_PreExistingLockPreventsSecondRun` (Win) — pre-stages lock file with first-dispatch PID, asserts exit 13 + lock-content unchanged + Phase B reverse-asserted skipped (marker stays at v1, no .bak) |
 | E11.u2 | Stale tentacle lock file (from crashed process) → next dispatch detects + breaks the lock | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E12.h | SHA companion file fetch + hash verification → matching SHA accepts | ✓ | — | 12.G | ✅ | 🟡 | covered by `WindowsUpgradeShaVerifyE2ETests` |
 | E12.u1 | SHA mismatch → reject + log + status Failed with "checksum failed" | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithChecksumDetail` — `LocalReleaseMirror.StageSha256Override` injects deliberately-wrong digest; reverse-asserts service stayed at v1 (Phase B aborted, swap did NOT proceed despite corrupt download) |
-| E12.u2 | SHA companion 404 → opportunistic fetch falls through, install proceeds (current behaviour) | ✓ | — | 12.G | ✅ | 🟢 | |
+| E12.u2 | SHA companion 404 → opportunistic fetch falls through, install proceeds (current behaviour) | ✓ | — | 12.G + 12.J.E.4 | ✅ | 🟢 | covered at fetch-isolated tier (`OpportunisticFetch_404_FallsThroughCleanly_NoExitCode7`) AND at full-lifecycle tier (`E12u2_Sha256Companion404_FallsThroughCleanly_FullLifecycleStillSucceeds` — Phase A+B end-to-end with `mirror.SuppressSha256Companion()`, asserts SUCCESS status + marker swap to v2) |
 | E13.h | Custom `SQUID_TARGET_*_DOWNLOAD_BASE_URL` env → uses mirror; HTTPS warning absent for HTTPS URL | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E13.u1 | Custom URL non-HTTPS → warning logged, install still proceeds | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E14.u1 | Wrapper mid-script Halibut disconnect → server treats as Initiated; outcome via last-upgrade.json next probe | ✓ | ✓ | 12.J | ⚪ | 🟡 | unit-tested; promote |
-| E15.h | Upgrade preserves `instances/<name>.config.json` (cert + subscription unchanged) | ✓ | ✓ | 12.J | ⚪ | 🟢 | critical regression target |
+| E15.h | Upgrade preserves `instances/<name>.config.json` (cert + subscription unchanged) | ✓ | ✓ | 12.J.E.4 | ✅ | 🟢 | `E15h_UpgradePreservesInstanceConfigAndCertFiles` (Win) — pre-stages `instances.json` + per-instance config.json + 2KB cert under test-isolated %ProgramData%, captures pre-upgrade SHA256, runs full Phase A+B, asserts byte-for-byte preservation. Critical regression target — agent identity hinges on these files |
 | E16.h | Linux apt rollback: snapshot `.deb` saved before upgrade; `dpkg -i --force-downgrade` restores | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E17.h | Linux dnf rollback: `dnf downgrade -y squid-tentacle` restores prior version | — | ✓ | 12.J | ⚪ | 🟢 | |
 
@@ -270,11 +270,11 @@ Edge cases that bit operators in production.
 | B — Service lifecycle | 19 | 19 | 12 (G.2 + G.5) |
 | C — Registration | 18 | 18 | 9 (Phase 12.I) |
 | D — Deployment execution | 26 | 52 | 13 (Phase 12.J.D.1-4) |
-| E — Upgrade flow | 32 | 52 | 12 (3 wrapper E2E from 12.G + 3 J.E.1 dispatch + 6 J.E.3 lifecycle/SHA/last-upgrade.json) |
+| E — Upgrade flow | 32 | 52 | 15 (3 wrapper E2E from 12.G + 3 J.E.1 dispatch + 6 J.E.3 lifecycle/SHA/last-upgrade.json + 3 J.E.4 ship-blocking E15.h/E11.u1/E12.u2) |
 | F — Health & capabilities | 6 | 12 | 4 (J.E.2 capabilities probe via PR #195, P0-unblocked) |
 | G — Multi-instance | 6 | 8 | 0 |
 | H — Boundary cases | 10 | 16 | 0 |
-| **Total** | **141 unique scenarios** | **≈201 tests** | **81 (40% covered)** |
+| **Total** | **141 unique scenarios** | **≈201 tests** | **84 (42% covered)** |
 
 ---
 
@@ -296,8 +296,10 @@ Edge cases that bit operators in production.
 | 12.L.1 | G — multi-instance Windows | ✅ Verified (PR #193) | +2 | 71 |
 | **P0 fix** | **🐛 Halibut cache-key bug** — every health check + liveness probe was silently broken | ✅ Verified (PR #194) | **+0 production tests, but 3 fix-pin** | 71 (+3 fix-pin) |
 | 12.J.E.2 | F — capabilities probe (UNBLOCKED by P0) | ✅ Verified (PR #195) | +4 | 75 |
-| 12.J.E.3 | E — full upgrade lifecycle (download + SHA verify + Phase B + last-upgrade.json round-trip) | ✅ Verified (PR #196) | +6 | **81** |
-| 12.J.E.4+ | E — upgrade methods (apt/dnf) + rollback + lock + already-up-to-date | ⚪ Planned | ~25 | ~106 |
+| 12.J.E.3 | E — full upgrade lifecycle (download + SHA verify + Phase B + last-upgrade.json round-trip) | ✅ Verified (PR #196) | +6 | 81 |
+| 12.J.E.3.1 | 🐛 fix: 3 production / test bugs caught by J.E.3 (placeholder-in-comment + Get-FileHash auto-loader + StageBinary double-wrap) | ✅ Verified (PR #197) | +0 production tests, +2 fix-pin (placeholder uniqueness + direct-.NET SHA) | 81 (+2 fix-pin) |
+| 12.J.E.4 | E — ship-blocking: instance-config preservation (E15.h) + agent-side lock (E11.u1) + SHA-companion-404 lifecycle promotion (E12.u2) | ✅ Verified (PR #198) | +3 | **84** |
+| 12.J.E.5+ | E — upgrade methods (apt/dnf) + rollback (E6.u1/E7.u1 require new prod code) + already-up-to-date (E4.h) + concurrent server-side (E10.u1) | ⚪ Planned | ~20 | ~104 |
 | 12.J.D.5 | D — Calamari + variable substitution + cancellation | ⚪ Planned | ~10 | ~118 |
 | 12.K | A (install scripts) + H (boundary) | ⚪ Planned | ~40 | ~158 |
 | 12.L | B (lifecycle remainder) + F (health) + G (multi-instance) | ⚪ Planned | ~28 | ~186 |
