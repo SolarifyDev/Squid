@@ -61,6 +61,18 @@
     <ProjectReference Include="..\Squid.WindowsUpgradeE2E.TestService\Squid.WindowsUpgradeE2E.TestService.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+
+    <!--
+      Phase 12.J.E.9 — version-stamped Squid.Tentacle.exe shim used ONLY
+      by the E4.h already-up-to-date test. ReferenceOutputAssembly=false
+      because we don't want to load its types into the test assembly;
+      we only want its build output (Squid.Tentacle.exe with a known
+      Win32 VERSIONINFO ProductVersion stamp) on disk for the test to
+      copy + stage into INSTALL_DIR.
+    -->
+    <ProjectReference Include="..\Squid.WindowsUpgradeE2E.VersionStampedShim\Squid.WindowsUpgradeE2E.VersionStampedShim.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>
