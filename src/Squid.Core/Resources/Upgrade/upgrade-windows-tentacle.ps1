@@ -118,6 +118,15 @@ $HEALTHCHECK_RETRIES = {{HEALTHCHECK_RETRIES}}
 # = warning + proceed (matches Octopus Tentacle); `$true` = strict =
 # rollback on timeout. See WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar.
 $HEALTHCHECK_FATAL = {{HEALTHCHECK_FATAL}}
+# Per-WaitForStatus wall-clock cap (seconds). Default 30. Operators with
+# heavyweight agents (heavy plugin enumeration, slow .NET tiered JIT cold
+# start, AV scanning a 50MB binary before first run) override via
+# SQUID_TARGET_WINDOWS_TENTACLE_SERVICE_TIMEOUT_SECONDS to avoid false
+# rollbacks from a slow-but-eventually-successful Start. Used for both
+# Stop-Service and Start-Service WaitForStatus calls + Invoke-Rollback's
+# old-service-restart wait.
+$SERVICE_TIMEOUT_SECONDS = {{SERVICE_TIMEOUT_SECONDS}}
+$SERVICE_TIMEOUT_SPAN = [TimeSpan]::FromSeconds($SERVICE_TIMEOUT_SECONDS)
 
 #  contract: %ProgramData%\Squid\Tentacle\upgrade\
 $STATUS_DIR  = Join-Path $env:ProgramData 'Squid\Tentacle\upgrade'
@@ -202,7 +211,7 @@ function Invoke-Rollback {
         if ($null -ne $svc -and $svc.Status -ne 'Stopped') {
             Append-UpgradeLog "[rollback] Stopping new service (current state: $($svc.Status))"
             Stop-Service -Name $SERVICE_NAME -Force -ErrorAction SilentlyContinue
-            $svc.WaitForStatus('Stopped', '00:00:30')
+            $svc.WaitForStatus('Stopped', $SERVICE_TIMEOUT_SPAN)
         }
     } catch {
         Append-UpgradeLog "[rollback] Couldn't cleanly stop new service: $($_.Exception.Message). Proceeding with restore — Move-Item might still succeed if SCM has released the binary."
@@ -253,7 +262,7 @@ function Invoke-Rollback {
         # Wait for SCM to confirm RUNNING — synchronous proof that the old
         # service is genuinely back up before we report ROLLED_BACK.
         $svc = Get-Service -Name $SERVICE_NAME
-        $svc.WaitForStatus('Running', '00:00:30')
+        $svc.WaitForStatus('Running', $SERVICE_TIMEOUT_SPAN)
 
         Append-UpgradeLog "[rollback] Service running (old binary)"
         Write-UpgradeStatus -Status 'ROLLED_BACK' -InstallMethod $INSTALL_METHOD -Detail "Rolled back from failed upgrade. Reason: $Reason. Broken binary preserved at $failedDir for inspection." -ExitCode $ExitCode
@@ -515,7 +524,7 @@ try {
             # Wait up to 30s for the service to actually stop (Stop-Service
             # returns when the SCM accepts the stop command; the service
             # process may take a moment longer to exit).
-            $svc.WaitForStatus('Stopped', '00:00:30')
+            $svc.WaitForStatus('Stopped', $SERVICE_TIMEOUT_SPAN)
         }
     }
     else {
@@ -577,7 +586,7 @@ try {
             Start-Service -Name $SERVICE_NAME
 
             $svcVerify = Get-Service -Name $SERVICE_NAME
-            $svcVerify.WaitForStatus('Running', '00:00:30')
+            $svcVerify.WaitForStatus('Running', $SERVICE_TIMEOUT_SPAN)
 
             Append-UpgradeLog "[upgrade] Service $SERVICE_NAME reached RUNNING state"
         } catch {

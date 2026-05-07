@@ -155,6 +155,38 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     public const string HealthcheckFatalEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL";
 
     /// <summary>
+    /// Operator override for the wall-clock timeout the .ps1 waits on
+    /// `$svc.WaitForStatus('Running', ...)` and `WaitForStatus('Stopped', ...)`
+    /// after Start-Service / Stop-Service. Default <see cref="DefaultServiceTimeoutSeconds"/>
+    /// (30s) covers stock-agent boot (~3-5s) plus runtime warmup (~10-30s).
+    ///
+    /// <para><b>Why this matters</b>: a heavyweight agent (heavy plugin
+    /// enumeration, .NET tiered JIT cold start, AV scanning a 50MB binary
+    /// before the first run) can take >30s to reach the SCM RUNNING state.
+    /// Without this override, the post-Start `WaitForStatus` times out →
+    /// Invoke-Rollback fires → operator sees ROLLED_BACK on what was
+    /// actually a successful (just-slow) upgrade.</para>
+    ///
+    /// <para><b>Single var for both Stop and Start</b>: Stop-Service's
+    /// 30s default is rarely the bottleneck (a service stuck Stopping is
+    /// usually a CanStop=false / OnStop deadlock bug, not slowness).
+    /// Operators tuning for slow-start environments rarely need different
+    /// numbers for Stop vs Start. Keep one knob; revisit if 5+ env vars
+    /// triggers refactor (Rule 7).</para>
+    ///
+    /// <para>Pinned per Rule 8 by
+    /// <c>WindowsTentacleUpgradeStrategyTests.ServiceTimeoutSecondsEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string ServiceTimeoutSecondsEnvVar = "SQUID_TARGET_WINDOWS_TENTACLE_SERVICE_TIMEOUT_SECONDS";
+
+    /// <summary>
+    /// Default wall-clock cap on each <c>WaitForStatus</c> call (Stop and
+    /// Start). 30s × ~5s typical RUNNING transition = 6x margin. Operators
+    /// with heavyweight agents override via <see cref="ServiceTimeoutSecondsEnvVar"/>.
+    /// </summary>
+    internal const int DefaultServiceTimeoutSeconds = 30;
+
+    /// <summary>
     /// Wall-clock cap for a single upgrade dispatch. Mirrors Linux's
     /// 5-minute cap — must stay strictly less than
     /// <c>MachineUpgradeService.LockExpiry</c> (7 min) so an abandoned
@@ -408,6 +440,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             .Replace("{{HEALTHCHECK_URL}}", ResolveHealthcheckUrl(), StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_RETRIES}}", ResolveHealthcheckRetries().ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{HEALTHCHECK_FATAL}}", ResolveHealthcheckFatal() ? "$true" : "$false", StringComparison.Ordinal)
+            .Replace("{{SERVICE_TIMEOUT_SECONDS}}", ResolveServiceTimeoutSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
@@ -627,6 +660,32 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
             "Falling back to default (false — warning + proceed on healthcheck timeout).",
             HealthcheckFatalEnvVar, raw);
         return false;
+    }
+
+    /// <summary>
+    /// Resolves the SCM <c>WaitForStatus</c> wall-clock cap. Defaults to
+    /// <see cref="DefaultServiceTimeoutSeconds"/> (30s). Invalid values
+    /// (negative, non-numeric) silently fall back to default — operator-
+    /// friendly: a typo'd env var doesn't break upgrades.
+    /// </summary>
+    internal static int ResolveServiceTimeoutSeconds()
+    {
+        var raw = System.Environment.GetEnvironmentVariable(ServiceTimeoutSecondsEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultServiceTimeoutSeconds;
+
+        if (!int.TryParse(raw.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            || parsed < 1)
+        {
+            Log.Warning(
+                "[Upgrade] {EnvVar} is set to an invalid value ('{Value}'). " +
+                "Must be a positive integer (seconds). " +
+                "Falling back to default of {Default}.",
+                ServiceTimeoutSecondsEnvVar, raw, DefaultServiceTimeoutSeconds);
+            return DefaultServiceTimeoutSeconds;
+        }
+
+        return parsed;
     }
 
     /// <summary>
