@@ -100,6 +100,47 @@ public sealed class LinuxTentacleBinaryFixture
     }
 
     /// <summary>
+    /// Runs the binary as root via <c>sudo -n</c>. Use for subcommands
+    /// that mutate system state (<c>service install/uninstall/start/stop</c>
+    /// touch <c>/etc/systemd/system/</c> and run <c>systemctl</c>;
+    /// <c>register</c> persists config under <c>/etc/squid-tentacle/</c>).
+    ///
+    /// <para>Same 60s timeout + output capture as <see cref="Run"/>;
+    /// only difference is the sudo wrapper.</para>
+    /// </summary>
+    public (int exitCode, string output) SudoRun(params string[] args)
+    {
+        var binaryPath = EnsureBuilt();
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add(binaryPath);
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to launch sudo {binaryPath}");
+
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+        if (!proc.WaitForExit(60_000))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            throw new TimeoutException($"sudo {binaryPath} {string.Join(' ', args)} did not complete within 60s.");
+        }
+
+        return (proc.ExitCode, stdoutTask.Result + Environment.NewLine + stderrTask.Result);
+    }
+
+    /// <summary>
     /// Runs the binary with the given args + a clean environment.
     /// Returns (exitCode, combined stdout+stderr). 60s wall-clock cap —
     /// individual subcommands like <c>version</c> are sub-second; longer
