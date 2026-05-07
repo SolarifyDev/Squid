@@ -642,6 +642,103 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E11.u2-Linux — Stale lockfile (no live holder) MUST NOT block dispatch
+    //
+    // Linux uses kernel BSD flock as the lock primitive; lock file content
+    // is informational only. If a tentacle process is killed mid-upgrade
+    // (OOM, SIGKILL, panic), the lockfile remains on disk BUT the kernel
+    // flock is automatically released. The next dispatch's `flock -n`
+    // MUST succeed on the unattended file → upgrade proceeds normally.
+    //
+    // This is the natural "stale lock recovery" semantic on Linux —
+    // no explicit stale-detection code is needed (unlike Windows .ps1
+    // which reads PID from file content + checks process liveness).
+    // The kernel does it for us.
+    //
+    // Without this regression test, a future polish that "improved"
+    // lock detection by mirroring Windows' PID-based check (or any
+    // file-content based blocking) would silently regress the kernel
+    // flock contract — agents would get stuck with stale lockfiles
+    // requiring manual operator cleanup. This test pins the contract
+    // that PRE-EXISTING UNATTENDED LOCKFILE ≠ BLOCKED DISPATCH.
+    //
+    // Test mechanism: pre-stage a lockfile with bogus content (PID of
+    // a process that never existed), no flock holder. Run a normal
+    // upgrade. Assert it succeeds end-to-end (Phase A + Phase B) just
+    // like E1.h-Linux would.
+    //
+    // Mirrors Windows E11.u2 in intent (stale-lock recovery), but
+    // mechanism differs — Windows .ps1 explicitly reads/checks PID;
+    // Linux relies on kernel auto-release.
+    //
+    // High-fidelity. Real prod .sh + real systemd + real bash + real
+    // mirror. Same shape as E1.h-Linux, plus pre-staged stale lockfile.
+    // ========================================================================
+
+    [Fact]
+    public void E11u2_StaleLockfile_NoLiveHolder_DispatchProceedsNormally_Linux()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before E11.u2-Linux can validate stale-lock recovery");
+
+        // Pre-stage a stale lockfile with a sentinel PID. No flock
+        // holder process — the file is just bytes on disk. The .sh's
+        // `flock -n` must succeed against it (kernel sees no active
+        // holder → grants the lock immediately).
+        Directory.CreateDirectory(ctx.StateDirOverride);
+        const string stalePidContent = "99999\n";
+        File.WriteAllText(ctx.LockFilePath, stalePidContent);
+
+        // Run a normal upgrade — same shape as E1.h-Linux.
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        // exit 0 — same SUCCESS path as E1.h-Linux. If the stale lockfile
+        // somehow blocked the dispatch, we'd see exit 0 with the
+        // "upgrade is already in progress" no-op message instead.
+        exitCode.ShouldBe(0,
+            customMessage: $"stale lockfile MUST NOT block dispatch — the kernel auto-released the flock when the prior holder died. Got exit {exitCode}. " +
+                          $"If 0 + 'already in progress' message: the .sh added file-content based blocking that doesn't belong on Linux (kernel handles staleness). " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Affirmative: the no-op log message MUST NOT appear. If it does,
+        // the .sh's idempotency guard misfired on the stale lockfile and
+        // the upgrade was skipped (regression).
+        output.ShouldNotContain("upgrade is already in progress on this host",
+            customMessage: "stale lockfile (no holder) triggered the 'already in progress' no-op branch — the kernel-flock contract was bypassed by a regression in the idempotency guard.");
+
+        // The upgrade actually completed — last-upgrade.json reports SUCCESS.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "last-upgrade.json MUST exist after a successful upgrade — its absence implies Phase B never reached write_status SUCCESS, which would mean the stale lockfile derailed the dispatch somewhere.");
+
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"last-upgrade.json status MUST be 'SUCCESS' (stale lockfile recovered cleanly, full lifecycle completed). Got: '{statusPayload.Status}'");
+
+        // Service marker swapped — proves Phase B's mv-swap actually ran.
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: $"v2 service must be running with v2 marker after stale-lock recovery — proves the upgrade fully completed end-to-end despite the leftover lockfile.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
