@@ -74,26 +74,65 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// </summary>
     public string RenderProductionScriptForVersion(string targetVersion)
     {
-        // Set env vars for resolver-driven placeholders. Strategy reads:
-        //   - DownloadBaseUrl → mirror's HTTP listener
-        //   - StateDir       → test-isolated per-test dir (12.L.E.2)
-        //   - HealthcheckRetries → 1 attempt for fast tests (12.L.E.6)
-        Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, Mirror.BaseUri.ToString().TrimEnd('/'));
-        Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, StateDirOverride);
+        // Load production .sh template directly + substitute all placeholders
+        // manually. Mirrors what Windows
+        // UpgradeLifecycleContext.RenderProductionScriptForVersion does.
+        //
+        // Why NOT call LinuxTentacleUpgradeStrategy.BuildScript: the strategy
+        // hardcodes INSTALL_DIR / SERVICE_NAME / SERVICE_USER from its
+        // Default* fields (production paths). For E2E tests we need these
+        // to be the fixture's GUID-suffixed paths (so the systemctl restart
+        // hits OUR test service, not the production "squid-tentacle"
+        // unit). Loading the template directly + manually substituting is
+        // the cleanest way — drift detector at LinuxScript_PlaceholderSet_*
+        // pins the substitution map.
+        //
+        // J.L.E.7 first Linux runner caught this: BuildScript's default
+        // SERVICE_NAME=squid-tentacle made systemctl restart fail with
+        // "Unit squid-tentacle.service not found" — manual substitution
+        // with Fixture.ServiceName fixes it.
+        var template = File.ReadAllText(LocateLinuxTemplate());
 
-        // retries=1 cuts the .sh's 90s healthz wait down to 1s. With the
-        // test service's python3 healthz responder (SQUID_TEST_SERVICE_HEALTHZ=1
-        // set in systemd unit Environment), the responder is up by the
-        // time .sh's curl probe runs → HEALTH_OK=1 → success path.
-        Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, "1");
+        // DOWNLOAD_URL: mirror serves any tar.gz path; pattern matches
+        // production strategy's BuildDownloadUrl shape with $RID rewrite.
+        var downloadUrl = $"{Mirror.BaseUri.ToString().TrimEnd('/')}/{targetVersion}/squid-tentacle-{targetVersion}-$RID.tar.gz";
 
-        // Tarball-only method order. Skips apt+yum probes which would
-        // otherwise slow tests + introduce host-config sensitivity (apt's
-        // dpkg-query / yum's rpm -q on systems where these tools may or
-        // may not have squid-tentacle installed).
-        var tarballOnly = new ILinuxUpgradeMethod[] { new TarballUpgradeMethod() };
+        // INSTALL_METHODS: tarball-only render (skips apt+yum probes).
+        var installMethodsBlock = new TarballUpgradeMethod().RenderDetectAndInstall(targetVersion);
 
-        return LinuxTentacleUpgradeStrategy.BuildScript(targetVersion, tarballOnly);
+        // SERVICE_USER: current user. The .sh's chown line targets this
+        // user; on the GHA runner it's typically "runner". Defaulting to
+        // Environment.UserName makes ownership transfers no-ops (current
+        // user owns INSTALL_DIR already).
+        var serviceUser = Environment.UserName;
+
+        return template
+            .Replace("{{TARGET_VERSION}}", targetVersion, StringComparison.Ordinal)
+            .Replace("{{DOWNLOAD_URL}}", downloadUrl, StringComparison.Ordinal)
+            .Replace("{{EXPECTED_SHA256}}", string.Empty, StringComparison.Ordinal)
+            .Replace("{{INSTALL_DIR}}", Fixture.InstallDir, StringComparison.Ordinal)
+            .Replace("{{SERVICE_NAME}}", Fixture.ServiceName, StringComparison.Ordinal)
+            .Replace("{{SERVICE_USER}}", serviceUser, StringComparison.Ordinal)
+            // HEALTHCHECK_URL default 127.0.0.1:8080/healthz works because
+            // the test service's python3 responder binds there. Tests
+            // wanting a different port set HEALTHCHECK_URL env first.
+            .Replace("{{HEALTHCHECK_URL}}", "http://127.0.0.1:8080/healthz", StringComparison.Ordinal)
+            .Replace("{{STATE_DIR}}", StateDirOverride, StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_RETRIES}}", "1", StringComparison.Ordinal)
+            .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
+    }
+
+    private static string LocateLinuxTemplate()
+    {
+        var thisAssemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+        var dir = thisAssemblyDir;
+        for (var i = 0; i < 8 && dir != null; i++)
+        {
+            var candidate = Path.Combine(dir, "src", "Squid.Core", "Resources", "Upgrade", "upgrade-linux-tentacle.sh");
+            if (File.Exists(candidate)) return candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+        throw new FileNotFoundException("Could not locate upgrade-linux-tentacle.sh from the test assembly's directory tree");
     }
 
     /// <summary>
