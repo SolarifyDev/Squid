@@ -260,6 +260,219 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // G2.h-Linux — `service install --instance Alpha` + --instance Beta
+    //               create distinct systemd units with correct ExecStart
+    //
+    // Composes G1h's multi-instance register isolation with the systemd
+    // service-lifecycle layer. The full operator workflow:
+    //
+    //   sudo squid-tentacle create-instance --instance Alpha
+    //   sudo squid-tentacle register --instance Alpha ...
+    //   sudo squid-tentacle service install --instance Alpha
+    //   (repeat for Beta)
+    //
+    // Production contract this pins:
+    //   - Default service name for `--instance Alpha` is
+    //     "squid-tentacle-Alpha" (NOT "squid-tentacle"); the suffix
+    //     prevents systemd-unit collision when both instances run
+    //   - Each unit's ExecStart contains `--instance <name>` flag so
+    //     the agent loads its OWN config file on boot (not Default's)
+    //   - Both units coexist as `enabled` simultaneously
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - ServiceCommand.cs's serviceName fallback regresses to using
+    //     DefaultServiceName for ALL instances → second install
+    //     overwrites first's unit file (operator boots, only one
+    //     instance runs)
+    //   - ExecArgs forgets to add `--instance NAME` for non-Default
+    //     → both units' ExecStart launches `run` without a flag
+    //     → both load Default's config (or fail to find it) → both
+    //     services either start as the SAME instance or fail
+    //   - SystemdServiceHost mishandles unit-name → unit content
+    //     drift between Alpha and Beta
+    //
+    // Test mechanism (composes with G1h's setup):
+    //   1-4. Same as G1h (create + register both instances)
+    //   5. service install --instance Alpha
+    //   6. service install --instance Beta
+    //   7. Assert two distinct unit files at expected paths
+    //   8. Assert each unit's ExecStart contains "--instance <name>"
+    //   9. Assert systemctl is-enabled returns 0 for BOTH units
+    //
+    // Cleanup: service uninstall both via production CLI; defensive
+    // systemctl cleanup in MultiInstanceTestContext.Dispose handles
+    // any half-installed state on assertion failure.
+    //
+    // Tier: 🟢 H. Real binary + real systemd + real /etc/systemd/system/.
+    //
+    // Expected runtime: ~10-15s (G1h's ~7s + 2× service install ~3s
+    // each + 2× is-enabled query).
+    // ========================================================================
+
+    [Fact]
+    public void G2h_TwoInstances_ServiceInstall_CreatesSeparateUnitsWithInstanceFlag()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new MultiInstanceTestContext();
+
+        // ── Step 1-4: G1h-style setup (create + register both) ────────────
+        var (alphaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.AlphaInstance);
+        alphaCreateExit.ShouldBe(0, "G2h precondition: create-instance Alpha must succeed");
+
+        var (alphaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.AlphaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G2-ALPHA",
+            "--name", ctx.AlphaMachineName,
+            "--role", "alpha-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
+        alphaRegExit.ShouldBe(0, "G2h precondition: register Alpha must succeed");
+
+        var (betaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.BetaInstance);
+        betaCreateExit.ShouldBe(0, "G2h precondition: create-instance Beta must succeed");
+
+        var (betaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.BetaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G2-BETA",
+            "--name", ctx.BetaMachineName,
+            "--role", "beta-role",
+            "--environment", "Staging",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
+        betaRegExit.ShouldBe(0, "G2h precondition: register Beta must succeed");
+
+        // ── Step 5: service install --instance Alpha ──────────────────────
+        var (alphaInstallExit, alphaInstallOutput) = ctx.Binary.SudoRun(
+            "service", "install", "--instance", ctx.AlphaInstance);
+
+        alphaInstallExit.ShouldBe(0,
+            customMessage: $"`service install --instance {ctx.AlphaInstance}` MUST exit 0. Got exit {alphaInstallExit}. " +
+                          $"If non-zero: ServiceCommand's instance-aware serviceName fallback OR ExecArgs construction broke. " +
+                          $"\noutput:\n{alphaInstallOutput}");
+
+        // Default service name for --instance NAME is "squid-tentacle-{NAME}".
+        // Pin both halves of the path so a regression touching either ends
+        // up here, not at "the unit file is missing" downstream.
+        var alphaUnitPath = $"/etc/systemd/system/squid-tentacle-{ctx.AlphaInstance}.service";
+        ctx.RegisterServiceForCleanup($"squid-tentacle-{ctx.AlphaInstance}");
+
+        LinuxInstallScriptContext.SudoFileExists(alphaUnitPath).ShouldBeTrue(
+            customMessage: $"Alpha unit file MUST exist at {alphaUnitPath}. " +
+                          $"If absent: serviceName fallback in ServiceCommand.cs (lines ~39-42) regressed to using " +
+                          $"DefaultServiceName for ALL instances — both Alpha and Beta would land at /etc/systemd/system/squid-tentacle.service " +
+                          $"and the second install overwrites the first.");
+
+        // ── Step 6: service install --instance Beta ───────────────────────
+        var (betaInstallExit, betaInstallOutput) = ctx.Binary.SudoRun(
+            "service", "install", "--instance", ctx.BetaInstance);
+
+        betaInstallExit.ShouldBe(0,
+            customMessage: $"`service install --instance {ctx.BetaInstance}` MUST exit 0 after Alpha already installed. Got exit {betaInstallExit}. " +
+                          $"If non-zero: second install conflicted with Alpha's state (e.g. SystemdServiceHost cached the unit name). " +
+                          $"\noutput:\n{betaInstallOutput}");
+
+        var betaUnitPath = $"/etc/systemd/system/squid-tentacle-{ctx.BetaInstance}.service";
+        ctx.RegisterServiceForCleanup($"squid-tentacle-{ctx.BetaInstance}");
+
+        LinuxInstallScriptContext.SudoFileExists(betaUnitPath).ShouldBeTrue(
+            customMessage: $"Beta unit file MUST exist at {betaUnitPath}. Same root-cause space as Alpha-missing.");
+
+        // ── Assertion: Alpha is NOT at the Default path ───────────────────
+        // Reverse-pin the contract: Default service name only applies when
+        // --instance is omitted (or = "Default"). For named instances it's
+        // suffixed. If both --instance Alpha and --instance Beta land at
+        // /etc/systemd/system/squid-tentacle.service, the units overwrite
+        // each other and only the latest survives.
+        LinuxInstallScriptContext.SudoFileExists("/etc/systemd/system/squid-tentacle.service").ShouldBeFalse(
+            customMessage: "/etc/systemd/system/squid-tentacle.service MUST NOT exist after install --instance NAME. " +
+                          "If present: serviceName fallback regressed to DefaultServiceName for the named-instance case — " +
+                          "Alpha and Beta both wrote to the SAME unit file path, second overwrites first.");
+
+        // ── Assertion: each unit's ExecStart contains its --instance flag ──
+        // This is the ALL-IMPORTANT contract: at boot, systemd launches
+        // each unit's ExecStart, and the binary needs `--instance NAME`
+        // to know which config file to load. If either unit's ExecStart
+        // is missing the flag, that unit boots as Default and the
+        // multi-instance illusion collapses.
+        var alphaUnitContent = LinuxInstallScriptContext.SudoReadAllText(alphaUnitPath);
+        alphaUnitContent.ShouldContain($"--instance {ctx.AlphaInstance}",
+            customMessage: $"Alpha unit's ExecStart MUST contain '--instance {ctx.AlphaInstance}'. " +
+                          $"If absent: ServiceCommand.cs's ExecArgs builder (lines ~162-168) didn't add the --instance flag " +
+                          $"for non-Default instances — the agent boots as Default and loads Default.config.json instead of " +
+                          $"{ctx.AlphaInstance}.config.json. " +
+                          $"\nAlpha unit content:\n{alphaUnitContent}");
+
+        var betaUnitContent = LinuxInstallScriptContext.SudoReadAllText(betaUnitPath);
+        betaUnitContent.ShouldContain($"--instance {ctx.BetaInstance}",
+            customMessage: $"Beta unit's ExecStart MUST contain '--instance {ctx.BetaInstance}'. Same root-cause as Alpha case.");
+
+        // Cross-pin: Alpha unit MUST NOT contain Beta's name (smoking-gun
+        // evidence of a templating regression).
+        alphaUnitContent.ShouldNotContain(ctx.BetaInstance,
+            customMessage: $"Alpha unit MUST NOT mention '{ctx.BetaInstance}'. " +
+                          "If present: a templating regression mixed Alpha and Beta's identities — " +
+                          "Alpha's unit boots Beta's config OR vice versa.");
+
+        // ── Assertion: BOTH units enabled simultaneously ──────────────────
+        var (alphaEnabledExit, _) = RunSystemctl("is-enabled", $"squid-tentacle-{ctx.AlphaInstance}");
+        alphaEnabledExit.ShouldBe(0,
+            customMessage: $"`systemctl is-enabled squid-tentacle-{ctx.AlphaInstance}` MUST return 0 after install. " +
+                          $"Got exit {alphaEnabledExit}. If non-zero: systemctl enable wasn't called for the named-instance case.");
+
+        var (betaEnabledExit, _) = RunSystemctl("is-enabled", $"squid-tentacle-{ctx.BetaInstance}");
+        betaEnabledExit.ShouldBe(0,
+            customMessage: $"`systemctl is-enabled squid-tentacle-{ctx.BetaInstance}` MUST return 0 after install. " +
+                          $"Got exit {betaEnabledExit}. If non-zero: same as Alpha case for the second install.");
+
+        // ── Cleanup: uninstall both via production CLI ────────────────────
+        var (alphaUninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--instance", ctx.AlphaInstance);
+        alphaUninstallExit.ShouldBe(0, "Alpha uninstall must succeed");
+
+        var (betaUninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--instance", ctx.BetaInstance);
+        betaUninstallExit.ShouldBe(0, "Beta uninstall must succeed");
+
+        ctx.MarkServicesUninstalled();
+        ctx.MarkClean();
+    }
+
+    /// <summary>
+    /// Wraps <c>sudo systemctl &lt;verb&gt; &lt;name&gt;</c> for is-enabled /
+    /// is-active queries that are part of the multi-instance assertions.
+    /// Mirrors the helper in <see cref="TentacleLinuxServiceCommandE2ETests"/>;
+    /// kept local to this file to avoid cross-class test infrastructure
+    /// coupling.
+    /// </summary>
+    private static (int exitCode, string output) RunSystemctl(string verb, string serviceName)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("systemctl");
+        psi.ArgumentList.Add(verb);
+        psi.ArgumentList.Add(serviceName);
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start sudo systemctl");
+        var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit(10_000);
+        return (proc.ExitCode, stdout + Environment.NewLine + stderr);
+    }
+
     /// <summary>
     /// Per-test context for multi-instance scenarios: owns the binary
     /// fixture + stub server + GUID-suffixed instance names + per-instance
@@ -269,6 +482,8 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
     private sealed class MultiInstanceTestContext : IDisposable
     {
         private bool _clean;
+        private bool _servicesUninstalled;
+        private readonly List<string> _serviceNamesToCleanup = new();
 
         public LinuxTentacleBinaryFixture Binary { get; } = new();
         public LinuxStubSquidServer Stub { get; } = LinuxStubSquidServer.Start();
@@ -296,11 +511,38 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
         }
 
         public void MarkClean() => _clean = true;
+        public void MarkServicesUninstalled() => _servicesUninstalled = true;
+
+        /// <summary>
+        /// Records a service name that the test installed via the production
+        /// CLI so Dispose can defensively clean up if the happy-path
+        /// uninstall didn't run (e.g. assertion failure between install
+        /// and the uninstall call). Called immediately after
+        /// <c>service install --instance NAME</c> returns 0.
+        /// </summary>
+        public void RegisterServiceForCleanup(string serviceName) => _serviceNamesToCleanup.Add(serviceName);
 
         public void Dispose()
         {
             if (!_clean)
                 Console.WriteLine($"[MultiInstanceTestContext] Dispose without MarkClean — Alpha='{AlphaInstance}' Beta='{BetaInstance}' test failed before completion.");
+
+            // ── Defensive systemd cleanup ─────────────────────────────────
+            // If the test installed services but didn't run the production
+            // uninstall (assertion failure mid-test), defensively stop +
+            // disable + rm-unit-file + daemon-reload for each registered
+            // service. Skipped on the happy path (MarkServicesUninstalled).
+            if (!_servicesUninstalled)
+            {
+                foreach (var serviceName in _serviceNamesToCleanup)
+                {
+                    TrySudo("systemctl", "stop", serviceName);
+                    TrySudo("systemctl", "disable", serviceName);
+                    TrySudo("rm", "-f", $"/etc/systemd/system/{serviceName}.service");
+                }
+                if (_serviceNamesToCleanup.Count > 0)
+                    TrySudo("systemctl", "daemon-reload");
+            }
 
             // Best-effort: rm both instance configs + cert dirs + entire
             // instances.json (next test starts fresh). Order: file → dir →
