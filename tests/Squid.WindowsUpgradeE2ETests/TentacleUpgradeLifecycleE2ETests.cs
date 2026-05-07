@@ -432,6 +432,236 @@ public sealed class TentacleUpgradeLifecycleE2ETests
     }
 
     // ========================================================================
+    // E15.h — Upgrade preserves instance config + cert files
+    //
+    // Operator's tentacle agent identity is its server thumbprint (in
+    // instance config) + its agent cert (in instances/<name>/certs/). If
+    // upgrade clobbers either, the agent loses its identity and the server
+    // sees the machine "disappear" from its console — operator must re-register.
+    // This is a SHIP-BLOCKING regression target. Pin that the .ps1's
+    // INSTALL_DIR-targeted Move-Item swap NEVER touches files under the
+    // sibling %ProgramData%\Squid\Tentacle\ instances tree.
+    //
+    // Production layout (per PlatformPaths.GetInstance*):
+    //   $ProgramData$\Squid\Tentacle\
+    //     instances.json                    ← registry (every instance's name + ConfigPath)
+    //     instances\<name>.config.json      ← per-instance Server URL, subscription, etc.
+    //     instances\<name>\certs\<...>      ← per-instance cert files
+    //     upgrade\last-upgrade.json         ← upgrade subdir (.ps1 writes only here)
+    //     upgrade\upgrade.lock              ← idempotency lock
+    //     upgrade\upgrade.log               ← Phase A+B log
+    //
+    // The .ps1 swaps INSTALL_DIR (C:\Program Files\Squid Tentacle) — NOT
+    // %ProgramData%. So preservation is structural; this test pins the
+    // contract so a future polish that "tidies up" the upgrade flow doesn't
+    // accidentally shred the operator's identity.
+    // ========================================================================
+
+    [Fact]
+    public void E15h_UpgradePreservesInstanceConfigAndCertFiles()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
+
+        // Pre-stage instance state under the test-isolated %ProgramData%.
+        // Mirrors the layout production InstanceRegistry + register CLI write.
+        var instanceName = $"e2e-instance-{Guid.NewGuid():N}";
+        var configDir = Path.Combine(ctx.ProgramDataOverride, "Squid", "Tentacle");
+        Directory.CreateDirectory(configDir);
+
+        var instancesJsonPath = Path.Combine(configDir, "instances.json");
+        var instanceConfigPath = Path.Combine(configDir, "instances", $"{instanceName}.config.json");
+        var instanceCertsDir = Path.Combine(configDir, "instances", instanceName, "certs");
+        var instancePfxPath = Path.Combine(instanceCertsDir, $"{instanceName}.pfx");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(instanceConfigPath)!);
+        Directory.CreateDirectory(instanceCertsDir);
+
+        var registryJson = $@"{{ ""instances"": [{{ ""name"": ""{instanceName}"", ""configPath"": ""{instanceConfigPath.Replace("\\", "\\\\")}"", ""createdAt"": ""2026-05-01T00:00:00+00:00"" }}] }}";
+        var configJson = $@"{{ ""serverUrl"": ""https://test-server.example.com"", ""serverThumbprint"": ""ABCDEF1234567890ABCDEF1234567890ABCDEF12"", ""subscriptionId"": ""{Guid.NewGuid():N}"", ""agentName"": ""{instanceName}"" }}";
+        // Cert binary: 2KB of pseudo-random bytes representing a real .pfx.
+        // Content doesn't need to be a real cert — we're testing FILE preservation,
+        // not cert validation. Hash comparison drives the assertion.
+        var certBytes = new byte[2048];
+        new Random(42).NextBytes(certBytes);
+
+        File.WriteAllText(instancesJsonPath, registryJson);
+        File.WriteAllText(instanceConfigPath, configJson);
+        File.WriteAllBytes(instancePfxPath, certBytes);
+
+        // Capture pre-upgrade SHA256 for byte-for-byte preservation assertion.
+        var preRegistryHash = HashFile(instancesJsonPath);
+        var preConfigHash = HashFile(instanceConfigPath);
+        var preCertHash = HashFile(instancePfxPath);
+
+        // Run a normal upgrade — same shape as E1h.
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"Phase A+B happy path must succeed before E15.h preservation can be asserted. stdout:\n{stdout}");
+
+        // The CRITICAL assertions: every instance-tree file must be byte-identical post-upgrade.
+
+        File.Exists(instancesJsonPath).ShouldBeTrue(
+            customMessage: $"instances.json at {instancesJsonPath} MUST still exist after upgrade. " +
+                          "If missing: the .ps1's swap inadvertently moved/deleted ProgramData\\Squid\\Tentacle\\instances.json. " +
+                          "Operator impact: agent loses ALL its instance records → every registered tentacle becomes 'unregistered' from the server's view → operators must re-register every machine.");
+
+        File.Exists(instanceConfigPath).ShouldBeTrue(
+            customMessage: $"per-instance config at {instanceConfigPath} MUST still exist after upgrade. " +
+                          "If missing: agent loses its server URL + thumbprint + subscription ID → can't dial in to the server post-restart → " +
+                          "service starts but immediately marks itself idle / unreachable.");
+
+        File.Exists(instancePfxPath).ShouldBeTrue(
+            customMessage: $"per-instance cert at {instancePfxPath} MUST still exist after upgrade. " +
+                          "If missing: agent's mTLS handshake with the server fails → polling subscription rejected → permanent disconnection.");
+
+        HashFile(instancesJsonPath).ShouldBe(preRegistryHash,
+            customMessage: "instances.json content drifted across upgrade — even a whitespace change would mean the .ps1 mutated the file (unexpected; .ps1 should never read/write here)");
+
+        HashFile(instanceConfigPath).ShouldBe(preConfigHash,
+            customMessage: "per-instance config content drifted across upgrade — server URL / thumbprint / subscription ID would be regenerated, breaking agent identity");
+
+        HashFile(instancePfxPath).ShouldBe(preCertHash,
+            customMessage: "agent cert bytes drifted across upgrade — new mTLS material would mean re-registration is required");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // E11.u1 — Concurrent agent-side dispatch: pre-existing lock prevents second run
+    //
+    // The .ps1's idempotency lock at line ~160 reads $LOCK_FILE; if present,
+    // exits 13 with "lock already held by PID <X>" log. Pin: a pre-existing
+    // lock file (simulating an in-flight or recently-crashed first dispatch)
+    // makes the second .ps1 invocation no-op-fail with the documented exit
+    // code BEFORE touching anything destructive (no Stop-Service, no
+    // Move-Item, no last-upgrade.json overwrite).
+    //
+    // Operator impact (without this lock): two operators triggering upgrade
+    // concurrently → race in Stop-Service / Move-Item / Start-Service
+    // sequence → service in unrecoverable state. The lock is the only thing
+    // preventing this; pin it so a future polish doesn't drop the check.
+    // ========================================================================
+
+    [Fact]
+    public void E11u1_ConcurrentDispatch_PreExistingLockPreventsSecondRun()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        // Stage v1 service so a destructive Phase B WOULD have an effect if
+        // the lock check failed. Reverse-assert the marker stays at v1 →
+        // proves Phase B never ran.
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
+
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Pre-stage the lock file with a fake "first dispatch" PID. The .ps1
+        // reads $LOCK_FILE BEFORE writing $STATUS_DIR (no, wait — STATUS_DIR
+        // is created first; the lock check happens AFTER). The .ps1 ensures
+        // STATUS_DIR exists at line 116-118 then immediately reads the lock.
+        Directory.CreateDirectory(ctx.StatusDir);
+        var lockFilePath = Path.Combine(ctx.StatusDir, "upgrade.lock");
+        const string firstDispatchPid = "99999";   // fake PID for the "first" dispatch
+        File.WriteAllText(lockFilePath, firstDispatchPid);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(13,
+            customMessage: $"pre-existing lock file MUST cause exit 13 (documented in upgrade-windows-tentacle.ps1 header — 'failed to acquire upgrade lock'). " +
+                          $"Got exit {exitCode}. stdout:\n{stdout}");
+
+        // Lock file content MUST be unchanged — first dispatch's PID still owns it.
+        // If the second dispatch wrote its own PID, the .ps1's `Set-Content` ran
+        // BEFORE the lock check, which would mean the check is broken.
+        File.ReadAllText(lockFilePath).Trim().ShouldBe(firstDispatchPid,
+            customMessage: $"lock file content MUST stay at first dispatcher's PID '{firstDispatchPid}'. " +
+                          "If overwritten: the .ps1's Set-Content ran before the lock check — second dispatch silently stomped the first's lock, " +
+                          "which would let the next concurrent dispatch through unguarded.");
+
+        // Reverse-assert: Phase B did NOT run. Service should still be on v1.
+        File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim().ShouldBe("1.0.0",
+            customMessage: $"marker MUST stay at '1.0.0' — if it changed to '2.0.0', Phase B's Stop/Swap/Start ran despite the lock check exiting 13 (concurrent-dispatch protection broken). Got: '{File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim()}'");
+
+        // The .bak directory MUST NOT exist — Phase B's Move-Item never executed.
+        var bakDir = Path.Combine(Path.GetDirectoryName(ctx.Fixture.InstallDir)!, Path.GetFileName(ctx.Fixture.InstallDir) + ".bak");
+        Directory.Exists(bakDir).ShouldBeFalse(
+            customMessage: $".bak dir MUST NOT exist after a lock-rejected dispatch — Move-Item never ran. Got: {bakDir} exists");
+
+        // Manually clean the lock file (no production code removes it on exit-13;
+        // operators clean it up themselves once they confirm the holder is dead).
+        try { File.Delete(lockFilePath); } catch { }
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // E12.u2 — SHA companion 404: opportunistic fetch falls through, install proceeds
+    //
+    // Air-gap mirrors and older pre-companion releases don't ship .sha256
+    // files. The .ps1's verification block must catch the 404 + skip-with-
+    // warning + continue. Pin: full lifecycle still SUCCEEDs even when
+    // .sha256 is absent.
+    //
+    // Coverage delta vs ShaVerify isolated test (E12.u2 there): that test
+    // exercises ONLY the fetch-and-extract block. This test exercises the
+    // full Phase A+B lifecycle with the SHA fetch failing — proves Phase B
+    // proceeds correctly even though SHA verification was skipped.
+    // ========================================================================
+
+    [Fact]
+    public void E12u2_Sha256Companion404_FallsThroughCleanly_FullLifecycleStillSucceeds()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue();
+
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Suppress .sha256 → mirror returns 404 for every companion fetch.
+        ctx.Mirror.SuppressSha256Companion();
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $".sha256 companion 404 MUST NOT fail the upgrade — opportunistic verify falls through with skip-warning. " +
+                          $"Got exit {exitCode}. stdout:\n{stdout}");
+
+        // last-upgrade.json shows SUCCESS (Phase B ran to completion).
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull("last-upgrade.json must be written even when SHA was skipped");
+
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"status MUST be SUCCESS even with no SHA verification. Got: '{statusPayload.Status}'. " +
+                          "If FAILED: the .ps1's catch path treated the 404 as fatal instead of falling through; " +
+                          "that would break every air-gap mirror operator who doesn't ship companion hashes.");
+
+        // Reverse-assert: marker now reports v2 (proves Phase B did its swap).
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: "post-upgrade marker MUST reflect v2 — Phase B ran to completion without SHA verification");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Drift detector — Pins the placeholder set this test substitutes against
     // the production .ps1's expected substitutions. New placeholders the
     // strategy adds without test-side rendering would silently leave
@@ -495,6 +725,19 @@ public sealed class TentacleUpgradeLifecycleE2ETests
             Thread.Sleep(200);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Lower-case hex SHA256 of the file at <paramref name="path"/>. Used by
+    /// E15.h preservation assertions to compare bytes-for-bytes pre and post
+    /// upgrade — modification-time / metadata changes don't false-positive a
+    /// content comparison.
+    /// </summary>
+    private static string HashFile(string path)
+    {
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
     }
 
     private static string LocateProductionTemplate()
