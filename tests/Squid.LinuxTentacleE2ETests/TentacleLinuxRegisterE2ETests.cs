@@ -266,43 +266,52 @@ public sealed class TentacleLinuxRegisterE2ETests
     }
 
     // ========================================================================
-    // C1.u4-Linux — Server returns 200 with incomplete payload → register fails
+    // C1.u4-Linux — Server returns 200 with NON-JSON body → register fails
     //
-    // Real-world driver: server-side regression OR proxy/CDN injection
-    // returns malformed JSON. Production EnsureRegistrationPayloadComplete
-    // (line 174-177 of TentacleRegistrationClient) checks:
-    //   - data.MachineId > 0
-    //   - data.ServerThumbprint non-empty
+    // Real-world driver: proxy/CDN/gateway injects an HTML error page,
+    // ALB returns plain text "OK" health probe, or server-side bug emits
+    // raw stack trace. Production deserializes via System.Text.Json which
+    // throws JsonException on non-JSON input → bubbles up → exit non-zero.
     //
-    // If either fails, throws → register exits non-zero, no config persisted.
+    // Without this pin, regressions ship silently:
+    //   - JsonException swallowed at the registrar boundary → operator sees
+    //     "success" with default-empty config (machineId=0, no thumbprint)
+    //   - Persisted config has zero useful state → agent unreachable from
+    //     server, but operator believes registration succeeded
     //
-    // Without this pin, regressions in the payload-completeness check ship
-    // silently:
-    //   - Operator sees "success" but config has machineId=0 + empty
-    //     thumbprint → agent registered with bogus identity → server
-    //     can't dispatch to it
-    //   - Subsequent dispatches reject with "machine not found"
+    // ── KNOWN PRODUCTION GAP DISCOVERED BY THIS TEST ──────────────────────
+    // J.M.L.C.2 first runner ALSO tried `{"data":{"machineId":0,"serverThumbprint":""}}`
+    // (valid JSON, semantically incomplete). That case currently EXITS 0
+    // because TentacleListeningRegistrar (lines 196-201) silently accepts
+    // machineId=0 + falls back to settings.ServerCertificate for thumbprint
+    // — UNLIKE TentacleRegistrationClient (Polling) which has
+    // EnsureRegistrationPayloadComplete validation. Asymmetry tracked as a
+    // separate prod-fix task. This test pins the case that DOES correctly
+    // throw (non-JSON body); the incomplete-payload-but-valid-JSON gap will
+    // get its own E2E test once the production validation is added.
+    // ─────────────────────────────────────────────────────────────────────
     //
-    // Test mechanism: stub returns 200 (transport success) but with payload
-    // missing the required fields. Production parser accepts JSON but
-    // EnsureRegistrationPayloadComplete throws.
+    // Test mechanism: stub returns 200 with HTML body (simulates proxy
+    // error page injection). Production JsonSerializer.Deserialize throws
+    // JsonException → register exit non-zero.
     //
     // Tier: 🟢 H. Same fixture; differs in stub body override.
     // Expected runtime: ~1s.
     // ========================================================================
 
     [Fact]
-    public void C1u4_RegisterListening_IncompletePayload_ExitsNonZero()
+    public void C1u4_RegisterListening_NonJsonBody_ExitsNonZero()
     {
         if (!LinuxTentacleBinaryFixture.IsAvailable) return;
         if (!LinuxServiceFixture.IsAvailable) return;
 
         using var ctx = new RegisterTestContext();
 
-        // 200 status (transport success) but payload missing the required
-        // fields. machineId=0 fails the > 0 check; serverThumbprint empty.
+        // 200 status (transport success) but body is HTML (e.g. proxy
+        // injection of an error page). System.Text.Json rejects with
+        // JsonException at the first non-whitespace non-`{` byte.
         ctx.Stub.ConfigureRegisterStatusCode(200);
-        ctx.Stub.ConfigureRegisterBody("{\"data\":{\"machineId\":0,\"serverThumbprint\":\"\",\"subscriptionUri\":null}}");
+        ctx.Stub.ConfigureRegisterBody("<html><body><h1>502 Bad Gateway</h1><p>Proxy error</p></body></html>");
 
         var (exitCode, output) = ctx.Binary.SudoRun(
             "register",
@@ -313,21 +322,20 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--flavor", "LinuxTentacle");
 
         exitCode.ShouldNotBe(0,
-            customMessage: $"register MUST exit non-zero on incomplete payload (machineId=0 OR empty thumbprint). Got exit {exitCode}. " +
-                          $"If 0: EnsureRegistrationPayloadComplete regressed → operator gets 'success' with bogus identity, server can't dispatch to the registered agent. " +
+            customMessage: $"register MUST exit non-zero on non-JSON response body. Got exit {exitCode}. " +
+                          $"If 0: JsonException is being swallowed at the registrar boundary — operator sees 'success' with default-empty config, agent unreachable from server. " +
                           $"output:\n{output}");
 
-        // Stub MUST have received the register call (we're testing payload
-        // validation, not transport failure).
+        // Stub MUST have received the register call (we're testing parser
+        // failure, not transport failure).
         ctx.Stub.ReceivedRegistrations.Count.ShouldBeGreaterThan(0,
-            customMessage: "stub MUST have received at least 1 register call before payload validation rejected.");
+            customMessage: "stub MUST have received at least 1 register call before parser rejected.");
 
-        // Config NOT persisted — payload-validation failure happens before
-        // PersistInstanceConfig.
+        // Config NOT persisted — JsonException happens before PersistInstanceConfig.
         var configPath = "/etc/squid-tentacle/instances/Default.config.json";
         LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
-            customMessage: $"config file at {configPath} MUST NOT exist after incomplete-payload register. " +
-                          "If present: payload validation regressed → bogus identity persisted → operator's agent unreachable from server.");
+            customMessage: $"config file at {configPath} MUST NOT exist after non-JSON-response register. " +
+                          "If present: parser failure didn't abort PersistInstanceConfig → operator gets 'success' with bogus state.");
 
         ctx.MarkClean();
     }
