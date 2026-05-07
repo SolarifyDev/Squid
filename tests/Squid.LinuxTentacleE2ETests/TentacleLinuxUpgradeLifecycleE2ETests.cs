@@ -739,6 +739,143 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uRollbackCritical-Linux — Phase B AND rollback BOTH fail → exit 9
+    //                              + ROLLBACK_CRITICAL_FAILED status
+    //
+    // The worst-case unguarded path until this test landed. Until now:
+    //   - J.L.E.7  pinned happy path
+    //   - J.L.E.9  pinned Phase B fail → rollback succeeds (exit 4)
+    //   - this PR  pins Phase B fail → rollback ALSO fails (exit 9)
+    //
+    // Operator-visible state when it fires:
+    //   - exit 9
+    //   - last-upgrade.json status = "ROLLBACK_CRITICAL_FAILED"
+    //   - detail = "Agent in unknown state; manual intervention required"
+    //   - INSTALL_DIR contains a corrupted/broken v1 binary (rollback
+    //     mv'd .bak → INSTALL_DIR but v1 itself is non-functional)
+    //   - .bak directory consumed (mv'd into INSTALL_DIR)
+    //   - service in failed state (systemctl is-active returns inactive)
+    //
+    // Without this pin, a regression in the rollback's exit-9 path
+    // (e.g. someone removes the write_status call so operators see
+    // ROLLING_BACK forever instead of the operator-actionable
+    // ROLLBACK_CRITICAL_FAILED status) ships silently. Operators would
+    // get no clear "your agent is binaryless, run install-tentacle.sh
+    // to recover" signal — they'd just see a stuck mid-rollback state.
+    //
+    // Test mechanism (composed):
+    //   1. failHealthz=true v2 (mirrors J.L.E.9) triggers Phase B's
+    //      healthz-fail → rollback path.
+    //   2. Watchdog Task polls for INSTALL_DIR.bak's existence (= Phase B's
+    //      `sudo mv $INSTALL_DIR $BAK_DIR` just completed) and overwrites
+    //      .bak's service script with `#!/bin/bash\nexit 1`. Mode 0755
+    //      keeps it executable so systemd CAN run it and observe the
+    //      immediate failure.
+    //   3. Rollback's `sudo mv $BAK_DIR $INSTALL_DIR` succeeds (just a
+    //      rename), but the contents are now broken.
+    //   4. Rollback's `sudo systemctl start` fires the broken script →
+    //      bash exits 1 → unit failed → is-active never returns active.
+    //   5. .sh's 30-iteration is-active loop times out → ROLLBACK_OK=0
+    //      → emit_event B rollback-fail → write_status ROLLBACK_CRITICAL_FAILED
+    //      → exit 9.
+    //
+    // Why ownership works: `sudo mv` preserves file ownership. The test
+    // process owns INSTALL_DIR (under /tmp). After Phase B's mv, .bak's
+    // contents are still test-process-owned → we can write to them
+    // without sudo.
+    //
+    // Tier: 🟢 H (Rule 12.4 — real prod .sh + real systemd + real sudo +
+    // real bash + real watchdog corruption + real systemctl-start failure).
+    //
+    // Expected runtime: ~50s (Phase A ~2s + restart ~3s + 10s healthz
+    // retries + rollback's 30s is-active wait + write_status + exit).
+    // Heaviest test in the suite, but the worst-case path coverage value
+    // justifies it.
+    // ========================================================================
+
+    [Fact]
+    public async Task E1uRollbackCritical_PhaseBHealthzFailAndRollbackV1Broken_ExitsNineWithCriticalFailedStatus()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before rollback-critical test can validate the worst-case both-fail path");
+
+        // failHealthz=true: v2's healthz returns 503 → Phase B's curl
+        // fails → rollback path fires (mirrors J.L.E.9).
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test", failHealthz: true);
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        // Watchdog: polls for .bak (= Phase B's mv complete) then corrupts
+        // its service script. The 60s deadline must outlast Phase A (~2s)
+        // + Phase B mv (~1s into the run) so watchdog has plenty of time
+        // to catch the .bak window.
+        var corruptionWatchdog = ctx.StartBakCorruptionWatchdog(TimeSpan.FromSeconds(60));
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        // Watchdog must have actually fired — otherwise our test is
+        // running J.L.E.9's path (just rollback success), not the
+        // critical-failed worst case. Confirms watchdog's timing.
+        var watchdogFired = await corruptionWatchdog;
+        watchdogFired.ShouldBeTrue(
+            "watchdog never saw .bak appear within 60s deadline — either Phase B never reached the mv step, " +
+            "or the corruption logic has a path bug. Without the watchdog firing, this test is just " +
+            "redundant J.L.E.9 coverage rather than the critical-failed branch.");
+
+        // Exit 9 = ROLLBACK_CRITICAL_FAILED per .sh line 718-719.
+        exitCode.ShouldBe(9,
+            customMessage: $"both Phase B fail AND rollback fail MUST trigger exit 9 (per .sh line 719). Got exit {exitCode}. " +
+                          $"If 4: rollback actually succeeded — watchdog corruption didn't take effect (timing issue?) OR " +
+                          $"v1 service somehow restarted despite the broken script. " +
+                          $"If 1: bash hit set-u/set-e mid-rollback (different prod bug — investigate). " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // last-upgrade.json: ROLLBACK_CRITICAL_FAILED + manual-intervention detail.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "last-upgrade.json MUST be written even on critical-failed path — operators need this to surface the binaryless state in the UI. " +
+                          "If absent: write_status ROLLBACK_CRITICAL_FAILED never ran, the .sh exited 9 without recording WHY.");
+
+        statusPayload.Status.ShouldBe("ROLLBACK_CRITICAL_FAILED",
+            customMessage: $"status MUST be 'ROLLBACK_CRITICAL_FAILED' so operator UI distinguishes 'binaryless' (manual fix needed) from " +
+                          $"plain 'ROLLED_BACK' (recovered automatically). Got: '{statusPayload.Status}'. Detail: {statusPayload.Detail}");
+
+        statusPayload.Detail.ShouldContain("manual intervention",
+            customMessage: $"detail MUST tell operators they need to manually intervene — without this, the operator could mistake " +
+                          $"this for a transient retry-eligible failure. Got: '{statusPayload.Detail}'");
+
+        // Operator-visible terminal log line — the .sh prints "CRITICAL"
+        // before exit 9. If absent, the .sh skipped the diagnostic and
+        // operators tailing journalctl have no signal.
+        output.ShouldContain("CRITICAL: rollback also failed",
+            customMessage: "stdout MUST contain 'CRITICAL: rollback also failed' so operators tailing journalctl see the unrecoverable signal " +
+                          "(in addition to the last-upgrade.json status, which the UI surfaces but operators on the box need the log too).");
+
+        // Reverse-assert: NO .bak directory after rollback's mv. Even on
+        // the critical-failed path, the mv did succeed (our corruption
+        // happens AFTER the mv); .bak gets consumed.
+        var critBakDir = ctx.Fixture.InstallDir + ".bak";
+        Directory.Exists(critBakDir).ShouldBeFalse(
+            customMessage: $".bak dir at {critBakDir} MUST NOT exist after rollback's mv consumed it. " +
+                          "If .bak still exists: rollback's mv didn't run — different code path than this test exercises.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)

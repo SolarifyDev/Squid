@@ -441,6 +441,72 @@ public sealed class LinuxLifecycleContext : IDisposable
     }
 
     /// <summary>
+    /// Spawns a background watchdog Task that polls for the .bak directory
+    /// (created by Phase B's `sudo mv $INSTALL_DIR $BAK_DIR`) and, on
+    /// detection, corrupts its embedded service script so any subsequent
+    /// rollback attempt's `systemctl start` fires the broken script and
+    /// exits 1 immediately.
+    ///
+    /// <para>Used by E1.uRollbackCritical-Linux to drive the worst-case
+    /// path: Phase B fails (failHealthz=true v2 triggers the rollback
+    /// chain) AND the rollback's restore-from-.bak ALSO fails (because
+    /// .bak's v1 is now corrupted) → ROLLBACK_OK=0 → exit 9 +
+    /// ROLLBACK_CRITICAL_FAILED status.</para>
+    ///
+    /// <para>Why a watchdog (not pre-corruption): the .bak directory is
+    /// created at runtime by Phase B's mv. Pre-corrupting INSTALL_DIR's
+    /// script would crash the running v1 service before the test even
+    /// gets to v1-marker validation. Watchdog waits for .bak to exist
+    /// (= Phase B's mv just completed) THEN corrupts.</para>
+    ///
+    /// <para>Why ownership works: <c>sudo mv</c> preserves file ownership.
+    /// The test process owns INSTALL_DIR (under /tmp). After mv, .bak
+    /// is still owned by the test process — we can write to it without
+    /// sudo. Setting mode 0755 keeps the script executable so systemd
+    /// CAN run it (and observe the immediate exit-1).</para>
+    ///
+    /// <para>Returns a Task that completes when corruption is applied OR
+    /// the deadline expires. Caller awaits it after the .sh returns to
+    /// confirm the watchdog actually fired (vs the .sh somehow finishing
+    /// before .bak was even created — which would invalidate the test).</para>
+    /// </summary>
+    public Task<bool> StartBakCorruptionWatchdog(TimeSpan deadline)
+    {
+        var bakDir = Fixture.InstallDir + ".bak";
+        var bakScriptPath = Path.Combine(bakDir, "squid-linux-test-service.sh");
+
+        return Task.Run(() =>
+        {
+            var stopAt = DateTime.UtcNow + deadline;
+            while (DateTime.UtcNow < stopAt)
+            {
+                try
+                {
+                    if (Directory.Exists(bakDir) && File.Exists(bakScriptPath))
+                    {
+                        // Replace the v1 script with a deliberately broken
+                        // one. systemctl start will exec bash on this →
+                        // bash exits 1 → systemd marks unit failed → rollback
+                        // wait loop never sees is-active, ROLLBACK_OK=0.
+                        File.WriteAllText(bakScriptPath, "#!/bin/bash\nexit 1\n");
+                        File.SetUnixFileMode(bakScriptPath,
+                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // .bak might be in flux during Phase B's mv — retry.
+                }
+                Thread.Sleep(50);
+            }
+            return false;
+        });
+    }
+
+    /// <summary>
     /// SHA256 over the file's bytes, lowercase hex. Stable across runs
     /// (same content → same digest). Used by E15.h-Linux to pin
     /// byte-for-byte preservation of pre-staged instance state across
