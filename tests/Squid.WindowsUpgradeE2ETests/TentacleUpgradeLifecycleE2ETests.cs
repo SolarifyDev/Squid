@@ -662,6 +662,92 @@ public sealed class TentacleUpgradeLifecycleE2ETests
     }
 
     // ========================================================================
+    // E7.u1 — New binary's OnStart fails post-swap → auto-rollback restores v1
+    //
+    // The most operationally critical "failed upgrade" path: Phase B's
+    // Stop-Service + Move-Item swap succeeded, but the new binary throws
+    // from OnStart (DI graph crash, missing dependency, broken config
+    // schema, etc.). SCM observes the OnStart exception → registers
+    // service as failed-to-start (event 1067 / 7000). The .ps1's
+    // Invoke-Rollback fires → moves new (broken) binary aside →
+    // restores .bak → restarts old binary → reports ROLLED_BACK.
+    //
+    // SHIP-BLOCKING. Without rollback, a failed upgrade leaves the
+    // operator's agent in a Stopped state with the new (broken) binary
+    // → manual SSH-and-restore required across every machine. With
+    // rollback, the operator sees ROLLED_BACK in the UI and the agent
+    // is auto-recovered to its previous version.
+    //
+    // Test mechanism: stage v1 service (clean), build v2 bundle WITH the
+    // crash-on-start.marker sentinel → Phase B swaps in v2 → SCM
+    // Start-Service throws (OnStart raised) → rollback fires → marker
+    // file goes back to "1.0.0" (proves v1 is running again).
+    // ========================================================================
+
+    [Fact]
+    public void E7u1_NewBinaryOnStartCrashes_TriggersAutoRollbackToV1()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        // Stage v1 service (clean — no crash marker).
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before E7.u1 can validate rollback restores to v1");
+
+        // Build v2 bundle with the crash sentinel — OnStart will throw post-swap.
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test", crashOnStart: true);
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        // Exit 8 is the documented "Start-Service post-swap failed → rollback fired" code.
+        exitCode.ShouldBe(8,
+            customMessage: $"crashing OnStart MUST trigger Invoke-Rollback (exit 8 per .ps1 header documentation). " +
+                          $"Got exit {exitCode}. If 0: rollback didn't fire → broken binary still in INSTALL_DIR. " +
+                          $"If 14: outer catch handled the Start-Service throw before Invoke-Rollback could (ordering bug in the .ps1). " +
+                          $"stdout:\n{stdout}");
+
+        // last-upgrade.json reports ROLLED_BACK with the operator-facing detail.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "last-upgrade.json MUST be written even on rollback path — operators need to see WHY the upgrade was rolled back via the UI");
+
+        statusPayload.Status.ShouldBe("ROLLED_BACK",
+            customMessage: $"status MUST be 'ROLLED_BACK' after a successful auto-rollback. Got: '{statusPayload.Status}'. " +
+                          $"If 'FAILED': rollback never fired (broken state). " +
+                          $"If 'ROLLBACK_CRITICAL_FAILED': old binary couldn't restart either (a separate failure mode — different test). " +
+                          $"Detail: {statusPayload.Detail}");
+
+        statusPayload.Detail.ShouldContain("Start-Service post-swap failed",
+            customMessage: $"detail MUST surface the original failure cause for operator diagnosis. Got: '{statusPayload.Detail}'");
+
+        // The CRITICAL post-rollback assertion: service MUST be running at v1 again.
+        // The test service's OnStart writes the marker with the version from
+        // version.txt — after rollback, .bak (v1, version.txt = "1.0.0") is at
+        // INSTALL_DIR, and Start-Service of v1 succeeds (no crash marker).
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: $"after auto-rollback, marker at {ctx.Fixture.MarkerFilePath} MUST contain '1.0.0' — " +
+                          "proves rollback restored v1 AND v1 service started cleanly. " +
+                          "If marker absent: rollback restored .bak but Start-Service didn't run / didn't reach RUNNING. " +
+                          "If marker = '2.0.0-test': swap proceeded despite crash → rollback didn't fire (ship-blocking regression).");
+
+        // Defense-in-depth: the broken v2 binary should be archived as `.failed`
+        // for operator post-mortem, not silently deleted.
+        var failedDir = Path.Combine(Path.GetDirectoryName(ctx.Fixture.InstallDir)!, Path.GetFileName(ctx.Fixture.InstallDir) + ".failed");
+        Directory.Exists(failedDir).ShouldBeTrue(
+            customMessage: $".failed directory MUST exist post-rollback at {failedDir} — operators need access to the broken binary for post-mortem. " +
+                          "If absent: rollback deleted the evidence → operator can't diagnose what made OnStart fail.");
+
+        // Clean up the .failed directory (fixture only owns INSTALL_DIR).
+        try { Directory.Delete(failedDir, recursive: true); } catch { /* best-effort */ }
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Drift detector — Pins the placeholder set this test substitutes against
     // the production .ps1's expected substitutions. New placeholders the
     // strategy adds without test-side rendering would silently leave
@@ -865,8 +951,15 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         /// Mirrors what the production tentacle release zip looks like:
         /// every framework-dependent .NET binary needs its sibling .dll /
         /// .runtimeconfig.json / .deps.json + runtimes\ subdir to start.
+        ///
+        /// <para><b>crashOnStart</b> (J.E.6): when true, includes the
+        /// `crash-on-start.marker` sentinel file in the bundle. The test
+        /// service's OnStart detects this and throws → SCM 1067 ("service
+        /// did not start in a timely fashion") → triggers .ps1's
+        /// rollback path. The OLD binary at .bak doesn't have the marker,
+        /// so post-rollback Start-Service succeeds at v1.</para>
         /// </summary>
-        public byte[] BuildV2BundleZip(string targetVersion)
+        public byte[] BuildV2BundleZip(string targetVersion, bool crashOnStart = false)
         {
             using var ms = new MemoryStream();
             using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
@@ -921,6 +1014,18 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 // never matches the targetVersion ⇒ the upgrade proceeds.
                 // (No-op — included as a comment to document why we don't
                 // need a separate "doesn't short-circuit" test.)
+
+                // J.E.6 rollback test seam: when crashOnStart=true, include
+                // the sentinel file the test service detects in OnStart →
+                // throws → SCM rejects start → triggers .ps1's rollback.
+                // Pinned by `TestUpgradeService.CrashOnStartMarkerFileName`.
+                if (crashOnStart)
+                {
+                    var crashMarkerEntry = zip.CreateEntry("crash-on-start.marker", System.IO.Compression.CompressionLevel.Fastest);
+                    using var crashStream = crashMarkerEntry.Open();
+                    using var writer = new StreamWriter(crashStream, new UTF8Encoding(false));
+                    writer.Write("# E2E rollback test sentinel — TestUpgradeService.OnStart throws when this file exists");
+                }
             }
 
             return ms.ToArray();

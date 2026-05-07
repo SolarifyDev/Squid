@@ -428,6 +428,75 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     // no test actually ran the rendered .ps1 through to the verify step.
     // ========================================================================
 
+    // ========================================================================
+    // J.E.6 — auto-rollback contract
+    //
+    // The .ps1 MUST roll back to the previous binary if Phase B's
+    // post-swap Start-Service throws (new binary's OnStart raised → SCM
+    // marks service as failed). Without rollback, a failed upgrade leaves
+    // the operator with INSTALL_DIR holding a broken binary + service in
+    // Stopped state. With rollback, the agent auto-recovers to the
+    // previous version and the operator sees ROLLED_BACK status in the UI.
+    //
+    // E2E coverage: TentacleUpgradeLifecycleE2ETests.E7u1_*.
+    // This unit test pins the structural shape of the rollback contract
+    // (function exists in template, key operations present, status enum
+    // used) so a future polish that drops the rollback path is caught at
+    // build time, not at the next operator-broken-upgrade incident.
+    // ========================================================================
+
+    [Fact]
+    public void RenderInnerScript_RollbackContract_PinnedStructurally()
+    {
+        var asm = typeof(WindowsTentacleUpgradeStrategy).Assembly;
+        using var stream = asm.GetManifestResourceStream("Squid.Core.Resources.Upgrade.upgrade-windows-tentacle.ps1")
+            ?? throw new System.IO.InvalidDataException("embedded template not found");
+        using var reader = new System.IO.StreamReader(stream);
+        var template = reader.ReadToEnd();
+
+        // 1. The Invoke-Rollback function MUST exist.
+        template.ShouldContain("function Invoke-Rollback",
+            customMessage: "Invoke-Rollback function REGRESSED. " +
+                          "Without this, a failed upgrade leaves the operator's INSTALL_DIR holding a broken binary + service Stopped → manual SSH-and-restore required across every machine. " +
+                          "Restore via the J.E.6 commit's pattern: function Invoke-Rollback { Stop-Service → archive broken to .failed → Move .bak → INSTALL_DIR → Start-Service old → write ROLLED_BACK }.");
+
+        // 2. Start-Service post-swap MUST be wrapped in try/catch calling Invoke-Rollback.
+        // String search for the exact pattern is brittle to whitespace; pin
+        // the key tokens that MUST coexist in the start-service block.
+        template.ShouldContain("Start-Service -Name $SERVICE_NAME",
+            customMessage: "Start-Service call REGRESSED — Phase B no longer attempts to start the new binary");
+        template.ShouldContain("Invoke-Rollback -Reason \"Start-Service post-swap failed",
+            customMessage: "Start-Service catch path MUST call Invoke-Rollback. " +
+                          "If absent: a Start-Service exception bubbles to the outer catch which writes 'Unexpected failure' status with exit 14 — broken binary stays in INSTALL_DIR.");
+
+        // 3. ROLLED_BACK status enum is the documented happy-path-of-rollback outcome.
+        template.ShouldContain("Write-UpgradeStatus -Status 'ROLLED_BACK'",
+            customMessage: "ROLLED_BACK status emit REGRESSED — operator UI would show generic FAILED instead of the actionable rollback marker");
+
+        // 4. ROLLBACK_CRITICAL_FAILED is the worst-case status (rollback restored .bak but old service won't start).
+        template.ShouldContain("'ROLLBACK_CRITICAL_FAILED'",
+            customMessage: "ROLLBACK_CRITICAL_FAILED status enum REGRESSED — without it, a fully-broken host (new AND old binary won't start) produces no actionable status");
+
+        // 5. Exit code 8 is the documented "Start-Service post-swap failed → rollback fired" code.
+        template.ShouldContain("-ExitCode 8",
+            customMessage: "exit code 8 REGRESSED — operator parsing the .ps1's exit doesn't see the rollback-fired signal");
+
+        // 6. The .failed archive path preserves the broken binary for post-mortem.
+        template.ShouldContain("\"$installLeaf.failed\"",
+            customMessage: ".failed archive path REGRESSED — operators need access to the broken binary to diagnose the OnStart failure. " +
+                          "If absent: rollback deletes the broken binary → operator must reproduce the failure to debug it.");
+
+        // 7. WaitForStatus('Running', ...) is what surfaces the OnStart exception synchronously.
+        // Start-Service returns when SCM accepts the start; the OnStart
+        // exception arrives asynchronously a few seconds later. Without
+        // WaitForStatus, the catch wouldn't fire — the .ps1 would proceed
+        // to the healthcheck loop with a service that's actually crashed.
+        template.ShouldContain("WaitForStatus('Running'",
+            customMessage: "WaitForStatus('Running', ...) REGRESSED. " +
+                          "Without this synchronous wait after Start-Service, an OnStart exception arrives asynchronously and the .ps1's catch can't see it. " +
+                          "Result: rollback never fires for the most common 'new binary is broken' failure mode.");
+    }
+
     [Fact]
     public void RenderInnerScript_ShaVerifyUsesDirectDotNetApi_NotGetFileHashCmdlet()
     {

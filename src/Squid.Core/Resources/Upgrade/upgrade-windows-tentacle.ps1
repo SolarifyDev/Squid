@@ -58,6 +58,7 @@
 #   3   — missing binary in extracted archive
 #   5   — insufficient disk space
 #   7   — SHA256 mismatch (only when EXPECTED_SHA256 is non-empty)
+#   8   — Start-Service post-swap failed → rollback fired (J.E.6)
 #   12  — Windows version too old (PowerShell 5.0+ required, Server 2016+)
 #   13  — failed to acquire upgrade lock (concurrent upgrade in progress)
 #   14  — no install method succeeded (zip + future chocolatey/MSI all skipped or failed)
@@ -155,6 +156,106 @@ function Append-UpgradeLog {
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     Add-Content -Path $LOG_FILE -Value "[$stamp] $Line"
     Write-Host $Line
+}
+
+# ── Rollback helper (J.E.6) ──────────────────────────────────────────────────
+# Restores the previous binary from .bak when Phase B can't bring the new
+# binary up. Three failure modes drive this:
+#   1. Start-Service throws (new binary's OnStart raised → SCM 1067 / "the
+#      service did not start in a timely fashion"). E.g., new binary has a
+#      broken DI graph that throws at construction time.
+#   2. Service start succeeded but new binary's healthcheck never returned
+#      200 within $HEALTHCHECK_RETRIES * 2 seconds — currently a warning
+#      (matches Octopus Tentacle's behaviour: capabilities probe will detect
+#      a missing version on the next health probe). A future env-var-gated
+#      "fatal" mode will make this a rollback trigger.
+#   3. Move-Item swap failed (rare: file in use, permission). Phase A
+#      already validated $extractDir exists; the only Move-Item failure
+#      mode here is filesystem-level. Best-effort: try restore.
+#
+# Rollback assumes: $bakDir, $INSTALL_DIR, $SERVICE_NAME, $INSTALL_METHOD,
+# $TARGET_VERSION are in scope (defined earlier in Phase A / Phase B).
+#
+# Status writes:
+#   - ROLLED_BACK              — clean restoration: old service is RUNNING again
+#   - ROLLBACK_NEEDED          — no .bak available (somehow), can't auto-restore
+#   - ROLLBACK_CRITICAL_FAILED — restored .bak but old service won't start either
+function Invoke-Rollback {
+    param(
+        [Parameter(Mandatory)] [string] $Reason,
+        [Parameter(Mandatory)] [int]    $ExitCode
+    )
+
+    Append-UpgradeLog "::warning:: [rollback] Initiating rollback: $Reason"
+
+    # Stop new service first if it managed to come up (degraded but running).
+    # Best-effort — SCM may already have force-killed it.
+    try {
+        $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
+        if ($null -ne $svc -and $svc.Status -ne 'Stopped') {
+            Append-UpgradeLog "[rollback] Stopping new service (current state: $($svc.Status))"
+            Stop-Service -Name $SERVICE_NAME -Force -ErrorAction SilentlyContinue
+            $svc.WaitForStatus('Stopped', '00:00:30')
+        }
+    } catch {
+        Append-UpgradeLog "[rollback] Couldn't cleanly stop new service: $($_.Exception.Message). Proceeding with restore — Move-Item might still succeed if SCM has released the binary."
+    }
+
+    # Resolve the .bak path the same way Phase B's backup step did.
+    $installParent = Split-Path -Parent $INSTALL_DIR
+    $installLeaf = Split-Path -Leaf $INSTALL_DIR
+    $bakDir = Join-Path $installParent "$installLeaf.bak"
+
+    if (-not (Test-Path $bakDir)) {
+        Append-UpgradeLog "::error:: [rollback] No .bak directory at $bakDir — cannot auto-restore. Operator must manually reinstall."
+        Write-UpgradeStatus -Status 'ROLLBACK_NEEDED' -InstallMethod $INSTALL_METHOD -Detail "Failure: $Reason. No .bak available — manual reinstall required." -ExitCode $ExitCode
+        exit $ExitCode
+    }
+
+    # Move new (broken) binary aside so the restore Move-Item has a clean
+    # destination. Use a `.failed` suffix so the operator can inspect the
+    # broken binary post-mortem if they want.
+    $failedDir = Join-Path $installParent "$installLeaf.failed"
+    try {
+        if (Test-Path $failedDir) {
+            Remove-Item -Path $failedDir -Recurse -Force
+        }
+        if (Test-Path $INSTALL_DIR) {
+            Append-UpgradeLog "[rollback] Moving broken $INSTALL_DIR → $failedDir for post-mortem"
+            Move-Item -Path $INSTALL_DIR -Destination $failedDir -Force
+        }
+    } catch {
+        Append-UpgradeLog "::error:: [rollback] Couldn't archive broken binary: $($_.Exception.Message). Restore may fail next step."
+    }
+
+    # Restore .bak → INSTALL_DIR.
+    try {
+        Append-UpgradeLog "[rollback] Restoring $bakDir → $INSTALL_DIR"
+        Move-Item -Path $bakDir -Destination $INSTALL_DIR -Force
+    } catch {
+        Append-UpgradeLog "::error:: [rollback] Restore Move-Item failed: $($_.Exception.Message)"
+        Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod $INSTALL_METHOD -Detail "Restore failed: $($_.Exception.Message). Failure: $Reason. Broken binary at $failedDir." -ExitCode $ExitCode
+        exit $ExitCode
+    }
+
+    # Restart old service.
+    try {
+        Append-UpgradeLog "[rollback] Starting service (old binary)"
+        Start-Service -Name $SERVICE_NAME
+
+        # Wait for SCM to confirm RUNNING — synchronous proof that the old
+        # service is genuinely back up before we report ROLLED_BACK.
+        $svc = Get-Service -Name $SERVICE_NAME
+        $svc.WaitForStatus('Running', '00:00:30')
+
+        Append-UpgradeLog "[rollback] Service running (old binary)"
+        Write-UpgradeStatus -Status 'ROLLED_BACK' -InstallMethod $INSTALL_METHOD -Detail "Rolled back from failed upgrade. Reason: $Reason. Broken binary preserved at $failedDir for inspection." -ExitCode $ExitCode
+    } catch {
+        Append-UpgradeLog "::error:: [rollback] Old service won't start after restore: $($_.Exception.Message)"
+        Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod $INSTALL_METHOD -Detail "Restored .bak but old service won't start: $($_.Exception.Message). Original failure: $Reason." -ExitCode $ExitCode
+    }
+
+    exit $ExitCode
 }
 
 # ── Idempotency: lock file ───────────────────────────────────────────────────
@@ -412,10 +513,29 @@ try {
         Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Binary swapped — restarting service"
     }
 
-    # Start the service (may already be running for first-install path)
+    # Start the service (may already be running for first-install path).
+    # Wrap in try/catch — if the new binary's OnStart throws (e.g. SCM 1067
+    # "service did not start in a timely fashion"), call Invoke-Rollback so
+    # the agent recovers to the old binary instead of being left in a half-
+    # swapped Stopped state. Wait for RUNNING state too — Start-Service
+    # returns when SCM accepts the start command, but the actual process
+    # OnStart may still throw a few seconds later. WaitForStatus surfaces
+    # that synchronously so the catch is reachable.
     if ($null -ne (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) {
         Append-UpgradeLog "[upgrade] Starting service $SERVICE_NAME"
-        Start-Service -Name $SERVICE_NAME
+        try {
+            Start-Service -Name $SERVICE_NAME
+
+            $svcVerify = Get-Service -Name $SERVICE_NAME
+            $svcVerify.WaitForStatus('Running', '00:00:30')
+
+            Append-UpgradeLog "[upgrade] Service $SERVICE_NAME reached RUNNING state"
+        } catch {
+            # Auto-rollback to old binary. Reason is captured for operator
+            # diagnostics in last-upgrade.json + upgrade.log. Exit 8 is the
+            # documented "Start-Service post-swap failed" code.
+            Invoke-Rollback -Reason "Start-Service post-swap failed: $($_.Exception.Message)" -ExitCode 8
+        }
     }
 
     # ── Health check ────────────────────────────────────────────────────────
