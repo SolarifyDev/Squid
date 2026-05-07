@@ -395,10 +395,14 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         // ServerCommsUrl + ServerCommsAddresses being empty. We didn't
         // pass --comms-url, so mode MUST be Listening. Catches a regression
         // where the mode-detection logic flipped (always reports Polling).
-        showOutput.ShouldContain("Detected Mode:        Listening",
-            customMessage: "show-config MUST report 'Detected Mode:        Listening' when no --comms-url was passed. " +
-                          "If 'Polling': mode-detection regressed (LinuxTentacleFlavor.ResolveCommunicationMode logic broke). " +
-                          $"\noutput:\n{showOutput}");
+        // Use regex match (\s+) so spacing changes in the printed format
+        // don't break this pin — operators care about LABEL + VALUE, not
+        // padding width.
+        System.Text.RegularExpressions.Regex.IsMatch(showOutput, @"Detected Mode:\s+Listening")
+            .ShouldBeTrue(
+                customMessage: "show-config MUST report 'Detected Mode:' followed by 'Listening' when no --comms-url was passed. " +
+                              "If 'Polling' instead: mode-detection regressed (LinuxTentacleFlavor.ResolveCommunicationMode logic broke). " +
+                              $"\noutput:\n{showOutput}");
 
         // Reverse-pin: the cert-error fallback path MUST NOT fire on the
         // happy path. ShowConfigCommand catches exceptions when loading
