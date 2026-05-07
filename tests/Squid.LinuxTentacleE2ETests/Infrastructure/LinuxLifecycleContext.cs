@@ -47,6 +47,9 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// <summary>The <c>upgrade.lock</c> path the .sh writes (under StateDirOverride).</summary>
     public string LockFilePath => Path.Combine(StateDirOverride, "upgrade.lock");
 
+    /// <summary>The <c>upgrade-events.jsonl</c> path the .sh writes — append-only structured event log read by the server's UI timeline.</summary>
+    public string EventsFilePath => Path.Combine(StateDirOverride, "upgrade-events.jsonl");
+
     /// <summary>
     /// Test-private mirror of production's per-OS config-dir (Linux:
     /// <c>/etc/squid-tentacle</c>). Used by E15.h-Linux to assert that
@@ -536,6 +539,55 @@ public sealed class LinuxLifecycleContext : IDisposable
     }
 
     /// <summary>
+    /// Reads + parses every line of the .sh-written <c>upgrade-events.jsonl</c>
+    /// into <see cref="UpgradeEvent"/> records. Each line is required to be
+    /// valid JSON with t/phase/kind/msg fields — any line that fails to
+    /// parse throws (the format contract MUST hold).
+    ///
+    /// <para>Used by E1.uEventsContract-Linux to pin the contract that
+    /// every event the .sh emits is parseable as JSON, has all required
+    /// fields, and uses the documented phase + kind tag set. The server's
+    /// UI timeline reads this file via Capabilities RPC and any format
+    /// regression silently breaks operator visibility into upgrade
+    /// progress.</para>
+    /// </summary>
+    public IReadOnlyList<UpgradeEvent> ReadUpgradeEvents()
+    {
+        if (!File.Exists(EventsFilePath))
+            return new List<UpgradeEvent>();
+
+        var lines = File.ReadAllLines(EventsFilePath);
+        var events = new List<UpgradeEvent>();
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            try
+            {
+                var parsed = System.Text.Json.JsonDocument.Parse(line);
+                var root = parsed.RootElement;
+
+                events.Add(new UpgradeEvent(
+                    T: root.GetProperty("t").GetString() ?? string.Empty,
+                    Phase: root.GetProperty("phase").GetString() ?? string.Empty,
+                    Kind: root.GetProperty("kind").GetString() ?? string.Empty,
+                    Msg: root.GetProperty("msg").GetString() ?? string.Empty
+                ));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Malformed event line in {EventsFilePath}: '{line}'. " +
+                    "Server-side timeline parser would silently drop or crash on this. " +
+                    $"Underlying error: {ex.Message}", ex);
+            }
+        }
+
+        return events;
+    }
+
+    /// <summary>
     /// Reads the .sh-written <c>last-upgrade.json</c>. Returns null if
     /// the file doesn't exist OR is unparseable.
     /// </summary>
@@ -682,6 +734,14 @@ public sealed class LinuxLifecycleContext : IDisposable
 /// E15.h-Linux can pin byte-for-byte preservation across an upgrade.
 /// </summary>
 public sealed record InstanceConfigPaths(string Registry, string Config, string Cert);
+
+/// <summary>
+/// One parsed line from the .sh's <c>upgrade-events.jsonl</c> append-only
+/// event log. Mirrors the wire format the server's UI timeline parser
+/// consumes:
+/// <code>{"t":"2026-04-22T02:57:04Z","phase":"A","kind":"start","msg":"..."}</code>
+/// </summary>
+public sealed record UpgradeEvent(string T, string Phase, string Kind, string Msg);
 
 /// <summary>
 /// Disposable wrapper around the background <c>flock</c> child process
