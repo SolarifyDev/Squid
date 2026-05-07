@@ -190,6 +190,156 @@ public sealed class TentacleLinuxRegisterE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // C1.u1-Linux — Server returns 401 unauthorized → register exits non-zero
+    //               WITHOUT retry, no config persisted
+    //
+    // Real-world driver: operator typos `--api-key` (or the key was revoked
+    // server-side). Production server returns 401 Unauthorized.
+    //
+    // Per TentacleRegistrationClient.RegisterAsync line 56-60: client errors
+    // (4xx) are NOT retried — the registrar throws immediately. Bubbles to
+    // RegisterCommand → unhandled exception → exit 1.
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - 4xx retry logic regresses to retry-anyway → operator sees 10
+    //     retries × exponential backoff (~5min hang) before final failure
+    //     instead of the documented immediate-fail behavior
+    //   - Exception handling at the CLI boundary changes (e.g. exit 0
+    //     swallowed) → operator sees "success" but no config persisted
+    //   - Config persistence runs DESPITE the auth failure → leaves
+    //     stale incomplete config that confuses subsequent register attempts
+    //
+    // Test mechanism: stub configured with status 401, run register, assert:
+    //   - Stub received exactly 1 call (no retry on client errors)
+    //   - Binary exit non-zero
+    //   - Config file NOT persisted
+    //
+    // Tier: 🟢 H. Reuses fixture; only differs in stub status code.
+    // Expected runtime: ~1s.
+    // ========================================================================
+
+    [Fact]
+    public void C1u1_RegisterListening_Server401_ExitsNonZeroWithoutRetry()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // Stub returns 401 for register endpoint. Body content doesn't matter —
+        // production parses status code first.
+        ctx.Stub.ConfigureRegisterStatusCode(401);
+        ctx.Stub.ConfigureRegisterBody("{\"error\":\"unauthorized: invalid API key\"}");
+
+        var (exitCode, output) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-INVALID-KEY",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+
+        exitCode.ShouldNotBe(0,
+            customMessage: $"register MUST exit non-zero on 401. Got exit {exitCode}. " +
+                          $"If 0: client-error handling regressed (auth failure swallowed → operator sees 'success' but no config persisted). " +
+                          $"output:\n{output}");
+
+        // Production contract: 4xx errors are NOT retried (line 56 of
+        // TentacleRegistrationClient.RegisterAsync). Stub MUST have received
+        // exactly 1 call — if more, retry logic regressed.
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBe(1,
+            customMessage: $"stub MUST have received exactly 1 register call (4xx errors NOT retried per production contract). " +
+                          $"Got {ctx.Stub.ReceivedRegistrations.Count} calls. " +
+                          $"If >1: retry-on-4xx regressed → operator hangs ~5min on each typo'd API key instead of fail-fast.");
+
+        // Config file MUST NOT be persisted after auth failure.
+        // PersistInstanceConfig (line 126 of RegisterCommand) runs only AFTER
+        // RegisterAsync succeeds — auth-failed register throws before reaching it.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
+            customMessage: $"config file at {configPath} MUST NOT exist after 401-failed register. " +
+                          "If present: PersistInstanceConfig ran despite auth failure → stale incomplete config confuses subsequent register attempts. " +
+                          "Production impact: operator can't recover via re-register because the broken config blocks fresh attempts.");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // C1.u4-Linux — Server returns 200 with NON-JSON body → register fails
+    //
+    // Real-world driver: proxy/CDN/gateway injects an HTML error page,
+    // ALB returns plain text "OK" health probe, or server-side bug emits
+    // raw stack trace. Production deserializes via System.Text.Json which
+    // throws JsonException on non-JSON input → bubbles up → exit non-zero.
+    //
+    // Without this pin, regressions ship silently:
+    //   - JsonException swallowed at the registrar boundary → operator sees
+    //     "success" with default-empty config (machineId=0, no thumbprint)
+    //   - Persisted config has zero useful state → agent unreachable from
+    //     server, but operator believes registration succeeded
+    //
+    // ── KNOWN PRODUCTION GAP DISCOVERED BY THIS TEST ──────────────────────
+    // J.M.L.C.2 first runner ALSO tried `{"data":{"machineId":0,"serverThumbprint":""}}`
+    // (valid JSON, semantically incomplete). That case currently EXITS 0
+    // because TentacleListeningRegistrar (lines 196-201) silently accepts
+    // machineId=0 + falls back to settings.ServerCertificate for thumbprint
+    // — UNLIKE TentacleRegistrationClient (Polling) which has
+    // EnsureRegistrationPayloadComplete validation. Asymmetry tracked as a
+    // separate prod-fix task. This test pins the case that DOES correctly
+    // throw (non-JSON body); the incomplete-payload-but-valid-JSON gap will
+    // get its own E2E test once the production validation is added.
+    // ─────────────────────────────────────────────────────────────────────
+    //
+    // Test mechanism: stub returns 200 with HTML body (simulates proxy
+    // error page injection). Production JsonSerializer.Deserialize throws
+    // JsonException → register exit non-zero.
+    //
+    // Tier: 🟢 H. Same fixture; differs in stub body override.
+    // Expected runtime: ~1s.
+    // ========================================================================
+
+    [Fact]
+    public void C1u4_RegisterListening_NonJsonBody_ExitsNonZero()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // 200 status (transport success) but body is HTML (e.g. proxy
+        // injection of an error page). System.Text.Json rejects with
+        // JsonException at the first non-whitespace non-`{` byte.
+        ctx.Stub.ConfigureRegisterStatusCode(200);
+        ctx.Stub.ConfigureRegisterBody("<html><body><h1>502 Bad Gateway</h1><p>Proxy error</p></body></html>");
+
+        var (exitCode, output) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-STUB-1234567890",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+
+        exitCode.ShouldNotBe(0,
+            customMessage: $"register MUST exit non-zero on non-JSON response body. Got exit {exitCode}. " +
+                          $"If 0: JsonException is being swallowed at the registrar boundary — operator sees 'success' with default-empty config, agent unreachable from server. " +
+                          $"output:\n{output}");
+
+        // Stub MUST have received the register call (we're testing parser
+        // failure, not transport failure).
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBeGreaterThan(0,
+            customMessage: "stub MUST have received at least 1 register call before parser rejected.");
+
+        // Config NOT persisted — JsonException happens before PersistInstanceConfig.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
+            customMessage: $"config file at {configPath} MUST NOT exist after non-JSON-response register. " +
+                          "If present: parser failure didn't abort PersistInstanceConfig → operator gets 'success' with bogus state.");
+
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Per-test context: owns the stub server + binary fixture + cleanup.
     /// </summary>
