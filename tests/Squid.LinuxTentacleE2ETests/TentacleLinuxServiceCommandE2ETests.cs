@@ -516,6 +516,136 @@ public sealed class TentacleLinuxServiceCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // B4.h-Linux — `service stop` returns running agent to inactive state
+    //
+    // Operator workflow this pins:
+    //
+    //   sudo squid-tentacle service stop --service-name <name>
+    //
+    // Real-world drivers:
+    //   - Operator takes an agent down for maintenance (host reboot,
+    //     hardware swap, OS upgrade)
+    //   - Operator drains a running agent before uninstall (ensures no
+    //     in-flight scripts get killed mid-execution)
+    //   - Fleet automation pauses agents during deploy windows
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - Stop command exits 0 but service is still running (operator
+    //     thinks they brought it down, host reboots cleanly hours later
+    //     interrupting in-flight work)
+    //   - Stop hangs because TimeoutStopSec coordination broke and
+    //     systemd waits 5min before SIGKILL
+    //   - Stop succeeds but corrupts state (no clean shutdown drain)
+    //
+    // Test mechanism: composes B3h's full-workflow setup (register +
+    // install + wait active), then stops via production CLI + asserts
+    // is-active returns non-zero within reasonable timeout.
+    //
+    // Why this test couldn't exist before B3h: stop assertion only
+    // makes sense if service is actually running. B3h proved that;
+    // B4h builds on it.
+    //
+    // Tier: 🟢 H. Composes Register + Service install + Service stop
+    // through systemd to actually-running-then-stopped agent.
+    //
+    // Expected runtime: ~15-20s (B3h's ~12s + stop ~3s + is-inactive
+    // poll ~3s).
+    // ========================================================================
+
+    [Fact]
+    public void B4h_FullWorkflow_ServiceStop_ReturnsToInactiveState()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new FullWorkflowTestContext();
+
+        // ── Reuse B3h's setup: register + install + wait active ──────────
+        var (regExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-STOP-TEST-1234",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        regExit.ShouldBe(0, "B4h precondition: register must succeed");
+
+        var (installExit, _) = ctx.Binary.SudoRun("service", "install", "--service-name", ctx.ServiceName);
+        installExit.ShouldBe(0, "B4h precondition: service install must succeed");
+
+        // Wait for active state (precondition for the stop test).
+        var activeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        var becameActive = false;
+        while (DateTime.UtcNow < activeDeadline)
+        {
+            var (exitCode, output) = RunSystemctl("is-active", ctx.ServiceName);
+            if (exitCode == 0 && output.Trim().StartsWith("active", StringComparison.OrdinalIgnoreCase))
+            {
+                becameActive = true;
+                break;
+            }
+            Thread.Sleep(500);
+        }
+        becameActive.ShouldBeTrue("B4h precondition: service must reach active before stop can be tested");
+
+        // ── Step: stop via production CLI ─────────────────────────────────
+        var (stopExit, stopOutput) = ctx.Binary.SudoRun("service", "stop", "--service-name", ctx.ServiceName);
+
+        stopExit.ShouldBe(0,
+            customMessage: $"`service stop` MUST exit 0. Got exit {stopExit}. " +
+                          $"If non-zero: stop chain failed (systemctl stop returned non-zero, OR TimeoutStopSec triggered SIGKILL). " +
+                          $"output:\n{stopOutput}");
+
+        // ── Assert: service reached inactive within reasonable timeout ────
+        // is-active returns 0 for active, non-zero for inactive/failed/etc.
+        // After stop, MUST be non-zero AND output should be "inactive" (not
+        // "failed" — failed = service crashed, inactive = clean stop).
+        var inactiveDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var becameInactive = false;
+        var lastStatus = "(not yet polled)";
+
+        while (DateTime.UtcNow < inactiveDeadline)
+        {
+            var (exitCode, output) = RunSystemctl("is-active", ctx.ServiceName);
+            lastStatus = output.Trim();
+            if (exitCode != 0 && lastStatus.StartsWith("inactive", StringComparison.OrdinalIgnoreCase))
+            {
+                becameInactive = true;
+                break;
+            }
+            Thread.Sleep(500);
+        }
+
+        if (!becameInactive)
+        {
+            // Diagnostic: dump status + journal so failure tells the operator
+            // WHY stop didn't reach inactive. Most likely failures:
+            //   - "active" still: stop didn't propagate to the agent
+            //     process (service stop CLI returned 0 but didn't actually
+            //     systemctl-stop)
+            //   - "failed": agent crashed instead of clean shutdown
+            //   - "deactivating" stuck: ShutdownDrainTimeoutSeconds hit
+            //     TimeoutStopSec ceiling
+            var (_, statusOutput) = RunSystemctl("status", ctx.ServiceName);
+            var journalOutput = RunJournalctl(ctx.ServiceName);
+
+            becameInactive.ShouldBeTrue(
+                customMessage: $"service '{ctx.ServiceName}' did NOT reach inactive state within 10s after `service stop`. " +
+                              $"Last is-active status: '{lastStatus}'. " +
+                              $"\n\nsystemctl status:\n{statusOutput}" +
+                              $"\n\njournalctl tail:\n{journalOutput}");
+        }
+
+        // Cleanup.
+        var (uninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--service-name", ctx.ServiceName);
+        uninstallExit.ShouldBe(0, "uninstall must succeed");
+
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
