@@ -54,7 +54,8 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
     //   6. Assertions:
     //      - exit 0
     //      - last-upgrade.json reports SUCCESS, target version, tarball method
-    //      - service marker file content swapped from "1.0.0" to "2.0.0"
+    //      - service marker file content swapped from "1.0.0" to "2.0.0-test"
+    //        (FULL pre-release suffix, matching .sh's exact-match version probe)
     //      - service is still running on systemctl is-active
     //
     // High-fidelity. No mocks at any layer — production .sh + real
@@ -123,7 +124,13 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         // 30s timeout is generous; .sh's healthz already passed (.sh exited
         // 0 and last-upgrade.json shows SUCCESS), so service IS running —
         // we just need its marker write to land.
-        if (!WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)))
+        //
+        // J.L.E.7.6: assert FULL "2.0.0-test" (not stripped "2.0.0") because
+        // version.txt now writes the full target version verbatim, matching
+        // the .sh's exact-string version probe in Phase B. If we asserted
+        // stripped "2.0.0" here AND the .sh's probe rejected stripped output,
+        // we'd never see the upgrade succeed end-to-end.
+        if (!WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)))
         {
             // Diagnostic dump: capture install dir state for debugging.
             var diag = new System.Text.StringBuilder();
@@ -145,8 +152,9 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
             catch (Exception ex) { diag.AppendLine($"  (diagnostic dump failed: {ex.Message})"); }
 
             throw new Shouldly.ShouldAssertException(
-                $"after Phase B mv swap + systemctl restart, marker at {ctx.Fixture.MarkerFilePath} MUST contain '2.0.0' within 30s. " +
+                $"after Phase B mv swap + systemctl restart, marker at {ctx.Fixture.MarkerFilePath} MUST contain '2.0.0-test' within 30s. " +
                 "If marker still '1.0.0': swap failed OR new service didn't start. " +
+                "If marker shows stripped '2.0.0' (no '-test'): version.txt was stripped — check BuildV2BundleTarGz did NOT split on '-'. " +
                 "If marker absent: trap-handler ran OR rollback fired OR service script crashed pre-marker-write.\n\n" +
                 $"Diagnostic state:\n{diag}\n\n" +
                 $"Marker exists: {File.Exists(ctx.Fixture.MarkerFilePath)}, " +
