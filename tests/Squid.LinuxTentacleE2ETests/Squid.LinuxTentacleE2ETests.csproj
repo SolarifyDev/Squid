@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 12.L (Linux E2E) — counterpart to Squid.WindowsUpgradeE2ETests.
+    Drives the production `upgrade-linux-tentacle.sh` + `install-tentacle.sh`
+    scripts end-to-end against real systemd / apt / dnf / curl / tar tooling
+    on the GHA `ubuntu-latest` runner.
+
+    Cross-platform build (compiles on Win/macOS/Linux); tests skip-guard
+    on `OperatingSystem.IsLinux()` so dev-host `dotnet test` runs cleanly.
+    The CI workflow that ACTUALLY exercises the tests is `.github/workflows/
+    tentacle-linux-e2e.yml` running on `ubuntu-latest`.
+
+    Why a separate project (vs adding to Squid.WindowsUpgradeE2ETests):
+      - Different fixture surface (systemd vs sc.exe; apt/dnf vs MSI/zip;
+        curl vs Invoke-WebRequest; tar.gz vs zip).
+      - Different runner image (`ubuntu-latest` vs `windows-latest`)
+        means separate workflow files; keeping projects 1:1 with workflows
+        simplifies the GHA filter mapping.
+      - Project-level `[Trait("Category", "Linux*E2E")]` partition lets
+        tests.yml + tentacle-linux-e2e.yml cleanly target only the Linux
+        side without filter cross-talk.
+
+    Convention parity with Windows project:
+      - Same csproj structure (no MSTest, xUnit + Shouldly + custom fixtures)
+      - Same skip-guard pattern (`if (!OperatingSystem.IsLinux()) return;`)
+      - Same naming (categories suffixed `*E2E`, classes suffixed `*E2ETests`)
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Squid.LinuxTentacleE2ETests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Squid.Core\Squid.Core.csproj" />
+  </ItemGroup>
+
+</Project>

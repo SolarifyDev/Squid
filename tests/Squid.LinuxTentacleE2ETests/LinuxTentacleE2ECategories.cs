@@ -1,0 +1,24 @@
+namespace Squid.LinuxTentacleE2ETests;
+
+/// <summary>
+/// xUnit Trait categories for the Linux upgrade E2E suite. Mirrors
+/// <c>WindowsUpgradeE2ECategories</c> for the Windows project.
+///
+/// <para>The CI workflow filters by these categories. A developer running
+/// the suite locally on macOS/Windows gets a clean "0 ran, 0 passed"
+/// rather than spurious failures from
+/// <c>if (!OperatingSystem.IsLinux()) return</c> short-circuits.</para>
+/// </summary>
+public static class LinuxTentacleE2ECategories
+{
+    /// <summary>
+    /// Phase 12.L.E.1 baseline E2E coverage for the production
+    /// <c>upgrade-linux-tentacle.sh</c> placeholder substitution + bash
+    /// parse-cleanliness contract. Cross-platform safe (uses bash -n
+    /// available on Linux + macOS); doesn't actually run an upgrade.
+    ///
+    /// <para>Subsequent phases (12.L.E.2+) extend this with real
+    /// systemd-run / systemctl restart / apt / dnf / curl flows.</para>
+    /// </summary>
+    public const string UpgradeScript = "LinuxTentacleUpgradeScriptE2E";
+}

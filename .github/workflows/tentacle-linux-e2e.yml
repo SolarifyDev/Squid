@@ -1,0 +1,66 @@
+name: Tentacle Linux E2E
+
+# Linux runners are 1x billing on GHA (vs Windows 2x), so we can afford to
+# run on every PR touching Linux-relevant paths. But the tentacle Linux E2E
+# is operationally heavier (apt/dnf interactions, systemd, sudo) and most
+# PRs don't touch the Linux upgrade flow. Match the Windows workflow's
+# cadence: nightly schedule + on-merge-to-main + workflow_dispatch for
+# on-demand runs.
+#
+# Future expansion (12.L.E.2+): when full systemd-driven E2E lands, this
+# workflow will drive `dotnet test` against ubuntu-latest (sudo + systemd
+# + apt available) and the test fixture will install/start a transient
+# systemd service for the upgrade-flow swap mechanics. Today the workflow
+# only runs the placeholder-drift + bash-parse tests which need no system
+# infrastructure.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"    # 09:00 UTC daily — same window as Windows workflow
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "xUnit --filter for the Squid.LinuxTentacleE2ETests step"
+        required: false
+        default: "Category=LinuxTentacleUpgradeScriptE2E"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-tentacle-e2e:
+    name: Linux Tentacle End-to-End
+    runs-on: ubuntu-latest
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Confirm bash + systemd available
+        run: |
+          bash --version | head -1
+          systemctl --version | head -1 || echo "systemd not on PATH (acceptable for L.E.1 — no systemd-driven tests yet)"
+
+      - name: Restore Squid.LinuxTentacleE2ETests
+        run: dotnet restore tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Run Squid.LinuxTentacleE2ETests
+        run: |
+          FILTER="${{ github.event.inputs.test_filter }}"
+          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E"; fi
+          dotnet test tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj \
+            --configuration Release --no-restore \
+            --filter "$FILTER" \
+            --logger "console;verbosity=normal"
