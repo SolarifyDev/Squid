@@ -87,6 +87,26 @@ public sealed class TestUpgradeService : ServiceBase
     /// </summary>
     public const string MarkerFileName = "service-running.marker";
 
+    /// <summary>
+    /// Sentinel file that, if present in the exe directory at OnStart
+    /// time, makes the service deliberately fail to start. SCM observes
+    /// the OnStart exception → registers the service as failed-to-start
+    /// (event 7000 / 1067). Used by upgrade-rollback E2E tests
+    /// (J.E.6 / E7.u1): the v2 bundle includes this marker so the
+    /// post-swap Start-Service call throws → upgrade-windows-tentacle.ps1's
+    /// rollback path fires → restores .bak (v1, no marker) → service
+    /// recovers at v1.
+    ///
+    /// <para><b>Why a sentinel file (not a separate "crashing" exe binary)</b>:
+    /// keeping the same binary keeps the test surface lean. The CRASHING
+    /// behaviour is a configuration of the same binary, identical to how
+    /// production agents differ across deployments by config file alone —
+    /// not by binary identity. A separate crashing-binary project would
+    /// duplicate the OnStart / OnStop / version-read logic and force tests
+    /// to manage two artifact paths.</para>
+    /// </summary>
+    public const string CrashOnStartMarkerFileName = "crash-on-start.marker";
+
     public TestUpgradeService()
     {
         ServiceName = "SquidUpgradeE2ETestService";  // overridden by sc.exe at install time
@@ -96,9 +116,21 @@ public sealed class TestUpgradeService : ServiceBase
 
     protected override void OnStart(string[] args)
     {
+        // Rollback-test sentinel check FIRST. If the v2 bundle was staged
+        // with `crash-on-start.marker`, throw deliberately so SCM marks the
+        // start as failed → triggers .ps1's rollback → service comes back
+        // at v1 (which has no marker) → operator-visible recovery.
+        var exeDir = AppContext.BaseDirectory;
+        var crashMarker = Path.Combine(exeDir, CrashOnStartMarkerFileName);
+        if (File.Exists(crashMarker))
+            throw new InvalidOperationException(
+                $"OnStart aborted by test sentinel at {crashMarker}. " +
+                "This is intentional: rollback-on-failure E2E tests stage this marker " +
+                "into the v2 bundle so the post-swap Start-Service throws and the .ps1's " +
+                "rollback path fires.");
+
         try
         {
-            var exeDir = AppContext.BaseDirectory;
             var markerPath = Path.Combine(exeDir, MarkerFileName);
             File.WriteAllText(markerPath, Program.ReadCurrentVersion());
         }
