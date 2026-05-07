@@ -629,6 +629,167 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // G4.h-Linux — `delete-instance --instance Alpha` MUST NOT destroy Beta
+    //
+    // Mirror of G3h's `service uninstall --purge` cross-instance safety
+    // pin, but at the lower-level <c>delete-instance</c> command:
+    //
+    //   sudo squid-tentacle delete-instance --instance Alpha
+    //
+    // Operator scenario: an operator wants to remove Alpha (e.g. it was
+    // misconfigured, or the instance was created experimentally) WITHOUT
+    // touching Alpha's service first (because no service was ever
+    // installed for it). They run delete-instance, which:
+    //
+    //   1. Reads instance.ConfigPath from registry
+    //   2. DeleteIfExists(ConfigPath) — file delete
+    //   3. Resolves InstanceSelector.ResolveCertsPath(record) →
+    //      Path.GetDirectoryName(certsDir) = .../instances/Alpha/
+    //   4. IsSafeInstanceDir guard: dir name MUST equal instance name
+    //   5. Directory.Delete(instanceDir, recursive: true) if guard passes
+    //   6. registry.Remove(instanceName)
+    //
+    // Same safety contract as G3h's `--purge`: the recursive delete
+    // MUST be confined to the instance's own directory. A regression
+    // in IsSafeInstanceDir (always-true), or in ResolveCertsPath
+    // (returning the SHARED parent), would silently nuke Beta's state
+    // on every Alpha decommission.
+    //
+    // Why pin both G3h (purge) and G4h (delete-instance): they share
+    // the safety logic but operators reach them through different
+    // commands. A change in IsSafeInstanceDir affects BOTH; pinning
+    // both surfaces ensures any regression breaks at least one test
+    // even if only one path is exercised in CI.
+    //
+    // Test mechanism:
+    //   1. Setup: register Alpha + register Beta (G1h-style; no service
+    //      install needed — delete-instance doesn't touch service state,
+    //      keeping the test focused on instance-management isolation)
+    //   2. Run delete-instance --instance Alpha
+    //   3. Assert exit 0
+    //   4. Assert Alpha's config file + cert dir GONE (happy path)
+    //   5. Assert Beta's config + cert dir + registry entry SURVIVE
+    //      (the safety pin)
+    //   6. Assert instances.json no longer contains Alpha
+    //   7. Assert stdout logs deletion scoped to Alpha specifically
+    //
+    // Tier: 🟢 H. Real binary + real filesystem state. No systemd state
+    // touched — keeps the test scope tight.
+    //
+    // Expected runtime: ~5-8s (2× create-instance + 2× register + 1×
+    // delete-instance + 7 assertions; no service install / systemctl).
+    // ========================================================================
+
+    [Fact]
+    public void G4h_DeleteInstanceAlpha_DoesNotDestroyBetaState()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+
+        using var ctx = new MultiInstanceTestContext();
+
+        // ── Setup: register both Alpha + Beta (G1h-style) ─────────────────
+        var (alphaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.AlphaInstance);
+        alphaCreateExit.ShouldBe(0, "G4h precondition: create-instance Alpha must succeed");
+
+        var (alphaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.AlphaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G4-ALPHA",
+            "--name", ctx.AlphaMachineName,
+            "--role", "alpha-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
+        alphaRegExit.ShouldBe(0, "G4h precondition: register Alpha must succeed");
+
+        var (betaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.BetaInstance);
+        betaCreateExit.ShouldBe(0, "G4h precondition: create-instance Beta must succeed");
+
+        var (betaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.BetaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G4-BETA",
+            "--name", ctx.BetaMachineName,
+            "--role", "beta-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
+        betaRegExit.ShouldBe(0, "G4h precondition: register Beta must succeed");
+
+        // Sanity preconditions: Beta's artefacts MUST exist before delete —
+        // otherwise the survival pin below is vacuous.
+        var alphaConfig = $"/etc/squid-tentacle/instances/{ctx.AlphaInstance}.config.json";
+        var alphaInstanceDir = $"/etc/squid-tentacle/instances/{ctx.AlphaInstance}";
+        var betaConfig = $"/etc/squid-tentacle/instances/{ctx.BetaInstance}.config.json";
+        var betaInstanceDir = $"/etc/squid-tentacle/instances/{ctx.BetaInstance}";
+
+        LinuxInstallScriptContext.SudoFileExists(alphaConfig).ShouldBeTrue("G4h precondition: Alpha config must exist before delete");
+        LinuxInstallScriptContext.SudoFileExists(betaConfig).ShouldBeTrue("G4h precondition: Beta config must exist before delete");
+        LinuxInstallScriptContext.SudoDirectoryExists(betaInstanceDir).ShouldBeTrue("G4h precondition: Beta cert dir must exist before delete");
+
+        // ── Action: delete-instance Alpha ─────────────────────────────────
+        var (deleteExit, deleteOutput) = ctx.Binary.SudoRun(
+            "delete-instance", "--instance", ctx.AlphaInstance);
+
+        deleteExit.ShouldBe(0,
+            customMessage: $"`delete-instance --instance {ctx.AlphaInstance}` MUST exit 0. Got exit {deleteExit}. " +
+                          $"\noutput:\n{deleteOutput}");
+
+        // ── Assertion 1: Alpha's artefacts gone (happy-path sanity) ───────
+        // Without these the survival pin below could trivially pass via a
+        // no-op delete-instance.
+        LinuxInstallScriptContext.SudoFileExists(alphaConfig).ShouldBeFalse(
+            customMessage: $"Alpha config at {alphaConfig} MUST be gone after delete-instance. " +
+                          "If present: delete-instance silently no-op'd OR DeleteIfExists's File.Delete was bypassed.");
+
+        LinuxInstallScriptContext.SudoDirectoryExists(alphaInstanceDir).ShouldBeFalse(
+            customMessage: $"Alpha cert dir at {alphaInstanceDir} MUST be gone after delete-instance.");
+
+        // ── Assertion 2 (THE PIN): Beta SURVIVES ───────────────────────────
+        // IsSafeInstanceDir's name-match guard MUST prevent Alpha's delete
+        // from walking up into the shared parent /etc/squid-tentacle/
+        // instances/ directory and recursively wiping Beta with it.
+        LinuxInstallScriptContext.SudoFileExists(betaConfig).ShouldBeTrue(
+            customMessage: $"Beta config at {betaConfig} MUST STILL EXIST after Alpha's delete-instance. " +
+                          "If absent: delete-instance crossed the instance boundary — same catastrophic regression as G3h's --purge case " +
+                          "(IsSafeInstanceDir guard regression OR ResolveCertsPath returning shared parent). " +
+                          $"\nAlpha delete output:\n{deleteOutput}");
+
+        LinuxInstallScriptContext.SudoDirectoryExists(betaInstanceDir).ShouldBeTrue(
+            customMessage: $"Beta cert dir at {betaInstanceDir} MUST STILL EXIST after Alpha's delete-instance.");
+
+        // ── Assertion 3: registry entry boundary ──────────────────────────
+        var registryPath = "/etc/squid-tentacle/instances.json";
+        var registryContent = LinuxInstallScriptContext.SudoReadAllText(registryPath);
+
+        registryContent.ShouldContain(ctx.BetaInstance,
+            customMessage: $"instances.json MUST still list '{ctx.BetaInstance}' after Alpha's delete-instance. " +
+                          "If absent: registry.Remove regressed to wipe ALL entries. " +
+                          $"\ncontent:\n{registryContent}");
+
+        registryContent.ShouldNotContain(ctx.AlphaInstance,
+            customMessage: $"instances.json MUST NOT contain '{ctx.AlphaInstance}' after delete-instance. " +
+                          "If present: registry.Remove silently failed — operator's `list-instances` would still show Alpha.");
+
+        // ── Assertion 4: log boundary message — Alpha specifically ────────
+        // delete-instance prints "Instance 'NAME' deleted" via Console.WriteLine
+        // on the happy path (DeleteInstanceCommand.cs line 53).
+        deleteOutput.ShouldContain($"Instance '{ctx.AlphaInstance}' deleted",
+            customMessage: $"stdout MUST log delete scoped to '{ctx.AlphaInstance}' specifically. " +
+                          $"\noutput:\n{deleteOutput}");
+
+        // Cross-pin: Beta's name MUST NOT appear in any 'deleted' log line
+        // (smoking-gun signal of cross-instance destruction).
+        deleteOutput.ShouldNotContain($"Instance '{ctx.BetaInstance}' deleted",
+            customMessage: $"stdout MUST NOT contain 'Instance '{ctx.BetaInstance}' deleted' — that would mean Alpha's " +
+                          "delete-instance touched Beta's registry entry. Cross-instance contamination.");
+
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Wraps <c>sudo systemctl &lt;verb&gt; &lt;name&gt;</c> for is-enabled /
     /// is-active queries that are part of the multi-instance assertions.
