@@ -302,6 +302,36 @@ public sealed class LinuxInstallScriptContext : IDisposable
     }
 
     /// <summary>
+    /// Sudo-wrapped <c>test -d</c>. Returns true if the directory exists.
+    /// Same permission-boundary rationale as <see cref="SudoFileExists"/>:
+    /// directories under <c>/etc/squid-tentacle/instances/&lt;name&gt;/</c>
+    /// inherit the parent's restrictive ownership (root or the
+    /// <c>squid-tentacle</c> user, mode <c>0750</c>) so a non-root test
+    /// process can't <c>Directory.Exists</c> through them.
+    /// Used by J.M.L.B.6/B7 to pin <c>service uninstall --purge</c>'s
+    /// instance-directory contract.
+    /// </summary>
+    public static bool SudoDirectoryExists(string path)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "sudo",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("test");
+        psi.ArgumentList.Add("-d");
+        psi.ArgumentList.Add(path);
+
+        using var proc = Process.Start(psi);
+        proc?.WaitForExit(5_000);
+        return proc?.ExitCode == 0;
+    }
+
+    /// <summary>
     /// Sudo-wrapped <c>cat</c>. Returns the file's content as a string,
     /// or empty string on read failure. Same permission-boundary
     /// rationale as <see cref="SudoFileExists"/>.
