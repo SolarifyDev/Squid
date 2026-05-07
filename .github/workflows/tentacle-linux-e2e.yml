@@ -24,7 +24,7 @@ on:
       test_filter:
         description: "xUnit --filter for the Squid.LinuxTentacleE2ETests step"
         required: false
-        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E|Category=LinuxTentacleUpgradeLifecycleE2E|Category=LinuxTentacleInstallScriptE2E"
+        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E|Category=LinuxTentacleUpgradeLifecycleE2E|Category=LinuxTentacleInstallScriptE2E|Category=LinuxTentacleBinaryE2E"
 
 permissions:
   contents: read
