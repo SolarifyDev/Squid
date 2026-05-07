@@ -474,8 +474,25 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
 
         using var ctx = new DiagnosticTestContext();
 
-        // ── Run 1: fresh state, expect cert creation ──────────────────────
-        var (firstExit, firstOutput) = ctx.Binary.SudoRun("new-certificate");
+        // ── Documented prerequisite: create-instance first ────────────────
+        // create-instance eagerly creates the cert dir AND adds a registry
+        // entry so InstanceSelector.Resolve(Default) returns a record with
+        // a real ConfigPath. Without this, new-certificate's
+        // TentacleCertificateManager constructor receives an empty
+        // CertsPath and crashes inside Directory.CreateDirectory with a
+        // System.ArgumentException (NOT operator-friendly UX, but
+        // documented requirement per CreateInstanceCommand's comment:
+        // "Eagerly create per-instance certs directory so register/
+        // new-certificate can land in it.").
+        var createInstance = $"d4-instance-{Guid.NewGuid():N}";
+        ctx.RegisterInstanceForCleanup(createInstance);
+        var (createExit, createOutput) = ctx.Binary.SudoRun(
+            "create-instance", "--instance", createInstance);
+        createExit.ShouldBe(0,
+            customMessage: $"D4h precondition: create-instance MUST succeed.\noutput:\n{createOutput}");
+
+        // ── Run 1: cert dir prepared, expect cert creation ────────────────
+        var (firstExit, firstOutput) = ctx.Binary.SudoRun("new-certificate", "--instance", createInstance);
         firstExit.ShouldBe(0,
             customMessage: $"first `new-certificate` MUST exit 0. Got {firstExit}.\noutput:\n{firstOutput}");
 
@@ -500,7 +517,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         var firstThumbprint = firstMatches[^1].Value;
 
         // ── Run 2: existing cert, expect load + same thumbprint ───────────
-        var (secondExit, secondOutput) = ctx.Binary.SudoRun("new-certificate");
+        var (secondExit, secondOutput) = ctx.Binary.SudoRun("new-certificate", "--instance", createInstance);
         secondExit.ShouldBe(0,
             customMessage: $"second `new-certificate` MUST exit 0 (idempotent contract). Got {secondExit}.\noutput:\n{secondOutput}");
 
