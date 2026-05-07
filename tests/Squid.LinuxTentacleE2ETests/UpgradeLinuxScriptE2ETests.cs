@@ -62,6 +62,7 @@ public sealed class UpgradeLinuxScriptE2ETests
         {
             "DOWNLOAD_URL",
             "EXPECTED_SHA256",
+            "HEALTHCHECK_RETRIES",
             "HEALTHCHECK_URL",
             "INSTALL_DIR",
             "INSTALL_METHODS",

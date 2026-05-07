@@ -40,16 +40,19 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     private readonly string _previousBaseUrlOverride;
     private readonly string _previousHealthcheckUrlOverride;
     private readonly string _previousStateDirOverride;
+    private readonly string _previousHealthcheckRetriesOverride;
 
     public LinuxTentacleUpgradeStrategyTests()
     {
         _previousBaseUrlOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar);
         _previousHealthcheckUrlOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar);
         _previousStateDirOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar);
+        _previousHealthcheckRetriesOverride = SystemEnvironment.GetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar);
 
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar, null);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, null);
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, null);
     }
 
     public void Dispose()
@@ -57,6 +60,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, _previousBaseUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckUrlEnvVar, _previousHealthcheckUrlOverride);
         SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.StateDirEnvVar, _previousStateDirOverride);
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, _previousHealthcheckRetriesOverride);
     }
 
     [Fact]
@@ -146,6 +150,80 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
 
         rendered.ShouldContain("STATUS_DIR=\"/var/lib/squid-tentacle\"",
             customMessage: "default render MUST inject /var/lib/squid-tentacle — operators not-overriding see pre-PR behaviour");
+    }
+
+    // ── J.L.E.6: HealthcheckRetriesEnvVar pins ─────────────────────────────
+
+    [Fact]
+    public void HealthcheckRetriesEnvVar_ConstantNamePinned()
+    {
+        LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar
+            .ShouldBe("SQUID_TARGET_LINUX_TENTACLE_HEALTHCHECK_RETRIES");
+    }
+
+    [Fact]
+    public void ResolveHealthcheckRetries_NoEnvVar_ReturnsDefault90()
+    {
+        // 90 × 1s sleep = 90s wait window. Pre-J.L.E.6 was hardcoded 90;
+        // pin to preserve operator-observable behaviour after the env-var
+        // refactor.
+        LinuxTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(90);
+    }
+
+    [Theory]
+    [InlineData("1", 1)]                  // tests use this to bypass the wait
+    [InlineData("180", 180)]              // 3min for slow agents
+    [InlineData("3600", 3600)]
+    [InlineData("  60  ", 60)]
+    public void ResolveHealthcheckRetries_ValidValue_RoundTripsAsInteger(string envValue, int expected)
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, envValue);
+
+        LinuxTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("90s")]
+    [InlineData("not-a-number")]
+    [InlineData("")]
+    public void ResolveHealthcheckRetries_InvalidValue_FallsBackToDefault90(string envValue)
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, envValue);
+
+        // Operator-friendly: invalid values fall back with Serilog warning.
+        // 0 specifically — passing 0 to seq would loop 0 times → healthz
+        // never checked → silent SUCCESS even on dead agent. Default
+        // protects against this.
+        LinuxTentacleUpgradeStrategy.ResolveHealthcheckRetries().ShouldBe(90);
+    }
+
+    [Fact]
+    public void BuildScript_HealthcheckRetriesPlaceholder_SubstitutedFromEnv()
+    {
+        SystemEnvironment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.HealthcheckRetriesEnvVar, "5");
+
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript("1.6.0", LinuxTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        // Direct substitution: the placeholder gets the resolved value as
+        // a numeric literal.
+        rendered.ShouldContain("HEALTHCHECK_RETRIES=5",
+            customMessage: "BuildScript MUST substitute the env-resolved retry count. " +
+                          "If this fails: placeholder wasn't wired through Replace, OR .sh dropped the variable assignment.");
+
+        // Healthcheck loop MUST reference the variable, not a hardcoded value.
+        rendered.ShouldContain("seq 1 \"$HEALTHCHECK_RETRIES\"",
+            customMessage: "healthcheck loop MUST use \\$HEALTHCHECK_RETRIES — if it's a fixed integer, operator override is no-op");
+    }
+
+    [Fact]
+    public void BuildScript_HealthcheckRetries_DefaultsTo90InRender()
+    {
+        var rendered = LinuxTentacleUpgradeStrategy.BuildScript("1.6.0", LinuxTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        rendered.ShouldContain("HEALTHCHECK_RETRIES=90",
+            customMessage: "default render MUST inject 90 — operators not-overriding see pre-J.L.E.6 90s wait window");
     }
 
     [Theory]
