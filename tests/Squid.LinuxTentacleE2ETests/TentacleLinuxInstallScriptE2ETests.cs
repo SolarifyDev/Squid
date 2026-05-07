@@ -229,4 +229,106 @@ public sealed class TentacleLinuxInstallScriptE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // A2.u2-Linux — Plain --version 1.6.0 URL 404s, .sh falls back to v1.6.0
+    //               and installs successfully
+    //
+    // Production scenario this pins: install-tentacle.sh tries TWO download
+    // URL forms in sequence (line 230-241):
+    //
+    //   URL_PLAIN     = ${DOWNLOAD_BASE}/download/${VERSION}/squid-tentacle-${VERSION}-${RID}.tar.gz
+    //   URL_V_PREFIXED = ${DOWNLOAD_BASE}/download/v${VERSION}/squid-tentacle-${VERSION}-${RID}.tar.gz
+    //
+    // Real-world driver: GitHub Releases tag conventions vary across
+    // projects. Squid's current pipeline publishes both `v1.6.0` and
+    // `1.6.0` tags, but operators on legacy / private mirrors might
+    // only have ONE form. The .sh's retry-with-v-prefix is the
+    // operator-friendly compatibility shim.
+    //
+    // Without this test, a regression in the retry logic ships silently:
+    //   - .sh stops retrying on 404 → operator on legacy mirror sees
+    //     install fail with "could not download 1.6.0" even though
+    //     v1.6.0 IS published
+    //   - .sh doesn't echo the retry attempt → operators have no log
+    //     signal that the fallback was tried (vs "single shot fail")
+    //   - .sh's exit-on-failure regression after retry → silently
+    //     swallows the v-prefix 404 and exits 0 with no install
+    //
+    // Test mechanism: configure mirror to 404 ONLY the plain-version
+    // URL path (via the new ConfigureNotFoundForPath surgical-404 API
+    // — substring match with leading slash boundary). Mirror serves the
+    // v-prefixed path normally via StagePreBuiltArchive. Run install,
+    // assert exit 0 + retry log message + binary installed.
+    //
+    // Why surgical-404: ConfigureNotFoundForVersion("1.6.0") would also
+    // 404 the v-prefixed URL (substring "1.6.0" appears in both paths).
+    // ConfigureNotFoundForPath("/download/1.6.0/") matches ONLY the plain
+    // form because the v-prefixed path contains "/download/v1.6.0/".
+    //
+    // Tier: 🟢 H. Reuses J.M.L.A.2's fixture + tarball builder; only
+    // adds the surgical mirror config + retry-message assertion.
+    //
+    // Expected runtime: ~3-5s (curl 404 fast on plain URL → retry attempt
+    // → tarball download succeeds via v-prefix path → standard install).
+    // ========================================================================
+
+    [Fact]
+    public void A2u2_PlainVersion404FallsBackToVPrefix_InstallSucceeds()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+
+        const string version = "1.6.0-vfallback";
+
+        // Surgical 404: plain version URL only. v-prefixed URL still serves.
+        // The leading slash in "/download/<version>/" disambiguates from
+        // the v-prefixed sibling "/download/v<version>/" — ConfigureNotFoundForPath
+        // does substring match, and `/download/v1.6.0-vfallback/` does NOT
+        // contain `/download/1.6.0-vfallback/` (the leading char of the
+        // version segment differs).
+        ctx.Mirror.ConfigureNotFoundForPath($"/download/{version}/");
+
+        // Stage tarball. Served by mirror at any URL that doesn't match
+        // the surgical-404 path → v-prefixed URL serves successfully.
+        var tarball = ctx.BuildInstallTarGz(version);
+        ctx.Mirror.StagePreBuiltArchive(tarball);
+
+        var (exitCode, output) = ctx.RunInstallScript(version);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"v-prefix fallback install MUST succeed (plain URL 404, v-prefix serves). Got exit {exitCode}. " +
+                          $"If 1: .sh's retry logic regressed — operator log should show 'retrying with v...' and install should still succeed. " +
+                          $"If 2: arg parsing rejected --version. " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Operator-visible signal: the .sh MUST log the retry attempt.
+        // Without this, operators on legacy mirrors can't distinguish
+        // "first attempt succeeded" from "fallback succeeded" — important
+        // because if BOTH attempts failed they'd want to know which URL
+        // forms were tried.
+        output.ShouldContain($"retrying with 'v{version}'",
+            customMessage: $"stdout MUST contain 'retrying with v{version}' so operators see the .sh tried both URL forms. " +
+                          $"If absent: retry log line at .sh line 236 was dropped — operators tailing the log can't tell whether the fallback fired. " +
+                          $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Operator-visible: the v-prefixed URL appears in the second
+        // download-attempt log message. If absent: the .sh constructed
+        // the wrong URL form and the test would fail above with exit 1
+        // anyway — but echoing the URL gives diagnostic precision.
+        output.ShouldContain($"v{version}/squid-tentacle-{version}-",
+            customMessage: $"stdout MUST echo the v-prefixed download URL containing 'v{version}/squid-tentacle-{version}-'. " +
+                          "Operators verify which URL form succeeded by reading this log.");
+
+        // Sanity: the install actually completed end-to-end via the v-prefix path.
+        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
+            customMessage: $"Squid.Tentacle binary MUST exist at {ctx.InstallDir}/Squid.Tentacle after v-prefix fallback install. " +
+                          "If absent: .sh logged retry but never actually downloaded — retry construction may produce a malformed URL.");
+
+        File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
+            customMessage: "/usr/local/bin/squid-tentacle symlink MUST exist after v-prefix fallback install — confirms post-extract steps ran the same way as the plain-URL happy path.");
+
+        ctx.MarkClean();
+    }
 }
