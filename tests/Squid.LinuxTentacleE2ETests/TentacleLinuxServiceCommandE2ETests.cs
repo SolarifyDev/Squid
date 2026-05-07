@@ -1090,6 +1090,14 @@ public sealed class TentacleLinuxServiceCommandE2ETests
             TrySudo("rm", "-rf", "/etc/squid-tentacle/instances/Default");
             TrySudo("rm", "-rf", "/etc/squid-tentacle/instances.json");
 
+            // Host-state hygiene: this context's constructor mkdir's
+            // /etc/squid-tentacle/instances/. Install-script tests like
+            // A2u1 expect /etc/squid-tentacle to NOT exist on entry.
+            // `rmdir --ignore-fail-on-non-empty` defensively removes
+            // only-if-empty.
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle/instances");
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle");
+
             try { Stub.Dispose(); } catch { /* best-effort */ }
         }
 

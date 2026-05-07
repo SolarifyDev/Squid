@@ -745,6 +745,15 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             // (collection serialization) may also rely on an empty registry.
             TrySudo("rm", "-f", "/etc/squid-tentacle/instances.json");
 
+            // Host-state hygiene (matches DiagnosticTestContext rationale):
+            // this context's constructor mkdir's /etc/squid-tentacle/instances/.
+            // The install-script tests like A2u1 expect /etc/squid-tentacle
+            // to NOT exist before they run. Use `rmdir --ignore-fail-on-non-empty`
+            // to defensively remove only-if-empty so legitimately-staged
+            // state from other tests survives.
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle/instances");
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle");
+
             try { Stub.Dispose(); } catch { /* best-effort */ }
         }
 
