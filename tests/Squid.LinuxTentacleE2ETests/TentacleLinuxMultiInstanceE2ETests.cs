@@ -443,6 +443,192 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // G3.h-Linux — `service uninstall --instance Alpha --purge` MUST NOT
+    //               destroy Beta's config / certs / registry entry
+    //
+    // The single most operator-critical multi-instance regression vector.
+    // PurgeInstanceArtefacts (ServiceCommand.cs lines 76-98) does:
+    //
+    //   var certsDir = InstanceSelector.ResolveCertsPath(instance);
+    //   var instanceDir = Path.GetDirectoryName(certsDir);
+    //   if (DeleteInstanceCommand.IsSafeInstanceDir(instanceDir, instance.Name))
+    //       DeleteDirectoryQuietly(instanceDir, "instance directory");
+    //
+    // The `IsSafeInstanceDir` guard checks `Path.GetFileName(instanceDir)
+    // == instanceName`. If that guard ever regresses (e.g. always returns
+    // true, OR the path resolution returns the parent /etc/squid-tentacle/
+    // instances/ instead of the per-instance subdir), --purge would
+    // recursively delete the SHARED parent dir, taking ALL instances
+    // (including the just-registered Beta) down with it.
+    //
+    // Operator scenario: a host runs Alpha (decommissioned) + Beta (live
+    // production). Operator decommissions Alpha:
+    //
+    //   sudo squid-tentacle service uninstall --instance Alpha --purge
+    //
+    // Beta MUST remain fully functional. If --purge nukes Beta:
+    //   - Beta's cert identity is gone → server's trust list still has
+    //     it but the agent can't authenticate next poll → silent
+    //     production outage hours later
+    //   - Beta's config (machine name, listening port, roles) is gone →
+    //     even after re-register, the new identity has different
+    //     thumbprint → server-side machine record is orphaned
+    //   - Operator runs `list-instances` to investigate, sees Beta gone
+    //     too, hours of triage to recover
+    //
+    // Without this E2E pin, regressions in IsSafeInstanceDir / path
+    // resolution / Directory.Delete recursion bounds ship silently.
+    //
+    // Test mechanism (composes with G1h's setup):
+    //   1. create-instance + register both Alpha and Beta
+    //   2. service install --instance Alpha (needed for `service uninstall`
+    //      to have a service to remove; Beta need not be service-installed)
+    //   3. service uninstall --instance Alpha --purge
+    //   4. Assert Alpha's artefacts ARE gone (purge happy-path on Alpha)
+    //   5. Assert Beta's config + cert dir + registry entry STILL EXIST
+    //      (the safety pin)
+    //
+    // Cleanup: dispose handles Beta's leftover state (config, cert dir,
+    // registry entry) and any uninstall failure on Alpha.
+    //
+    // Tier: 🟢 H. Real binary + real systemd + real filesystem.
+    //
+    // Expected runtime: ~10-15s (G1h's ~7s + service install Alpha ~3s +
+    // uninstall --purge ~2s + 6 assertions).
+    // ========================================================================
+
+    [Fact]
+    public void G3h_PurgeAlpha_DoesNotDestroyBetaState()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new MultiInstanceTestContext();
+
+        // ── Setup: register both Alpha and Beta (G1h-style) ───────────────
+        var (alphaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.AlphaInstance);
+        alphaCreateExit.ShouldBe(0, "G3h precondition: create-instance Alpha must succeed");
+
+        var (alphaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.AlphaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G3-ALPHA",
+            "--name", ctx.AlphaMachineName,
+            "--role", "alpha-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
+        alphaRegExit.ShouldBe(0, "G3h precondition: register Alpha must succeed");
+
+        var (betaCreateExit, _) = ctx.Binary.SudoRun("create-instance", "--instance", ctx.BetaInstance);
+        betaCreateExit.ShouldBe(0, "G3h precondition: create-instance Beta must succeed");
+
+        var (betaRegExit, _) = ctx.Binary.SudoRun(
+            "register",
+            "--instance", ctx.BetaInstance,
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-G3-BETA",
+            "--name", ctx.BetaMachineName,
+            "--role", "beta-role",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
+        betaRegExit.ShouldBe(0, "G3h precondition: register Beta must succeed");
+
+        // ── Setup: service install Alpha only (Beta stays register-only) ──
+        // Alpha needs to be service-installed so `service uninstall --purge`
+        // has a real systemd unit to remove. Beta doesn't need a service
+        // unit — its config + cert dir + registry entry exist purely from
+        // register, which is what we're going to assert survives.
+        var (alphaInstallExit, _) = ctx.Binary.SudoRun("service", "install", "--instance", ctx.AlphaInstance);
+        alphaInstallExit.ShouldBe(0, "G3h precondition: service install Alpha must succeed");
+        ctx.RegisterServiceForCleanup($"squid-tentacle-{ctx.AlphaInstance}");
+
+        // Sanity: Beta's artefacts are present BEFORE we run the purge —
+        // otherwise the post-purge survival assertion is vacuous.
+        var betaConfig = $"/etc/squid-tentacle/instances/{ctx.BetaInstance}.config.json";
+        var betaInstanceDir = $"/etc/squid-tentacle/instances/{ctx.BetaInstance}";
+
+        LinuxInstallScriptContext.SudoFileExists(betaConfig).ShouldBeTrue(
+            "G3h precondition: Beta config MUST exist before purge — otherwise survival check is meaningless");
+        LinuxInstallScriptContext.SudoDirectoryExists(betaInstanceDir).ShouldBeTrue(
+            "G3h precondition: Beta cert dir MUST exist before purge");
+
+        // ── Action: service uninstall --instance Alpha --purge ────────────
+        var (purgeExit, purgeOutput) = ctx.Binary.SudoRun(
+            "service", "uninstall", "--instance", ctx.AlphaInstance, "--purge");
+
+        purgeExit.ShouldBe(0,
+            customMessage: $"`service uninstall --instance {ctx.AlphaInstance} --purge` MUST exit 0. Got exit {purgeExit}. " +
+                          $"\noutput:\n{purgeOutput}");
+
+        // ── Assertion 1 (Alpha purge worked — happy-path sanity) ──────────
+        // Without these, the survival pin below is meaningless: the test
+        // could pass simply because --purge silently no-ops on EVERYTHING.
+        var alphaConfig = $"/etc/squid-tentacle/instances/{ctx.AlphaInstance}.config.json";
+        var alphaInstanceDir = $"/etc/squid-tentacle/instances/{ctx.AlphaInstance}";
+
+        LinuxInstallScriptContext.SudoFileExists(alphaConfig).ShouldBeFalse(
+            customMessage: $"Alpha config at {alphaConfig} MUST be gone after --purge (happy path). " +
+                          "If present: --purge silently no-op'd — the survival pin below is then trivially satisfied.");
+
+        LinuxInstallScriptContext.SudoDirectoryExists(alphaInstanceDir).ShouldBeFalse(
+            customMessage: $"Alpha cert dir at {alphaInstanceDir} MUST be gone after --purge (happy path).");
+
+        // ── Assertion 2 (THE PIN): Beta survives ──────────────────────────
+        // Beta's instance dir has trailing component '{ctx.BetaInstance}'
+        // — IsSafeInstanceDir's name-match check should reject any attempt
+        // to delete it under Alpha's purge. The shared parent
+        // /etc/squid-tentacle/instances/ has trailing component 'instances'
+        // which doesn't match 'AlphaInstance' either, so even a regression
+        // that skipped IsSafeInstanceDir to walk up further would be caught
+        // here.
+        LinuxInstallScriptContext.SudoFileExists(betaConfig).ShouldBeTrue(
+            customMessage: $"Beta config at {betaConfig} MUST STILL EXIST after Alpha --purge. " +
+                          "If absent: PurgeInstanceArtefacts regressed to deleting the shared parent " +
+                          "/etc/squid-tentacle/instances/, taking Beta's config down with Alpha. " +
+                          "This is the catastrophic multi-instance regression vector. " +
+                          $"\nAlpha purge output:\n{purgeOutput}");
+
+        LinuxInstallScriptContext.SudoDirectoryExists(betaInstanceDir).ShouldBeTrue(
+            customMessage: $"Beta cert dir at {betaInstanceDir} MUST STILL EXIST after Alpha --purge. " +
+                          "If absent: --purge crossed the instance boundary — IsSafeInstanceDir's name-match " +
+                          "check failed to reject Beta's directory OR ResolveCertsPath returned a path that " +
+                          "shadowed Beta. Production outage — Beta would silently lose its cert identity.");
+
+        // ── Assertion 3: Beta's registry entry survives ───────────────────
+        var registryPath = "/etc/squid-tentacle/instances.json";
+        var registryContent = LinuxInstallScriptContext.SudoReadAllText(registryPath);
+
+        registryContent.ShouldContain(ctx.BetaInstance,
+            customMessage: $"instances.json MUST still list '{ctx.BetaInstance}' after Alpha --purge. " +
+                          "If absent: InstanceRegistry.Remove regressed to wiping ALL entries instead of just Alpha's. " +
+                          $"\ncontent:\n{registryContent}");
+
+        registryContent.ShouldNotContain(ctx.AlphaInstance,
+            customMessage: $"instances.json MUST NOT contain '{ctx.AlphaInstance}' after --purge. " +
+                          "If present: --purge skipped the registry-removal step (which is part of PurgeInstanceArtefacts).");
+
+        // ── Assertion 4: log boundary message — Alpha specifically ────────
+        purgeOutput.ShouldContain($"Removed '{ctx.AlphaInstance}' from instance registry",
+            customMessage: $"stdout MUST log registry removal scoped to '{ctx.AlphaInstance}' specifically. " +
+                          "If a different instance name appears: PurgeInstanceArtefacts is removing the wrong instance from the registry. " +
+                          $"\noutput:\n{purgeOutput}");
+
+        // Cross-pin: Beta's name MUST NOT appear in any 'Removed' log line
+        // (smoking-gun signal of cross-instance destruction).
+        purgeOutput.ShouldNotContain($"Removed '{ctx.BetaInstance}'",
+            customMessage: $"stdout MUST NOT contain 'Removed '{ctx.BetaInstance}'' — that would mean Alpha's --purge " +
+                          "is removing Beta's registry entry. Cross-instance contamination.");
+
+        // Mark Alpha's service uninstalled (defensive cleanup skips it).
+        // Beta was never service-installed so nothing to mark there.
+        ctx.MarkServicesUninstalled();
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Wraps <c>sudo systemctl &lt;verb&gt; &lt;name&gt;</c> for is-enabled /
     /// is-active queries that are part of the multi-instance assertions.
