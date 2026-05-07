@@ -23,6 +23,16 @@ public static class LinuxTentacleE2ECategories
     public const string UpgradeScript = "LinuxTentacleUpgradeScriptE2E";
 
     /// <summary>
+    /// Phase 12.L.E.4+ E2E coverage for the production
+    /// <c>upgrade-linux-tentacle.sh</c> end-to-end against a real
+    /// <see cref="Infrastructure.LocalReleaseMirror"/> + (later)
+    /// <see cref="Infrastructure.LinuxServiceFixture"/>. Tier 🟢
+    /// high-fidelity. Linux-only — requires bash + sudo. CI runs on
+    /// <c>ubuntu-latest</c>.
+    /// </summary>
+    public const string UpgradeLifecycle = "LinuxTentacleUpgradeLifecycleE2E";
+
+    /// <summary>
     /// Phase 12.L.E.3 smoke coverage for <see cref="Infrastructure.LinuxServiceFixture"/>.
     /// Tier 🔵 Fixture-only (Rule 12) — does NOT count toward production
     /// E2E coverage. Subsequent phases (12.L.E.4+) consume the fixture

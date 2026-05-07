@@ -24,7 +24,7 @@ on:
       test_filter:
         description: "xUnit --filter for the Squid.LinuxTentacleE2ETests step"
         required: false
-        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E"
+        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E|Category=LinuxTentacleUpgradeLifecycleE2E"
 
 permissions:
   contents: read
@@ -59,7 +59,7 @@ jobs:
       - name: Run Squid.LinuxTentacleE2ETests
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
-          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E"; fi
+          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxServiceFixtureE2E|Category=LinuxTentacleUpgradeLifecycleE2E"; fi
           dotnet test tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj \
             --configuration Release --no-restore \
             --filter "$FILTER" \
