@@ -21,4 +21,17 @@ public static class LinuxTentacleE2ECategories
     /// systemd-run / systemctl restart / apt / dnf / curl flows.</para>
     /// </summary>
     public const string UpgradeScript = "LinuxTentacleUpgradeScriptE2E";
+
+    /// <summary>
+    /// Phase 12.L.E.3 smoke coverage for <see cref="Infrastructure.LinuxServiceFixture"/>.
+    /// Tier 🔵 Fixture-only (Rule 12) — does NOT count toward production
+    /// E2E coverage. Subsequent phases (12.L.E.4+) consume the fixture
+    /// for real upgrade-lifecycle tests where the fixture's systemd
+    /// service is the target of <c>systemctl restart</c> swap mechanics.
+    ///
+    /// <para>Linux-only: requires systemd + passwordless sudo. Skip-
+    /// guards on macOS/Windows + on Linux dev hosts without sudo
+    /// configured. GHA <c>ubuntu-latest</c> runner has both.</para>
+    /// </summary>
+    public const string ServiceFixture = "LinuxServiceFixtureE2E";
 }
