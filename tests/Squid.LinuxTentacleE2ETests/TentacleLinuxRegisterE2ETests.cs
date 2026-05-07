@@ -86,9 +86,16 @@ public sealed class TentacleLinuxRegisterE2ETests
 
         using var ctx = new RegisterTestContext();
 
+        // Use Default instance (no --instance flag): InstanceSelector.Resolve
+        // auto-creates the Default record without requiring `create-instance`
+        // pre-step, so first-run tests can register directly. Named instances
+        // throw "does not exist" unless pre-created — use Default for now;
+        // future tests that need multiple instances per run will prepend
+        // `create-instance --instance <name>` calls.
+        // J.M.L.C.1.1: caught by first runner — `--instance <guid>` threw
+        // "does not exist" because Resolve only auto-creates Default.
         var (exitCode, output) = ctx.Binary.SudoRun(
             "register",
-            "--instance", ctx.InstanceName,
             "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
             "--api-key", "API-STUB-1234567890",
             "--role", "web-server",
@@ -149,8 +156,9 @@ public sealed class TentacleLinuxRegisterE2ETests
 
         // ── Config persistence ──────────────────────────────────────────────
         // RegisterCommand calls PersistInstanceConfig which writes to
-        // /etc/squid-tentacle/instances/<instance>.config.json.
-        var configPath = $"/etc/squid-tentacle/instances/{ctx.InstanceName}.config.json";
+        // /etc/squid-tentacle/instances/<instance>.config.json. Using
+        // Default instance, so config lands at Default.config.json.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
         LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
             customMessage: $"instance config MUST be persisted at {configPath}. " +
                           "If absent: PersistInstanceConfig regressed OR InstanceSelector resolved to a different path. " +
@@ -191,28 +199,21 @@ public sealed class TentacleLinuxRegisterE2ETests
 
         public LinuxTentacleBinaryFixture Binary { get; } = new();
         public LinuxStubSquidServer Stub { get; } = LinuxStubSquidServer.Start();
-        public string InstanceName { get; } = $"register-test-{Guid.NewGuid():N}";
 
         public void MarkClean() => _clean = true;
 
         public void Dispose()
         {
             if (!_clean)
-                Console.WriteLine($"[RegisterTestContext] Dispose called without MarkClean — register test for instance '{InstanceName}' failed before its happy-path conclusion.");
+                Console.WriteLine($"[RegisterTestContext] Dispose called without MarkClean — register test failed before its happy-path conclusion.");
 
-            // Cleanup: rm the per-instance config + certs dir created by
-            // RegisterCommand. Both live under /etc/squid-tentacle/.
-            // Best-effort sudo rm — missing paths are no-ops.
-            TrySudoRm($"/etc/squid-tentacle/instances/{InstanceName}.config.json");
-            TrySudoRm($"/etc/squid-tentacle/instances/{InstanceName}");
-
-            // The instance also gets registered in
-            // /etc/squid-tentacle/instances.json. Leaving it stale would
-            // pollute `list-instances` for later tests. Easiest cleanup:
-            // wipe the parent /etc/squid-tentacle/instances/ + instances.json
-            // entirely — rebuilt on next test's register. NOT removing
-            // /etc/squid-tentacle/ itself in case other tests depend on its
-            // existence.
+            // Cleanup: rm Default instance state. Best-effort sudo rm —
+            // missing paths are no-ops. Wipe the whole /etc/squid-tentacle/
+            // instances/ subtree + instances.json so subsequent tests start
+            // with a clean state. /etc/squid-tentacle/ itself stays in case
+            // other tests depend on its existence.
+            TrySudoRm("/etc/squid-tentacle/instances/Default.config.json");
+            TrySudoRm("/etc/squid-tentacle/instances/Default");
             TrySudoRm("/etc/squid-tentacle/instances.json");
 
             try { Stub.Dispose(); } catch { /* best-effort */ }
