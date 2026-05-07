@@ -46,6 +46,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Squid.UnitTests" />
     <InternalsVisibleTo Include="Squid.WindowsUpgradeE2ETests" />
+    <InternalsVisibleTo Include="Squid.LinuxTentacleE2ETests" />
   </ItemGroup>
 
   <ItemGroup>
