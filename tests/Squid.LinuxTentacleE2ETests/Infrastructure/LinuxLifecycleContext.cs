@@ -705,6 +705,34 @@ public sealed class LinuxLifecycleContext : IDisposable
 
         try { Mirror.Dispose(); } catch { /* best-effort */ }
 
+        // Production .sh's Phase B (line 600) creates a symlink at
+        // /usr/local/bin/squid-tentacle pointing to $INSTALL_DIR. After
+        // INSTALL_DIR is rm'd above, the symlink dangles. Subsequent
+        // upgrade tests overwrite it (different target), so upgrade-
+        // suite alone never trips on this. But it's a real leak that
+        // J.M.L.A.1 (install-script test) caught — its reverse-assert
+        // "no symlink after a failed install" found the leftover from
+        // parallel/prior upgrade runs. Cleaning here keeps host state
+        // consistent across test classes.
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sudo",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("rm");
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add("/usr/local/bin/squid-tentacle");
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5_000);
+        }
+        catch { /* best-effort */ }
+
         // Reset env vars set during RenderProductionScriptForVersion. NOT
         // strictly needed (test process exits) but clean.
         try { Environment.SetEnvironmentVariable(LinuxTentacleUpgradeStrategy.DownloadBaseUrlEnvVar, null); } catch { }

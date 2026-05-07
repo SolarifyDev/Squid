@@ -19,6 +19,7 @@ namespace Squid.LinuxTentacleE2ETests;
 /// false. CI runs on <c>ubuntu-latest</c> which has both.</para>
 /// </summary>
 [Trait("Category", LinuxTentacleE2ECategories.ServiceFixture)]
+[Collection(LinuxTentacleHostStateCollection.Name)]
 public sealed class LinuxServiceFixtureSmokeE2ETests
 {
     [Fact]
