@@ -200,6 +200,25 @@ public sealed class TentacleLinuxRegisterE2ETests
         public LinuxTentacleBinaryFixture Binary { get; } = new();
         public LinuxStubSquidServer Stub { get; } = LinuxStubSquidServer.Start();
 
+        public RegisterTestContext()
+        {
+            // Pre-create /etc/squid-tentacle/ to mimic post-install state.
+            // Production operators run `sudo install-tentacle.sh` (which
+            // creates this dir) BEFORE `sudo register`. Without this dir,
+            // PlatformPaths.ResolveActiveConfigDir falls back to the user
+            // config dir ($HOME/.config/squid-tentacle/) — when register
+            // runs via sudo, $HOME=/root so config lands at
+            // /root/.config/squid-tentacle/instances/Default.config.json,
+            // not the operator-expected /etc/squid-tentacle/ location.
+            //
+            // J.M.L.C.1.2: caught by first-runner of the Default-instance
+            // fix — register exit 0 + stub call recorded, but config went
+            // to user dir because the Install test's cleanup matrix
+            // removes /etc/squid-tentacle/ before this Register test runs
+            // (alphabetical class order: Install < Register).
+            TrySudoMkdirP("/etc/squid-tentacle/instances");
+        }
+
         public void MarkClean() => _clean = true;
 
         public void Dispose()
@@ -234,6 +253,29 @@ public sealed class TentacleLinuxRegisterE2ETests
                 psi.ArgumentList.Add("-n");
                 psi.ArgumentList.Add("rm");
                 psi.ArgumentList.Add("-rf");
+                psi.ArgumentList.Add(path);
+
+                using var proc = Process.Start(psi);
+                proc?.WaitForExit(5_000);
+            }
+            catch { /* best-effort */ }
+        }
+
+        private static void TrySudoMkdirP(string path)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "sudo",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("-n");
+                psi.ArgumentList.Add("mkdir");
+                psi.ArgumentList.Add("-p");
                 psi.ArgumentList.Add(path);
 
                 using var proc = Process.Start(psi);
