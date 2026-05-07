@@ -531,6 +531,117 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E11.u1-Linux — Concurrent dispatch: pre-existing kernel flock makes
+    //                second .sh dispatch a no-op (exit 0, no Phase A/B)
+    //
+    // Production stability target: an operator manually triggering an
+    // upgrade while a scheduled upgrade is mid-flight (or two operators
+    // racing) MUST NOT cause two parallel Phase A's competing on the
+    // same INSTALL_DIR + STATE_DIR. The .sh's `flock -n` guard at line
+    // 288 is the only thing preventing this; without it, two simultaneous
+    // mv-swaps would corrupt the install tree → unrecoverable agent.
+    //
+    // Linux-vs-Windows mechanism difference:
+    //   - Windows: file-content-based detection (.ps1 reads $LOCK_FILE,
+    //     checks if PID alive, exits 13 if held). Pre-staging the
+    //     lockfile content is sufficient.
+    //   - Linux: kernel BSD flock primitive. Lock state is held by an
+    //     ACTIVE process owning the file descriptor; lock file content
+    //     is informational only. Pre-staging an unattended file does
+    //     NOTHING — the kernel auto-releases flocks on process death.
+    //
+    // This test genuinely holds a kernel flock via a backgrounded
+    // `flock -n -x $LOCK_FILE sleep 30` child process for the duration
+    // of the upgrade .sh invocation. Disposing the FlockHolder kills the
+    // child + the kernel releases the lock.
+    //
+    // Expected behaviour (.sh line 288–295):
+    //   if ! flock -n "$LOCK_FD"; then
+    //     echo "An upgrade is already in progress on this host..."
+    //     exit 0
+    //   fi
+    //
+    // i.e. exit 0 as a NO-OP — the second dispatch is silently skipped,
+    // which is intentional: server-side dispatch is at-least-once, so a
+    // duplicate is expected behaviour and shouldn't surface as an error.
+    //
+    // Mirrors Windows E11.u1 with adjusted exit-code expectation
+    // (Linux: 0 no-op vs Windows: 13 fail) reflecting the different
+    // semantic per-platform.
+    //
+    // High-fidelity. Real prod .sh + real systemd + real bash + real
+    // kernel flock + real sleep-holder process.
+    // ========================================================================
+
+    [Fact]
+    public void E11u1_PreExistingFlock_LockHeldExitsZeroAsNoOp_Linux()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage v1 service so destructive Phase B WOULD have an effect if
+        // the lock check were broken. Reverse-asserting the marker stays
+        // at v1 proves Phase B never ran.
+        ctx.Fixture.InstallAndStart(ctx.TestServiceScript, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(15));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before E11.u1-Linux can validate Phase B was actually skipped (not run-and-rolled-back)");
+
+        // Hold an EXCLUSIVE kernel flock on the upgrade lockfile for the
+        // duration of the test. The .sh's `flock -n` against the same
+        // file MUST fail immediately → script falls into the no-op branch.
+        using var flockHolder = ctx.StartFlockHolder(holdSeconds: 30);
+
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        // Exit 0 (NO-OP) is the documented behaviour when flock is held —
+        // server-side dispatch is at-least-once, so duplicates are normal,
+        // not errors. Distinct from .sh's other exit codes (2/6/7/13/14)
+        // which are all fail-codes.
+        exitCode.ShouldBe(0,
+            customMessage: $"flock-held second dispatch MUST exit 0 as a no-op (per .sh line 294). Got exit {exitCode}. " +
+                          $"If 13: .sh's flock check broke and Phase B started — concurrent-dispatch protection failed. " +
+                          $"If 1: bash hit set-u or set-e on the no-op exit — guard logic itself errored. " +
+                          $"output tail (last 1k chars):\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+        // Operator-visible log MUST surface WHY the dispatch was a no-op
+        // — without this, a stuck-forever in-flight upgrade looks like
+        // total silence on every subsequent dispatch.
+        output.ShouldContain("upgrade is already in progress on this host",
+            customMessage: $"stdout MUST contain 'upgrade is already in progress on this host' so operators tailing the log see the no-op happened (vs total silence). " +
+                          $"output tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+        // Reverse-assert: Phase A never spawned the scope. Without this,
+        // a flock-broken .sh might exit 0 falsely BUT have already
+        // downloaded + extracted to a staging area. So we need to verify
+        // none of Phase A's side effects happened.
+        output.ShouldNotContain("Detaching to systemd scope",
+            customMessage: "Phase A's 'Detaching to systemd scope' message MUST NOT appear — its presence proves the .sh got past the flock guard despite the lock being held.");
+
+        // Reverse-assert: Phase B never ran. Service still on v1 marker.
+        File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim().ShouldBe("1.0.0",
+            customMessage: $"marker MUST stay at '1.0.0' — if it changed, Phase B's mv swap ran despite the flock-held no-op (concurrent-dispatch protection broken). Got: '{File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim()}'");
+
+        // Reverse-assert: no .bak directory. Phase B's mv-swap creates
+        // INSTALL_DIR.bak; absence proves Phase B's mv never executed.
+        var noOpBakDir = ctx.Fixture.InstallDir + ".bak";
+        Directory.Exists(noOpBakDir).ShouldBeFalse(
+            customMessage: $".bak dir at {noOpBakDir} MUST NOT exist after a flock-rejected dispatch — Phase B's mv-swap never ran.");
+
+        // Sanity: holder is still alive when the upgrade .sh exited. If
+        // the holder died first, the lock was released and the .sh's
+        // flock acquire would have succeeded, invalidating the test.
+        flockHolder.IsAlive.ShouldBeTrue(
+            "flock holder process must still be alive at end of test — if it died, the kernel released the lock mid-test and the .sh actually proceeded through Phase A/B (and the assertions above passed coincidentally).");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
