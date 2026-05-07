@@ -190,6 +190,148 @@ public sealed class TentacleLinuxRegisterE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // C1.u1-Linux — Server returns 401 unauthorized → register exits non-zero
+    //               WITHOUT retry, no config persisted
+    //
+    // Real-world driver: operator typos `--api-key` (or the key was revoked
+    // server-side). Production server returns 401 Unauthorized.
+    //
+    // Per TentacleRegistrationClient.RegisterAsync line 56-60: client errors
+    // (4xx) are NOT retried — the registrar throws immediately. Bubbles to
+    // RegisterCommand → unhandled exception → exit 1.
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - 4xx retry logic regresses to retry-anyway → operator sees 10
+    //     retries × exponential backoff (~5min hang) before final failure
+    //     instead of the documented immediate-fail behavior
+    //   - Exception handling at the CLI boundary changes (e.g. exit 0
+    //     swallowed) → operator sees "success" but no config persisted
+    //   - Config persistence runs DESPITE the auth failure → leaves
+    //     stale incomplete config that confuses subsequent register attempts
+    //
+    // Test mechanism: stub configured with status 401, run register, assert:
+    //   - Stub received exactly 1 call (no retry on client errors)
+    //   - Binary exit non-zero
+    //   - Config file NOT persisted
+    //
+    // Tier: 🟢 H. Reuses fixture; only differs in stub status code.
+    // Expected runtime: ~1s.
+    // ========================================================================
+
+    [Fact]
+    public void C1u1_RegisterListening_Server401_ExitsNonZeroWithoutRetry()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // Stub returns 401 for register endpoint. Body content doesn't matter —
+        // production parses status code first.
+        ctx.Stub.ConfigureRegisterStatusCode(401);
+        ctx.Stub.ConfigureRegisterBody("{\"error\":\"unauthorized: invalid API key\"}");
+
+        var (exitCode, output) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-INVALID-KEY",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+
+        exitCode.ShouldNotBe(0,
+            customMessage: $"register MUST exit non-zero on 401. Got exit {exitCode}. " +
+                          $"If 0: client-error handling regressed (auth failure swallowed → operator sees 'success' but no config persisted). " +
+                          $"output:\n{output}");
+
+        // Production contract: 4xx errors are NOT retried (line 56 of
+        // TentacleRegistrationClient.RegisterAsync). Stub MUST have received
+        // exactly 1 call — if more, retry logic regressed.
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBe(1,
+            customMessage: $"stub MUST have received exactly 1 register call (4xx errors NOT retried per production contract). " +
+                          $"Got {ctx.Stub.ReceivedRegistrations.Count} calls. " +
+                          $"If >1: retry-on-4xx regressed → operator hangs ~5min on each typo'd API key instead of fail-fast.");
+
+        // Config file MUST NOT be persisted after auth failure.
+        // PersistInstanceConfig (line 126 of RegisterCommand) runs only AFTER
+        // RegisterAsync succeeds — auth-failed register throws before reaching it.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
+            customMessage: $"config file at {configPath} MUST NOT exist after 401-failed register. " +
+                          "If present: PersistInstanceConfig ran despite auth failure → stale incomplete config confuses subsequent register attempts. " +
+                          "Production impact: operator can't recover via re-register because the broken config blocks fresh attempts.");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // C1.u4-Linux — Server returns 200 with incomplete payload → register fails
+    //
+    // Real-world driver: server-side regression OR proxy/CDN injection
+    // returns malformed JSON. Production EnsureRegistrationPayloadComplete
+    // (line 174-177 of TentacleRegistrationClient) checks:
+    //   - data.MachineId > 0
+    //   - data.ServerThumbprint non-empty
+    //
+    // If either fails, throws → register exits non-zero, no config persisted.
+    //
+    // Without this pin, regressions in the payload-completeness check ship
+    // silently:
+    //   - Operator sees "success" but config has machineId=0 + empty
+    //     thumbprint → agent registered with bogus identity → server
+    //     can't dispatch to it
+    //   - Subsequent dispatches reject with "machine not found"
+    //
+    // Test mechanism: stub returns 200 (transport success) but with payload
+    // missing the required fields. Production parser accepts JSON but
+    // EnsureRegistrationPayloadComplete throws.
+    //
+    // Tier: 🟢 H. Same fixture; differs in stub body override.
+    // Expected runtime: ~1s.
+    // ========================================================================
+
+    [Fact]
+    public void C1u4_RegisterListening_IncompletePayload_ExitsNonZero()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new RegisterTestContext();
+
+        // 200 status (transport success) but payload missing the required
+        // fields. machineId=0 fails the > 0 check; serverThumbprint empty.
+        ctx.Stub.ConfigureRegisterStatusCode(200);
+        ctx.Stub.ConfigureRegisterBody("{\"data\":{\"machineId\":0,\"serverThumbprint\":\"\",\"subscriptionUri\":null}}");
+
+        var (exitCode, output) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-STUB-1234567890",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+
+        exitCode.ShouldNotBe(0,
+            customMessage: $"register MUST exit non-zero on incomplete payload (machineId=0 OR empty thumbprint). Got exit {exitCode}. " +
+                          $"If 0: EnsureRegistrationPayloadComplete regressed → operator gets 'success' with bogus identity, server can't dispatch to the registered agent. " +
+                          $"output:\n{output}");
+
+        // Stub MUST have received the register call (we're testing payload
+        // validation, not transport failure).
+        ctx.Stub.ReceivedRegistrations.Count.ShouldBeGreaterThan(0,
+            customMessage: "stub MUST have received at least 1 register call before payload validation rejected.");
+
+        // Config NOT persisted — payload-validation failure happens before
+        // PersistInstanceConfig.
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
+            customMessage: $"config file at {configPath} MUST NOT exist after incomplete-payload register. " +
+                          "If present: payload validation regressed → bogus identity persisted → operator's agent unreachable from server.");
+
+        ctx.MarkClean();
+    }
+
     /// <summary>
     /// Per-test context: owns the stub server + binary fixture + cleanup.
     /// </summary>
