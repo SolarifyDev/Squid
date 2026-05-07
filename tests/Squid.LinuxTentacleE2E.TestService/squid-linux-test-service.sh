@@ -57,7 +57,14 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'OK\n')
     def log_message(self, *args, **kwargs): pass
-with socketserver.TCPServer(('127.0.0.1', $HEALTHZ_PORT), H) as httpd:
+# allow_reuse_address=True is essential for Phase B re-bind. Without it,
+# v1's python3 leaves port \$HEALTHZ_PORT in TIME_WAIT (60s on Linux),
+# and v2's bind fails with 'Address already in use' → silent crash
+# (background & swallows the exception) → healthz unresponsive →
+# .sh thinks upgrade failed → rollback fires.
+class ReusableServer(socketserver.TCPServer):
+    allow_reuse_address = True
+with ReusableServer(('127.0.0.1', $HEALTHZ_PORT), H) as httpd:
     httpd.serve_forever()
 " &
     HEALTHZ_PID=$!
