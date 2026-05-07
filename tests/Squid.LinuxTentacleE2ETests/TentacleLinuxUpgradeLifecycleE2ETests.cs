@@ -1000,6 +1000,114 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         }
     }
 
+    // ========================================================================
+    // E1.uMissingBinary — Tarball arrives but missing Squid.Tentacle binary
+    //                     (exit 3 + FAILED status, release-pipeline regression
+    //                     target)
+    //
+    // The .sh's Phase A line 458 verifies the extracted archive contains
+    // the Squid.Tentacle binary BEFORE proceeding to swap. If absent
+    // (botched build, stripped tarball, partial download that decompressed
+    // but had truncated contents), exit 3 fires with a clear "Missing
+    // binary after extraction" detail.
+    //
+    // Production scenarios this protects:
+    //   - Release pipeline accidentally publishes a tarball with .sh
+    //     and version.txt but missing the compiled binary (e.g. dotnet
+    //     publish failed silently and only the static files got tar'd).
+    //   - Mirror serves a corrupted tarball that decompresses to fewer
+    //     entries than expected (e.g. tar truncated mid-stream by
+    //     transport error, but enough header was read to extract some
+    //     entries).
+    //
+    // Without this pin, a regression that drops the line-458 existence
+    // check (e.g. someone refactors Phase A and removes the guard
+    // thinking it's redundant with SHA verify) ships silently. Operators
+    // would see a confusing "command not found: $INSTALL_DIR/Squid.Tentacle"
+    // mid-Phase-B instead of the early exit + diagnostic.
+    //
+    // SHA verify alone doesn't cover this: if the build pipeline computed
+    // the SHA over a NEW broken tarball, both SHA and contents are
+    // self-consistently wrong. The line-458 existence check is the
+    // last-line-of-defence diagnostic.
+    //
+    // Test mechanism: BuildV2BundleTarGz(omitSquidTentacleBinary: true)
+    // produces a tarball with version.txt + the test service script BUT
+    // no "Squid.Tentacle" entry. Phase A's extract succeeds; line 458's
+    // `[ -f $NEW_BIN ]` check fails; exit 3 fires.
+    //
+    // High-fidelity. Real prod .sh + real tar+gzip + real `[ -f ... ]`
+    // bash test against the extracted file tree.
+    //
+    // Expected runtime: ~3-5s (Phase A download + extract + binary check;
+    // exits before Phase B).
+    // ========================================================================
+
+    [Fact]
+    public void E1uMissingBinary_TarballMissingSquidTentacle_ExitsThreeWithFailedStatus()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage v1 service. The pre-condition matters because exit 3 fires
+        // POST-extract but PRE-swap; we want to verify the still-running
+        // v1 isn't disturbed by the failed Phase A.
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15));
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before E1.uMissingBinary can validate Phase B was never reached");
+
+        // Build a deliberately-broken v2 tarball: only the .sh + version.txt,
+        // NO Squid.Tentacle binary entry.
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test", omitSquidTentacleBinary: true);
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        // Exit 3 = "Missing binary after extraction" per .sh line 458.
+        exitCode.ShouldBe(3,
+            customMessage: $"missing Squid.Tentacle binary in tarball MUST trigger exit 3 (per .sh line 458). Got exit {exitCode}. " +
+                          $"If 0: the existence check was bypassed and Phase A proceeded — broken tarball would land in INSTALL_DIR (regression). " +
+                          $"If 7: SHA verify rejected the tarball before reaching the existence check (would mean SHA was unexpectedly enforced). " +
+                          $"If 6 / 14: Phase A bailed before extract — tarball download or extraction itself failed (different failure mode). " +
+                          $"output tail (last 1.5k chars):\n{(output.Length > 1500 ? "..." + output.Substring(output.Length - 1500) : output)}");
+
+        // last-upgrade.json: FAILED with operator-actionable diagnostic.
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull(
+            customMessage: "last-upgrade.json MUST be written so operators see WHY Phase A bailed. If absent: write_status FAILED never ran, .sh exited 3 without recording the cause.");
+
+        statusPayload.Status.ShouldBe("FAILED",
+            customMessage: $"status MUST be 'FAILED' for missing-binary tarball. Got: '{statusPayload.Status}'. Detail: {statusPayload.Detail}");
+
+        statusPayload.Detail.ShouldContain("Missing binary after extraction",
+            customMessage: $"detail MUST surface the exact extraction-time check that failed so operators distinguish 'missing binary' from " +
+                          $"generic 'download failed' / 'sha mismatch'. Got: '{statusPayload.Detail}'");
+
+        // stdout MUST also surface the diagnostic for operators tailing the log.
+        output.ShouldContain("Extracted archive missing Squid.Tentacle binary",
+            customMessage: "stdout MUST contain the operator-facing 'Extracted archive missing Squid.Tentacle binary' diagnostic.");
+
+        // Reverse-assert: Phase B never started — the v1 service is unchanged.
+        File.ReadAllText(ctx.Fixture.MarkerFilePath).Trim().ShouldBe("1.0.0",
+            customMessage: $"marker MUST stay at '1.0.0' — exit 3 fires BEFORE Phase B's mv-swap, so v1 must still be running. " +
+                          $"If marker changed: Phase A's existence check was bypassed and Phase B proceeded with the broken tarball.");
+
+        // Reverse-assert: no .bak directory. Phase B's mv creates it, exit 3
+        // fires before that.
+        var noBakDir = ctx.Fixture.InstallDir + ".bak";
+        Directory.Exists(noBakDir).ShouldBeFalse(
+            customMessage: $".bak dir at {noBakDir} MUST NOT exist after exit 3 — Phase B's mv-swap never ran. " +
+                          $"If .bak exists: Phase B started despite the broken tarball (regression in Phase A's pre-swap guards).");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
