@@ -46,6 +46,24 @@ public static class LinuxTentacleE2ECategories
     public const string ServiceFixture = "LinuxServiceFixtureE2E";
 
     /// <summary>
+    /// Phase 12.M.L.B.0+ E2E coverage for the real production
+    /// <c>Squid.Tentacle</c> binary's CLI surface (<c>version</c>,
+    /// <c>service install/start/stop/uninstall</c>, <c>register</c>,
+    /// <c>create-instance</c>, etc.).
+    ///
+    /// <para>Tier 🟢 high-fidelity — drives the actual published binary
+    /// (built via <c>dotnet publish -r linux-x64 --self-contained</c>
+    /// matching production CI) against real systemd / real REST stub.
+    /// UNBLOCKS Section B (service-lifecycle CLI), Section C (register),
+    /// and Section G (multi-instance) which can't be covered with the
+    /// bash-script placeholder used for upgrade-flow E2E.</para>
+    ///
+    /// <para>Linux-only; the fixture's binary is a self-contained
+    /// <c>linux-x64</c> bundle that won't run on macOS / Windows.</para>
+    /// </summary>
+    public const string TentacleBinary = "LinuxTentacleBinaryE2E";
+
+    /// <summary>
     /// Phase 12.M.L.A.1+ E2E coverage for the production
     /// <c>deploy/scripts/install-tentacle.sh</c> bootstrap installer.
     /// Tier 🟢 high-fidelity — drives the real <c>.sh</c> against a real
