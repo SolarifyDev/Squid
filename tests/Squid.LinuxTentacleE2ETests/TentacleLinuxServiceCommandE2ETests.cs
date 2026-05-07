@@ -241,6 +241,142 @@ public sealed class TentacleLinuxServiceCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // B5.u1-Linux — `service status` on non-registered service exits non-zero
+    //
+    // Trivial sanity: when the operator (or a fleet-monitoring script)
+    // queries status of a service that was never installed, the binary
+    // MUST exit non-zero so calling code knows there's no service to act
+    // on.
+    //
+    // Without this pin, a regression that swallows systemctl's "no such
+    // unit" error and exits 0 would silently break:
+    //   - Operator scripts that check `squid-tentacle service status &&
+    //     squid-tentacle register` (skip register if already registered)
+    //   - Monitoring tools that treat exit 0 as "service running fine"
+    //
+    // Test mechanism: invoke `service status` with a guaranteed-unique
+    // GUID-suffixed service name that's never been installed. Expect
+    // non-zero exit. No setup, no cleanup needed (no state mutated).
+    //
+    // Tier: 🟢 H. Real binary + real systemctl. Sub-second runtime.
+    // ========================================================================
+
+    [Fact]
+    public void B5u1_ServiceStatus_NonExistentService_ExitsNonZero()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        var binary = new LinuxTentacleBinaryFixture();
+        var bogusServiceName = $"squid-tentacle-status-test-{Guid.NewGuid():N}";
+
+        var (exitCode, output) = binary.Run("service", "status", "--service-name", bogusServiceName);
+
+        exitCode.ShouldNotBe(0,
+            customMessage: $"`service status --service-name {bogusServiceName}` MUST exit non-zero for an unregistered service. " +
+                          $"Got exit {exitCode}. " +
+                          $"If 0: regression where systemctl's 'no such unit' error is being swallowed and the binary reports success — operator scripts that conditionally branch on status would all silently fail. " +
+                          $"output:\n{output}");
+    }
+
+    // ========================================================================
+    // B8.h-Linux — Unit file written by `service install` MUST contain the
+    //               crash-loop hardening directives
+    //
+    // Production unit content (from SystemdServiceHost.BuildUnitFile):
+    //
+    //   [Unit]
+    //   Description=...
+    //   After=network.target
+    //   StartLimitBurst=3                  ← give-up-after-3-failures cap
+    //   StartLimitIntervalSec=120          ← within a 120s window
+    //
+    //   [Service]
+    //   Type=simple
+    //   ExecStart=...
+    //   WorkingDirectory=...
+    //   [User=...]
+    //   Restart=on-failure                 ← only restart on FAILED exit
+    //   RestartSec=10                      ← wait 10s between attempts
+    //   KillSignal=SIGINT
+    //   TimeoutStopSec=330                 ← drain timeout coordination
+    //
+    // Coverage at unit tier: ServiceCommandTests.GenerateUnitFile_PinsTimeoutStopSec330
+    // pins TimeoutStopSec=330 on the GENERATED string (no E2E component).
+    //
+    // E2E delta added by this test: round-trip from real binary → real
+    // unit file ON DISK → assert content. Catches integration regressions
+    // unit tests miss:
+    //   - File.WriteAllText output mutated by something between generation
+    //     and disk write (encoding bug, BOM injection)
+    //   - Production code path that bypasses BuildUnitFile entirely
+    //     (regression that hardcodes a different unit template at the
+    //     install call site)
+    //
+    // Why this matters: without Restart=on-failure + StartLimitBurst, a
+    // crashing v2 binary after upgrade would either crash-loop forever
+    // (Restart=always) flooding journalctl + CPU, OR not restart at all
+    // (Restart=no) leaving the agent permanently dead. The current
+    // hardening is the operator-tuned middle ground.
+    // ========================================================================
+
+    [Fact]
+    public void B8h_ServiceInstall_UnitFileContainsCrashLoopHardening()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new ServiceCommandTestContext();
+
+        var (installExit, _) = ctx.Binary.SudoRun("service", "install", "--service-name", ctx.ServiceName);
+        installExit.ShouldBe(0, "install must succeed before hardening pins can be checked");
+
+        var unitPath = $"/etc/systemd/system/{ctx.ServiceName}.service";
+        var content = LinuxInstallScriptContext.SudoReadAllText(unitPath);
+
+        // ── Restart hardening ──────────────────────────────────────────────
+        // Restart=on-failure (NOT always, NOT no): only restart on
+        // non-zero exit. Pinned because production rationale (BuildUnitFile
+        // line 110-130) is operator-tuned: always-restart floods on
+        // genuinely-broken binaries; no-restart leaves permanent failures
+        // unrecovered.
+        content.ShouldContain("Restart=on-failure",
+            customMessage: $"unit file MUST contain 'Restart=on-failure' (NOT 'Restart=always' or 'Restart=no'). " +
+                          $"Production rationale: a crashing v2 binary after upgrade would either crash-loop forever (always) flooding journalctl + CPU, OR stay permanently dead (no). " +
+                          $"on-failure is the operator-tuned middle ground. " +
+                          $"Got unit content:\n{content}");
+
+        // RestartSec=10 — 10s between restart attempts. Combined with
+        // StartLimitBurst=3 + StartLimitIntervalSec=120 → 3 failures in
+        // 120s = 30s spacing per failure → systemd gives up cleanly.
+        content.ShouldContain("RestartSec=10",
+            customMessage: "unit file MUST contain 'RestartSec=10' for the 10s-between-attempts contract. If different value: timing tradeoff was changed without updating this pin (verify the change is intentional, then update test).");
+
+        // StartLimitBurst=3 — give-up-after-3-failures cap.
+        content.ShouldContain("StartLimitBurst=3",
+            customMessage: "unit file MUST contain 'StartLimitBurst=3' — without it systemd would retry indefinitely. Cap = 3 failures in 120s window before systemd marks the unit as 'failed' and stops retrying.");
+
+        // StartLimitIntervalSec=120 — sliding window for the burst counter.
+        content.ShouldContain("StartLimitIntervalSec=120",
+            customMessage: "unit file MUST contain 'StartLimitIntervalSec=120' — paired with StartLimitBurst=3, this is the operator-tuned 'give up after 3 failures within 2 minutes' policy.");
+
+        // TimeoutStopSec=330 — drain coordination per BuildUnitFile's
+        // 30→300 raise comment. Pinned at unit tier
+        // (ServiceCommandTests.GenerateUnitFile_PinsTimeoutStopSec330);
+        // E2E pin catches the round-trip into the on-disk file.
+        content.ShouldContain("TimeoutStopSec=330",
+            customMessage: "unit file MUST contain 'TimeoutStopSec=330' — coordinated with TentacleSettings.DefaultShutdownDrainTimeoutSeconds=300. " +
+                          "Lower value = systemd SIGKILLs the agent BEFORE drain completes, abruptly terminating in-flight scripts WITHOUT cancellation cleanup.");
+
+        // Cleanup via production CLI.
+        var (uninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--service-name", ctx.ServiceName);
+        uninstallExit.ShouldBe(0, "uninstall must succeed to leave clean state for next test");
+
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
