@@ -38,6 +38,9 @@ public sealed class LinuxInstallScriptContext : IDisposable
     /// <summary>Per-test isolated install dir (under /tmp). The .sh's `mkdir -p` only fires after successful download, so failed runs leave this absent.</summary>
     public string InstallDir { get; }
 
+    /// <summary>Path to the test service script under tests/ (used as the placeholder Squid.Tentacle binary in install tarballs).</summary>
+    public string TestServiceScript { get; }
+
     public LinuxInstallScriptContext()
     {
         var unique = Guid.NewGuid().ToString("N");
@@ -45,6 +48,105 @@ public sealed class LinuxInstallScriptContext : IDisposable
         InstallDir = Path.Combine(Path.GetTempPath(), $"squid-install-test-{unique}");
         Mirror = LocalReleaseMirror.Start();
         InstallScriptPath = LocateInstallScript();
+        TestServiceScript = LocateTestServiceScript();
+    }
+
+    /// <summary>
+    /// Builds a single-entry .tar.gz containing a placeholder
+    /// <c>Squid.Tentacle</c> binary (a copy of the test service script).
+    /// install-tentacle.sh extracts the tarball to <see cref="InstallDir"/>
+    /// then chmod +x's the binary + creates the symlinks. The placeholder
+    /// is a bash script that handles <c>version</c> + <c>help</c>
+    /// subcommands (per the .sh's post-install verification at line 510)
+    /// and falls into a sleep loop otherwise (so a systemd start
+    /// post-install would idle as expected).
+    ///
+    /// <para>Tar contents are FLAT (no wrapper directory) — line 251 of
+    /// install-tentacle.sh expects this exact shape: <c>tar xzf "$ARCHIVE"
+    /// -C "$INSTALL_DIR"</c> with no <c>--strip-components</c>.</para>
+    /// </summary>
+    public byte[] BuildInstallTarGz(string version)
+    {
+        var binaryBytes = File.ReadAllBytes(TestServiceScript);
+
+        // Single entry: Squid.Tentacle (the placeholder binary).
+        // No version.txt needed — install-tentacle.sh doesn't read it
+        // (only the upgrade flow's marker mechanism does). Keeping the
+        // tarball minimal matches what the production release pipeline
+        // ships for fresh installs.
+        var entries = new (string Name, byte[] Content)[]
+        {
+            ("Squid.Tentacle", binaryBytes)
+        };
+
+        return BuildTarGz(entries);
+    }
+
+    /// <summary>
+    /// Hand-rolled multi-entry POSIX tar + gzip. Mirrors
+    /// <see cref="LinuxLifecycleContext.BuildV2BundleTarGz"/>'s helper
+    /// so the install tarball format matches the upgrade tarball format
+    /// the production release pipeline produces.
+    /// </summary>
+    private static byte[] BuildTarGz((string Name, byte[] Content)[] entries)
+    {
+        using var tarMs = new MemoryStream();
+        foreach (var entry in entries)
+        {
+            var header = BuildTarHeader(entry.Name, entry.Content.Length);
+            tarMs.Write(header, 0, header.Length);
+            tarMs.Write(entry.Content, 0, entry.Content.Length);
+            var pad = (512 - (entry.Content.Length % 512)) % 512;
+            if (pad > 0) tarMs.Write(new byte[pad], 0, pad);
+        }
+        tarMs.Write(new byte[1024], 0, 1024);
+
+        using var gzMs = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(gzMs, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        {
+            var tarBytes = tarMs.ToArray();
+            gz.Write(tarBytes, 0, tarBytes.Length);
+        }
+        return gzMs.ToArray();
+    }
+
+    private static byte[] BuildTarHeader(string fileName, long size)
+    {
+        var header = new byte[512];
+
+        var nameBytes = System.Text.Encoding.ASCII.GetBytes(fileName);
+        Array.Copy(nameBytes, header, Math.Min(nameBytes.Length, 100));
+
+        // Mode 0755 — install-tentacle.sh re-applies chmod +x but
+        // shipping it executable from the tarball matches production.
+        WriteOctal(header, offset: 100, length: 8, value: 0x1ED);
+        WriteOctal(header, 108, 8, 0);
+        WriteOctal(header, 116, 8, 0);
+        WriteOctal(header, 124, 12, size);
+        WriteOctal(header, 136, 12, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        for (var i = 148; i < 156; i++) header[i] = (byte)' ';
+        header[156] = (byte)'0';
+
+        var ustar = System.Text.Encoding.ASCII.GetBytes("ustar");
+        Array.Copy(ustar, 0, header, 257, ustar.Length);
+        header[263] = (byte)'0';
+        header[264] = (byte)'0';
+
+        var checksum = 0;
+        foreach (var b in header) checksum += b;
+        WriteOctal(header, 148, 7, checksum);
+        header[155] = 0;
+
+        return header;
+    }
+
+    private static void WriteOctal(byte[] buffer, int offset, int length, long value)
+    {
+        var s = Convert.ToString(value, 8).PadLeft(length - 1, '0');
+        var bytes = System.Text.Encoding.ASCII.GetBytes(s);
+        Array.Copy(bytes, 0, buffer, offset, Math.Min(bytes.Length, length - 1));
+        buffer[offset + length - 1] = 0;
     }
 
     /// <summary>
@@ -199,5 +301,19 @@ public sealed class LinuxInstallScriptContext : IDisposable
         }
         throw new FileNotFoundException(
             "Could not locate deploy/scripts/install-tentacle.sh. Expected at the repo root's deploy/scripts/.");
+    }
+
+    private static string LocateTestServiceScript()
+    {
+        var thisAssemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+        var dir = thisAssemblyDir;
+        for (var i = 0; i < 8 && dir != null; i++)
+        {
+            var candidate = Path.Combine(dir, "tests", "Squid.LinuxTentacleE2E.TestService", "squid-linux-test-service.sh");
+            if (File.Exists(candidate)) return candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+        throw new FileNotFoundException(
+            "Could not locate squid-linux-test-service.sh. Expected at tests/Squid.LinuxTentacleE2E.TestService/.");
     }
 }

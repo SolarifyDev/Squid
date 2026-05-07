@@ -53,6 +53,18 @@ if [ "${1:-}" = "version" ]; then
     exit 0
 fi
 
+# `help` subcommand fast-path. Used by install-tentacle.sh's post-install
+# verification (line 510-516): `if ${BINARY_NAME} help >/dev/null 2>&1`.
+# Without this fast-path we'd fall into the sleep loop and the install
+# .sh would hang forever waiting on the help command. Real Squid.Tentacle's
+# CLI handles `help` similarly. Bug found by J.M.L.A.2 (Linux install
+# happy path E2E) — the install verification was the first caller of
+# this fast-path.
+if [ "${1:-}" = "help" ]; then
+    echo "test service - subcommands: version, help"
+    exit 0
+fi
+
 # Optional healthz endpoint for J.L.E.6+ full-lifecycle tests. The .sh's
 # Phase B healthcheck loop curls $HEALTHCHECK_URL (default
 # http://127.0.0.1:8080/healthz) — without an actual responder the
