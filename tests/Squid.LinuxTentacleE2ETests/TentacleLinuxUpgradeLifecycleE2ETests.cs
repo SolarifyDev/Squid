@@ -291,6 +291,129 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E15.h-Linux — Upgrade preserves /etc/squid-tentacle/{instances.json,
+    //                instances/<name>.config.json, instances/<name>/certs/*}
+    //
+    // Same ship-blocker the Windows E15.h test pins (see PR #198): the .sh's
+    // Phase B mv-swap operates on INSTALL_DIR (= /opt/squid-tentacle by
+    // default) ONLY. The sibling config tree at /etc/squid-tentacle holds
+    // EVERY instance's identity material:
+    //
+    //   /etc/squid-tentacle/
+    //     instances.json                    ← registry: name → ConfigPath map
+    //     instances/<name>.config.json      ← per-instance Server URL + thumbprint + subscription
+    //     instances/<name>/certs/<...>      ← per-instance mTLS material
+    //
+    // Production layout (per Squid.Tentacle.Platform.PlatformPaths.GetSystemConfigDir
+    // for Linux + GetInstancesRegistryPath / GetInstanceConfigPath /
+    // GetInstanceCertsDir).
+    //
+    // If any of these get touched across an upgrade, the agent loses
+    // identity → server sees the machine "disappear" → operator must
+    // re-register every Tentacle. Pin the contract so a future polish
+    // that "tidies up" the upgrade flow doesn't accidentally shred it.
+    //
+    // Strategy: stage instance state in a TEST-PRIVATE config dir
+    // (sibling to INSTALL_DIR, NOT under /etc/squid-tentacle to avoid
+    // polluting the host), capture pre-upgrade SHA256, run a normal
+    // upgrade (same shape as E1.h-Linux), re-hash → assert byte-for-byte
+    // identical. Since the .sh has no config-dir env override, we don't
+    // need to inject the config path into the .sh — the .sh genuinely
+    // never reads OR writes outside INSTALL_DIR + STATE_DIR, so any
+    // sibling tree is provably untouched simply by virtue of NOT being
+    // INSTALL_DIR.
+    //
+    // High-fidelity. Real prod .sh + real systemd + real bash + real
+    // mirror + 2KB pseudo-random cert blob hashed both sides.
+    // ========================================================================
+
+    [Fact]
+    public void E15h_UpgradePreservesInstanceConfigAndCertFiles_Linux()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // Stage v1 service (healthz responder ENABLED so Phase B
+        // healthcheck succeeds and the upgrade actually completes).
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before E15.h-Linux can validate config preservation");
+
+        // Pre-stage instance state under the test-isolated config dir.
+        // GUID-suffixed instance name keeps overlapping-test runner logs
+        // readable.
+        var instanceName = $"e2e-instance-{Guid.NewGuid():N}";
+        var staged = ctx.StageInstanceState(instanceName);
+
+        // Capture pre-upgrade SHA256 — the exact bytes we expect to find
+        // unchanged after the upgrade swap completes.
+        var preRegistryHash = LinuxLifecycleContext.HashFile(staged.Registry);
+        var preConfigHash = LinuxLifecycleContext.HashFile(staged.Config);
+        var preCertHash = LinuxLifecycleContext.HashFile(staged.Cert);
+
+        // Run a normal upgrade — same shape as E1.h-Linux.
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"Phase A+B happy path MUST succeed before E15.h preservation can be asserted. " +
+                          $"Got exit {exitCode}. Without a successful upgrade we have no upgrade swap event " +
+                          $"to validate preservation against — so this is a precondition, not the test's main assertion.\n" +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Service successfully swapped to v2 — proves Phase B's mv ran
+        // and we have a real "upgrade event" to test preservation against.
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "v2 service must be running with v2 marker after upgrade — without proof Phase B's mv-swap actually ran, " +
+            "preservation assertions below would pass vacuously (the swap never happened, so of course nothing got swapped)");
+
+        // CRITICAL assertions: every instance-tree file MUST be byte-identical post-upgrade.
+
+        File.Exists(staged.Registry).ShouldBeTrue(
+            customMessage: $"instances.json at {staged.Registry} MUST still exist after upgrade. " +
+                          "If missing: the .sh's swap inadvertently moved/deleted the sibling config tree. " +
+                          "Operator impact: agent loses ALL its instance records → every registered tentacle " +
+                          "becomes 'unregistered' from the server's view → operators must re-register every machine.");
+
+        File.Exists(staged.Config).ShouldBeTrue(
+            customMessage: $"per-instance config at {staged.Config} MUST still exist after upgrade. " +
+                          "If missing: agent loses its server URL + thumbprint + subscription ID → can't dial in to " +
+                          "the server post-restart → service starts but immediately marks itself idle / unreachable.");
+
+        File.Exists(staged.Cert).ShouldBeTrue(
+            customMessage: $"per-instance cert at {staged.Cert} MUST still exist after upgrade. " +
+                          "If missing: agent's mTLS handshake with the server fails → polling subscription rejected " +
+                          "→ permanent disconnection.");
+
+        LinuxLifecycleContext.HashFile(staged.Registry).ShouldBe(preRegistryHash,
+            customMessage: $"instances.json content drifted across upgrade — even a whitespace change would mean " +
+                          $"the .sh mutated the file (unexpected; .sh should never read/write under {ctx.ConfigDirOverride}). " +
+                          $"Path: {staged.Registry}");
+
+        LinuxLifecycleContext.HashFile(staged.Config).ShouldBe(preConfigHash,
+            customMessage: $"per-instance config content drifted across upgrade — server URL / thumbprint / subscription ID " +
+                          $"would be regenerated, breaking agent identity. Path: {staged.Config}");
+
+        LinuxLifecycleContext.HashFile(staged.Cert).ShouldBe(preCertHash,
+            customMessage: $"agent cert bytes drifted across upgrade — new mTLS material would mean re-registration is required. " +
+                          $"Path: {staged.Cert}");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
