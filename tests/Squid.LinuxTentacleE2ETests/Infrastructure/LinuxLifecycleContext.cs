@@ -369,6 +369,78 @@ public sealed class LinuxLifecycleContext : IDisposable
     }
 
     /// <summary>
+    /// Spawns a background process that holds an EXCLUSIVE kernel flock
+    /// on <see cref="LockFilePath"/> for <paramref name="holdSeconds"/>
+    /// seconds (default: 30). Used by E11.u1-Linux to simulate a
+    /// concurrent in-flight upgrade — the next .sh dispatch must hit the
+    /// `flock -n` failure branch and exit 0 as a no-op.
+    ///
+    /// <para>The Linux .sh uses kernel flock (BSD-style), NOT file-content
+    /// detection. Pre-staging a "stale" lockfile alone does NOT block a
+    /// second dispatch — the kernel auto-releases flocks when the holding
+    /// process exits, so an unattended file is just data. This helper
+    /// genuinely holds the lock at the kernel level for the test window.</para>
+    ///
+    /// <para>Returns a disposable wrapper. Caller MUST `using` it (or
+    /// Dispose explicitly) to release the lock + reap the child process
+    /// even if the test asserts mid-flight. The kernel ALSO auto-releases
+    /// the flock on process death, so even Process.Kill() during a panic
+    /// is safe.</para>
+    ///
+    /// <para>Implementation detail: invokes the <c>flock</c> CLI from
+    /// util-linux (universally available on every modern Linux distro
+    /// + GHA ubuntu-latest). Skipped on macOS via the test's
+    /// <see cref="IsAvailable"/> guard.</para>
+    /// </summary>
+    public FlockHolder StartFlockHolder(int holdSeconds = 30)
+    {
+        // Pre-create the lockfile so flock has something to grab. The .sh
+        // also auto-creates it via touch (line 285) but creating it here
+        // gives us deterministic existence timing.
+        Directory.CreateDirectory(StateDirOverride);
+        if (!File.Exists(LockFilePath))
+            File.WriteAllText(LockFilePath, string.Empty);
+
+        // `flock -n -x <file> sleep N` — acquires an exclusive lock,
+        // runs `sleep N` while holding it, releases on sleep exit.
+        // `-n` makes the acquire non-blocking (fail-fast if already held,
+        // which we don't expect since this IS the holder).
+        var psi = new ProcessStartInfo
+        {
+            FileName = "flock",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("-x");
+        psi.ArgumentList.Add(LockFilePath);
+        psi.ArgumentList.Add("sleep");
+        psi.ArgumentList.Add(holdSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to spawn flock holder — `flock` CLI missing? util-linux must be installed.");
+
+        // Brief race window: flock acquires + sleeps, but our caller's
+        // upgrade .sh must run AFTER the lock is held. flock acquires the
+        // lock before exec'ing sleep, so a 100ms wait is conservative —
+        // gives the kernel time to register the lock without making tests
+        // sluggish. If flock dies before sleep starts, the lock is gone
+        // and Process.HasExited surfaces it on the next assertion.
+        Thread.Sleep(100);
+
+        if (proc.HasExited)
+            throw new InvalidOperationException(
+                $"flock holder exited prematurely with code {proc.ExitCode}. " +
+                $"Stderr: {proc.StandardError.ReadToEnd()}. " +
+                "The kernel flock acquire failed — likely another holder already exists, " +
+                "or sudo permissions on the lockfile path are wrong.");
+
+        return new FlockHolder(proc);
+    }
+
+    /// <summary>
     /// SHA256 over the file's bytes, lowercase hex. Stable across runs
     /// (same content → same digest). Used by E15.h-Linux to pin
     /// byte-for-byte preservation of pre-staged instance state across
@@ -515,3 +587,46 @@ public sealed class LinuxLifecycleContext : IDisposable
 /// E15.h-Linux can pin byte-for-byte preservation across an upgrade.
 /// </summary>
 public sealed record InstanceConfigPaths(string Registry, string Config, string Cert);
+
+/// <summary>
+/// Disposable wrapper around the background <c>flock</c> child process
+/// that holds an exclusive kernel flock on the upgrade lockfile during
+/// E11.u1-Linux. Disposing kills + reaps the child; the kernel
+/// auto-releases the flock on process death.
+/// </summary>
+public sealed class FlockHolder : IDisposable
+{
+    private readonly Process _proc;
+    private bool _disposed;
+
+    internal FlockHolder(Process proc)
+    {
+        _proc = proc;
+    }
+
+    /// <summary>True if the kernel flock holder is still alive.</summary>
+    public bool IsAlive => !_disposed && !_proc.HasExited;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        try
+        {
+            if (!_proc.HasExited)
+            {
+                _proc.Kill(entireProcessTree: true);
+                _proc.WaitForExit(2000);
+            }
+        }
+        catch
+        {
+            // Best-effort. Even on panic the kernel auto-releases the
+            // flock on process death — leaking a Process handle is the
+            // worst-case impact.
+        }
+
+        try { _proc.Dispose(); } catch { /* best-effort */ }
+    }
+}
