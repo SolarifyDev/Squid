@@ -417,6 +417,115 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // D4.h-Linux — `new-certificate` is idempotent (load-or-create, NOT
+    //               always-create-new despite the command name)
+    //
+    // Operator scenario this pins: an operator looks at the documented
+    // `new-certificate` command (description says "Generate a new
+    // Tentacle certificate") and runs it expecting fresh cert
+    // generation. Production behavior is actually:
+    //
+    //   var certManager = new TentacleCertificateManager(settings.CertsPath);
+    //   var cert = certManager.LoadOrCreateCertificate();   // ← LOADS if exists
+    //   Console.WriteLine($"Thumbprint: {cert.Thumbprint}");
+    //
+    // So `new-certificate` is really "ensure-certificate-exists":
+    //   - First run on fresh state → creates new cert + prints thumbprint
+    //   - Subsequent runs → load existing cert + print SAME thumbprint
+    //
+    // Why this matters / why this is a discovered behavior to pin:
+    //   - If operators expect rotation, they'll be confused (and the
+    //     command's naming reinforces the rotation expectation —
+    //     "new-certificate" implies "create a new one each time").
+    //     This is a production UX issue worth raising as a separate
+    //     task: rename to ensure-certificate, OR change behavior to
+    //     truly rotate, OR add a `--force` flag.
+    //   - For test discipline (Rule 9): pin actual behavior, raise
+    //     the gap separately. The existing semantic IS load-or-create
+    //     and that's what this test pins.
+    //   - The cert-preservation property is operator-critical for one
+    //     other reason: if `new-certificate` accidentally rotated on
+    //     every call, fleet automation re-running it would silently
+    //     destroy the agent's identity each cycle, breaking server
+    //     trust-list pinning.
+    //
+    // Test mechanism:
+    //   1. Run `new-certificate` on fresh state → first cert created
+    //      → capture thumbprint
+    //   2. Run `new-certificate` AGAIN → load-existing path
+    //      → assert thumbprint identical to first run
+    //   3. Assert output contains operator-grepped labels
+    //      (Thumbprint:/SubscriptionId:/CertsPath:)
+    //
+    // Cleanup: rm Default cert dir + config.
+    //
+    // Tier: 🟢 H. Real binary + real cert generation + real /etc/squid-
+    // tentacle/instances/Default/certs/ filesystem state.
+    //
+    // Expected runtime: ~2-3s (cert gen on first run is the bulk;
+    // subsequent calls just load).
+    // ========================================================================
+
+    [Fact]
+    public void D4h_NewCertificate_IsIdempotent_LoadsExistingCertOnRepeatCalls()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+
+        using var ctx = new DiagnosticTestContext();
+
+        // ── Run 1: fresh state, expect cert creation ──────────────────────
+        var (firstExit, firstOutput) = ctx.Binary.SudoRun("new-certificate");
+        firstExit.ShouldBe(0,
+            customMessage: $"first `new-certificate` MUST exit 0. Got {firstExit}.\noutput:\n{firstOutput}");
+
+        // Output format pin: operator scripts grep these labels.
+        firstOutput.ShouldContain("Thumbprint:",
+            customMessage: $"`new-certificate` output MUST contain 'Thumbprint:' label. " +
+                          "If absent: NewCertificateCommand.cs line 19 changed format. Operator awk/grep pipelines targeting " +
+                          $"this literal break silently. \noutput:\n{firstOutput}");
+
+        firstOutput.ShouldContain("SubscriptionId:",
+            customMessage: "`new-certificate` output MUST contain 'SubscriptionId:' label.");
+
+        firstOutput.ShouldContain("CertsPath:",
+            customMessage: "`new-certificate` output MUST contain 'CertsPath:' label — operators verify via this output that " +
+                          "the cert dir resolved to the expected /etc/squid-tentacle path.");
+
+        // Capture first thumbprint via regex (stdout has the value as
+        // 40-char hex on its own line).
+        var firstMatches = Regex.Matches(firstOutput, @"\b[0-9A-Fa-f]{40}\b");
+        firstMatches.Count.ShouldBeGreaterThan(0,
+            customMessage: $"first `new-certificate` MUST emit a 40-char hex thumbprint. \noutput:\n{firstOutput}");
+        var firstThumbprint = firstMatches[^1].Value;
+
+        // ── Run 2: existing cert, expect load + same thumbprint ───────────
+        var (secondExit, secondOutput) = ctx.Binary.SudoRun("new-certificate");
+        secondExit.ShouldBe(0,
+            customMessage: $"second `new-certificate` MUST exit 0 (idempotent contract). Got {secondExit}.\noutput:\n{secondOutput}");
+
+        var secondMatches = Regex.Matches(secondOutput, @"\b[0-9A-Fa-f]{40}\b");
+        secondMatches.Count.ShouldBeGreaterThan(0,
+            customMessage: $"second `new-certificate` MUST emit a thumbprint. \noutput:\n{secondOutput}");
+        var secondThumbprint = secondMatches[^1].Value;
+
+        // ── THE PIN: idempotent — second call returns SAME thumbprint ────
+        // TentacleCertificateManager.LoadOrCreateCertificate's "if exists,
+        // load" branch must fire. If a regression makes it always-create
+        // (consistent with the command's misleading name), every call
+        // generates a new cert and rotates the agent's identity silently.
+        secondThumbprint.ToUpperInvariant().ShouldBe(firstThumbprint.ToUpperInvariant(),
+            customMessage: $"second `new-certificate` MUST return the SAME thumbprint as the first (load-or-create semantic). " +
+                          $"\n\nFirst thumbprint:  {firstThumbprint}\n" +
+                          $"Second thumbprint: {secondThumbprint}\n\n" +
+                          $"If different: production semantic regressed to always-create-new — every fleet-automation re-run of " +
+                          "`new-certificate` would silently rotate the agent's identity, breaking server-side trust pinning. " +
+                          "The command's name promises rotation, but the documented + currently-pinned behavior is load-or-create. " +
+                          "If true rotation is desired, raise as a separate production change with proper migration.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
