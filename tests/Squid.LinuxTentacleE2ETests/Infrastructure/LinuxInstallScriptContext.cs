@@ -259,7 +259,41 @@ public sealed class LinuxInstallScriptContext : IDisposable
         TrySudoRm("/etc/sudoers.d/squid-tentacle-upgrade");
         TrySudoRm("/etc/systemd/system/squid-tentacle.service");
 
+        // J.M.L.A.5: tests that enable CREATE_USER=yes leave the
+        // squid-tentacle system user behind. userdel'ing on Dispose
+        // keeps host state clean across test runs (otherwise subsequent
+        // CI runs see the user as pre-existing → useradd idempotent
+        // skips, but state pollution accumulates and could mask
+        // useradd regressions).
+        TrySudoUserDel("squid-tentacle");
+
         try { Mirror.Dispose(); } catch { /* best-effort */ }
+    }
+
+    private static void TrySudoUserDel(string username)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sudo",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("userdel");
+            psi.ArgumentList.Add(username);
+
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5_000);
+        }
+        catch
+        {
+            // Best-effort. user may not exist (most tests skip CREATE_USER);
+            // userdel returns 6 in that case which is fine.
+        }
     }
 
     private static void TrySudoRm(string path)

@@ -440,4 +440,172 @@ public sealed class TentacleLinuxInstallScriptE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // A11.h-Linux — Sudoers + service-user happy path: install with
+    //                CREATE_USER=yes creates the squid-tentacle system
+    //                user AND installs a visudo-validated sudoers file
+    //
+    // This is THE prerequisite for the in-UI upgrade flow. The 11
+    // upgrade-flow E2E tests in J.L.E.7-19 all use a custom systemd unit
+    // running as the test user, but production runs the agent as the
+    // dedicated `squid-tentacle` system user. The upgrade path's sudo
+    // calls (systemd-run --scope, apt-get install squid-tentacle=*,
+    // dpkg -i --force-downgrade, mv to /var/lib/squid-tentacle/...) ALL
+    // require the matching sudoers file to be installed correctly.
+    //
+    // Without this E2E pin, regressions in any of the following ship
+    // silently (operator's first upgrade attempt is the catch site, and
+    // by then they've already deployed the broken installer to the fleet):
+    //
+    //   - Sudoers template's heredoc breaks (e.g. unescaped backtick
+    //     introduced — caught a real prod bug pinned by
+    //     InstallTentacleSudoersTests unit; this test confirms the unit's
+    //     pin actually flows through the .sh's heredoc + visudo chain
+    //     end-to-end)
+    //   - visudo -c is removed/replaced with no validation → bad sudoers
+    //     gets written → first upgrade prompts for password and hangs
+    //   - SERVICE_USER detection regresses → sudoers block skipped even
+    //     though useradd succeeded → upgrade prompts for password
+    //   - useradd flag drift (e.g. --no-create-home dropped) → /home/
+    //     pollution; test's user enumeration catches this
+    //
+    // Existing coverage:
+    //   - InstallTentacleSudoersTests (unit) validates the GENERATED
+    //     sudoers content shape
+    //   - This test confirms the WHOLE CHAIN: .sh's heredoc renders →
+    //     temp file passes visudo -c → moves to /etc/sudoers.d/ →
+    //     operator-visible "Installed upgrade sudoers rule" log line
+    //
+    // Test mechanism: re-run install with CREATE_USER=yes (overrides the
+    // fixture's default CREATE_USER=no), assert:
+    //   - exit 0
+    //   - getent passwd squid-tentacle returns the system user
+    //   - /etc/sudoers.d/squid-tentacle-upgrade exists with mode 0440
+    //   - file content has expected sudoers rule prefix
+    //   - stdout logs "Created system user: squid-tentacle"
+    //   - stdout logs "Installed upgrade sudoers rule" (NOT "Warning:
+    //     generated sudoers rule failed validation")
+    //
+    // Cleanup matrix already handles userdel + sudoers rm in fixture's
+    // Dispose (J.M.L.A.5 added userdel).
+    //
+    // Tier: 🟢 H (Rule 12.4) — drives real .sh + real useradd + real
+    // visudo + real /etc/sudoers.d/. Heaviest install test
+    // because it actually mutates the system identity DB.
+    //
+    // Expected runtime: ~5-10s.
+    // ========================================================================
+
+    [Fact]
+    public void A11h_SudoersAndServiceUserInstalled_VisudoValidates()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+
+        const string version = "1.6.0-sudoers";
+        var tarball = ctx.BuildInstallTarGz(version);
+        ctx.Mirror.StagePreBuiltArchive(tarball);
+
+        // Override fixture default: enable user + sudoers creation.
+        // Fixture default is CREATE_USER=no (smaller pollution surface
+        // for most install tests); this test exercises the real
+        // production path that depends on the system user existing.
+        var (exitCode, output) = ctx.RunInstallScript(version, extraEnv: new Dictionary<string, string>
+        {
+            ["CREATE_USER"] = "yes"
+        });
+
+        exitCode.ShouldBe(0,
+            customMessage: $"sudoers + service-user install MUST exit 0. Got exit {exitCode}. " +
+                          $"If 1: useradd or sudoers visudo failed mid-flight. " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // ── Service user assertions ────────────────────────────────────────
+        // `getent passwd squid-tentacle` returns 0 if the user exists. The
+        // .sh's useradd is conditional on `getent passwd $SERVICE_USER`
+        // failing (i.e. user doesn't exist) — first install run should
+        // create it.
+        var getentPsi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "getent",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        getentPsi.ArgumentList.Add("passwd");
+        getentPsi.ArgumentList.Add("squid-tentacle");
+
+        using (var getent = System.Diagnostics.Process.Start(getentPsi))
+        {
+            getent.ShouldNotBeNull();
+            var getentStdout = getent.StandardOutput.ReadToEnd();
+            getent.WaitForExit(5_000).ShouldBeTrue("getent must complete within 5s");
+            getent.ExitCode.ShouldBe(0,
+                customMessage: $"squid-tentacle system user MUST exist after install with CREATE_USER=yes. " +
+                              $"`getent passwd squid-tentacle` exited {getent.ExitCode}. " +
+                              "If non-zero: useradd silently failed (likely missing on the host, OR --system flag rejected). " +
+                              "Production impact: agent runs as root instead of the dedicated system user — privilege containment broken.");
+
+            // System user MUST be `--no-create-home` (no /home/squid-tentacle).
+            // getent passwd output: name:passwd:uid:gid:gecos:home:shell
+            // Sanity: home should NOT be /home/squid-tentacle.
+            getentStdout.ShouldNotContain("/home/squid-tentacle",
+                customMessage: $"squid-tentacle MUST be a `--no-create-home` system user. getent shows /home/squid-tentacle home dir, suggesting useradd's --no-create-home flag regressed. " +
+                              $"getent stdout: {getentStdout.Trim()}");
+        }
+
+        // Operator-visible "Created system user" log MUST appear (proves
+        // useradd actually ran in this invocation, not idempotent skip).
+        output.ShouldContain("Created system user: squid-tentacle",
+            customMessage: $"stdout MUST log 'Created system user: squid-tentacle' on the first install run that creates the user. " +
+                          $"If absent: useradd block skipped (perhaps user already existed pre-test, but cleanup matrix should have removed it).");
+
+        // ── Sudoers assertions ─────────────────────────────────────────────
+        const string sudoersPath = "/etc/sudoers.d/squid-tentacle-upgrade";
+        File.Exists(sudoersPath).ShouldBeTrue(
+            customMessage: $"sudoers file MUST exist at {sudoersPath} after install with SERVICE_USER created. " +
+                          "If absent: visudo -c rejected the generated content (template bug — operator-visible 'Warning: generated sudoers rule failed validation' should appear in stdout). " +
+                          "Production impact: in-UI upgrades hang on password prompt forever.");
+
+        // Verify the visudo path actually fired SUCCESSFULLY — log line
+        // distinguishes from the failure-mode message that .sh emits if
+        // visudo -c rejects.
+        output.ShouldContain("Installed upgrade sudoers rule",
+            customMessage: $"stdout MUST contain 'Installed upgrade sudoers rule' confirming visudo -c accepted the generated content + the file was moved to {sudoersPath}. " +
+                          $"If absent: .sh logged the failure-path message instead — visudo rejected the heredoc-rendered content (likely template regression: e.g. unescaped backtick, malformed colon). " +
+                          $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Reverse-assert: failure-path message MUST NOT appear (catches
+        // the case where .sh logs both — proceed-with-warning AND install).
+        output.ShouldNotContain("Warning: generated sudoers rule failed validation",
+            customMessage: "stdout contains visudo-validation-failure warning — install proceeded but sudoers wasn't actually installed. " +
+                          "Production impact: agent's first upgrade hangs on password prompt because sudoers file is absent.");
+
+        // Mode 0440 is required by visudo to load the file. .sh's `chmod
+        // 440 ${SUDOERS_FILE}.tmp` sets this before mv. Verify the final
+        // file's mode.
+        var sudoersInfo = new FileInfo(sudoersPath);
+        sudoersInfo.UnixFileMode.ShouldBe(System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.GroupRead,
+            customMessage: $"sudoers file mode MUST be 0440 (user-read + group-read, no execute, no other). Got {sudoersInfo.UnixFileMode}. " +
+                          "If wrong: visudo at runtime ignores the file (logs 'unsafe permissions' warning) and the rule has no effect. " +
+                          "Operator impact: in-UI upgrade hangs on password prompt despite the file being on disk.");
+
+        // Sanity: file content has expected sudoers rule prefix. The full
+        // shape is unit-tested by InstallTentacleSudoersTests; here we
+        // just confirm the heredoc rendered SOME plausible sudoers content.
+        var sudoersContent = File.ReadAllText(sudoersPath);
+        sudoersContent.ShouldContain("squid-tentacle ALL=(root) NOPASSWD:",
+            customMessage: $"sudoers file content MUST contain at least one 'squid-tentacle ALL=(root) NOPASSWD:' rule. " +
+                          $"If absent: heredoc didn't expand SERVICE_USER, OR template regressed. " +
+                          $"Content (first 500 chars):\n{sudoersContent.Substring(0, Math.Min(500, sudoersContent.Length))}");
+
+        sudoersContent.ShouldContain("/usr/bin/systemd-run --scope",
+            customMessage: "sudoers file MUST contain the scope-detach rule (the SINGLE hard privilege the upgrade flow needs). " +
+                          "If absent: upgrade-linux-tentacle.sh's `sudo systemd-run --scope` will prompt for password.");
+
+        ctx.MarkClean();
+    }
 }
