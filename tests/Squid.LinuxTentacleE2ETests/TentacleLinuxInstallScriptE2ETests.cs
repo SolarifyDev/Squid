@@ -118,4 +118,115 @@ public sealed class TentacleLinuxInstallScriptE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // A1.h-Linux — Happy path: --version X.Y.Z installs binary + symlink chain
+    //               + post-install dirs, exits 0
+    //
+    // Production scenario this pins: operator runs the documented one-liner
+    //   curl -fsSL .../install-tentacle.sh | sudo bash -s -- --version 1.6.0
+    // → binary lands at INSTALL_DIR, symlink chain on PATH, post-install
+    // dirs (config, state, workspace) created, "Verified: squid-tentacle
+    // executable" printed.
+    //
+    // Why this test is critical: it's THE prerequisite for every
+    // downstream operation. If install regresses, no upgrade can run,
+    // no register can persist, no deploy can dispatch. Currently zero
+    // Linux E2E coverage on this path.
+    //
+    // Test mechanism:
+    //   1. Build a tarball with a placeholder Squid.Tentacle binary
+    //      (the test service script, which handles `version` + `help`
+    //      subcommands and would block on systemd start otherwise).
+    //   2. Stage on LocalReleaseMirror.
+    //   3. Run install-tentacle.sh via sudo bash with --version (matches
+    //      operator one-liner shape).
+    //   4. Assert exit 0 + binary file exists + symlink chain wired up
+    //      + post-install dirs (created).
+    //
+    // Why placeholder binary handles `help`: install-tentacle.sh's line
+    // 510-516 verification step runs `squid-tentacle help`. Without a
+    // `help` fast-path, the placeholder's main loop is sleep-forever,
+    // and the install .sh would hang. Real Squid.Tentacle's CLI handles
+    // help similarly — the J.M.L.A.2 first-runner caught this gap.
+    //
+    // Recommended overrides (set by fixture):
+    //   - INSTALL_DIR=test-private  (avoids /opt collision)
+    //   - DOWNLOAD_BASE=mirror      (offline + deterministic tarball)
+    //   - NO_PKG_INSTALL=1          (skip APT/RPM probe — test is offline)
+    //   - CREATE_USER=no            (skip useradd; sudoers block also skipped)
+    //   - SQUID_BASE_URL=http://localhost:1  (defensive)
+    //
+    // Tier: 🟢 H (Rule 12.4) — drives the real production .sh against
+    // real bash + real curl + real LocalReleaseMirror serving real
+    // tar.gz + real sudo orchestration of mkdir + chmod + symlinks.
+    //
+    // Expected runtime: ~10-15s (curl LAN download + extract + chmod +
+    // symlinks + dir creation + verify-help on placeholder).
+    // ========================================================================
+
+    [Fact]
+    public void A1h_HappyPath_InstallsBinaryAndCreatesSymlinkChain()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+
+        // Stage a tarball with the placeholder Squid.Tentacle binary.
+        // The .sh tries plain version URL first (line 230); we serve
+        // the same bytes for any URL via StagePreBuiltArchive.
+        const string version = "1.6.0-installtest";
+        var tarball = ctx.BuildInstallTarGz(version);
+        ctx.Mirror.StagePreBuiltArchive(tarball);
+
+        var (exitCode, output) = ctx.RunInstallScript(version);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"happy-path install MUST exit 0. Got {exitCode}. " +
+                          $"If 1: download/extract/symlink failed (likely curl URL mismatch with mirror, OR `tar xzf` rejected our tarball format, OR sudoer chain broke). " +
+                          $"If 2: `Unknown option:` from arg parsing. " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Operator-visible "Installation Complete" banner — pins the
+        // .sh's success message contract.
+        output.ShouldContain("Installation Complete",
+            customMessage: $"stdout MUST contain 'Installation Complete' banner. Operators tail this for confirmation. output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Verification step ran AND succeeded — the .sh prints
+        // "Verified: squid-tentacle executable" only when `${BINARY_NAME}
+        // help` exits 0. If absent: either help fast-path missing OR
+        // PATH wiring broke.
+        output.ShouldContain("Verified: squid-tentacle executable",
+            customMessage: $"stdout MUST contain 'Verified: squid-tentacle executable' — the .sh's post-install verification (line 510-516) ran the binary's `help` subcommand successfully. " +
+                          $"If absent: placeholder binary doesn't handle `help` (fall-through to sleep loop, .sh hangs OR exits non-zero on its own timeout) " +
+                          $"OR symlink chain didn't put `squid-tentacle` on PATH. " +
+                          $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Binary exists at INSTALL_DIR/Squid.Tentacle (extracted by tar).
+        var binaryPath = Path.Combine(ctx.InstallDir, "Squid.Tentacle");
+        File.Exists(binaryPath).ShouldBeTrue(
+            customMessage: $"Squid.Tentacle binary MUST exist at {binaryPath} after install. " +
+                          "If absent: tar extraction failed silently, OR tarball had a different entry name (mirror serving wrong content?), OR INSTALL_DIR override didn't propagate to .sh.");
+
+        // Symlink within INSTALL_DIR — `ln -sf $INSTALL_DIR/Squid.Tentacle $INSTALL_DIR/squid-tentacle`.
+        var binaryNameSymlink = Path.Combine(ctx.InstallDir, "squid-tentacle");
+        File.Exists(binaryNameSymlink).ShouldBeTrue(
+            customMessage: $"well-known-name symlink MUST exist at {binaryNameSymlink}. " +
+                          ".sh's `ln -sf $INSTALL_DIR/Squid.Tentacle $INSTALL_DIR/squid-tentacle` (line 264) ran but produced no symlink — defensive ln failed silently?");
+
+        // Symlink on PATH (/usr/local/bin/) — `ln -sf $INSTALL_DIR/squid-tentacle /usr/local/bin/squid-tentacle`.
+        File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
+            customMessage: "/usr/local/bin/squid-tentacle symlink MUST exist after install — operators register + run via this PATH-resolved name. " +
+                          "If absent: .sh skipped the symlink (perhaps /usr/local/bin doesn't exist, but it's standard on every distro), OR sudo couldn't write there.");
+
+        // Post-install dirs created (the .sh creates these unconditionally).
+        Directory.Exists("/etc/squid-tentacle").ShouldBeTrue(
+            customMessage: "/etc/squid-tentacle MUST exist after install (CONFIG_DIR — register + run persist instance state here). " +
+                          "If absent: .sh's `mkdir -p $CONFIG_DIR` (line 296-299) didn't run — likely `[ ! -d $CONFIG_DIR ]` returned false (so dir already existed pre-test, but cleanup matrix should have removed it).");
+
+        Directory.Exists("/var/lib/squid-tentacle").ShouldBeTrue(
+            customMessage: "/var/lib/squid-tentacle MUST exist after install (STATE_DIR — upgrade flow's last-upgrade.json + lock + events go here).");
+
+        ctx.MarkClean();
+    }
 }
