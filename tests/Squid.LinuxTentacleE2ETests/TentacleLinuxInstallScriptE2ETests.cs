@@ -24,6 +24,7 @@ namespace Squid.LinuxTentacleE2ETests;
 /// returning real HTTP 404. No mocks at OS-resource layer.</para>
 /// </summary>
 [Trait("Category", LinuxTentacleE2ECategories.InstallScript)]
+[Collection(LinuxTentacleHostStateCollection.Name)]
 public sealed class TentacleLinuxInstallScriptE2ETests
 {
     // ========================================================================

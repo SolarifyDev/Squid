@@ -33,6 +33,7 @@ namespace Squid.LinuxTentacleE2ETests;
 /// CI <c>ubuntu-latest</c> runner has both.</para>
 /// </summary>
 [Trait("Category", LinuxTentacleE2ECategories.UpgradeLifecycle)]
+[Collection(LinuxTentacleHostStateCollection.Name)]
 public sealed class TentacleLinuxUpgradeLifecycleE2ETests
 {
     // ========================================================================
