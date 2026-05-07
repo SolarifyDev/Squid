@@ -270,12 +270,14 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
     {
         if (string.IsNullOrEmpty(body)) return null;
 
-        // JSON field could be camelCase ("tentacleThumbprint") or
-        // PascalCase ("TentacleThumbprint") depending on serializer
-        // settings. Match both case-insensitively. The value is a
+        // The field name is just "thumbprint" — see
+        // TentacleListeningRegistrar.cs line 180:
+        //   ["thumbprint"] = identity.Thumbprint,
+        // (case-insensitive match to be robust against a serializer
+        // settings change that PascalCases keys). The value is a
         // 40-char hex string (SHA-1) wrapped in quotes.
         var match = Regex.Match(body,
-            "\"tentacleThumbprint\"\\s*:\\s*\"([0-9A-Fa-f]{40})\"",
+            "\"thumbprint\"\\s*:\\s*\"([0-9A-Fa-f]{40})\"",
             RegexOptions.IgnoreCase);
 
         return match.Success ? match.Groups[1].Value : null;
@@ -341,6 +343,16 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             // instances.json: rm so the next test's create-instance starts
             // from a clean registry.
             TrySudo("rm", "-f", "/etc/squid-tentacle/instances.json");
+
+            // CRITICAL host-state hygiene: the /etc/squid-tentacle/ tree
+            // was created by THIS test (mkdir -p in the constructor).
+            // Subsequent tests like A2u1
+            // ('install fails → /etc/squid-tentacle MUST NOT exist') expect
+            // a clean state. Use `rmdir --ignore-fail-on-non-empty` so
+            // we only delete if empty — defensive against the case
+            // where another test legitimately stages files there.
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle/instances");
+            TrySudo("rmdir", "--ignore-fail-on-non-empty", "/etc/squid-tentacle");
 
             try { Stub.Dispose(); } catch { /* best-effort */ }
         }
