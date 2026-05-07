@@ -1511,6 +1511,173 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uStatusPayloadV2 — last-upgrade.json schema v2 round-trip pin
+    //
+    // Final upgrade-flow capstone. After this, BOTH the structured event log
+    // (events.jsonl, pinned by J.L.E.16/17/18) AND the operator-visible
+    // status payload (last-upgrade.json) are pinned at:
+    //   1. Wire format strict — every field present, valid JSON
+    //   2. Production parser binding — [JsonPropertyName] attributes wire
+    //      the snake-camel field names (schemaVersion → SchemaVersion,
+    //      targetVersion → TargetVersion, etc.) to the C# record
+    //
+    // Coverage gap before this test: existing E2E tests assert .Status,
+    // .TargetVersion, .InstallMethod, .Detail. They DO NOT assert:
+    //   - SchemaVersion (server uses this to negotiate parse paths across
+    //     v1/v2/v3 schema evolution; if .sh emits v3 but C# expects v2,
+    //     the server's compatibility branch breaks silently)
+    //   - StartedAt / UpdatedAt (DateTimeOffset binding from ISO 8601 Z;
+    //     if these come back null the operator UI shows "completed at
+    //     never")
+    //   - ScriptPid (operator-visible diagnostic; helps correlate the
+    //     upgrade attempt to journalctl)
+    //   - ExitCode (1.5.x added field; null on success path is the
+    //     intentional contract — pin so a future polish doesn't make
+    //     it always-required and break older agents)
+    //
+    // If a regression in [JsonPropertyName] silently drops binding for
+    // any of these fields, the file still parses (TryParse returns a
+    // non-null payload) but with default values → server UI shows
+    // schema=0, no timestamps, scriptPid=null. We need the explicit pin.
+    //
+    // Test mechanism: run E1.h-Linux end-to-end, then PARSE the agent's
+    // last-upgrade.json via UpgradeStatusPayload.TryParse (the production
+    // parser path), assert every schema v2 field is bound and matches
+    // the upgrade attempt's actual state.
+    //
+    // Tier: 🟢 H. Same fixture as E1.h, only adds parse + assert on top.
+    // Expected runtime: ~5s.
+    // ========================================================================
+
+    [Fact]
+    public void E1uStatusPayloadV2_AfterSuccess_AllSchemaV2FieldsBindCorrectly()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 must be running before status v2 round-trip pin can validate against a successful run");
+
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+
+        // Capture wall-clock around the run for timestamp range assertions.
+        // 5-second buffer absorbs minor clock skew between test process
+        // and the systemd-run scope's `date -u` invocation.
+        var beforeRun = DateTimeOffset.UtcNow.AddSeconds(-5);
+
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        var afterRun = DateTimeOffset.UtcNow.AddSeconds(5);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"E1.h precondition: upgrade must succeed before parsing the success payload. Got exit {exitCode}.\noutput tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue();
+
+        // Parse via PRODUCTION parser. TryParse returns null on parse fail
+        // (e.g. malformed JSON, unknown enum value); a non-null result
+        // means the payload at minimum looks like the right shape.
+        var rawJson = File.ReadAllText(ctx.StatusFilePath);
+        rawJson.ShouldNotBeNullOrEmpty(
+            customMessage: $"last-upgrade.json at {ctx.StatusFilePath} MUST be non-empty after success — write_status SUCCESS produces this file. Empty file = write_status's atomic mv failed silently.");
+
+        var payload = UpgradeStatusPayload.TryParse(rawJson);
+        payload.ShouldNotBeNull(
+            customMessage: $"production UpgradeStatusPayload.TryParse MUST deserialize the agent's last-upgrade.json. " +
+                          $"Null result = TryParse caught a parse exception (malformed JSON shape OR unknown enum / type binding regression). " +
+                          $"Raw JSON content (first 500 chars):\n{rawJson.Substring(0, Math.Min(500, rawJson.Length))}");
+
+        // ── Schema version pin ─────────────────────────────────────────────
+        // The .sh's write_status emits `"schemaVersion": 2`. If C# defaults
+        // to 1 (record's default value), [JsonPropertyName("schemaVersion")]
+        // regressed.
+        payload.SchemaVersion.ShouldBe(2,
+            customMessage: $"SchemaVersion MUST bind to 2 (the .sh's write_status emits schemaVersion=2). " +
+                          $"Got {payload.SchemaVersion}. " +
+                          $"If 1: [JsonPropertyName(\"schemaVersion\")] attribute regressed → server-side compatibility branch ('schema unknown → degrade') fires for every agent.");
+
+        // ── Status binding ─────────────────────────────────────────────────
+        payload.Status.ShouldBe("SUCCESS",
+            customMessage: $"Status MUST bind 'SUCCESS' on happy path. Got '{payload.Status}'.");
+
+        // ── String fields (existing coverage; pin again at this layer) ────
+        payload.TargetVersion.ShouldBe("2.0.0-test",
+            customMessage: $"TargetVersion MUST bind from wire 'targetVersion'. Got '{payload.TargetVersion}'.");
+
+        payload.InstallMethod.ShouldBe("tarball",
+            customMessage: $"InstallMethod MUST bind from wire 'installMethod'. Got '{payload.InstallMethod}'. If empty: [JsonPropertyName(\"installMethod\")] regressed.");
+
+        payload.Detail.ShouldNotBeNullOrWhiteSpace(
+            customMessage: "Detail MUST bind from wire 'detail' (non-empty string). Empty Detail = operator UI shows blank explanation card.");
+
+        // ── DateTimeOffset binding ─────────────────────────────────────────
+        // StartedAt + UpdatedAt are DateTimeOffset?. They MUST bind to non-
+        // null values for a completed run. If null: [JsonPropertyName] OR
+        // DateTimeOffset binding regressed → operator UI shows "started:
+        // never, updated: never" for every successful upgrade.
+        payload.StartedAt.HasValue.ShouldBeTrue(
+            customMessage: $"StartedAt MUST be non-null after a completed upgrade. Null = wire 'startedAt' field didn't bind to DateTimeOffset?. " +
+                          $"Raw JSON has startedAt: {rawJson.Contains("\"startedAt\":")}");
+
+        payload.UpdatedAt.HasValue.ShouldBeTrue(
+            customMessage: $"UpdatedAt MUST be non-null after a completed upgrade. Null = wire 'updatedAt' field didn't bind.");
+
+        // Sanity: timestamps fall within the test's wall-clock window.
+        // If they don't, something's emitting bogus timestamps (clock skew,
+        // wrong format, etc.) — operators would see times in the future
+        // or far past in the UI.
+        payload.StartedAt.Value.ShouldBeInRange(beforeRun, afterRun,
+            customMessage: $"StartedAt {payload.StartedAt.Value:O} MUST fall within the test's wall-clock window [{beforeRun:O}, {afterRun:O}]. " +
+                          "Out-of-range = wrong timezone interpretation OR bogus value emitted by .sh's `date -u` invocation.");
+
+        payload.UpdatedAt.Value.ShouldBeInRange(beforeRun, afterRun,
+            customMessage: $"UpdatedAt {payload.UpdatedAt.Value:O} MUST fall within the test's wall-clock window [{beforeRun:O}, {afterRun:O}].");
+
+        // updatedAt should be >= startedAt (write_status updates after
+        // startedAt was first stamped).
+        payload.UpdatedAt.Value.ShouldBeGreaterThanOrEqualTo(payload.StartedAt.Value,
+            customMessage: $"UpdatedAt ({payload.UpdatedAt.Value:O}) MUST be >= StartedAt ({payload.StartedAt.Value:O}). " +
+                          "Inverted = wrong timestamp ordering, breaks UI duration display.");
+
+        // ── ScriptPid binding ─────────────────────────────────────────────
+        // The .sh emits `"scriptPid": $$` (bash's PID). MUST bind to a
+        // positive int. If null/0: [JsonPropertyName("scriptPid")] regressed.
+        payload.ScriptPid.HasValue.ShouldBeTrue(
+            customMessage: "ScriptPid MUST be non-null. Operators correlate the upgrade to journalctl entries by PID.");
+
+        payload.ScriptPid.Value.ShouldBeGreaterThan(0,
+            customMessage: $"ScriptPid MUST be positive (real OS PID). Got {payload.ScriptPid.Value}. " +
+                          "Zero or negative = .sh emitted bogus value OR int? binding regressed.");
+
+        // ── ExitCode contract ─────────────────────────────────────────────
+        // Schema v2 added ExitCode field (1.5.x). Success path's .sh does
+        // NOT emit it (only failure paths set it explicitly). C# binds
+        // missing JSON field to int? null. PIN this — a future polish that
+        // makes ExitCode always-emitted on success would break older
+        // agents that don't emit it (server would expect non-null and
+        // misclassify success as malformed).
+        payload.ExitCode.ShouldBeNull(
+            customMessage: $"ExitCode MUST be null on the success path. Got {payload.ExitCode}. " +
+                          ".sh emits ExitCode only on failure paths (SHA mismatch, download fail, etc.); " +
+                          "success path omits it. If non-null here: .sh started always-emitting it → backward-compat break for older agents.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
