@@ -1378,6 +1378,139 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // E1.uEventsProductionParser — .sh emits events that the PRODUCTION
+    //                              parser binds correctly via [JsonPropertyName]
+    //
+    // Coverage gap before this test: J.L.E.16 (E1.uEventsContract) verifies
+    // the wire format is strict-parseable as JSON via raw JsonDocument. It
+    // does NOT verify that the PRODUCTION parser
+    // (UpgradeStatusPayload.TryParseEvents) correctly binds those wire-
+    // format fields to the C# UpgradeEvent record.
+    //
+    // The production parser uses [JsonPropertyName] attributes to map:
+    //   "t"      → Timestamp (DateTimeOffset?)
+    //   "phase"  → Phase     (string)
+    //   "kind"   → Kind      (string)
+    //   "msg"    → Message   (string)
+    //
+    // If those attributes are silently dropped (refactor accident, IDE
+    // auto-format reorders), JsonSerializer falls back to property-name
+    // matching → Timestamp/Message/Phase/Kind don't match wire t/msg/
+    // phase/kind → every event deserializes to all-defaults (null
+    // Timestamp, empty strings) → the production parser's
+    // `if (parsed != null) result.Add(parsed)` returns events with empty
+    // fields → server UI timeline shows blank cards.
+    //
+    // J.L.E.16's strict parser would NOT catch this regression (the wire
+    // format is still valid JSON; only the C# binding broke). This test
+    // runs the actual production parser against the actual .sh-emitted
+    // file → catches [JsonPropertyName] regressions, Timestamp parsing
+    // failures, and any other binding-layer drift.
+    //
+    // Mechanism: parse via production UpgradeStatusPayload.TryParseEvents,
+    // assert symmetry with the strict parser (same count = no silent
+    // drops), assert non-empty bound fields (no all-defaults stub
+    // events).
+    //
+    // Tier: 🟢 H (Rule 12.4 — real prod .sh emits real wire format,
+    // real production parser deserializes it; round-trip).
+    //
+    // Expected runtime: ~5s (E1.h + ms for parse).
+    // ========================================================================
+
+    [Fact]
+    public void E1uEventsProductionParser_AfterSuccess_BindsWireFormatToCSharpRecord()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(
+            ctx.TestServiceScript,
+            initialVersion: "1.0.0",
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string>
+            {
+                ["SQUID_TEST_SERVICE_HEALTHZ"] = "1"
+            });
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 must be running before parser-symmetry test can validate against a successful run's events");
+
+        var v2Tarball = ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Tarball);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, output) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"E1.h precondition for production parser test: upgrade must succeed before we exercise the parser. Got exit {exitCode}.\noutput tail:\n{(output.Length > 1000 ? "..." + output.Substring(output.Length - 1000) : output)}");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue();
+
+        // Strict parse (J.L.E.16 mechanism — JsonDocument).
+        var strictEvents = ctx.ReadUpgradeEvents();
+        strictEvents.Count.ShouldBeGreaterThan(0, "events file MUST contain at least one event after success");
+
+        // PRODUCTION parser (line 127 of UpgradeStatusPayload.cs). This is
+        // the path the server uses to deserialize the agent's events file
+        // for the UI timeline. If [JsonPropertyName] attributes regress,
+        // this returns events with all-default fields (or zero events).
+        var rawJsonl = File.ReadAllText(ctx.EventsFilePath);
+        var prodEvents = UpgradeStatusPayload.TryParseEvents(rawJsonl);
+
+        // Symmetry: production parser MUST see the same number of events
+        // as the strict parser. If production parser saw fewer, it silently
+        // dropped lines (`catch { /* skip malformed */ }` at line 140) —
+        // a regression that's invisible to operators but breaks the UI.
+        prodEvents.Count.ShouldBe(strictEvents.Count,
+            customMessage: $"production parser dropped {strictEvents.Count - prodEvents.Count} events that strict-parse accepted. " +
+                          $"Server-side timeline UI would show {prodEvents.Count} events when {strictEvents.Count} were emitted. " +
+                          $"Most likely cause: a regression in UpgradeEvent's [JsonPropertyName] attributes OR a JSON shape mismatch the production parser silently rejects. " +
+                          $"strictEvents kinds: [{string.Join(", ", strictEvents.Select(e => e.Kind))}]; " +
+                          $"prodEvents kinds: [{string.Join(", ", prodEvents.Select(e => e.Kind))}]");
+
+        // Field binding: every event MUST have bound Phase + Kind + Message.
+        // If [JsonPropertyName("phase")] is dropped, JsonSerializer falls
+        // back to "Phase"-named JSON properties — the wire format uses
+        // lowercase "phase" so default fallback would yield empty string.
+        // Catches: silently-empty events that count toward total but render
+        // as blank UI cards.
+        for (var i = 0; i < prodEvents.Count; i++)
+        {
+            var ev = prodEvents[i];
+            ev.Phase.ShouldNotBeNullOrWhiteSpace(
+                customMessage: $"event[{i}] Phase MUST bind from wire 'phase' field. Empty Phase suggests [JsonPropertyName(\"phase\")] regressed. " +
+                              $"Wire-format event was kind={strictEvents[i].Kind} phase={strictEvents[i].Phase}.");
+            ev.Kind.ShouldNotBeNullOrWhiteSpace(
+                customMessage: $"event[{i}] Kind MUST bind from wire 'kind'. Empty Kind suggests [JsonPropertyName(\"kind\")] regressed.");
+            // Message may legitimately be empty for certain kinds, so we
+            // don't strictly require non-empty here.
+        }
+
+        // Timestamp binding: check at least one event has a parsed
+        // Timestamp. The wire format is ISO 8601 with Z suffix; if
+        // DateTimeOffset binding regresses (e.g. wrong field name OR
+        // JsonSerializer options change), Timestamp comes back null.
+        var withTimestamp = prodEvents.Count(e => e.Timestamp.HasValue);
+        withTimestamp.ShouldBe(prodEvents.Count,
+            customMessage: $"all {prodEvents.Count} events MUST have a parsed Timestamp. Got {withTimestamp} with timestamps. " +
+                          $"If less: DateTimeOffset binding from wire 't' field regressed — UI timeline can't order events. " +
+                          $"Wire 't' values: [{string.Join(", ", strictEvents.Take(3).Select(e => e.T))}...]");
+
+        // Cross-check: production parser preserves expected kind sequence.
+        // (Strict parser already asserted this in J.L.E.16; here we verify
+        // the production-parser-bound Kind property matches.)
+        var prodKinds = prodEvents.Select(e => e.Kind).ToList();
+        prodKinds.ShouldContain("start", customMessage: "production-parsed events MUST include 'start' kind (sanity).");
+        prodKinds.ShouldContain("success", customMessage: "production-parsed events MUST include 'success' terminal kind.");
+        prodEvents[^1].Kind.ShouldBe("success",
+            customMessage: $"production parser's last event MUST be 'success' (matches strict parser's terminal-state assertion). Got '{prodEvents[^1].Kind}'.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
