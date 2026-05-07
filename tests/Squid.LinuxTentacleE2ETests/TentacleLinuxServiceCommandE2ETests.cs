@@ -646,6 +646,275 @@ public sealed class TentacleLinuxServiceCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // B6.h-Linux — `service uninstall` (no --purge) PRESERVES config + certs
+    //
+    // Operator workflow this pins: a tentacle is being moved from one host
+    // to another (hardware swap, OS upgrade), or the operator wants to
+    // re-install over the existing identity. They run:
+    //
+    //   sudo squid-tentacle service uninstall --service-name <name>
+    //
+    // and expect the SERVICE to be gone (no more systemd unit) but the
+    // INSTANCE IDENTITY (config file with thumbprint, cert dir) to be
+    // preserved so `service install` can re-bind without re-registering
+    // and the server-side trust list stays valid.
+    //
+    // This is the historical default behaviour — operators have built
+    // tooling around it. Without this pin, a regression that "helpfully"
+    // wipes config on every uninstall would silently break:
+    //   - Operator re-install loses their cert identity → server-side
+    //     trust list still has the old thumbprint → polling fails
+    //   - Disaster recovery scripts that uninstall + reinstall to
+    //     refresh the unit file lose the agent's identity
+    //   - Fleet automation that does "stop, uninstall, redeploy binary,
+    //     install" pattern bricks every agent
+    //
+    // Test mechanism: composes B3h's setup (register → service install →
+    // wait active), then runs `service uninstall` WITHOUT --purge,
+    // asserts:
+    //   - service unit gone (uninstall did its job)
+    //   - config file STILL EXISTS (the boundary distinction)
+    //   - cert dir STILL EXISTS
+    //   - registry entry NOT removed
+    //
+    // Pairs with B7h to pin the contract boundary: --purge controls
+    // whether instance state survives uninstall.
+    //
+    // Tier: 🟢 H. Real binary + real systemd + real /etc/squid-tentacle/
+    // filesystem state.
+    //
+    // Expected runtime: ~12-18s (B3h's ~12s + uninstall ~3s + assertions).
+    // ========================================================================
+
+    [Fact]
+    public void B6h_FullWorkflow_ServiceUninstall_PreservesConfigAndCerts()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new FullWorkflowTestContext();
+
+        // ── Setup: register + install (so config + cert dir exist) ────────
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-UNINSTALL-PRESERVE-1234",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        regExit.ShouldBe(0, $"B6h precondition: register must succeed.\noutput:\n{regOutput}");
+
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        var instanceDir = "/etc/squid-tentacle/instances/Default";
+
+        // Sanity: register actually staged the artefacts the test needs to
+        // observe survive the uninstall.
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            "B6h precondition: register MUST persist config — without it the preservation pin is meaningless");
+
+        var (installExit, installOutput) = ctx.Binary.SudoRun(
+            "service", "install", "--service-name", ctx.ServiceName);
+        installExit.ShouldBe(0, $"B6h precondition: service install must succeed.\noutput:\n{installOutput}");
+
+        // ── Action: uninstall WITHOUT --purge ─────────────────────────────
+        var (uninstallExit, uninstallOutput) = ctx.Binary.SudoRun(
+            "service", "uninstall", "--service-name", ctx.ServiceName);
+
+        uninstallExit.ShouldBe(0,
+            customMessage: $"`service uninstall --service-name {ctx.ServiceName}` (no --purge) MUST exit 0. Got exit {uninstallExit}. " +
+                          $"output:\n{uninstallOutput}");
+
+        // ── Assertion 1: service unit gone (uninstall did its primary job) ──
+        var unitPath = $"/etc/systemd/system/{ctx.ServiceName}.service";
+        LinuxInstallScriptContext.SudoFileExists(unitPath).ShouldBeFalse(
+            customMessage: $"unit file at {unitPath} MUST NOT exist after uninstall. " +
+                          "If present: SystemdServiceHost.Uninstall regressed.");
+
+        // ── Assertion 2 (the pin): config file PRESERVED ──────────────────
+        // This is the contract boundary. Without --purge the operator's
+        // identity SURVIVES the uninstall.
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            customMessage: $"config file at {configPath} MUST STILL EXIST after `service uninstall` (no --purge). " +
+                          "If absent: regression that wipes config on every uninstall — operators rebuilding the service " +
+                          "would lose their cert identity AND the server-side trust list would still have the old thumbprint, " +
+                          "breaking polling. --purge is the intentional opt-in for this destructive behaviour. " +
+                          $"\n\nuninstall output (should NOT contain 'Removed config file'):\n{uninstallOutput}");
+
+        // ── Assertion 3: instance dir (containing cert dir) PRESERVED ─────
+        LinuxInstallScriptContext.SudoDirectoryExists(instanceDir).ShouldBeTrue(
+            customMessage: $"instance directory at {instanceDir} MUST STILL EXIST after `service uninstall` (no --purge). " +
+                          "If absent: --purge logic is incorrectly running on the no-purge path. " +
+                          "The cert dir under it is required for re-install without re-register.");
+
+        // ── Assertion 4: stdout did NOT log purge-only messages ───────────
+        // Reverse-pin: the "Removed config file" / "Removed instance directory"
+        // / "Removed 'Default' from instance registry" messages MUST NOT
+        // appear because --purge wasn't requested.
+        uninstallOutput.ShouldNotContain("Removed config file:",
+            customMessage: "stdout MUST NOT log 'Removed config file:' when --purge isn't passed. " +
+                          "If present: --purge code path is firing on plain uninstall — config is being silently destroyed.");
+
+        uninstallOutput.ShouldNotContain("from instance registry",
+            customMessage: "stdout MUST NOT log registry-removal message when --purge isn't passed.");
+
+        // Mark service uninstalled (Dispose's defensive systemctl path skips).
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
+    // B7.h-Linux — `service uninstall --purge` REMOVES config + certs +
+    //               instance registry entry
+    //
+    // Operator workflow this pins: a tentacle is being decommissioned
+    // permanently. The operator wants the host to look as if the agent
+    // had never existed — no service unit, no cert dir, no config file
+    // they have to remember to clean up later. They run:
+    //
+    //   sudo squid-tentacle service uninstall --purge --service-name <name>
+    //
+    // Real-world drivers:
+    //   - Permanent decommission (host being repurposed / wiped)
+    //   - Hard reset before fresh registration to a different server
+    //   - GDPR / compliance ask: "remove all instance state"
+    //   - install-tentacle.sh's documented uninstall recipe
+    //
+    // Without this E2E pin, regressions ship silently:
+    //   - --purge silently no-ops because the flag-parsing changed (operator
+    //     thinks identity is wiped, runs `register` against new server →
+    //     succeeds but old config still on disk → next reboot the OLD
+    //     identity comes back online)
+    //   - PurgeInstanceArtefacts fails halfway (e.g. removes config but
+    //     not certs) and exits 0 anyway → partial state operators have to
+    //     clean by hand
+    //   - IsSafeInstanceDir guard regression that refuses to delete safe
+    //     paths → operators see "Warning: skipping deletion" but no actual
+    //     purge happened
+    //
+    // Test mechanism: register + install (so config, cert dir, registry
+    // entry, and unit file all exist), then uninstall WITH --purge,
+    // assert ALL FOUR are gone:
+    //   - service unit (the uninstall path's job)
+    //   - config file (PurgeInstanceArtefacts → DeleteFileQuietly)
+    //   - instance dir (PurgeInstanceArtefacts → DeleteDirectoryQuietly,
+    //     guarded by IsSafeInstanceDir)
+    //   - "Removed 'Default' from instance registry" log (the registry
+    //     entry's removal logged by PurgeInstanceArtefacts)
+    //
+    // Pairs with B6h to pin the contract boundary: --purge OPTS IN to
+    // destruction; uninstall without it preserves identity.
+    //
+    // Tier: 🟢 H. Real binary + real systemd + real filesystem state.
+    //
+    // Expected runtime: ~12-18s (B3h's ~12s + purge ~3s + assertions).
+    // ========================================================================
+
+    [Fact]
+    public void B7h_FullWorkflow_ServiceUninstallPurge_RemovesConfigAndCertsAndRegistry()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new FullWorkflowTestContext();
+
+        // ── Setup: register + install ─────────────────────────────────────
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-UNINSTALL-PURGE-1234",
+            "--role", "web-server",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle",
+            "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        regExit.ShouldBe(0, $"B7h precondition: register must succeed.\noutput:\n{regOutput}");
+
+        var configPath = "/etc/squid-tentacle/instances/Default.config.json";
+        var instanceDir = "/etc/squid-tentacle/instances/Default";
+
+        // Sanity: artefacts that --purge needs to remove actually exist.
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeTrue(
+            "B7h precondition: register MUST persist config — otherwise --purge has nothing to delete and the test trivially passes");
+        LinuxInstallScriptContext.SudoDirectoryExists(instanceDir).ShouldBeTrue(
+            "B7h precondition: register MUST create cert dir — otherwise --purge's instance-dir removal is unverifiable");
+
+        var (installExit, installOutput) = ctx.Binary.SudoRun(
+            "service", "install", "--service-name", ctx.ServiceName);
+        installExit.ShouldBe(0, $"B7h precondition: service install must succeed.\noutput:\n{installOutput}");
+
+        // ── Action: uninstall WITH --purge ────────────────────────────────
+        var (purgeExit, purgeOutput) = ctx.Binary.SudoRun(
+            "service", "uninstall", "--purge", "--service-name", ctx.ServiceName);
+
+        purgeExit.ShouldBe(0,
+            customMessage: $"`service uninstall --purge --service-name {ctx.ServiceName}` MUST exit 0. Got exit {purgeExit}. " +
+                          $"If non-zero: PurgeInstanceArtefacts threw OR the underlying service uninstall failed. " +
+                          $"output:\n{purgeOutput}");
+
+        // ── Assertion 1: service unit gone ─────────────────────────────────
+        var unitPath = $"/etc/systemd/system/{ctx.ServiceName}.service";
+        LinuxInstallScriptContext.SudoFileExists(unitPath).ShouldBeFalse(
+            customMessage: $"unit file at {unitPath} MUST NOT exist after `service uninstall --purge`. " +
+                          "If present: --purge bypassed the underlying uninstall (regression in Uninstall's host.Uninstall call).");
+
+        // ── Assertion 2: config file gone ─────────────────────────────────
+        LinuxInstallScriptContext.SudoFileExists(configPath).ShouldBeFalse(
+            customMessage: $"config file at {configPath} MUST NOT exist after --purge. " +
+                          "If present: PurgeInstanceArtefacts → DeleteFileQuietly silently failed (likely a permission " +
+                          "issue OR instance.ConfigPath resolved to the wrong path). " +
+                          $"\n\npurge output (should contain 'Removed config file:'):\n{purgeOutput}");
+
+        // ── Assertion 3: instance dir (cert dir parent) gone ──────────────
+        LinuxInstallScriptContext.SudoDirectoryExists(instanceDir).ShouldBeFalse(
+            customMessage: $"instance directory at {instanceDir} MUST NOT exist after --purge. " +
+                          "If present: PurgeInstanceArtefacts's IsSafeInstanceDir guard rejected the path " +
+                          "(check that ResolveCertsPath returns the expected layout AND IsSafeInstanceDir's name-match check " +
+                          "passes for 'Default') OR DeleteDirectoryQuietly hit an exception swallowed as a Warning. " +
+                          $"\n\npurge output (should contain 'Removed instance directory:'):\n{purgeOutput}");
+
+        // ── Assertion 4: log message contracts ────────────────────────────
+        // PurgeInstanceArtefacts logs each successful deletion. Operators
+        // tail this output to confirm what was removed.
+        purgeOutput.ShouldContain("Removed config file:",
+            customMessage: $"stdout MUST log 'Removed config file:' for each purged file (DeleteFileQuietly's success path). " +
+                          $"If absent: PurgeInstanceArtefacts didn't run the config delete OR DeleteFileQuietly's log line was changed " +
+                          "(pin the wording so operators don't see drift in logs they tail). " +
+                          $"\n\noutput:\n{purgeOutput}");
+
+        purgeOutput.ShouldContain("Removed instance directory:",
+            customMessage: $"stdout MUST log 'Removed instance directory:' (DeleteDirectoryQuietly's success path for the cert dir parent). " +
+                          $"If absent: IsSafeInstanceDir refused the path OR the log line was reworded. " +
+                          $"\n\noutput:\n{purgeOutput}");
+
+        purgeOutput.ShouldContain("Removed 'Default' from instance registry",
+            customMessage: $"stdout MUST log 'Removed 'Default' from instance registry' (PurgeInstanceArtefacts's registry-removal). " +
+                          $"If absent: InstanceRegistry.Remove failed silently OR the message was reworded — operators tailing " +
+                          "this output to verify decommission would lose confirmation of the registry cleanup. " +
+                          $"\n\noutput:\n{purgeOutput}");
+
+        // ── Reverse-assert: no warnings in stdout ─────────────────────────
+        // PurgeInstanceArtefacts emits warnings via Console.Error.WriteLine
+        // for: (a) IsSafeInstanceDir guard rejection, (b) DeleteFileQuietly
+        // exception, (c) registry update failure. None should fire on the
+        // happy path.
+        purgeOutput.ShouldNotContain("skipping deletion of",
+            customMessage: "stdout MUST NOT contain 'skipping deletion of' — that's the IsSafeInstanceDir guard rejecting " +
+                          "the instance dir. If present: ResolveCertsPath is returning a path whose tail doesn't match " +
+                          "instance.Name, breaking the safety check on every purge.");
+
+        purgeOutput.ShouldNotContain("Warning: couldn't delete",
+            customMessage: "stdout MUST NOT contain 'Warning: couldn't delete' — that's DeleteFileQuietly / DeleteDirectoryQuietly " +
+                          "swallowing an exception. If present: a delete genuinely failed and the operator's purge is incomplete.");
+
+        purgeOutput.ShouldNotContain("Warning: couldn't update instance registry",
+            customMessage: "stdout MUST NOT contain registry-update warning — registry remove failed silently. " +
+                          "Operator's `list-instances` would still show 'Default'.");
+
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
