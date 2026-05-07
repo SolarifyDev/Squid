@@ -141,6 +141,106 @@ public sealed class TentacleLinuxServiceCommandE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // B2.h-Linux — `service install` is idempotent (re-run succeeds on
+    //               existing-service state)
+    //
+    // Production scenario this pins: operators re-run the documented
+    // post-install step:
+    //
+    //   sudo squid-tentacle service install   (first time)
+    //   sudo squid-tentacle service install   (refresh / repair / fleet
+    //                                          automation re-trigger)
+    //
+    // Real-world drivers:
+    //   - Fleet automation (Ansible / Salt) re-runs install playbooks on
+    //     every host on every reboot for self-healing
+    //   - Operator sees a stuck service, runs install again as part of
+    //     "have you tried turning it off and on again"
+    //   - Upgrade flow's prerequisite: install-tentacle.sh (J.M.L.A.4
+    //     covers its idempotency) is followed by `service install` —
+    //     any operator script that wraps both must work twice
+    //
+    // Without this pin, a regression that adds a "service already exists,
+    // refusing to install" check ships silently and breaks every fleet
+    // refresh AND every operator self-healing attempt.
+    //
+    // The .sh's design IS idempotent today (per code inspection of
+    // SystemdServiceHost.Install):
+    //   - File.WriteAllText (overwrites existing unit file)
+    //   - systemctl daemon-reload (idempotent)
+    //   - systemctl enable (idempotent — already-enabled is no-op)
+    //   - systemctl start (idempotent — already-running is no-op)
+    //
+    // Test mechanism: install once (J.M.L.B.1's path), then install AGAIN
+    // with the same --service-name. Both must exit 0 + final unit file
+    // content unchanged (re-install is non-destructive overwrite of the
+    // same content).
+    //
+    // Tier: 🟢 H (Rule 12.4) — real production binary + real systemd.
+    //
+    // Expected runtime: ~2× single install (~5-8s).
+    // ========================================================================
+
+    [Fact]
+    public void B2h_ServiceInstall_IdempotentReRunSucceeds()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        using var ctx = new ServiceCommandTestContext();
+
+        // ── Run 1: clean install ────────────────────────────────────────────
+        var (exit1, output1) = ctx.Binary.SudoRun("service", "install", "--service-name", ctx.ServiceName);
+
+        exit1.ShouldBe(0,
+            customMessage: $"first install MUST succeed before idempotency can be tested. Got exit {exit1}.\noutput:\n{output1}");
+
+        var unitPath = $"/etc/systemd/system/{ctx.ServiceName}.service";
+        LinuxInstallScriptContext.SudoFileExists(unitPath).ShouldBeTrue("first install must write the unit file");
+
+        // Capture unit content for comparison after re-install.
+        var contentAfterRun1 = LinuxInstallScriptContext.SudoReadAllText(unitPath);
+        contentAfterRun1.ShouldNotBeNullOrEmpty("first install must produce non-empty unit content");
+
+        // ── Run 2: re-run on existing state ────────────────────────────────
+        // No cleanup between runs — the binary's idempotency contract MUST
+        // handle: existing unit file, already-enabled service, already-
+        // running service.
+        var (exit2, output2) = ctx.Binary.SudoRun("service", "install", "--service-name", ctx.ServiceName);
+
+        exit2.ShouldBe(0,
+            customMessage: $"SECOND `service install --service-name {ctx.ServiceName}` MUST succeed (idempotent contract). Got exit {exit2}. " +
+                          $"If 1: regression in idempotency — likely added an 'already exists, refusing' check, OR daemon-reload/enable started rejecting already-active state, OR File.WriteAllText changed to fail-if-exists. " +
+                          $"output:\n{output2}");
+
+        // Unit file content unchanged. WriteAllText overwrites with the
+        // SAME content (the binary regenerates the same unit text from
+        // the same input). Pin this contract: re-install must not alter
+        // unit content (otherwise it's not really idempotent — stale
+        // ExecArgs / Description drift across re-runs).
+        var contentAfterRun2 = LinuxInstallScriptContext.SudoReadAllText(unitPath);
+        contentAfterRun2.ShouldBe(contentAfterRun1,
+            customMessage: $"unit file content MUST be byte-identical after re-install. " +
+                          "If different: the binary is regenerating different content for the same input — operators see drift between re-runs, undermining the idempotency contract operators depend on. " +
+                          $"\n\nRun 1 content:\n{contentAfterRun1}\n\nRun 2 content:\n{contentAfterRun2}");
+
+        // Reverse-assert: no spurious error log. The .sh's overwrite path
+        // shouldn't log anything that looks like an error or warning.
+        output2.ShouldNotContain("already exists",
+            customMessage: "second-run stdout MUST NOT contain 'already exists' — that signal indicates a regression where idempotency was broken by adding an error-on-existing-state check.");
+
+        output2.ShouldNotContain("Permission denied",
+            customMessage: "second-run stdout MUST NOT contain 'Permission denied' — would indicate a stale unit file ownership issue blocking the overwrite.");
+
+        // Cleanup via the production CLI.
+        var (uninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--service-name", ctx.ServiceName);
+        uninstallExit.ShouldBe(0, "uninstall must succeed to leave clean state for next test");
+
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
