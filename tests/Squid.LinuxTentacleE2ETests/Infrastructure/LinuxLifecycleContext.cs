@@ -47,6 +47,19 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// <summary>The <c>upgrade.lock</c> path the .sh writes (under StateDirOverride).</summary>
     public string LockFilePath => Path.Combine(StateDirOverride, "upgrade.lock");
 
+    /// <summary>
+    /// Test-private mirror of production's per-OS config-dir (Linux:
+    /// <c>/etc/squid-tentacle</c>). Used by E15.h-Linux to assert that
+    /// the .sh's swap of INSTALL_DIR does NOT touch sibling config trees.
+    ///
+    /// <para>The .sh has no config-dir env override — it only writes
+    /// under STATE_DIR (= upgrade artefacts) and INSTALL_DIR (= binary
+    /// staging). Anything OUTSIDE those two MUST survive byte-for-byte.
+    /// We stage instance state here so the test can prove that contract
+    /// without polluting the host's real <c>/etc/squid-tentacle</c>.</para>
+    /// </summary>
+    public string ConfigDirOverride { get; }
+
     public LinuxLifecycleContext()
     {
         var unique = Guid.NewGuid().ToString("N");
@@ -63,6 +76,11 @@ public sealed class LinuxLifecycleContext : IDisposable
         // it here only so test code can write to it directly (e.g. pre-staging
         // a stale lock file for E11.u2 tests later).
         Directory.CreateDirectory(StateDirOverride);
+
+        ConfigDirOverride = Path.Combine(Path.GetTempPath(), $"squid-linux-lifecycle-config-{unique}");
+        // E15.h-Linux pre-stages instance state under here. NOT created by
+        // default — callers opt-in via StageInstanceState. Keeps the dir
+        // off-disk for non-E15 tests so Dispose has nothing to clean.
     }
 
     /// <summary>
@@ -276,6 +294,66 @@ public sealed class LinuxLifecycleContext : IDisposable
     }
 
     /// <summary>
+    /// Pre-stages instance registry + per-instance config + cert bytes
+    /// under <see cref="ConfigDirOverride"/>, mirroring the layout
+    /// production's <c>InstanceRegistry</c> + <c>register</c> CLI write.
+    ///
+    /// <para>Used by E15.h-Linux to assert the .sh's Phase B mv-swap
+    /// of INSTALL_DIR does NOT touch sibling config trees. Returns the
+    /// three concrete paths (registry / config / cert) so the caller can
+    /// hash them pre + post upgrade and pin byte-for-byte preservation.</para>
+    ///
+    /// <para>Why instance name is GUID-suffixed: tests run concurrently
+    /// against the same systemd namespace, so even though
+    /// <see cref="ConfigDirOverride"/> is per-test, baking a unique
+    /// instance name in too keeps logs readable when multiple test
+    /// instances overlap in the runner output.</para>
+    /// </summary>
+    public InstanceConfigPaths StageInstanceState(string instanceName)
+    {
+        Directory.CreateDirectory(ConfigDirOverride);
+
+        var registryPath = Path.Combine(ConfigDirOverride, "instances.json");
+        var configPath = Path.Combine(ConfigDirOverride, "instances", $"{instanceName}.config.json");
+        var certsDir = Path.Combine(ConfigDirOverride, "instances", instanceName, "certs");
+        var certPath = Path.Combine(certsDir, $"{instanceName}.pem");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        Directory.CreateDirectory(certsDir);
+
+        var registryJson = $@"{{ ""instances"": [{{ ""name"": ""{instanceName}"", ""configPath"": ""{configPath}"", ""createdAt"": ""2026-05-01T00:00:00+00:00"" }}] }}";
+        var configJson = $@"{{ ""serverUrl"": ""https://test-server.example.com"", ""serverThumbprint"": ""ABCDEF1234567890ABCDEF1234567890ABCDEF12"", ""subscriptionId"": ""{Guid.NewGuid():N}"", ""agentName"": ""{instanceName}"" }}";
+
+        // 2KB of pseudo-random bytes representing a real cert/key blob.
+        // Content doesn't need to be a real PEM — we're testing FILE
+        // preservation, not cert validation. SHA256 comparison drives
+        // the assertion. Seed pinned for deterministic cross-run hashes
+        // (same seed → same byte sequence → easier to debug if a digest
+        // mysteriously diverges).
+        var certBytes = new byte[2048];
+        new Random(42).NextBytes(certBytes);
+
+        File.WriteAllText(registryPath, registryJson);
+        File.WriteAllText(configPath, configJson);
+        File.WriteAllBytes(certPath, certBytes);
+
+        return new InstanceConfigPaths(registryPath, configPath, certPath);
+    }
+
+    /// <summary>
+    /// SHA256 over the file's bytes, lowercase hex. Stable across runs
+    /// (same content → same digest). Used by E15.h-Linux to pin
+    /// byte-for-byte preservation of pre-staged instance state across
+    /// the upgrade swap.
+    /// </summary>
+    public static string HashFile(string path)
+    {
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
+    }
+
+    /// <summary>
     /// Reads the .sh-written <c>last-upgrade.json</c>. Returns null if
     /// the file doesn't exist OR is unparseable.
     /// </summary>
@@ -369,6 +447,15 @@ public sealed class LinuxLifecycleContext : IDisposable
         }
         catch { /* best-effort */ }
 
+        // Test-isolated config dir (only present if E15.h-Linux staged
+        // instance state — otherwise this branch is a no-op).
+        try
+        {
+            if (Directory.Exists(ConfigDirOverride))
+                Directory.Delete(ConfigDirOverride, recursive: true);
+        }
+        catch { /* best-effort */ }
+
         try { Mirror.Dispose(); } catch { /* best-effort */ }
 
         // Reset env vars set during RenderProductionScriptForVersion. NOT
@@ -392,3 +479,11 @@ public sealed class LinuxLifecycleContext : IDisposable
             "Could not locate squid-linux-test-service.sh. Expected at tests/Squid.LinuxTentacleE2E.TestService/squid-linux-test-service.sh.");
     }
 }
+
+/// <summary>
+/// Triple of paths returned by <see cref="LinuxLifecycleContext.StageInstanceState"/>.
+/// Mirrors production's <c>InstanceRegistry</c> on-disk layout
+/// (instances.json + per-instance config + per-instance cert dir) so
+/// E15.h-Linux can pin byte-for-byte preservation across an upgrade.
+/// </summary>
+public sealed record InstanceConfigPaths(string Registry, string Config, string Cert);
