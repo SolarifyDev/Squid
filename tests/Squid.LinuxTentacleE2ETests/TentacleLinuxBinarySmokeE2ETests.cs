@@ -57,14 +57,16 @@ public sealed class TentacleLinuxBinarySmokeE2ETests
                           $"If non-zero: VersionCommand has a bug OR the binary is broken (build pipeline regression). " +
                           $"output:\n{output}");
 
-        // VersionCommand reads AssemblyVersion.Canonical which is derived
-        // from -p:Version=BuildVersion. Production strips trailing `.0`
-        // revision (e.g. "1.0.0.0" → "1.0.0"), but our BuildVersion is
-        // a pre-release form ("1.0.0-binarytest") which has no .0 to strip.
-        // The output should match BuildVersion exactly (modulo whitespace).
+        // VersionCommand reads AssemblyVersion.Canonical which is computed
+        // from the numeric AssemblyName.Version (Major.Minor.Build.Revision)
+        // with trailing `.0` Revision stripped. Pre-release suffixes from
+        // AssemblyInformationalVersion are NOT included — caught by the
+        // J.M.L.B.0 first runner where I'd assumed the suffix would
+        // propagate. BuildVersion is now a numeric 3-part value chosen to
+        // survive the Canonical computation unchanged.
         output.Trim().ShouldBe(LinuxTentacleBinaryFixture.BuildVersion,
             customMessage: $"`squid-tentacle version` stdout MUST be exactly '{LinuxTentacleBinaryFixture.BuildVersion}' " +
-                          $"(the -p:Version stamp the fixture passes to dotnet publish). " +
+                          $"(the -p:Version stamp the fixture passes to dotnet publish, after AssemblyVersion.Canonical strips the trailing .0 revision). " +
                           $"Got: '{output.Trim()}'. " +
                           $"If different: AssemblyVersion.Canonical computation regressed, OR -p:Version flag is being overridden by the csproj's <Version> property, " +
                           $"OR Console.WriteLine is emitting extra text. " +

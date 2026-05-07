@@ -47,12 +47,31 @@ public sealed class LinuxTentacleBinaryFixture
     /// <summary>
     /// Pinned version stamp baked into the binary at publish time via
     /// <c>-p:Version=...</c>. The <c>version</c> subcommand reads
-    /// <c>AssemblyVersion.Canonical</c> and emits this string verbatim
-    /// (modulo trailing <c>.0</c> revision which is stripped). Tests
-    /// can <c>ShouldBe(BuildVersion)</c> against the binary's stdout to
-    /// confirm the build pipeline is wired correctly.
+    /// <see cref="AssemblyVersion.Canonical"/> which is computed from
+    /// the binary's NUMERIC <c>AssemblyName.Version</c> (4-part
+    /// <c>Major.Minor.Build.Revision</c>), with trailing <c>.0</c>
+    /// stripped — pre-release suffixes from
+    /// <c>AssemblyInformationalVersion</c> are NOT included.
+    ///
+    /// <para>Therefore <see cref="BuildVersion"/> must be a 3-component
+    /// numeric version. <c>99.99.99</c> chosen so it's:
+    /// <list type="bullet">
+    ///   <item>Distinguishable from any real production version
+    ///         (currently 1.x — semver guard against accidental
+    ///         match if test fixture leaks into production paths).</item>
+    ///   <item>Survives <see cref="AssemblyVersion.Canonical"/>'s
+    ///         computation unchanged: published Version="99.99.99" →
+    ///         numeric "99.99.99.0" → strip ".0" → "99.99.99".</item>
+    /// </list></para>
+    ///
+    /// <para>J.M.L.B.0 first runner caught my wrong assumption that
+    /// <c>-p:Version=1.0.0-binarytest</c> would propagate the
+    /// pre-release suffix to <c>version</c>'s output. It doesn't:
+    /// AssemblyVersion is numeric only, the suffix lives in a
+    /// different attribute. Test pinned this with the corrected
+    /// 99.99.99 value.</para>
     /// </summary>
-    public const string BuildVersion = "1.0.0-binarytest";
+    public const string BuildVersion = "99.99.99";
 
     public static bool IsAvailable => OperatingSystem.IsLinux() && IsDotnetOnPath();
 
