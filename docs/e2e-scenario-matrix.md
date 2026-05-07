@@ -168,8 +168,8 @@ Server → tentacle wrapper → Phase A (download) → Phase B (binary swap + re
 | E1.h-unreachable | UpgradeAsync against unreachable agent → returns Failed (NOT Initiated) | ✓ | — | 12.J.E.1 | 🟢 | 🟢 | `UpgradeAsync_AgentUnreachable_ReturnsFailed` |
 | E1.h-noversion | UpgradeAsync with empty target version → ValidateRequest rejects pre-dispatch | ✓ | — | 12.J.E.1 | 🟢 | 🟢 | `UpgradeAsync_EmptyTargetVersion_ReturnsFailedWithoutDispatch` |
 | E1.h | Win zip method: server dispatches upgrade → Phase A downloads → Phase B swaps + restarts → new version reported | ✓ | — | 12.J.E.3 | ✅ | 🟢 | `E1h_FullLifecycle_HappyPath_WritesSuccessStatusAndSwapsBinary` (drives prod .ps1 against LocalReleaseMirror + WindowsServiceFixture; isolates `$env:ProgramData`) |
-| E1.h2 | Linux tarball method: same flow with .tar.gz | — | ✓ | 12.J | ⚪ | 🟢 | |
-| E1.u1 | Download URL 404 → status reports Failed with download-error detail | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E1u1_DownloadVersionNotFound_ExitsTwoAndWritesFailedStatusWithDownloadDetail` (Win); Lin pending (12.J Linux phase) |
+| E1.h2 | Linux tarball method: same flow with .tar.gz | — | ✓ | 12.L.E.7 | ✅ | 🟢 | `E1h_FullLifecycle_HappyPath_WritesSuccessAndSwapsBinary` (Lin) — drives prod `upgrade-linux-tentacle.sh` against `LocalReleaseMirror` + `LinuxServiceFixture`; isolates `INSTALL_DIR` + `STATE_DIR`; stages real systemd-run --scope + healthz responder. 6-iteration debug loop (J.L.E.7.1–7.6) caught: SERVICE_NAME default, retries timing, port TIME_WAIT, SIGTERM-trap marker delete, version exact-match parity |
+| E1.u1 | Download URL 404 → status reports Failed with download-error detail | ✓ | ✓ | 12.J.E.3 / 12.L.E.4 | ✅ | 🟢 | `E1u1_DownloadVersionNotFound_ExitsTwoAndWritesFailedStatusWithDownloadDetail` (Win); `E1u1_DownloadVersionNotFound_ExitsSixAndWritesFailedStatusWithDownloadDetail` (Lin — exit 6 not 2 because .sh's curl-then-fallback semantics differ from .ps1's) |
 | E2.h | Linux apt method: package installed via `apt-get install -y squid-tentacle=1.6.0` | — | ✓ | 12.J | ⚪ | 🟢 | docker fixture with stub apt repo |
 | E2.u1 | apt lock contention → wait + retry; eventually succeeds | — | ✓ | 12.J | ⚪ | 🟢 | |
 | E2.u2 | apt repo missing → fallback to tarball method | — | ✓ | 12.J | ⚪ | 🟢 | |
@@ -191,7 +191,7 @@ Server → tentacle wrapper → Phase A (download) → Phase B (binary swap + re
 | E11.u1 | Concurrent agent-side dispatches (rare — operator + scheduled together) → tentacle lock file prevents dual; second is no-op | ✓ | ✓ | 12.J.E.4 | ✅ | 🟢 | `E11u1_ConcurrentDispatch_PreExistingLockPreventsSecondRun` (Win) — pre-stages lock file with first-dispatch PID, asserts exit 13 + lock-content unchanged + Phase B reverse-asserted skipped (marker stays at v1, no .bak) |
 | E11.u2 | Stale tentacle lock file (from crashed process) → next dispatch detects + breaks the lock | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E12.h | SHA companion file fetch + hash verification → matching SHA accepts | ✓ | — | 12.G | ✅ | 🟡 | covered by `WindowsUpgradeShaVerifyE2ETests` |
-| E12.u1 | SHA mismatch → reject + log + status Failed with "checksum failed" | ✓ | ✓ | 12.J.E.3 | ✅ | 🟢 | `E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithChecksumDetail` — `LocalReleaseMirror.StageSha256Override` injects deliberately-wrong digest; reverse-asserts service stayed at v1 (Phase B aborted, swap did NOT proceed despite corrupt download) |
+| E12.u1 | SHA mismatch → reject + log + status Failed with "checksum failed" | ✓ | ✓ | 12.J.E.3 / 12.L.E.5 | ✅ | 🟢 | Win: `E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithChecksumDetail` — `LocalReleaseMirror.StageSha256Override` injects deliberately-wrong digest; reverse-asserts service stayed at v1. Lin: `E12u1_Sha256Mismatch_ExitsSevenAndWritesFailedStatusWithMismatchDetail` — same shape, Phase B aborted before mv-swap |
 | E12.u2 | SHA companion 404 → opportunistic fetch falls through, install proceeds (current behaviour) | ✓ | — | 12.G + 12.J.E.4 | ✅ | 🟢 | covered at fetch-isolated tier (`OpportunisticFetch_404_FallsThroughCleanly_NoExitCode7`) AND at full-lifecycle tier (`E12u2_Sha256Companion404_FallsThroughCleanly_FullLifecycleStillSucceeds` — Phase A+B end-to-end with `mirror.SuppressSha256Companion()`, asserts SUCCESS status + marker swap to v2) |
 | E13.h | Custom `SQUID_TARGET_*_DOWNLOAD_BASE_URL` env → uses mirror; HTTPS warning absent for HTTPS URL | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
 | E13.u1 | Custom URL non-HTTPS → warning logged, install still proceeds | ✓ | ✓ | 12.J | ⚪ | 🟢 | |
@@ -299,12 +299,17 @@ Edge cases that bit operators in production.
 | 12.J.E.3 | E — full upgrade lifecycle (download + SHA verify + Phase B + last-upgrade.json round-trip) | ✅ Verified (PR #196) | +6 | 81 |
 | 12.J.E.3.1 | 🐛 fix: 3 production / test bugs caught by J.E.3 (placeholder-in-comment + Get-FileHash auto-loader + StageBinary double-wrap) | ✅ Verified (PR #197) | +0 production tests, +2 fix-pin (placeholder uniqueness + direct-.NET SHA) | 81 (+2 fix-pin) |
 | 12.J.E.4 | E — ship-blocking: instance-config preservation (E15.h) + agent-side lock (E11.u1) + SHA-companion-404 lifecycle promotion (E12.u2) | ✅ Verified (PR #198) | +3 | **84** |
-| 12.J.E.5+ | E — upgrade methods (apt/dnf) + rollback (E6.u1/E7.u1 require new prod code) + already-up-to-date (E4.h) + concurrent server-side (E10.u1) | ⚪ Planned | ~20 | ~104 |
+| 12.L.E.3 | E — `LinuxServiceFixture` + smoke (real systemd unit; install/start/stop/uninstall against `Squid.LinuxTentacleE2E.TestService`) | ✅ Verified | +2 | 86 |
+| 12.L.E.4 | E — Linux first lifecycle E1.u1 (download 404 → exit 6 + FAILED status) | ✅ Verified (PR #207) | +1 | 87 |
+| 12.L.E.5 | E — Linux SHA mismatch E12.u1 (exit 7 + checksum-failed status; service stays at v1) | ✅ Verified (PR #208) | +1 | 88 |
+| 12.L.E.6 | Production: `HEALTHCHECK_RETRIES` env-var parity with Win J.E.5 (10 modes, breaking-proof) + opt-in healthz responder in test service | ✅ Verified (PR #209) | +0 production tests, +5 unit (env-reader pinning ladder) | 88 (+5 fix-pin) |
+| 12.L.E.7 | E — **first Linux full-lifecycle E1.h2** (download → SHA-skip → mv-swap → systemctl restart → healthz curl → version probe → SUCCESS); 6-iteration runner-driven debug loop caught: SERVICE_NAME default override, retries=1 too tight, python3 port TIME_WAIT, sudo bash -c argv parse, version-probe SIGTERM marker delete, version exact-match parity (J.L.E.7.1–7.6, PRs #210–216) | ✅ Verified (PR #216) | +1 | **89** |
+| 12.J.E.5+ | E — upgrade methods (apt/dnf) + rollback (E6.u1/E7.u1 require new prod code) + already-up-to-date (E4.h) + concurrent server-side (E10.u1) | ⚪ Planned | ~20 | ~109 |
 | 12.J.D.5 | D — Calamari + variable substitution + cancellation | ⚪ Planned | ~10 | ~118 |
 | 12.K | A (install scripts) + H (boundary) | ⚪ Planned | ~40 | ~158 |
 | 12.L | B (lifecycle remainder) + F (health) + G (multi-instance) | ⚪ Planned | ~28 | ~186 |
 
-**Currently shipped on `phase12.G-real-e2e-hardening` branch: 66/66 verified on Windows + macOS.** This represents the highest-frequency operator workflows (install, register, deploy, upgrade dispatch) at high-fidelity tier 🟢 — every test drives real production code against real OS resources.
+**Currently shipped on `main`: 89 verified scenarios (Windows + Linux + macOS skip-guard).** Linux upgrade flow has reached **happy-path parity** with Windows (E1.u1, E12.u1, E1.h2 all green on the GHA ubuntu-latest runner driving real production `upgrade-linux-tentacle.sh` against real systemd-run --scope + sudo + python3-healthz + LocalReleaseMirror). Highest-frequency operator workflows (install, register, deploy, upgrade dispatch + Linux upgrade lifecycle) at high-fidelity tier 🟢.
 
 ---
 
