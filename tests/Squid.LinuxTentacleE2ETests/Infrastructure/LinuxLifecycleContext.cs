@@ -118,7 +118,13 @@ public sealed class LinuxLifecycleContext : IDisposable
             // wanting a different port set HEALTHCHECK_URL env first.
             .Replace("{{HEALTHCHECK_URL}}", "http://127.0.0.1:8080/healthz", StringComparison.Ordinal)
             .Replace("{{STATE_DIR}}", StateDirOverride, StringComparison.Ordinal)
-            .Replace("{{HEALTHCHECK_RETRIES}}", "1", StringComparison.Ordinal)
+            // HEALTHCHECK_RETRIES=10: ~10-15s window. python3 healthz
+            // responder takes ~500ms-2s to spawn after systemd starts the
+            // service; retries=1 gives <1s and fails. retries=10 is the
+            // safe-margin balance: well under production's 90s default,
+            // generous enough for any reasonable python3 startup variance.
+            // J.L.E.7 first Linux runner pass with retries=1 timed out.
+            .Replace("{{HEALTHCHECK_RETRIES}}", "10", StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 
