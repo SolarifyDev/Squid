@@ -662,4 +662,109 @@ public sealed class TentacleLinuxInstallScriptE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // A1.h-default-Linux — `--version latest` (the documented one-liner default)
+    //
+    // This is the documented operator one-liner:
+    //
+    //   curl -fsSL .../install-tentacle.sh | sudo bash
+    //
+    // No --version argument → VERSION defaults to "latest" → .sh uses
+    // a DIFFERENT URL form than --version X.Y.Z:
+    //
+    //   URL = ${DOWNLOAD_BASE}/latest/download/${BINARY_NAME}-${RID}.tar.gz
+    //
+    // (No v-prefix retry; only one URL form attempted.) This URL pattern
+    // matches GitHub's `/releases/latest/download/` redirect, which
+    // resolves to whatever tag is marked as "latest" in the GitHub UI.
+    //
+    // Real-world driver: this is THE most-used install path in fleet
+    // bootstrap automation (cloud-init / Ansible / Salt). The .sh's
+    // tagged-version path (--version 1.6.0) is for reproducibility-
+    // sensitive operators; the LATEST path is for "give me whatever's
+    // current".
+    //
+    // Without this test, regressions in the latest-only code path ship
+    // silently:
+    //   - VERSION default changes from "latest" → fleet bootstrap
+    //     suddenly requires --version arg (deployment automation breaks)
+    //   - Latest URL pattern changes (e.g. /latest/download/ → /releases/latest/)
+    //     → mirror compatibility breaks for air-gap operators
+    //   - The latest-path-specific download_ok call regresses → fleet
+    //     boots stop installing
+    //
+    // Test mechanism: stage tarball, invoke install with version=latest,
+    // assert exit 0 + log echoes the latest URL pattern + binary installed.
+    //
+    // Why this isn't covered by J.M.L.A.2 (--version 1.6.0): different
+    // URL pattern, different code branch. Per the .sh's structure:
+    //
+    //   if [ "$VERSION" = "latest" ]; then
+    //     URL="${DOWNLOAD_BASE}/latest/download/..."
+    //     # single attempt, no v-prefix retry
+    //   else
+    //     URL_PLAIN=...
+    //     URL_V_PREFIXED=...
+    //     # retry with v-prefix on 404
+    //   fi
+    //
+    // Tier: 🟢 H. Reuses fixture; only the version arg differs.
+    // Expected runtime: ~1-2s.
+    // ========================================================================
+
+    [Fact]
+    public void A1hDefault_LatestVersion_DownloadsViaLatestUrlPattern()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+
+        // For VERSION=latest, .sh hits /latest/download/squid-tentacle-${RID}.tar.gz.
+        // Mirror's StagePreBuiltArchive serves any URL — so the latest path
+        // resolves to our staged tarball. No retry, no v-prefix.
+        const string latestVersion = "latest";
+        var tarball = ctx.BuildInstallTarGz("latest-test");
+        ctx.Mirror.StagePreBuiltArchive(tarball);
+
+        var (exitCode, output) = ctx.RunInstallScript(latestVersion);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"latest-version install MUST succeed. Got exit {exitCode}. " +
+                          $"If 1: download from /latest/download/ URL failed (mirror not serving that path? URL pattern regressed in .sh?). " +
+                          $"output tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Operator-visible URL log MUST show the LATEST pattern (NOT the
+        // tagged-version pattern). Pin the URL form so a future regression
+        // that switches to the tagged-version path on VERSION=latest is
+        // caught (different URL → different mirror path → unknown-path
+        // 404 from any mirror that doesn't serve both forms).
+        output.ShouldContain("/latest/download/squid-tentacle-",
+            customMessage: $"stdout MUST echo the /latest/download/ URL pattern when VERSION=latest. " +
+                          $"If absent: .sh switched to a different URL form (e.g. /download/latest/, /releases/latest/) — air-gap mirror operators would need to reconfigure their layout. " +
+                          $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
+
+        // Reverse-assert: the v-prefix retry log line MUST NOT appear.
+        // For VERSION=latest, the .sh has only ONE URL attempt — no v-
+        // prefix fallback. If "retrying with 'v..." appears, the .sh's
+        // version branching regressed and latest is being treated like
+        // a tagged version.
+        output.ShouldNotContain("retrying with 'v",
+            customMessage: "VERSION=latest must NOT trigger the v-prefix retry log line — that retry is for tagged-version installs only (different code branch in .sh). " +
+                          "If present: version branching regressed.");
+
+        // Operator-visible: "Installation Complete" banner — pins the .sh's
+        // success contract is the same shape regardless of version path.
+        output.ShouldContain("Installation Complete",
+            customMessage: "stdout MUST contain 'Installation Complete' even on the latest path — operators tail this banner for confirmation regardless of version arg.");
+
+        // Final state: binary installed.
+        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
+            customMessage: $"Squid.Tentacle binary MUST exist at {ctx.InstallDir}/Squid.Tentacle after latest-version install.");
+
+        File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
+            customMessage: "/usr/local/bin/squid-tentacle symlink MUST exist after latest-version install — confirms post-extract steps ran the same way as tagged-version paths.");
+
+        ctx.MarkClean();
+    }
 }
