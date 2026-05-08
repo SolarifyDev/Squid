@@ -56,6 +56,7 @@ namespace Squid.WindowsUpgradeE2ETests;
 /// — covered in Linux phase).</para>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.TentacleRegister)]
+[Collection(WindowsTentacleHostStateCollection.Name)]
 public sealed class TentacleRegisterE2ETests
 {
     // ========================================================================

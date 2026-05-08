@@ -67,6 +67,7 @@ namespace Squid.WindowsUpgradeE2ETests;
 /// hosts no-op-skip cleanly.</para>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.TentacleUpgradeLifecycle)]
+[Collection(WindowsTentacleHostStateCollection.Name)]
 public sealed class TentacleUpgradeLifecycleE2ETests
 {
     // ========================================================================

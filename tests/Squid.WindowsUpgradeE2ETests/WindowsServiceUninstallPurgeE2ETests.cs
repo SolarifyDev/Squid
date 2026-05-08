@@ -39,6 +39,7 @@ namespace Squid.WindowsUpgradeE2ETests;
 /// the canonical guard — same skip pattern as the rest of the project.</para>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.ServiceHost)]
+[Collection(WindowsTentacleHostStateCollection.Name)]
 public sealed class WindowsServiceUninstallPurgeE2ETests
 {
     // ========================================================================
