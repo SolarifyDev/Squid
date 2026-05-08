@@ -169,4 +169,116 @@ public sealed class TentacleCapabilitiesE2ETests
         response.Metadata.ShouldContainKey("os",
             customMessage: "Metadata MUST carry 'os' key (consumed by `TentacleHealthCheckStrategy.ReadMetadata` / endpoint variable contributors)");
     }
+
+    // ========================================================================
+    // F3.cache-invalidation — [CacheResponse(60)] cache EXPIRES after TTL +
+    //                          rebuilds with fresh agent-reported value
+    //
+    // P1-#6 — pins the OTHER direction of the cache contract that
+    // Listening_RepeatedProbes_WithinCacheTtl_ReturnCachedResponse leaves
+    // open: the within-TTL test asserts the cache HOLDS; this test asserts
+    // the cache EXPIRES + rebuilds.
+    //
+    // Operator scenario: Tuesday 14:00, ops upgrades all agents to v2 via
+    // bulk dispatch. Server's UI shows "Tentacle version: v1" for ~60s
+    // post-upgrade (cache hit). After cache TTL, a fresh probe returns
+    // v2 and the UI updates.
+    //
+    // Pre-P1-#6 untested risk: if the cache TTL stretches (regression
+    // changes [CacheResponse(60)] to [CacheResponse(3600)]), operators
+    // would see the old version in the UI for an HOUR after every
+    // upgrade. The within-TTL test would still pass (60s contract is
+    // a ceiling); only an explicit "wait past 60s + assert refresh"
+    // catches the over-cached regression.
+    //
+    // Test mechanism (~75s runtime — bound by the production
+    // [CacheResponse(60)] TTL):
+    //   1. Initial probe at v1 → response cached for ≤60s
+    //   2. Flip agent to v2 (CapabilitiesService.AgentVersion = v2)
+    //   3. Within-TTL probe → returns CACHED v1 (matches existing test)
+    //   4. Wait > 60s (the production cache TTL) — total wait ~65s
+    //   5. Post-TTL probe → cache miss → rebuild → returns FRESH v2
+    //
+    // What this catches that the within-TTL test doesn't:
+    //   - Cache TTL increased silently (60 → 3600) — operators stuck with
+    //     stale version display for an hour after upgrade
+    //   - Cache invalidation regressed (TTL expires but cache returns
+    //     stale entry forever — operators NEVER see new version until
+    //     server pod restart)
+    //   - Cache key collisions (different probes share entries)
+    //
+    // Tier: 🟢 H per Rule 12.4. Cross-platform (Halibut + StubAgent run
+    // on every OS). Test runtime ~75s — bounded by the production cache
+    // TTL; cannot be reduced without changing production behaviour.
+    //
+    // Why not configurable: [CacheResponse(60)] is a wire-contract
+    // attribute on ICapabilitiesService.GetCapabilities. Making it
+    // configurable for tests would either change production behaviour
+    // (bad) or require a test-only contract (defeats Rule 12.4 by
+    // running tests against a different surface than production).
+    // 75s test runtime is the cost of pinning the real production
+    // contract.
+    // ========================================================================
+
+    [Fact]
+    public async Task Listening_ProbePastCacheTtl_RebuildsWithFreshAgentValue()
+    {
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        // ── Step 1: initial probe at v1 → cached for ≤60s ─────────────────
+        agent.SetAgentVersion("1.6.0-cache-invalidation-test");
+        var probe1 = await server.ProbeCapabilitiesListeningAsync(
+            agent.ListeningUri, agent.Thumbprint, CancellationToken.None);
+        probe1.AgentVersion.ShouldBe("1.6.0-cache-invalidation-test",
+            "F3.cache-invalidation precondition: initial probe MUST return v1");
+
+        // ── Step 2: flip agent to v2 ─────────────────────────────────────
+        // Agent-side state is now v2; server's cache still holds v1.
+        agent.SetAgentVersion("2.0.0-fresh-after-upgrade");
+
+        // ── Step 3: within-TTL probe → returns CACHED v1 ──────────────────
+        // Sanity: the cache is actually working (matches the existing
+        // Listening_RepeatedProbes_WithinCacheTtl test). If THIS fails,
+        // the cache attribute regressed and we'd never know if Step 5
+        // "expiry rebuilds" works because there'd be no cache to expire.
+        var probe2 = await server.ProbeCapabilitiesListeningAsync(
+            agent.ListeningUri, agent.Thumbprint, CancellationToken.None);
+        probe2.AgentVersion.ShouldBe("1.6.0-cache-invalidation-test",
+            customMessage: "F3.cache-invalidation precondition: within-TTL probe MUST return cached v1. " +
+                          "If this fails: [CacheResponse(60)] attribute was dropped — invalidation test " +
+                          "below would be testing a non-cache.");
+
+        // ── Step 4: wait past the production cache TTL ────────────────────
+        // Production [CacheResponse(60)] = 60s TTL. We wait 65s for a
+        // small safety margin. Slow CI runners + GC pauses can stretch
+        // wall-clock by ~1s; 5s margin handles it.
+        //
+        // This is the unavoidable test runtime cost — the cache TTL is
+        // a wire-contract attribute, can't be configured per-test
+        // without changing production behaviour.
+        await Task.Delay(TimeSpan.FromSeconds(65));
+
+        // ── Step 5: THE PIN — post-TTL probe rebuilds with fresh value ────
+        // Cache miss → handler invoked → returns agent's CURRENT version
+        // (v2). If the cache regressed to NEVER expire, this returns v1
+        // and the assertion catches it.
+        var probe3 = await server.ProbeCapabilitiesListeningAsync(
+            agent.ListeningUri, agent.Thumbprint, CancellationToken.None);
+
+        probe3.AgentVersion.ShouldBe("2.0.0-fresh-after-upgrade",
+            customMessage: $"F3.cache-invalidation THE PIN: post-TTL probe MUST return FRESH v2. " +
+                          $"Got: '{probe3.AgentVersion}'. " +
+                          $"If '1.6.0-cache-invalidation-test': cache TTL stretched beyond 60s (regression). " +
+                          $"Operator-impact: post-upgrade UI shows stale version for the new TTL window. " +
+                          "Compare against existing [CacheResponse(60)] attribute on " +
+                          "ICapabilitiesService.GetCapabilities — its first arg is the TTL in seconds.");
+
+        // Reverse-assert: agent itself reflects v2 (sanity that the cache
+        // is server-side, not agent-side bug).
+        agent.AgentVersion.ShouldBe("2.0.0-fresh-after-upgrade",
+            customMessage: "F3.cache-invalidation sanity: agent's local state MUST reflect v2 via SetAgentVersion. " +
+                          "If different: the cache test is meaningless because the agent doesn't actually have v2.");
+    }
 }
