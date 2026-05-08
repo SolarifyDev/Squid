@@ -54,9 +54,30 @@ try
     // Console mode — existing flow. Console.CancelKeyPress + ProcessExit
     // drive the CT so Ctrl-C on an interactive run + systemd stop on
     // Linux both trigger graceful drain.
-    using var consoleCts = new CancellationTokenSource();
-    Console.CancelKeyPress += (_, e) => { e.Cancel = true; consoleCts.Cancel(); };
-    AppDomain.CurrentDomain.ProcessExit += (_, _) => consoleCts.Cancel();
+    //
+    // IMPORTANT: do NOT wrap consoleCts in `using var`. PR #274's first-
+    // runner CI surfaced that a `using var` here breaks every short-lived
+    // CLI invocation (`version`, `show-thumbprint`, etc.) with exit 134:
+    //   1. `using var` disposes the CTS when the try block returns
+    //   2. ProcessExit handler then fires during runtime shutdown
+    //   3. Handler's `consoleCts.Cancel()` throws ObjectDisposedException
+    //   4. Unhandled exception → process aborts with 134 instead of 0
+    // The original (pre-#274) Program.cs used a non-using CTS that lived
+    // until process exit — restored here. Belt-and-suspenders: handlers
+    // also catch ObjectDisposedException as defence against any future
+    // code that disposes the CTS earlier.
+    var consoleCts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        try { consoleCts.Cancel(); }
+        catch (ObjectDisposedException) { /* race vs shutdown — handler fired post-Dispose */ }
+    };
+    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+    {
+        try { consoleCts.Cancel(); }
+        catch (ObjectDisposedException) { /* race vs shutdown */ }
+    };
 
     return await TentacleEntry.RunAsync(args, consoleCts.Token).ConfigureAwait(false);
 }
