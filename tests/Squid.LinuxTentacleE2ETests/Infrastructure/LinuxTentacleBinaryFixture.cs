@@ -43,6 +43,7 @@ public sealed class LinuxTentacleBinaryFixture
 {
     private static readonly object _buildLock = new();
     private static string _cachedBinaryPath;
+    private static string _cachedV2BinaryPath;
 
     /// <summary>
     /// Pinned version stamp baked into the binary at publish time via
@@ -73,6 +74,23 @@ public sealed class LinuxTentacleBinaryFixture
     /// </summary>
     public const string BuildVersion = "99.99.99";
 
+    /// <summary>
+    /// Pinned version stamp for the v2 (upgrade-target) binary build.
+    /// Same numeric-only constraint as <see cref="BuildVersion"/>.
+    /// <c>100.0.0</c> chosen so it's:
+    /// <list type="bullet">
+    ///   <item>STRICTLY GREATER than <see cref="BuildVersion"/> (semver
+    ///         well-ordering: an upgrade test that asserts "version went
+    ///         up" reads naturally).</item>
+    ///   <item>Distinguishable from any real production version (currently
+    ///         1.x).</item>
+    ///   <item>Used ONLY by Phase 12.M.L.U upgrade-binary-integration
+    ///         tests — single-version Section A/B/C/D/G tests use
+    ///         <see cref="BuildVersion"/>.</item>
+    /// </list>
+    /// </summary>
+    public const string BuildVersionV2 = "100.0.0";
+
     public static bool IsAvailable => OperatingSystem.IsLinux() && IsDotnetOnPath();
 
     /// <summary>
@@ -86,7 +104,7 @@ public sealed class LinuxTentacleBinaryFixture
             if (_cachedBinaryPath != null && File.Exists(_cachedBinaryPath))
                 return _cachedBinaryPath;
 
-            var binaryPath = Build();
+            var binaryPath = Build(BuildVersion, "linux-x64");
 
             if (!File.Exists(binaryPath))
                 throw new InvalidOperationException(
@@ -96,6 +114,38 @@ public sealed class LinuxTentacleBinaryFixture
 
             _cachedBinaryPath = binaryPath;
             return _cachedBinaryPath;
+        }
+    }
+
+    /// <summary>
+    /// Builds (or returns the cached path of) the v2 binary stamped at
+    /// <see cref="BuildVersionV2"/>. Used by Phase 12.M.L.U upgrade-binary-
+    /// integration tests to swap a v1-installed service to a v2 binary
+    /// and verify the version cycle + identity preservation contracts.
+    ///
+    /// <para>Cached at a SEPARATE output dir from the v1 build so the two
+    /// coexist during the same test run — the upgrade test needs both
+    /// binaries simultaneously (v1 to install, v2 to swap in).</para>
+    ///
+    /// <para>First call adds ~30-60s to the suite (full publish of the
+    /// same project with a different version stamp); subsequent calls
+    /// return the cached path. Idempotent + thread-safe.</para>
+    /// </summary>
+    public string EnsureBuiltV2()
+    {
+        lock (_buildLock)
+        {
+            if (_cachedV2BinaryPath != null && File.Exists(_cachedV2BinaryPath))
+                return _cachedV2BinaryPath;
+
+            var binaryPath = Build(BuildVersionV2, "linux-x64-v2");
+
+            if (!File.Exists(binaryPath))
+                throw new InvalidOperationException(
+                    $"v2 dotnet publish completed but binary not found at: {binaryPath}.");
+
+            _cachedV2BinaryPath = binaryPath;
+            return _cachedV2BinaryPath;
         }
     }
 
@@ -177,7 +227,7 @@ public sealed class LinuxTentacleBinaryFixture
         return (proc.ExitCode, stdoutTask.Result + Environment.NewLine + stderrTask.Result);
     }
 
-    private static string Build()
+    private static string Build(string versionStamp, string outputSubDir)
     {
         var repoRoot = LocateRepoRoot();
         var csproj = Path.Combine(repoRoot, "src", "Squid.Tentacle", "Squid.Tentacle.csproj");
@@ -188,8 +238,10 @@ public sealed class LinuxTentacleBinaryFixture
 
         // Stable cache path under the test assembly's bin/. Survives between
         // test runs but cleared by `dotnet clean` / `git clean -xdf bin/`.
+        // The outputSubDir parameter lets v1 + v2 coexist in separate cache
+        // dirs (e.g. linux-x64/ and linux-x64-v2/).
         var thisAssemblyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
-        var outputDir = Path.Combine(thisAssemblyDir, "squid-tentacle-binary-fixture", "linux-x64");
+        var outputDir = Path.Combine(thisAssemblyDir, "squid-tentacle-binary-fixture", outputSubDir);
 
         Directory.CreateDirectory(outputDir);
 
@@ -215,7 +267,7 @@ public sealed class LinuxTentacleBinaryFixture
         psi.ArgumentList.Add("--self-contained");
         psi.ArgumentList.Add("true");
         psi.ArgumentList.Add("-p:PublishSingleFile=true");
-        psi.ArgumentList.Add($"-p:Version={BuildVersion}");
+        psi.ArgumentList.Add($"-p:Version={versionStamp}");
         psi.ArgumentList.Add("-o");
         psi.ArgumentList.Add(outputDir);
         // Quiet verbosity — full build log isn't useful for test diagnosis;
