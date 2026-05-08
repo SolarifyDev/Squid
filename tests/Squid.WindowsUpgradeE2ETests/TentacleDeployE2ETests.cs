@@ -644,19 +644,34 @@ public sealed class TentacleDeployE2ETests
         /// </summary>
         public static (string body, ScriptType type) EmitServiceMessage(string magicLine)
         {
+            // Sleep BEFORE emit — same timing-resilience pattern as
+            // SleepThenEcho. Caught by Windows CI flake on
+            // Listening_OutputVariableWithBase64Encoding (1-in-7 failure
+            // rate, run 25529180587). Symptom: parsed variables list was
+            // empty even though the script body was correct.
+            //
+            // Root cause: pwsh.exe spawn takes 300-500ms on stressed
+            // Windows runners; if the heredoc body completes its emit
+            // BEFORE the agent's stdout reader is fully attached, the
+            // service-message line is lost. Sleep 1s gives the reader
+            // time to attach, then emit, then exit cleanly.
+            //
+            // Same fix that Windows polling tests + concurrent tests
+            // adopted (SleepThenEcho) — applied to EmitServiceMessage so
+            // all 3 service-message tests inherit the resilience.
             if (OperatingSystem.IsWindows())
             {
                 // PowerShell here-string (single-quote = literal, no
                 // expansion). Body terminator '@ MUST be at start of a
                 // physical line.
-                var ps = "Write-Output @'\n" + magicLine + "\n'@";
+                var ps = "Start-Sleep -Seconds 1\nWrite-Output @'\n" + magicLine + "\n'@";
                 return (ps, ScriptType.PowerShell);
             }
             else
             {
                 // Bash heredoc with single-quoted delimiter — same "no
                 // expansion" semantics as the PowerShell variant.
-                var bash = "cat <<'SQUIDMSGEOF'\n" + magicLine + "\nSQUIDMSGEOF";
+                var bash = "sleep 1\ncat <<'SQUIDMSGEOF'\n" + magicLine + "\nSQUIDMSGEOF";
                 return (bash, ScriptType.Bash);
             }
         }

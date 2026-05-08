@@ -271,9 +271,15 @@ public sealed class TentacleLinuxDeployE2ETests
 
         const string varName = "MyOutputVar";
         const string varValue = "value-from-deploy-no-base64";
-        // Plain service-message format — no base64 encoding.
+        // Plain service-message format — no base64 encoding. Sleep 1s
+        // before emit (timing-resilience) — same pattern Windows
+        // EmitServiceMessage adopted: bash spawn time can occasionally
+        // overlap with the emit, leaving the agent's stdout reader
+        // unattached when the line surfaces. Caught by PR #266 first
+        // runner where LD7h failed in an unrelated PR (new-certificate
+        // change shouldn't affect LD7h, surfacing the underlying flake).
         var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
-            $"echo \"##squid[setVariable name='{varName}' value='{varValue}']\"",
+            $"sleep 1; echo \"##squid[setVariable name='{varName}' value='{varValue}']\"",
             ScriptType.Bash);
 
         result.ExitCode.ShouldBe(0,
@@ -527,8 +533,9 @@ public sealed class TentacleLinuxDeployE2ETests
         const string varName = "MyApiKey";
         const string varValue = "secret-value-that-must-not-leak";
 
+        // sleep 1 before emit for timing resilience — same as LD7h.
         var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
-            $"echo \"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']\"",
+            $"sleep 1; echo \"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']\"",
             ScriptType.Bash);
 
         result.ExitCode.ShouldBe(0,
