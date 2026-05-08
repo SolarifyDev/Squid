@@ -495,6 +495,189 @@ public sealed class TentacleLinuxDeployE2ETests
                           $"\nLogs:\n{result.AllText}");
     }
 
+    // ========================================================================
+    // L-D12.h-Linux — Sensitive output variable flagged correctly
+    //
+    // Operator scenario: deployment script emits a credential that
+    // MUST NOT appear in plain logs. Production uses
+    // <c>##squid[setVariable name='X' value='Y' sensitive='True']</c>
+    // — server-side parser sees sensitive=True and routes the value
+    // through encrypted storage + redaction in subsequent logs.
+    //
+    // This test pins the agent-side surface: the service-message line
+    // (including the `sensitive='True'` flag) round-trips through
+    // bash → ProcessOutput → Halibut → server logs intact. Server-
+    // side parsing + redaction is covered separately at integration
+    // tier; THIS test ensures the dispatch path doesn't strip / mangle
+    // the sensitive flag.
+    //
+    // Mirror of Windows
+    // <c>Listening_SensitiveOutputVariable_FlaggedByProductionParser</c>.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD12h_Listening_SensitiveOutputVariable_FlagRoundTripsExactly()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string varName = "MyApiKey";
+        const string varValue = "secret-value-that-must-not-leak";
+
+        var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
+            $"echo \"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']\"",
+            ScriptType.Bash);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"sensitive output-variable script MUST exit 0.\nLogs:\n{result.AllText}");
+
+        // Service message must round-trip with sensitive flag intact.
+        // Server-side parsing (in DeploymentTaskExecutor.CaptureOutputVariables)
+        // checks for sensitive='True' to route the value through the
+        // encrypted-variables sink. If the flag gets stripped here,
+        // operators leak credentials in subsequent step logs.
+        result.AllText.ShouldContain("sensitive='True'",
+            customMessage: $"sensitive='True' flag MUST round-trip through bash → Halibut → server logs intact. " +
+                          "If absent: the flag was stripped/mangled by the dispatch path — server-side parser " +
+                          "would treat it as non-sensitive and the credential leaks into plain logs of subsequent " +
+                          $"deployment steps.\nLogs:\n{result.AllText}");
+
+        result.AllText.ShouldContain(varName,
+            customMessage: $"variable name '{varName}' MUST surface in logs.\nLogs:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // L-D13.h-Linux — Multi-file transfer: all files available to script
+    //
+    // Operator scenario: deployment step has multiple resource files
+    // (config + secrets + data files). Server attaches them all to
+    // StartScriptCommand; agent must persist EACH in the script's workdir.
+    //
+    // Pins:
+    //   - 3 ScriptFile attachments all reach the agent
+    //   - Each writes to the workdir under its declared name
+    //   - Bash can read all 3 by bare filename
+    //
+    // Mirror of Windows
+    // <c>Listening_MultipleFileTransfer_AllFilesAvailableToScript</c>.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD13h_Listening_MultipleFileTransfer_AllFilesAvailableToScript()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string fileA = "config-a.txt";
+        const string fileB = "secrets-b.txt";
+        const string fileC = "data-c.txt";
+        const string contentA = "content-A-config-marker-zzz";
+        const string contentB = "content-B-secrets-marker-yyy";
+        const string contentC = "content-C-data-marker-xxx";
+
+        // Bash script reads each file + adds a per-file separator so
+        // even if the file contents are identical we can detect a
+        // missing one.
+        var ticket = new ScriptTicket($"e2e-linux-multifiles-{Guid.NewGuid():N}");
+        var command = new StartScriptCommand(
+            ticket,
+            $"cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(1),
+            null,
+            Array.Empty<string>(),
+            ticket.TaskId,
+            TimeSpan.Zero,
+            new ScriptFile(fileA, Halibut.DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes(contentA))),
+            new ScriptFile(fileB, Halibut.DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes(contentB))),
+            new ScriptFile(fileC, Halibut.DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes(contentC))))
+        {
+            ScriptSyntax = ScriptType.Bash
+        };
+
+        var result = await server.DispatchAndObserveListeningAsync(agent.ListeningUri, agent.Thumbprint, command,
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"multi-file-read script MUST exit 0 — proves all 3 files were present + readable.\nLogs:\n{result.AllText}");
+
+        // ALL three contents must be present. Catches a regression
+        // where WriteAdditionalFiles silently drops files 2+ when
+        // multiple are passed.
+        result.AllText.ShouldContain(contentA,
+            customMessage: $"file A content '{contentA}' MUST be present.\nLogs:\n{result.AllText}");
+        result.AllText.ShouldContain(contentB,
+            customMessage: $"file B content '{contentB}' MUST be present. " +
+                          "If absent but A is: agent dropped subsequent files in the multi-file path. " +
+                          $"\nLogs:\n{result.AllText}");
+        result.AllText.ShouldContain(contentC,
+            customMessage: $"file C content '{contentC}' MUST be present.\nLogs:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // L-D14.h-Linux — Long output (500 lines) all captured (no truncation)
+    //
+    // Operator scenario: deployment scripts that produce verbose output
+    // (e.g. `kubectl describe pod` or large log dumps) MUST have all
+    // output captured — operators rely on full logs to debug failures.
+    //
+    // Pins:
+    //   - 500 distinct line emits all reach the server's log stream
+    //   - No mid-stream truncation by Halibut serialization
+    //   - No final-line drop by the observe loop
+    //
+    // Without this pin, a regression in the agent's stdout streaming
+    // batch size OR Halibut's log message length cap would silently
+    // truncate output for verbose scripts — operators see "task succeeded"
+    // but their diagnostic logs are incomplete.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD14h_Listening_LongOutput_500Lines_AllCaptured()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        // Bash for loop emitting 500 lines with line numbers. Specific
+        // markers at line 1 / 250 / 500 — verifies start, middle, end
+        // all captured (a partial-truncation regression usually drops
+        // either start or end depending on which buffer wraps).
+        const int expectedLineCount = 500;
+        const string scriptBody = "for i in $(seq 1 500); do echo \"line-$i-marker\"; done";
+        var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
+            scriptBody, ScriptType.Bash,
+            observeTimeout: TimeSpan.FromSeconds(30));
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"long-output script MUST exit 0.\nLogs (truncated):\n{result.AllText.Substring(0, Math.Min(result.AllText.Length, 500))}...");
+
+        // Markers at start, middle, end — proves NO truncation on any
+        // of the 3 likely loss points.
+        result.AllText.ShouldContain("line-1-marker",
+            customMessage: $"first line missing — start-of-stream truncation regression.");
+        result.AllText.ShouldContain("line-250-marker",
+            customMessage: $"middle line missing — mid-stream batch / serialization truncation regression.");
+        result.AllText.ShouldContain("line-500-marker",
+            customMessage: $"last line missing — end-of-stream / observe-loop final-flush regression.");
+
+        // Pin total line count via regex match — actual capture must
+        // contain ALL 500 marker lines, not a sample.
+        var markerCount = System.Text.RegularExpressions.Regex.Matches(result.AllText, @"\bline-\d+-marker\b").Count;
+        markerCount.ShouldBe(expectedLineCount,
+            customMessage: $"expected exactly {expectedLineCount} 'line-N-marker' instances in output. Got {markerCount}. " +
+                          $"If less: streaming truncation regression. If more: log-line duplication regression " +
+                          "(Halibut RPC poll re-emitted previously-seen lines).");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
