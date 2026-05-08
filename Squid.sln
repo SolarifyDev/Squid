@@ -29,11 +29,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Tentacle.Tests", "tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.Tentacle.Watchdog", "src\Squid.Tentacle.Watchdog\Squid.Tentacle.Watchdog.csproj", "{120D728C-76EF-4D81-BE20-781D4F5C9BB0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2ETests", "tests\Squid.WindowsUpgradeE2ETests\Squid.WindowsUpgradeE2ETests.csproj", "{60B2E9F3-4C01-4C34-AB04-C33B980D0306}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsTentacleE2ETests", "tests\Squid.WindowsTentacleE2ETests\Squid.WindowsTentacleE2ETests.csproj", "{60B2E9F3-4C01-4C34-AB04-C33B980D0306}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2E.TestService", "tests\Squid.WindowsUpgradeE2E.TestService\Squid.WindowsUpgradeE2E.TestService.csproj", "{C73A5594-231B-42E2-A42C-2D1EB786D82E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsTentacleE2E.TestService", "tests\Squid.WindowsTentacleE2E.TestService\Squid.WindowsTentacleE2E.TestService.csproj", "{C73A5594-231B-42E2-A42C-2D1EB786D82E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsUpgradeE2E.VersionStampedShim", "tests\Squid.WindowsUpgradeE2E.VersionStampedShim\Squid.WindowsUpgradeE2E.VersionStampedShim.csproj", "{70B61BAD-F3FC-4A47-9201-3ECB4936B091}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.WindowsTentacleE2E.VersionStampedShim", "tests\Squid.WindowsTentacleE2E.VersionStampedShim\Squid.WindowsTentacleE2E.VersionStampedShim.csproj", "{70B61BAD-F3FC-4A47-9201-3ECB4936B091}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Squid.LinuxTentacleE2ETests", "tests\Squid.LinuxTentacleE2ETests\Squid.LinuxTentacleE2ETests.csproj", "{4764B60D-869D-483B-B8F8-9985727AEE41}"
 EndProject

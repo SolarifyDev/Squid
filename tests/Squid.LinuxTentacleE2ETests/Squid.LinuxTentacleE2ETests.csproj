@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Phase 12.L (Linux E2E) — counterpart to Squid.WindowsUpgradeE2ETests.
+    Phase 12.L (Linux E2E) — counterpart to Squid.WindowsTentacleE2ETests.
     Drives the production `upgrade-linux-tentacle.sh` + `install-tentacle.sh`
     scripts end-to-end against real systemd / apt / dnf / curl / tar tooling
     on the GHA `ubuntu-latest` runner.
@@ -11,7 +11,7 @@
     The CI workflow that ACTUALLY exercises the tests is `.github/workflows/
     tentacle-linux-e2e.yml` running on `ubuntu-latest`.
 
-    Why a separate project (vs adding to Squid.WindowsUpgradeE2ETests):
+    Why a separate project (vs adding to Squid.WindowsTentacleE2ETests):
       - Different fixture surface (systemd vs sc.exe; apt/dnf vs MSI/zip;
         curl vs Invoke-WebRequest; tar.gz vs zip).
       - Different runner image (`ubuntu-latest` vs `windows-latest`)
@@ -49,7 +49,7 @@
     <!--
       Phase 12.M.L.D — Squid.Tentacle reference needed for the Halibut-based
       stub agent (SquidHalibutStubAgent) which wraps the production
-      LocalScriptService. Mirrors Squid.WindowsUpgradeE2ETests' reference.
+      LocalScriptService. Mirrors Squid.WindowsTentacleE2ETests' reference.
       Used by deploy E2E tests (PR-2+); Section A/B/C/D/G tests don't depend
       on it but the reference is harmless when unused.
     -->

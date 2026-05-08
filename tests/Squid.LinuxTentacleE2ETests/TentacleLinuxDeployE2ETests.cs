@@ -15,9 +15,9 @@ namespace Squid.LinuxTentacleE2ETests;
 /// + real <c>LocalScriptService</c> (production agent-side script
 /// runner) + real bash execution + real network round-trip on
 /// loopback. Only mocked components are the upstream Squid server
-/// (replaced by <see cref="SquidHalibutStubServer"/>) and the
+/// (replaced by <see cref="StubSquidServer"/>) and the
 /// agent's process (replaced by in-process
-/// <see cref="SquidHalibutStubAgent"/> wrapping
+/// <see cref="StubAgent"/> wrapping
 /// <c>LocalScriptService</c>).</para>
 ///
 /// <para><b>Coverage delta vs <see cref="TentacleLinuxUpgradeBinaryIntegrationE2ETests"/></b>:
@@ -70,8 +70,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         // Bash echo — Linux path (no Windows branch needed; this test is
@@ -100,8 +100,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         // Exit 42 — specifically NOT 0 or 1, proves the exit code is
@@ -126,8 +126,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string scriptBody = "echo 'line-one'\necho 'line-two'\necho 'line-three'";
@@ -162,8 +162,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string marker = "error-message-on-stderr";
@@ -200,8 +200,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string marker = "after-3s-sleep";
@@ -228,8 +228,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         // Mix of multi-byte UTF-8: Chinese + emoji + accented Latin.
@@ -265,8 +265,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string varName = "MyOutputVar";
@@ -326,8 +326,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string marker = "hello-from-linux-polling-deploy";
@@ -356,8 +356,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const int expectedExit = 99;
@@ -392,8 +392,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string scriptA = "sleep 2; echo 'ticket-A-marker'";
@@ -463,8 +463,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string fileName = "linux-input-marker.txt";
@@ -476,7 +476,12 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-files-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            $"cat '{fileName}'",
+            // sleep 1 before cat for timing-resilience: bash spawn can occasionally
+            // be slower than the cat's complete-and-exit, leaving the agent's
+            // stdout reader unattached when the file content emits. Same pattern
+            // used by service-message tests (LD7, LD12). Caught by refactor PR
+            // #268 first runner where LD11 randomly emitted empty AllText.
+            $"sleep 1; cat '{fileName}'",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,
@@ -526,8 +531,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string varName = "MyApiKey";
@@ -577,8 +582,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         const string fileA = "config-a.txt";
@@ -594,7 +599,8 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-multifiles-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            $"cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
+            // sleep 1 before cats for timing-resilience (same as LD11h).
+            $"sleep 1; cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,
@@ -650,8 +656,8 @@ public sealed class TentacleLinuxDeployE2ETests
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        await using var server = await SquidHalibutStubServer.StartAsync();
-        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        await using var server = await StubSquidServer.StartAsync();
+        await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
         // Bash for loop emitting 500 lines with line numbers. Specific
@@ -690,12 +696,12 @@ public sealed class TentacleLinuxDeployE2ETests
     /// <summary>
     /// Builds a <see cref="StartScriptCommand"/> with a unique ticket and
     /// dispatches it to the listening agent via the stub server's
-    /// <see cref="SquidHalibutStubServer.DispatchAndObserveListeningAsync"/>.
+    /// <see cref="StubSquidServer.DispatchAndObserveListeningAsync"/>.
     /// Local helper instead of a private nested class on the test (keeps
     /// the file flat; can be promoted to shared infra in a follow-up PR).
     /// </summary>
     private static async Task<ObservedScriptResult> DispatchAndObserveListeningAsync(
-        SquidHalibutStubServer server,
+        StubSquidServer server,
         Uri agentUri,
         string agentThumbprint,
         string scriptBody,
@@ -724,10 +730,10 @@ public sealed class TentacleLinuxDeployE2ETests
     /// Polling-mode dispatch helper. Mirror of <see cref="DispatchAndObserveListeningAsync"/>
     /// but routes via the polling-agent path: stub server queues the command
     /// for the agent's subscription ID; the agent (already polling against
-    /// the stub's <see cref="SquidHalibutStubServer.PollingUri"/>) picks it up.
+    /// the stub's <see cref="StubSquidServer.PollingUri"/>) picks it up.
     /// </summary>
     private static async Task<ObservedScriptResult> DispatchAndObservePollingAsync(
-        SquidHalibutStubServer server,
+        StubSquidServer server,
         string agentSubscriptionId,
         string agentThumbprint,
         string scriptBody,

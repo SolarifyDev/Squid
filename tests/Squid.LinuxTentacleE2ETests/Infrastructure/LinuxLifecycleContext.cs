@@ -746,12 +746,12 @@ public sealed class LinuxLifecycleContext : IDisposable
         var dir = thisAssemblyDir;
         for (var i = 0; i < 8 && dir != null; i++)
         {
-            var candidate = Path.Combine(dir, "tests", "Squid.LinuxTentacleE2E.TestService", "squid-linux-test-service.sh");
+            var candidate = Path.Combine(dir, "tests", "Squid.LinuxTentacleE2ETests", "Infrastructure", "squid-linux-test-service.sh");
             if (File.Exists(candidate)) return candidate;
             dir = Path.GetDirectoryName(dir);
         }
         throw new FileNotFoundException(
-            "Could not locate squid-linux-test-service.sh. Expected at tests/Squid.LinuxTentacleE2E.TestService/squid-linux-test-service.sh.");
+            "Could not locate squid-linux-test-service.sh. Expected at tests/Squid.LinuxTentacleE2ETests/Infrastructure/squid-linux-test-service.sh.");
     }
 }
 
