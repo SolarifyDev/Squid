@@ -4,22 +4,15 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Squid.LinuxTentacleE2ETests.Infrastructure;
+namespace Squid.WindowsTentacleE2ETests.Infrastructure;
 
-// J.L.E.4: copied from Squid.WindowsTentacleE2ETests.Infrastructure (verbatim
-// — same wire shape: zip / tar.gz / .sha256 companion). The Linux upgrade
-// E2E uses tar.gz; install-tentacle.sh tests use the same surface.
-//
-// DUPLICATION NOTE: This is an intentional copy of the Windows project's
-// LocalReleaseMirror. The two will stay in sync because:
-//   1. Both serve the SAME wire shape (zip / tar.gz / .sha256 companion)
-//      — there's no Windows- or Linux-specific behaviour at the HTTP layer
-//   2. Each project's tests pin behaviour against its own copy, so drift
-//      between the two is automatically caught at test time
-//   3. A future refactor (Squid.E2E.Shared library) can deduplicate WITHOUT
-//      breaking either consumer because both consume the same surface
-// If the two copies start to diverge meaningfully, that's the signal to
-// extract the shared library — not before.
+// CROSS-PLATFORM SYNC NOTE: Linux project has a sibling copy at
+// tests/Squid.LinuxTentacleE2ETests/Infrastructure/LocalReleaseMirror.cs.
+// Both serve the SAME wire shape (zip / tar.gz / .sha256 companion).
+// Bug fixes / behaviour tweaks here MUST be mirrored there (and vice versa).
+// Future refactor candidate: extract to a shared infra project — but
+// premature DRY is a real anti-pattern, so kept as parallel copies until
+// either copy diverges enough to justify the cross-project coupling cost.
 
 /// <summary>
 /// In-process HTTP server stub that mimics the GitHub Releases / private-mirror
@@ -84,17 +77,6 @@ public sealed class LocalReleaseMirror : IDisposable
     /// </summary>
     private byte[] _preBuiltArchive;
     private readonly HashSet<string> _notFoundVersions = new(StringComparer.OrdinalIgnoreCase);
-    /// <summary>
-    /// Path-substring-based 404 list. Same matching shape as
-    /// <see cref="_notFoundVersions"/> but allows the caller to pass a
-    /// path-segment-aware string (e.g. <c>"/download/1.6.0/"</c>) that
-    /// won't match the v-prefixed sibling (<c>"/download/v1.6.0/"</c>) —
-    /// the leading-slash boundary character disambiguates. Used by
-    /// J.M.L.A.3 (A2.u2 v-prefix fallback) where we want to 404 ONLY
-    /// the plain-version URL form so the .sh's retry hits the
-    /// v-prefixed URL and succeeds.
-    /// </summary>
-    private readonly HashSet<string> _notFoundPaths = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// Per-archive byte cache. <see cref="ZipArchive"/> + GZipStream both
     /// embed timestamps in entry headers, so a fresh build for the
@@ -176,6 +158,22 @@ public sealed class LocalReleaseMirror : IDisposable
     {
         _stagedBinaryFileName = binaryFileName;
         _stagedBinary = content;
+
+        // Invalidate the per-archive byte cache so subsequent .zip / .tar.gz
+        // requests rebuild from the new staged content. Without this,
+        // tests that re-stage between two install invocations (e.g.
+        // InstallScript_ReRun_OverExistingInstall_Succeeds, which stages
+        // v1 → install → re-stages v2 → install) would see the SECOND
+        // install receive cached v1 bytes and produce v1 content on disk
+        // — the test would fail with "expected v2, got # v1" even
+        // though the production install script worked correctly.
+        // Caught by 4+ consecutive Windows CI failures of that test on
+        // main: the per-URL cache (added for SHA256 companion consistency)
+        // had no invalidation hook for re-staged content.
+        lock (_archiveCacheLock)
+        {
+            _archiveBytesCache.Clear();
+        }
     }
 
     /// <summary>
@@ -214,26 +212,6 @@ public sealed class LocalReleaseMirror : IDisposable
     public void ConfigureNotFoundForVersion(string version)
     {
         _notFoundVersions.Add(version);
-    }
-
-    /// <summary>
-    /// Configures the mirror to return 404 for any URL whose AbsolutePath
-    /// contains the given substring. Lower-level than
-    /// <see cref="ConfigureNotFoundForVersion"/>: lets the caller embed
-    /// path-segment boundary characters (leading <c>/</c>, trailing <c>/</c>)
-    /// to surgically 404 a single URL form without affecting siblings.
-    ///
-    /// <para>Use case: install-tentacle.sh's v-prefix fallback retry. The
-    /// .sh tries <c>/download/${VERSION}/...</c> first, then
-    /// <c>/download/v${VERSION}/...</c> on 404. To exercise the fallback
-    /// path, the test 404s the plain URL ONLY (e.g.
-    /// <c>ConfigureNotFoundForPath("/download/1.6.0/")</c>) — the leading
-    /// slash makes <c>/download/v1.6.0/...</c> NOT match (it has
-    /// <c>/download/v1.6.0/</c>, not <c>/download/1.6.0/</c>).</para>
-    /// </summary>
-    public void ConfigureNotFoundForPath(string pathSubstring)
-    {
-        _notFoundPaths.Add(pathSubstring);
     }
 
     /// <summary>
@@ -306,12 +284,8 @@ public sealed class LocalReleaseMirror : IDisposable
             _receivedRequests.Add(path);
         }
 
-        // 404 if the path mentions any of the configured "not found" versions
-        // OR matches any of the path-substring "not found" entries. Versions
-        // are coarse (substring of any URL); paths are surgical (used to 404
-        // the plain-version URL while letting the v-prefix sibling serve).
-        if (_notFoundVersions.Any(v => path.Contains(v, StringComparison.OrdinalIgnoreCase))
-            || _notFoundPaths.Any(p => path.Contains(p, StringComparison.OrdinalIgnoreCase)))
+        // 404 if the path mentions any of the configured "not found" versions.
+        if (_notFoundVersions.Any(v => path.Contains(v, StringComparison.OrdinalIgnoreCase)))
         {
             ctx.Response.StatusCode = 404;
             ctx.Response.OutputStream.Close();

@@ -23,7 +23,7 @@ on:
         required: false
         default: "Category=WindowsTentacleE2E"
       upgrade_test_filter:
-        description: "xUnit --filter for the Squid.WindowsUpgradeE2ETests step (defaults to wrapper + service categories)"
+        description: "xUnit --filter for the Squid.WindowsTentacleE2ETests step (defaults to wrapper + service categories)"
         required: false
         default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E"
 
@@ -69,15 +69,15 @@ jobs:
             --filter $filter `
             --logger "console;verbosity=normal"
 
-      - name: Restore Squid.WindowsUpgradeE2ETests
+      - name: Restore Squid.WindowsTentacleE2ETests
         shell: pwsh
-        run: dotnet restore tests/Squid.WindowsUpgradeE2ETests/Squid.WindowsUpgradeE2ETests.csproj --configfile "$env:NUGET_CONFIG"
+        run: dotnet restore tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj --configfile "$env:NUGET_CONFIG"
 
-      - name: Run Squid.WindowsUpgradeE2ETests
+      - name: Run Squid.WindowsTentacleE2ETests
         shell: pwsh
         run: |
           $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E" }
-          dotnet test tests/Squid.WindowsUpgradeE2ETests/Squid.WindowsUpgradeE2ETests.csproj `
+          dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
             --logger "console;verbosity=normal"
