@@ -192,22 +192,38 @@ public sealed class TentacleLinuxUpgradePollingCompositeE2ETests
                           "v2 binary either failed to read persisted v1 config OR Halibut polling broke. " +
                           $"\njournal tail:\n{RunJournalctl(ctx.ServiceName)}");
 
-        // ── Step 11: THE PIN — capabilities reports v2 version ────────────
-        // Server cache refresh on post-upgrade probe MUST see the new
-        // version. If still showing v1: capabilities cache wasn't
-        // invalidated, OR new binary regressed AssemblyVersion reading,
-        // OR the swap didn't actually take effect.
-        postUpgradeCapabilities.AgentVersion.ShouldBe(LinuxTentacleBinaryFixture.BuildVersionV2,
-            customMessage: $"R5h THE PIN: post-upgrade capabilities MUST report v2 version " +
+        // ── Step 11: THE PIN — binary on disk reports v2 version ─────────
+        // Use the binary's CLI directly (not the Halibut capabilities
+        // probe) because [CacheResponse(60)] on ICapabilitiesService
+        // caches probe responses for 60s. The pre-upgrade probe at v1
+        // is still cached server-side; a post-upgrade probe within 60s
+        // returns the cached v1 — the capabilities-cache contract is
+        // pinned by F3.cache-invalidation (PR #280), so reusing it
+        // here would race that cache.
+        //
+        // The CLI's `version` command reads AssemblyVersion.Canonical
+        // from the on-disk binary directly (no cache, no Halibut).
+        // After binary swap, the on-disk binary is v2, so `version`
+        // reports v2. This is exactly what U1h
+        // (TentacleLinuxUpgradeBinaryIntegrationE2ETests) does for the
+        // same pin.
+        var (postVersionExit, postVersionOutput) = SudoRunBinary(
+            ctx.PerTestBinaryPath, "version");
+        postVersionExit.ShouldBe(0,
+            $"R5h: post-upgrade `version` command MUST exit 0. Got {postVersionExit}.\noutput:\n{postVersionOutput}");
+        postVersionOutput.Trim().ShouldBe(LinuxTentacleBinaryFixture.BuildVersionV2,
+            customMessage: $"R5h THE PIN: post-upgrade `version` MUST report v2 stamp " +
                           $"'{LinuxTentacleBinaryFixture.BuildVersionV2}'. " +
-                          $"Got: '{postUpgradeCapabilities.AgentVersion}'. " +
+                          $"Got: '{postVersionOutput.Trim()}'. " +
                           $"If still '{LinuxTentacleBinaryFixture.BuildVersion}': swap didn't take effect, " +
-                          $"OR systemd cached the old binary, OR per-test binary path resolution drifted.");
+                          $"OR per-test binary path resolution drifted.");
 
         // ── Step 12: THE OTHER PIN — dispatch v2 (post-upgrade) ───────────
         // Proves the new v2 binary's LocalScriptService still works through
         // the polling channel. If a regression in v2's IScriptService
         // serialization or LocalScriptService spawn happens, this catches it.
+        // This proves the v2 binary IS the one running as the service —
+        // a binary that swapped but didn't restart-as-v2 wouldn't dispatch.
         await DispatchAndAssertAsync(ctx.Stub, agentSubscriptionId, agentThumbprint,
             $"sleep 1; echo '{ctx.MarkerV2}'", ctx.MarkerV2, "v2-post-upgrade");
 
