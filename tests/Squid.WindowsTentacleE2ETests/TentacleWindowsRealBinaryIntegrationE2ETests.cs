@@ -317,6 +317,183 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // R2.h-Windows — Soak: real binary's polling channel STAYS up over a 30s
+    //                 window across 5 dispatches + 5 capability probes
+    //
+    // Phase 13 PR-4. Windows mirror of Linux R2h (see that test's doc-
+    // comment for the full coverage rationale). Closes the same gap on
+    // Windows: R1h-Windows proves "polling channel comes up + accepts a
+    // single dispatch", but does NOT prove the channel STAYS up over
+    // multi-second windows or accepts multiple dispatches in sequence.
+    //
+    // Note on launch mechanism: unlike Linux R2h which uses systemd, this
+    // test uses Process.Start (same as R1h-Windows) because Squid.Tentacle
+    // lacks UseWindowsService() integration. Same caveat: validates the
+    // polling code path; SCM integration is a separate production task.
+    //
+    // Operator scenario: 5-step deployment pipeline against the same
+    // Windows agent. If agent's polling loop crashes after step 1, steps
+    // 2-5 hang. R1h-Windows doesn't catch that.
+    //
+    // Tier: 🟢 H. Same fidelity as R1h-Windows.
+    //
+    // Expected runtime: ~50-60s (Windows process spawn cost is higher
+    // than Linux; ~15s setup + 35s soak + ~5s cleanup).
+    // ========================================================================
+
+    [Fact]
+    public async Task R2h_RealBinary_PollingAgent_SoakStability_5DispatchesOver25Seconds()
+    {
+        if (!WindowsTentacleBinaryFixture.IsAvailable) return;
+
+        await using var stub = await StubSquidServer.StartAsync();
+        using var ctx = new RealBinaryPollingContext();
+
+        // ── Identical setup to R1h-Windows ────────────────────────────────
+        var (regExit, regOutput) = ctx.Binary.Run(
+            "register",
+            "--instance", ctx.InstanceName,
+            "--server", stub.ServerUri.ToString().TrimEnd('/'),
+            "--comms-url", stub.PollingUri.ToString().TrimEnd('/'),
+            "--api-key", "API-PHASE13-PR4-W-SOAK-1234",
+            "--role", "phase13-windows-soak-agent",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+        regExit.ShouldBe(0, $"R2h precondition: register MUST exit 0.\noutput:\n{regOutput}");
+
+        var registration = stub.ReceivedRegistrations.Single();
+        var agentThumbprint = registration.AgentThumbprint;
+        var agentSubscriptionId = registration.SubscriptionId;
+        stub.TrustAgent(agentThumbprint);
+
+        var runProcess = ctx.Binary.StartLongRunning("run", "--instance", ctx.InstanceName);
+        ctx.RunProcess = runProcess;
+        ctx.StdoutCapture = DrainStreamAsync(runProcess.StandardOutput, ctx.StdoutBuilder, ctx.StdoutLock, ctx.RunCts.Token);
+        ctx.StderrCapture = DrainStreamAsync(runProcess.StandardError, ctx.StderrBuilder, ctx.StderrLock, ctx.RunCts.Token);
+
+        // Wait for polling channel up.
+        var initialCapabilities = await WaitForPollingChannelAsync(stub, agentSubscriptionId, agentThumbprint, ctx, runProcess);
+        var initialVersion = initialCapabilities.AgentVersion;
+        initialVersion.ShouldNotBeNullOrEmpty("R2h precondition: initial capabilities probe must report a version");
+
+        // ── Soak loop: 5 dispatches + 5 capability probes interleaved ─────
+        const int soakIterations = 5;
+        const int interIterationDelaySeconds = 4;
+
+        var probeVersions = new List<string>();
+        var soakStart = DateTime.UtcNow;
+
+        for (var iter = 1; iter <= soakIterations; iter++)
+        {
+            // Bail early if binary crashed between iterations.
+            if (runProcess.HasExited)
+            {
+                runProcess.HasExited.ShouldBeFalse(
+                    customMessage: $"R2h iter {iter}/{soakIterations}: binary exited unexpectedly with code {runProcess.ExitCode}. " +
+                                  $"Real binary crashed mid-soak — operator's multi-step deployment would hang. " +
+                                  $"\nstdout:\n{ctx.SnapshotStdout()}" +
+                                  $"\nstderr:\n{ctx.SnapshotStderr()}");
+            }
+
+            // Probe capabilities — assert version consistency.
+            using (var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            {
+                var caps = await stub.ProbeCapabilitiesPollingAsync(agentSubscriptionId, agentThumbprint, probeCts.Token);
+                probeVersions.Add(caps.AgentVersion);
+            }
+
+            // Dispatch a per-iteration script with unique marker.
+            var marker = $"phase13-pr4-soak-w-iter-{iter}-{Guid.NewGuid():N}";
+            var ticket = new ScriptTicket($"phase13-pr4-soak-w-{Guid.NewGuid():N}");
+            var command = new StartScriptCommand(
+                ticket,
+                $"Start-Sleep -Seconds 1; Write-Host '{marker}'",
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(1),
+                null,
+                Array.Empty<string>(),
+                ticket.TaskId,
+                TimeSpan.Zero)
+            {
+                ScriptSyntax = ScriptType.PowerShell
+            };
+
+            using var dispatchCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var result = await stub.DispatchAndObservePollingAsync(
+                agentSubscriptionId, agentThumbprint, command,
+                TimeSpan.FromSeconds(20), dispatchCts.Token);
+
+            result.ExitCode.ShouldBe(0,
+                customMessage: $"R2h iter {iter}/{soakIterations}: PowerShell script MUST exit 0. Got {result.ExitCode}. " +
+                              $"Soak elapsed: {(DateTime.UtcNow - soakStart).TotalSeconds:F1}s. " +
+                              $"\nLogs:\n{result.AllText}");
+            result.AllText.ShouldContain(marker,
+                customMessage: $"R2h iter {iter}/{soakIterations}: marker '{marker}' MUST round-trip. " +
+                              $"\nLogs:\n{result.AllText}");
+
+            if (iter < soakIterations)
+                await Task.Delay(TimeSpan.FromSeconds(interIterationDelaySeconds));
+        }
+
+        // ── Pin: capability version is consistent across all probes ───────
+        probeVersions.Distinct().Count().ShouldBe(1,
+            customMessage: $"R2h: capability probes returned {probeVersions.Distinct().Count()} distinct AgentVersion strings. " +
+                          $"Expected 1 — version reporting MUST be stable. " +
+                          $"Got: [{string.Join(", ", probeVersions.Select((v, i) => $"iter{i + 1}:'{v}'"))}].");
+
+        probeVersions[0].ShouldBe(initialVersion,
+            customMessage: $"R2h: first soak-loop probe reported '{probeVersions[0]}', initial pre-soak '{initialVersion}'. Version flap detected.");
+
+        // ── Pin: process is still alive (didn't crash mid-soak) ───────────
+        runProcess.HasExited.ShouldBeFalse(
+            customMessage: $"R2h post-soak: real binary process MUST still be running after the {soakIterations}-iteration soak. " +
+                          $"If exited: agent crashed during soak — operator's long-running deployment would hit this. " +
+                          $"\nstdout:\n{ctx.SnapshotStdout()}" +
+                          $"\nstderr:\n{ctx.SnapshotStderr()}");
+
+        ctx.MarkClean();
+    }
+
+    /// <summary>
+    /// Waits for the agent's polling channel to be queryable via
+    /// <see cref="StubSquidServer.ProbeCapabilitiesPollingAsync"/>.
+    /// Mirrors the Linux R2h helper but with Process.HasExited bail-early
+    /// (we don't have systemd to monitor on Windows — the binary's
+    /// console process is the only signal).
+    /// </summary>
+    private static async Task<CapabilitiesResponse> WaitForPollingChannelAsync(
+        StubSquidServer stub, string agentSubscriptionId, string agentThumbprint,
+        RealBinaryPollingContext ctx, Process runProcess)
+    {
+        var probeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        Exception lastProbeException = null;
+        while (DateTime.UtcNow < probeDeadline)
+        {
+            if (runProcess.HasExited)
+                throw new InvalidOperationException(
+                    $"binary exited unexpectedly (code {runProcess.ExitCode}) before polling channel came up. " +
+                    $"\nstdout:\n{ctx.SnapshotStdout()}" +
+                    $"\nstderr:\n{ctx.SnapshotStderr()}");
+
+            try
+            {
+                using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                return await stub.ProbeCapabilitiesPollingAsync(
+                    agentSubscriptionId, agentThumbprint, probeCts.Token);
+            }
+            catch (Exception ex)
+            {
+                lastProbeException = ex;
+                await Task.Delay(500);
+            }
+        }
+
+        throw new TimeoutException(
+            $"polling channel did not come up within 30s. Last probe exception: " +
+            $"{lastProbeException?.GetType().Name}: {lastProbeException?.Message}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
