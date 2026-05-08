@@ -77,7 +77,17 @@ public sealed class RegisterCommand : ITentacleCommand
         var (instanceName, argsWithoutInstance) = InstanceSelector.ExtractInstanceArg(args);
         var instance = InstanceSelector.Resolve(instanceName);
 
-        var expandedArgs = ExpandShorthandArgs(argsWithoutInstance);
+        // --force bypasses the "already registered → NoOpRegistrar" skip
+        // path in flavor.ResolveRegistrar. Without --force, an operator
+        // re-running register to update roles / environment / api-key
+        // is silently no-op'd because Tentacle:Registered=true is
+        // persisted from the first register. With --force, the second
+        // register actually hits the server. Caught by Linux C3h E2E.
+        // Strip --force from args before AddCommandLine sees it (it's
+        // not a Tentacle:* config key).
+        var (forceRegistration, argsAfterForce) = ExtractForceFlag(argsWithoutInstance);
+
+        var expandedArgs = ExpandShorthandArgs(argsAfterForce);
 
         // Per-instance certs path takes priority over whatever's in config, so multi-instance
         // setups don't clobber each other's certificates.
@@ -116,7 +126,8 @@ public sealed class RegisterCommand : ITentacleCommand
         var runtime = flavor.CreateRuntime(new TentacleFlavorContext
         {
             TentacleSettings = settings,
-            Configuration = merged
+            Configuration = merged,
+            ForceRegistration = forceRegistration
         });
 
         Log.Information("Registering with {ServerUrl} as flavor {Flavor}...", settings.ServerUrl, flavor.Id);
@@ -200,6 +211,35 @@ public sealed class RegisterCommand : ITentacleCommand
         file.Merge(updates);
 
         Log.Information("Persisted settings to {Path}", instance.ConfigPath);
+    }
+
+    /// <summary>
+    /// Detects + strips the <c>--force</c> flag from the args. Returns
+    /// (<c>force</c>, <c>args without --force</c>). Stripped because
+    /// <c>--force</c> is not a Tentacle:* configuration key — passing
+    /// it through to <see cref="ConfigurationBuilder.AddCommandLine"/>
+    /// would land it as <c>Tentacle:force=true</c> in IConfiguration
+    /// and confuse settings binding.
+    /// </summary>
+    internal static (bool force, string[] remaining) ExtractForceFlag(string[] args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+
+        var force = false;
+        var remaining = new List<string>();
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i].Equals("--force", StringComparison.OrdinalIgnoreCase))
+            {
+                force = true;
+                continue;
+            }
+
+            remaining.Add(args[i]);
+        }
+
+        return (force, remaining.ToArray());
     }
 
     internal static string[] ExpandShorthandArgs(string[] args)
