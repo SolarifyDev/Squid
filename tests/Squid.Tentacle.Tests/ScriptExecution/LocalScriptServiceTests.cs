@@ -1024,6 +1024,81 @@ public class LocalScriptServiceTests : IDisposable
             .FirstOrDefault() ?? Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticket.TaskId}");
     }
 
+    // ========================================================================
+    // Async stream-reader flush contract — pins the WaitForExit() (no-arg) call
+    // in CompleteScript that drains AsyncStreamReader callbacks before logs
+    // are read off disk.
+    //
+    // Pre-fix race (chased through PR #273 rounds 1-3 via 1s/2s sleep workarounds):
+    //   1. Script writes a single line + exits within 50ms
+    //   2. CompleteScript called; HasExited=true → WaitForExit(timeout) branch SKIPPED
+    //   3. ReadLogs reads disk; AsyncStreamReader callback hasn't fired yet
+    //      → log file is empty
+    //   4. CompleteScript returns ExitCode=0 + empty Logs
+    //   5. Late callback fires AFTER LogWriter.Dispose() and gets silently
+    //      dropped by SequencedLogWriter.Append's _disposed-late-callback guard
+    //
+    // Post-fix: WaitForExit() (no-arg) ALWAYS called after the timed wait,
+    // ensuring async readers drain before ReadLogs.
+    //
+    // This test repeatedly runs a fast-exit script to amplify the race
+    // window — pre-fix it failed intermittently (1-in-5 to 1-in-10 on
+    // stressed hosts); post-fix it is deterministic.
+    // ========================================================================
+
+    [Fact]
+    public void CompleteScript_FlushesAsyncStreamReaders_FastExitScript_OutputCaptured()
+    {
+        // 5 iterations to surface intermittent race. Each iteration uses a
+        // unique marker so cross-iteration contamination is detectable.
+        // Pre-fix typical failure: 1+ iteration with empty logs. Post-fix:
+        // all 5 capture marker.
+        const int iterations = 5;
+        var failures = new List<string>();
+
+        for (var i = 0; i < iterations; i++)
+        {
+            var marker = $"fast-exit-line-{i}-{Guid.NewGuid():N}";
+            var script = OperatingSystem.IsWindows()
+                ? $"Write-Output '{marker}'"          // ~50ms exit on Windows
+                : $"echo '{marker}'";                  // ~10ms exit on Linux/macOS
+
+            var command = new StartScriptCommand(
+                new ScriptTicket(Guid.NewGuid().ToString("N")),
+                script,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(1),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero)
+            {
+                ScriptSyntax = OperatingSystem.IsWindows() ? ScriptType.PowerShell : ScriptType.Bash
+            };
+
+            var startResp = _service.StartScript(command);
+            var ticket = command.ScriptTicket;
+            _createdTickets.Add(ticket.TaskId);
+
+            // Don't sleep — go straight to CompleteScript to maximise the
+            // chance the AsyncStreamReader callback hasn't yet fired when
+            // CompleteScript begins. Pre-fix this is where the line was lost.
+            var completeResp = _service.CompleteScript(new CompleteScriptCommand(ticket, startResp.NextLogSequence));
+
+            var allText = string.Join("\n", startResp.Logs.Concat(completeResp.Logs).Select(l => l.Text));
+            if (!allText.Contains(marker))
+                failures.Add($"iter {i}: expected '{marker}' missing. Got: '{allText}'");
+        }
+
+        failures.ShouldBeEmpty(
+            customMessage: $"CompleteScript MUST flush async stream readers before reading logs. " +
+                          $"Got {failures.Count}/{iterations} flake(s) — pre-fix this race dropped output silently. " +
+                          $"Without WaitForExit() (no-arg), .NET's AsyncStreamReader's late OutputDataReceived " +
+                          $"callbacks fire AFTER LogWriter.Dispose() and get silently dropped by " +
+                          $"SequencedLogWriter.Append's _disposed-late-callback guard.\n\nFailures:\n" +
+                          $"{string.Join("\n", failures)}");
+    }
+
     public void Dispose()
     {
         foreach (var ticketId in _createdTickets)

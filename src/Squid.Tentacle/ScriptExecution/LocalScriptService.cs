@@ -563,6 +563,36 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (!running.Process.HasExited)
             running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
+        // ALWAYS drain async stream readers before reading logs — even if
+        // the process exited before this method was called.
+        //
+        // Per .NET docs: WaitForExit() with no parameters waits for the
+        // process to exit AND for the async output / error stream readers
+        // to be flushed. The bool overload above (WaitForExit(timeout))
+        // does NOT wait for async readers. WaitForExit(timeout) on an
+        // already-exited process is a no-op AND skips the flush; without
+        // calling WaitForExit() afterwards, .NET's AsyncStreamReader can
+        // still be mid-callback, holding output that hasn't reached the
+        // LogWriter yet.
+        //
+        // Concrete failure mode this eliminates (PR #273 round 1-3 chased
+        // it via 1s/2s sleep workarounds):
+        //   1. Script writes a single line + exits within 50ms
+        //   2. CompleteScript called; HasExited=true → WaitForExit(timeout)
+        //      branch SKIPPED entirely
+        //   3. ReadLogs reads disk; AsyncStreamReader callback hasn't
+        //      fired yet → log file is empty
+        //   4. Test sees ExitCode=0 + AllText=""
+        //   5. Worse: the late callback fires AFTER LogWriter.Dispose()
+        //      and gets silently dropped by SequencedLogWriter.Append's
+        //      _disposed guard (see that method's "Late-OutputDataReceived
+        //      race" comment)
+        //
+        // Fast: WaitForExit() on an already-exited process only waits for
+        // async readers to finish their final callbacks. For tiny output
+        // (single line) this is sub-millisecond.
+        running.Process.WaitForExit();
+
         var logs = ReadLogs(running, command.LastLogSequence - 1);
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
@@ -645,6 +675,26 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to kill process for ticket {TicketId}", command.Ticket.TaskId);
+        }
+
+        // Drain async stream readers (same rationale as CompleteScript).
+        // Even after Kill the OS may still have a partial line buffered;
+        // WaitForExit() (no-arg) ensures the AsyncStreamReader callbacks
+        // have fired before we read logs + dispose the writer. Bounded by
+        // a brief timed wait on HasExited because Kill is best-effort —
+        // some kernel races leave the process zombie momentarily.
+        try
+        {
+            if (!running.Process.HasExited)
+                running.Process.WaitForExit(TimeSpan.FromSeconds(5));
+
+            // Same WaitForExit() flush as CompleteScript — see that method's
+            // doc-comment for the AsyncStreamReader race rationale.
+            running.Process.WaitForExit();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to wait for process exit on cancel for ticket {TicketId}", command.Ticket.TaskId);
         }
 
         var logs = ReadLogs(running, command.LastLogSequence - 1);
