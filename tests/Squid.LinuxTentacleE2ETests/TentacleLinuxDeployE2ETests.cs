@@ -296,6 +296,205 @@ public sealed class TentacleLinuxDeployE2ETests
         // Squid.E2ETests/.../KubernetesVariableSubstitutionE2ETests.
     }
 
+    // ========================================================================
+    // L-D8.h-Linux — Polling: echo script dispatched + output captured
+    //
+    // Tests the POLLING dispatch path (vs Listening). In production,
+    // operators pick polling for tentacles behind firewalls (agent
+    // dials out, server queues commands). This test exercises:
+    //
+    //   Stub server → Halibut polling listener → Agent polls in →
+    //   Server queues StartScript → Agent runs bash → output back
+    //
+    // Different code path from Listening (server-initiated TCP) and
+    // can break independently. Mirror of Windows
+    // <c>Polling_EchoScript_OutputCapturedAndExitZero</c>.
+    //
+    // Uses `sleep 1; echo` (not bare echo) to ensure output emits
+    // AFTER the stdout reader is attached — same timing-resilience
+    // pattern as Windows polling tests after their flaky-runs analysis.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD8h_Polling_EchoBashScript_OutputCapturedAndExitZero()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string marker = "hello-from-linux-polling-deploy";
+        // sleep 1 + echo: gives bash spawn + stdout reader attach time
+        // before the marker is emitted (timing-resilience pattern).
+        var result = await DispatchAndObservePollingAsync(server, agent.SubscriptionId, agent.Thumbprint,
+            $"sleep 1; echo '{marker}'", ScriptType.Bash,
+            observeTimeout: TimeSpan.FromSeconds(15));
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"polling echo script MUST exit 0.\nLogs:\n{result.AllText}");
+
+        result.AllText.ShouldContain(marker,
+            customMessage: $"polling echo output MUST be captured via the polling RPC path. " +
+                          $"If absent: agent's polling client failed to dial in OR Halibut polling listener " +
+                          $"didn't queue the script for the agent to pick up. " +
+                          $"\nLogs:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // L-D9.u1-Linux — Polling: non-zero exit propagates exactly
+    // ========================================================================
+
+    [Fact]
+    public async Task LD9u1_Polling_NonZeroExit_PropagatesExactExitCode()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const int expectedExit = 99;
+        var result = await DispatchAndObservePollingAsync(server, agent.SubscriptionId, agent.Thumbprint,
+            $"exit {expectedExit}", ScriptType.Bash);
+
+        result.ExitCode.ShouldBe(expectedExit,
+            customMessage: $"polling exit code {expectedExit} MUST propagate exactly. Got {result.ExitCode}. " +
+                          $"\nLogs:\n{result.AllText}");
+    }
+
+    // ========================================================================
+    // L-D10.h-Linux — Concurrent listening dispatches: outputs isolated by ticket
+    //
+    // Operator scenario: server triggers 3 simultaneous deploys to the
+    // same agent (different steps in a release pipeline that fan out).
+    // Each dispatch must:
+    //   (a) Run independently without interfering
+    //   (b) Return its OWN output, not bleed into other tickets' results
+    //
+    // Without this pin, a regression in StartScriptCommand isolation
+    // could let two tickets share the same workdir / stdout reader,
+    // surfacing each other's output.
+    //
+    // Uses `sleep 2; echo` so all three scripts overlap for ~2s — REAL
+    // concurrent execution, not staggered. 100ms inter-dispatch stagger
+    // avoids the first 100ms of bash spawn-thread contention.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD10h_Listening_ConcurrentDispatches_OutputsIsolatedByTicket()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string scriptA = "sleep 2; echo 'ticket-A-marker'";
+        const string scriptB = "sleep 2; echo 'ticket-B-marker'";
+        const string scriptC = "sleep 2; echo 'ticket-C-marker'";
+
+        var taskA = DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint, scriptA, ScriptType.Bash,
+            observeTimeout: TimeSpan.FromSeconds(20));
+        await Task.Delay(100);
+        var taskB = DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint, scriptB, ScriptType.Bash,
+            observeTimeout: TimeSpan.FromSeconds(20));
+        await Task.Delay(100);
+        var taskC = DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint, scriptC, ScriptType.Bash,
+            observeTimeout: TimeSpan.FromSeconds(20));
+
+        var resultA = await taskA;
+        var resultB = await taskB;
+        var resultC = await taskC;
+
+        resultA.ExitCode.ShouldBe(0, $"ticket A MUST exit 0.\nLogs:\n{resultA.AllText}");
+        resultB.ExitCode.ShouldBe(0, $"ticket B MUST exit 0.\nLogs:\n{resultB.AllText}");
+        resultC.ExitCode.ShouldBe(0, $"ticket C MUST exit 0.\nLogs:\n{resultC.AllText}");
+
+        // Output isolation: each result contains ONLY its own marker.
+        resultA.AllText.ShouldContain("ticket-A-marker",
+            customMessage: $"ticket A MUST contain its marker.\nLogs:\n{resultA.AllText}");
+        resultA.AllText.ShouldNotContain("ticket-B-marker",
+            customMessage: $"ticket A leaked B's output — concurrent isolation regression.\nLogs:\n{resultA.AllText}");
+        resultA.AllText.ShouldNotContain("ticket-C-marker",
+            customMessage: $"ticket A leaked C's output — concurrent isolation regression.\nLogs:\n{resultA.AllText}");
+
+        resultB.AllText.ShouldContain("ticket-B-marker",
+            customMessage: $"ticket B MUST contain its marker.\nLogs:\n{resultB.AllText}");
+        resultB.AllText.ShouldNotContain("ticket-A-marker",
+            customMessage: $"ticket B leaked A's output.\nLogs:\n{resultB.AllText}");
+        resultB.AllText.ShouldNotContain("ticket-C-marker",
+            customMessage: $"ticket B leaked C's output.\nLogs:\n{resultB.AllText}");
+
+        resultC.AllText.ShouldContain("ticket-C-marker",
+            customMessage: $"ticket C MUST contain its marker.\nLogs:\n{resultC.AllText}");
+        resultC.AllText.ShouldNotContain("ticket-A-marker",
+            customMessage: $"ticket C leaked A's output.\nLogs:\n{resultC.AllText}");
+        resultC.AllText.ShouldNotContain("ticket-B-marker",
+            customMessage: $"ticket C leaked B's output.\nLogs:\n{resultC.AllText}");
+    }
+
+    // ========================================================================
+    // L-D11.h-Linux — File transfer: server-attached file readable from script's workdir
+    //
+    // Operator scenario: deployment step has resources (config templates,
+    // package files, secrets) that must be transferred to the agent
+    // BEFORE script execution. Production: server attaches files to
+    // StartScriptCommand; agent's LocalScriptService writes them to the
+    // script's working directory (via WriteAdditionalFiles); the script
+    // can reference them by bare filename.
+    //
+    // This test pins:
+    //   - Server-attached ScriptFile reaches the agent intact
+    //   - Agent writes it to the script's workdir before bash runs
+    //   - Bash can `cat` it by bare filename and the content matches
+    //
+    // Mirror of Windows <c>Listening_SingleFileTransfer_AgentWritesAndScriptReads</c>.
+    // ========================================================================
+
+    [Fact]
+    public async Task LD11h_Listening_FileTransfer_AgentWritesAndScriptReads()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await using var server = await SquidHalibutStubServer.StartAsync();
+        await using var agent = await SquidHalibutStubAgent.StartListeningAsync(server.ServerThumbprint);
+        server.TrustAgent(agent.Thumbprint);
+
+        const string fileName = "linux-input-marker.txt";
+        const string fileContent = "marker-LINUX-DEPLOY-FILE-XFER-from-server-to-agent";
+
+        // Build StartScriptCommand WITH a file attachment. Bash script
+        // simply cats the file — proves the agent persisted it under
+        // the script's workdir before bash ran.
+        var ticket = new ScriptTicket($"e2e-linux-files-{Guid.NewGuid():N}");
+        var command = new StartScriptCommand(
+            ticket,
+            $"cat '{fileName}'",
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(1),
+            null,
+            Array.Empty<string>(),
+            ticket.TaskId,
+            TimeSpan.Zero,
+            new ScriptFile(fileName, Halibut.DataStream.FromBytes(System.Text.Encoding.UTF8.GetBytes(fileContent))))
+        {
+            ScriptSyntax = ScriptType.Bash
+        };
+
+        var result = await server.DispatchAndObserveListeningAsync(agent.ListeningUri, agent.Thumbprint, command,
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"file-read script MUST exit 0 — proves file was present + readable in workdir.\nLogs:\n{result.AllText}");
+
+        result.AllText.ShouldContain(fileContent,
+            customMessage: $"echoed file content MUST match what server sent. " +
+                          $"If absent: agent's WriteAdditionalFiles regressed (didn't write to workdir, OR " +
+                          $"wrote with wrong filename, OR encoded bytes differently). " +
+                          $"\nLogs:\n{result.AllText}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -329,5 +528,37 @@ public sealed class TentacleLinuxDeployE2ETests
 
         var timeout = observeTimeout ?? TimeSpan.FromSeconds(30);
         return await server.DispatchAndObserveListeningAsync(agentUri, agentThumbprint, command, timeout, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Polling-mode dispatch helper. Mirror of <see cref="DispatchAndObserveListeningAsync"/>
+    /// but routes via the polling-agent path: stub server queues the command
+    /// for the agent's subscription ID; the agent (already polling against
+    /// the stub's <see cref="SquidHalibutStubServer.PollingUri"/>) picks it up.
+    /// </summary>
+    private static async Task<ObservedScriptResult> DispatchAndObservePollingAsync(
+        SquidHalibutStubServer server,
+        string agentSubscriptionId,
+        string agentThumbprint,
+        string scriptBody,
+        ScriptType scriptType,
+        TimeSpan? observeTimeout = null)
+    {
+        var ticket = new ScriptTicket($"e2e-linux-poll-{Guid.NewGuid():N}");
+        var command = new StartScriptCommand(
+            ticket,
+            scriptBody,
+            ScriptIsolationLevel.NoIsolation,
+            TimeSpan.FromMinutes(1),
+            null,
+            Array.Empty<string>(),
+            ticket.TaskId,
+            TimeSpan.Zero)
+        {
+            ScriptSyntax = scriptType
+        };
+
+        var timeout = observeTimeout ?? TimeSpan.FromSeconds(30);
+        return await server.DispatchAndObservePollingAsync(agentSubscriptionId, agentThumbprint, command, timeout, CancellationToken.None);
     }
 }
