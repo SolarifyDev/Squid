@@ -333,8 +333,17 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
             customMessage: "agent's CapabilitiesService MUST report a non-empty AgentVersion. " +
                           "If empty: the production CapabilitiesService regressed (e.g. AssemblyVersion lookup broke).");
 
-        capabilities.SupportedServices.ShouldContain("IScriptService",
-            customMessage: $"agent MUST list IScriptService in supported services (it's about to be invoked next). " +
+        // Production CapabilitiesService formats supported services as
+        // "<Name>/v1" — prefix-match with StartsWith so the assertion
+        // tolerates future version bumps (IScriptService/v2 in some
+        // future Halibut RPC version) without test-update churn.
+        // First runner CI failure pinned this: my initial exact-match
+        // ShouldContain("IScriptService") tripped on the production
+        // format ["IScriptService/v1", "ICapabilitiesService/v1"].
+        var hasScriptService = capabilities.SupportedServices?.Any(s => s.StartsWith("IScriptService", StringComparison.Ordinal)) ?? false;
+        hasScriptService.ShouldBeTrue(
+            customMessage: $"agent MUST list IScriptService (or IScriptService/vN) in supported services — " +
+                          "the script dispatch in Step 6 is about to invoke it. " +
                           $"Got: [{string.Join(", ", capabilities.SupportedServices ?? new List<string>())}]. " +
                           "If absent: TentacleHalibutHost.serviceFactory.Register<IScriptService> regressed.");
 
