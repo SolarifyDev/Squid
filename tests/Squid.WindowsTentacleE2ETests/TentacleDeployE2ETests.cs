@@ -64,7 +64,14 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        var (scriptBody, scriptType) = OsScript.Echo("hello-from-deploy-e2e");
+        // SleepThenEcho-1s timing resilience: bare Echo finishes in
+        // <100ms on Windows; if pwsh.exe spawn + StubAgent's stdout
+        // reader attach is slow enough, the script completes BEFORE the
+        // reader attaches → output lost (resultText="" with exit=0).
+        // Caught by Task #1 PR's first runner where Listening_EchoScript
+        // flaked even though Listening_ConcurrentDispatches (which already
+        // had SleepThenEcho) passed. Same fix shape as PR #273.
+        var (scriptBody, scriptType) = OsScript.SleepThenEcho(1, "hello-from-deploy-e2e");
 
         var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
 
@@ -287,7 +294,11 @@ public sealed class TentacleDeployE2ETests
         //   - emoji — common in modern logs / PR descriptions
         const string Marker = "hello-世界-—-🚀-end";  // hello-世界-—-🚀-end
 
-        var (scriptBody, scriptType) = OsScript.Echo(Marker);
+        // SleepThenEcho-1s timing resilience for the same reason as
+        // Listening_EchoScript_OutputCapturedAndExitZero (line 67).
+        // Bare Echo finishes too fast for stdout reader attach on
+        // Windows.
+        var (scriptBody, scriptType) = OsScript.SleepThenEcho(1, Marker);
 
         var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
 
