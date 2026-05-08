@@ -22,6 +22,27 @@
     <PackageReference Include="Serilog" Version="4.1.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <!--
+      Phase 13 follow-up — SCM control-handler integration.
+
+      Without this package, when SCM launches the binary via
+      `sc start squid-tentacle`, the process never calls
+      StartServiceCtrlDispatcher and SCM marks the start as
+      ERROR_SERVICE_REQUEST_TIMEOUT after 30s. Operators following the
+      documented `service install` + `sc start` workflow on Windows
+      would see the service fail to reach RUNNING state.
+
+      AddWindowsService() (called from Program.cs's SCM branch)
+      registers WindowsServiceLifetime which handles the SCM protocol:
+        START_PENDING → RUNNING → STOP_PENDING → STOPPED
+      with the SCM Stop signal triggering the host's cancellation token.
+
+      Cross-platform: package targets cross-platform (no native deps);
+      AddWindowsService() is a no-op outside Windows.
+      WindowsServiceHelpers.IsWindowsService() returns false on
+      non-Windows platforms.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="9.0.0" />
