@@ -131,13 +131,13 @@ public sealed class TentacleLinuxUpgradeBinaryIntegrationE2ETests
                           $"journal tail:\n{RunJournalctl(ctx.ServiceName)}");
 
         // ── Phase 4: capture pre-upgrade state ────────────────────────────
-        var preVersionOutput = RunBinary(ctx.PerTestBinaryPath, "version").output;
+        var preVersionOutput = SudoRunBinary(ctx.PerTestBinaryPath, "version").output;
         var preVersion = preVersionOutput.Trim();
         preVersion.ShouldBe(LinuxTentacleBinaryFixture.BuildVersion,
             customMessage: $"U1h precondition: pre-upgrade version MUST be v1 stamp '{LinuxTentacleBinaryFixture.BuildVersion}'. " +
                           $"Got: '{preVersion}'.");
 
-        var preThumbprintOutput = RunBinary(ctx.PerTestBinaryPath, "show-thumbprint").output;
+        var preThumbprintOutput = SudoRunBinary(ctx.PerTestBinaryPath, "show-thumbprint").output;
         var preThumbprint = ExtractThumbprint(preThumbprintOutput);
         preThumbprint.ShouldNotBeNullOrEmpty(
             customMessage: $"U1h precondition: pre-upgrade thumbprint MUST be readable.\noutput:\n{preThumbprintOutput}");
@@ -175,7 +175,7 @@ public sealed class TentacleLinuxUpgradeBinaryIntegrationE2ETests
                           $"\njournal:\n{RunJournalctl(ctx.ServiceName)}");
 
         // ── Phase 8: capture post-upgrade state + assert pin ──────────────
-        var postVersionOutput = RunBinary(ctx.PerTestBinaryPath, "version").output;
+        var postVersionOutput = SudoRunBinary(ctx.PerTestBinaryPath, "version").output;
         var postVersion = postVersionOutput.Trim();
 
         postVersion.ShouldBe(LinuxTentacleBinaryFixture.BuildVersionV2,
@@ -185,7 +185,7 @@ public sealed class TentacleLinuxUpgradeBinaryIntegrationE2ETests
                           "binary file wasn't actually overwritten, OR systemd cached the old binary somehow, " +
                           "OR the per-test binary path resolution drifted between install + start.");
 
-        var postThumbprintOutput = RunBinary(ctx.PerTestBinaryPath, "show-thumbprint").output;
+        var postThumbprintOutput = SudoRunBinary(ctx.PerTestBinaryPath, "show-thumbprint").output;
         var postThumbprint = ExtractThumbprint(postThumbprintOutput);
 
         // ── THE PIN: cert identity preserved through binary swap ──────────
