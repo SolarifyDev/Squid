@@ -207,4 +207,19 @@ public static class WindowsUpgradeE2ECategories
     /// stub HTTP exchange (D1h round-trip).</para>
     /// </summary>
     public const string TentacleDiagnostic = "TentacleDiagnosticE2E";
+
+    /// <summary>
+    /// Phase 13 PR-2+ E2E coverage for the real production
+    /// <c>Squid.Tentacle.exe</c> binary's CLI surface — Windows mirror
+    /// of <c>Squid.LinuxTentacleE2ETests.LinuxTentacleE2ECategories.TentacleBinary</c>.
+    ///
+    /// <para>Tier 🟢 high-fidelity — drives the actual published binary
+    /// (built via <c>dotnet publish -r win-x64 --self-contained</c>
+    /// matching production CI). UNBLOCKS Phase 13 PR-3 (real binary as
+    /// polling agent — the highest-fidelity Windows E2E).</para>
+    ///
+    /// <para>Windows-only; the fixture's binary is a self-contained
+    /// <c>win-x64</c> bundle that won't run on macOS / Linux.</para>
+    /// </summary>
+    public const string TentacleBinary = "WindowsTentacleBinaryE2E";
 }
