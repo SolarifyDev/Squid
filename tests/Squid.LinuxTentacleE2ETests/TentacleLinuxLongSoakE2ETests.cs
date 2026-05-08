@@ -345,14 +345,43 @@ public sealed class TentacleLinuxLongSoakE2ETests
 
     /// <summary>
     /// Reads VmRSS (resident set size, kB) from
-    /// <c>/proc/&lt;pid&gt;/status</c>. Returns 0 on failure.
+    /// <c>/proc/&lt;pid&gt;/status</c>. Uses sudo because the systemd
+    /// service runs as root (or service user), and this test process
+    /// runs as `runner` — non-self <c>/proc/&lt;pid&gt;/status</c>
+    /// reads require either same-user or root via sudo on Linux.
+    ///
+    /// <para>Round-3 first-runner CI surfaced this:
+    /// <c>baselineFdCount == 0</c> because <c>Directory.GetFileSystemEntries</c>
+    /// on a root-owned <c>/proc/&lt;pid&gt;/fd</c> returned empty for
+    /// the non-root test process. Same applies (less critically) to
+    /// VmRSS reads — wrapping both in sudo is the symmetric fix.</para>
+    ///
+    /// <para>Returns 0 on failure (parse error, permission denied, process
+    /// gone).</para>
     /// </summary>
     private static long ReadVmRssKb(int pid)
     {
         try
         {
-            var lines = File.ReadAllLines($"/proc/{pid}/status");
-            foreach (var line in lines)
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sudo",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("cat");
+            psi.ArgumentList.Add($"/proc/{pid}/status");
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return 0;
+            var stdout = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5_000);
+            if (proc.ExitCode != 0) return 0;
+
+            foreach (var line in stdout.Split('\n'))
             {
                 if (!line.StartsWith("VmRSS:", StringComparison.Ordinal)) continue;
                 var parts = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
@@ -363,21 +392,54 @@ public sealed class TentacleLinuxLongSoakE2ETests
         }
         catch
         {
-            // /proc may be inaccessible (process gone, permissions, etc.)
+            // sudo failed / process gone / parse error — return 0
         }
         return 0;
     }
 
     /// <summary>
     /// Reads the count of file descriptors from
-    /// <c>/proc/&lt;pid&gt;/fd</c>. Each entry is one open FD. Returns
-    /// 0 on failure.
+    /// <c>/proc/&lt;pid&gt;/fd</c> via <c>sudo ls</c>. Each entry is
+    /// one open FD.
+    ///
+    /// <para><b>Why sudo</b>: <c>/proc/&lt;pid&gt;/fd</c> is owned by
+    /// the process owner (root for systemd-launched service); the test
+    /// process runs as <c>runner</c> on GHA. Non-self <c>/proc</c> FD
+    /// directory enumeration requires root via sudo.</para>
+    ///
+    /// <para>Returns 0 on failure (sudo declined, process gone,
+    /// permission still denied).</para>
     /// </summary>
     private static int ReadFdCount(int pid)
     {
         try
         {
-            return Directory.GetFileSystemEntries($"/proc/{pid}/fd").Length;
+            // `sudo -n ls /proc/<pid>/fd | wc -l` would need a shell;
+            // use sudo-ls + count lines in stdout instead.
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sudo",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("ls");
+            psi.ArgumentList.Add("-1");
+            psi.ArgumentList.Add($"/proc/{pid}/fd");
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return 0;
+            var stdout = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5_000);
+            if (proc.ExitCode != 0) return 0;
+
+            // Count non-empty lines.
+            var count = 0;
+            foreach (var line in stdout.Split('\n'))
+                if (!string.IsNullOrWhiteSpace(line)) count++;
+            return count;
         }
         catch
         {
