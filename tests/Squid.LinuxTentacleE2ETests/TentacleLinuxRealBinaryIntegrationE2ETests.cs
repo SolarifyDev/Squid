@@ -419,6 +419,228 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // R2.h-Linux — Soak: real binary's polling channel STAYS up over a 30s
+    //               window across 5 dispatches + 5 capability probes
+    //
+    // Phase 13 PR-4. Closes a Phase 13 gap: R1h proves "polling channel
+    // comes up + accepts a single dispatch". It does NOT prove the channel
+    // STAYS up over multi-second windows or accepts multiple dispatches in
+    // sequence. A regression where the agent crashes after a single dispatch
+    // OR Halibut's polling client fails to retry on transient drops would
+    // ship silently — ALL of R1h's assertions still pass.
+    //
+    // Operator scenario this guards:
+    //
+    //   Operator's deployment pipeline triggers 5 sequential steps
+    //   (deploy step 1 → output → deploy step 2 → output → ...) across
+    //   the same agent. If the agent's polling loop crashes after step 1,
+    //   steps 2-5 hang waiting for the timeout. R1h doesn't catch that.
+    //
+    // What this catches that R1h doesn't:
+    //   - Agent process crash after first dispatch (Halibut error handler
+    //     regression, scriptbackend leaks, FD leaks)
+    //   - Polling loop's Task.Delay backoff drifts to a value beyond
+    //     the test's deadline
+    //   - LocalScriptService stale state between dispatches (workdir not
+    //     cleaned, output capture confused with prior iteration's data)
+    //   - Capabilities reporting flap (different version reported across
+    //     probes — would indicate version-string mutation regression)
+    //
+    // Test mechanism:
+    //   1. Setup identical to R1h (register polling, install service,
+    //      wait active, wait polling channel up).
+    //   2. Loop 5 iterations spanning ~25s wall-clock:
+    //      - Probe capabilities → assert version stays same as initial
+    //      - Dispatch a per-iteration script with unique marker
+    //      - Assert exit 0 + marker round-trips
+    //      - Sleep 4-5s before next iteration
+    //   3. Final pin: systemctl is-active still active (process didn't
+    //      crash mid-soak).
+    //   4. Cleanup: same as R1h.
+    //
+    // Why 5 iterations / ~25s: balances coverage (multi-dispatch + agent
+    // staying alive) against CI cost. Each iteration is ~3s (1s sleep +
+    // 1s echo + 1s overhead) + 4s spacing = ~7s per iter × 5 = 35s ceiling.
+    // Real wall-clock typically ~25-30s.
+    //
+    // Tier: 🟢 H. Same fidelity as R1h — real binary, real Halibut RPC,
+    // real bash spawn — just exercised over a longer window.
+    //
+    // Expected runtime: ~50s (R1h's ~12s setup + 35s soak + ~3s cleanup).
+    // ========================================================================
+
+    [Fact]
+    public async Task R2h_RealBinary_PollingAgent_SoakStability_5DispatchesOver25Seconds()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+        if (!LinuxServiceFixture.IsAvailable) return;
+
+        await using var ctx = await RealBinaryPollingContext.CreateAsync();
+
+        // ── Identical setup to R1h (register + service install + wait active) ──
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.ServerUri.ToString().TrimEnd('/'),
+            "--comms-url", ctx.Stub.PollingUri.ToString().TrimEnd('/'),
+            "--api-key", "API-PHASE13-PR4-SOAK-1234",
+            "--role", "phase13-soak-agent",
+            "--environment", "Production",
+            "--flavor", "LinuxTentacle");
+        regExit.ShouldBe(0, $"R2h precondition: register MUST exit 0.\noutput:\n{regOutput}");
+
+        var registration = ctx.Stub.ReceivedRegistrations.Single();
+        var agentThumbprint = registration.AgentThumbprint;
+        var agentSubscriptionId = registration.SubscriptionId;
+        ctx.Stub.TrustAgent(agentThumbprint);
+
+        var (installExit, installOutput) = ctx.Binary.SudoRun(
+            "service", "install", "--service-name", ctx.ServiceName);
+        installExit.ShouldBe(0, $"R2h precondition: service install MUST exit 0.\noutput:\n{installOutput}");
+
+        // Wait for systemd active.
+        var activeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        var becameActive = false;
+        while (DateTime.UtcNow < activeDeadline)
+        {
+            var (exitCode, output) = RunSystemctl("is-active", ctx.ServiceName);
+            if (exitCode == 0 && output.Trim().StartsWith("active", StringComparison.OrdinalIgnoreCase))
+            {
+                becameActive = true;
+                break;
+            }
+            await Task.Delay(500);
+        }
+        becameActive.ShouldBeTrue("R2h precondition: service must reach active before soak can run");
+
+        // Wait for polling channel up (capabilities probe succeeds).
+        var initialCapabilities = await WaitForPollingChannelAsync(ctx, agentSubscriptionId, agentThumbprint);
+        var initialVersion = initialCapabilities.AgentVersion;
+        initialVersion.ShouldNotBeNullOrEmpty("R2h precondition: initial capabilities probe must report a version");
+
+        // ── Soak loop: 5 dispatches + 5 capability probes interleaved ─────
+        const int soakIterations = 5;
+        const int interIterationDelaySeconds = 4;
+
+        var dispatchTimes = new List<TimeSpan>();
+        var probeVersions = new List<string>();
+        var soakStart = DateTime.UtcNow;
+
+        for (var iter = 1; iter <= soakIterations; iter++)
+        {
+            // Probe capabilities — assert version consistency.
+            using (var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            {
+                var caps = await ctx.Stub.ProbeCapabilitiesPollingAsync(agentSubscriptionId, agentThumbprint, probeCts.Token);
+                probeVersions.Add(caps.AgentVersion);
+            }
+
+            // Dispatch a per-iteration script with unique marker.
+            var marker = $"phase13-pr4-soak-iter-{iter}-{Guid.NewGuid():N}";
+            var ticket = new ScriptTicket($"phase13-pr4-soak-{Guid.NewGuid():N}");
+            var command = new StartScriptCommand(
+                ticket,
+                $"sleep 1; echo '{marker}'",
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(1),
+                null,
+                Array.Empty<string>(),
+                ticket.TaskId,
+                TimeSpan.Zero)
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+
+            var dispatchStart = DateTime.UtcNow;
+            using var dispatchCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var result = await ctx.Stub.DispatchAndObservePollingAsync(
+                agentSubscriptionId, agentThumbprint, command,
+                TimeSpan.FromSeconds(20), dispatchCts.Token);
+            dispatchTimes.Add(DateTime.UtcNow - dispatchStart);
+
+            result.ExitCode.ShouldBe(0,
+                customMessage: $"R2h iter {iter}/{soakIterations}: script MUST exit 0. Got {result.ExitCode}. " +
+                              $"Soak elapsed so far: {(DateTime.UtcNow - soakStart).TotalSeconds:F1}s. " +
+                              $"\nLogs:\n{result.AllText}");
+            result.AllText.ShouldContain(marker,
+                customMessage: $"R2h iter {iter}/{soakIterations}: marker '{marker}' MUST round-trip. " +
+                              $"If absent: agent's polling channel dropped between iterations OR LocalScriptService stale " +
+                              $"state confused this iteration's output with a prior one. " +
+                              $"\nLogs:\n{result.AllText}");
+
+            // Don't sleep after the last iteration.
+            if (iter < soakIterations)
+                await Task.Delay(TimeSpan.FromSeconds(interIterationDelaySeconds));
+        }
+
+        // ── Pin: capability version is consistent across all probes ───────
+        // A regression that mutated AgentVersion mid-process (e.g. from a
+        // hot-reload / cache refresh that re-read AssemblyInformationalVersion
+        // differently) would surface as 5 different version strings.
+        probeVersions.Distinct().Count().ShouldBe(1,
+            customMessage: $"R2h: capability probes returned {probeVersions.Distinct().Count()} distinct AgentVersion strings. " +
+                          $"Expected 1 — version reporting MUST be stable across all probes during a single agent lifetime. " +
+                          $"Got: [{string.Join(", ", probeVersions.Select((v, i) => $"iter{i + 1}:'{v}'"))}].");
+
+        probeVersions[0].ShouldBe(initialVersion,
+            customMessage: $"R2h: first soak-loop probe reported AgentVersion '{probeVersions[0]}', " +
+                          $"but the initial pre-soak probe reported '{initialVersion}'. " +
+                          "Version flap detected — agent's CapabilitiesService is non-deterministic.");
+
+        // ── Pin: agent process is still alive (didn't crash mid-soak) ─────
+        // systemctl is-active = active proves systemd still considers the
+        // unit running. A regression where the agent crashed after the
+        // 3rd dispatch (e.g. memory leak hits OOM, or an unhandled
+        // exception in the polling loop) would report "failed" or
+        // "inactive" here.
+        var (postSoakIsActiveExit, postSoakIsActiveOutput) = RunSystemctl("is-active", ctx.ServiceName);
+        postSoakIsActiveExit.ShouldBe(0,
+            customMessage: $"R2h post-soak: `systemctl is-active {ctx.ServiceName}` MUST exit 0 (service still active). " +
+                          $"Got exit {postSoakIsActiveExit}, status: '{postSoakIsActiveOutput.Trim()}'. " +
+                          $"If different: real binary crashed during the {soakIterations}-iteration soak — operator's " +
+                          $"long-running deployment pipeline would hit this same issue.");
+
+        // ── Cleanup ────────────────────────────────────────────────────────
+        var (uninstallExit, uninstallOutput) = ctx.Binary.SudoRun(
+            "service", "uninstall", "--purge", "--service-name", ctx.ServiceName);
+        uninstallExit.ShouldBe(0,
+            customMessage: $"R2h cleanup uninstall --purge MUST succeed. Got {uninstallExit}.\noutput:\n{uninstallOutput}");
+
+        ctx.MarkUninstalled();
+        ctx.MarkClean();
+    }
+
+    /// <summary>
+    /// Waits for the agent's polling channel to be queryable via
+    /// <see cref="StubSquidServer.ProbeCapabilitiesPollingAsync"/>.
+    /// Identical retry pattern to R1h Step 5 — extracted as a helper for
+    /// R2h reuse. Throws on timeout with full diagnostic dump.
+    /// </summary>
+    private static async Task<CapabilitiesResponse> WaitForPollingChannelAsync(
+        RealBinaryPollingContext ctx, string agentSubscriptionId, string agentThumbprint)
+    {
+        var probeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        Exception lastProbeException = null;
+        while (DateTime.UtcNow < probeDeadline)
+        {
+            try
+            {
+                using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                return await ctx.Stub.ProbeCapabilitiesPollingAsync(
+                    agentSubscriptionId, agentThumbprint, probeCts.Token);
+            }
+            catch (Exception ex)
+            {
+                lastProbeException = ex;
+                await Task.Delay(500);
+            }
+        }
+
+        throw new TimeoutException(
+            $"polling channel did not come up within 30s. Last probe exception: " +
+            $"{lastProbeException?.GetType().Name}: {lastProbeException?.Message}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
