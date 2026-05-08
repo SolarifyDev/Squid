@@ -188,11 +188,14 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
         var runProcess = ctx.Binary.StartLongRunning("run", "--instance", ctx.InstanceName);
         ctx.RunProcess = runProcess;
 
-        // Drain stdout/stderr concurrently so the binary's pipe buffers
-        // don't fill (which would block its writes and stall the polling
-        // loop). Captured for failure-diagnostic dumps.
-        ctx.StdoutCapture = DrainStreamAsync(runProcess.StandardOutput, ctx.RunCts.Token);
-        ctx.StderrCapture = DrainStreamAsync(runProcess.StandardError, ctx.RunCts.Token);
+        // Drain stdout/stderr concurrently into a thread-safe StringBuilder
+        // so the binary's pipe buffers don't fill (which would block its
+        // writes and stall the polling loop). Snapshot via lock for
+        // failure-diagnostic dumps — never await the drain task itself
+        // (it only completes on stream EOF, i.e. after process exit, so
+        // .Result on the failure path WOULD deadlock — caught by xUnit1031).
+        ctx.StdoutCapture = DrainStreamAsync(runProcess.StandardOutput, ctx.StdoutBuilder, ctx.StdoutLock, ctx.RunCts.Token);
+        ctx.StderrCapture = DrainStreamAsync(runProcess.StandardError, ctx.StderrBuilder, ctx.StderrLock, ctx.RunCts.Token);
 
         // ── Step 4: wait for polling channel to be queryable ──────────────
         // Capabilities probe via Halibut polling — proves the agent's
@@ -212,8 +215,8 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
                 runProcess.HasExited.ShouldBeFalse(
                     customMessage: $"binary exited with code {runProcess.ExitCode} BEFORE polling channel came up. " +
                                   $"Likely cause: config-load failure, port-bind failure, or unhandled exception in StartPolling. " +
-                                  $"\nstdout:\n{ctx.StdoutCapture.Result}" +
-                                  $"\nstderr:\n{ctx.StderrCapture.Result}");
+                                  $"\nstdout:\n{ctx.SnapshotStdout()}" +
+                                  $"\nstderr:\n{ctx.SnapshotStderr()}");
             }
 
             try
@@ -239,8 +242,8 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
                               "(1) agent's StartPolling didn't trust the server thumbprint correctly; " +
                               "(2) stub's TrustAgent didn't propagate; " +
                               "(3) ServerCommsUrl resolution diverged on Windows — check binary stdout. " +
-                              $"\n\nstdout:\n{ctx.StdoutCapture.Result}" +
-                              $"\n\nstderr:\n{ctx.StderrCapture.Result}");
+                              $"\n\nstdout:\n{ctx.SnapshotStdout()}" +
+                              $"\n\nstderr:\n{ctx.SnapshotStderr()}");
         }
 
         capabilities.AgentVersion.ShouldNotBeNullOrEmpty(
@@ -297,8 +300,8 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
                 "(1) polling channel actually wasn't ready (Step 4's probe got lucky once); " +
                 "(2) LocalScriptService PowerShell spawn regressed in real binary path; " +
                 "(3) Halibut RPC serialization broke for StartScriptCommand. " +
-                $"\n\nbinary stdout:\n{ctx.StdoutCapture.Result}" +
-                $"\n\nbinary stderr:\n{ctx.StderrCapture.Result}", ex);
+                $"\n\nbinary stdout:\n{ctx.SnapshotStdout()}" +
+                $"\n\nbinary stderr:\n{ctx.SnapshotStderr()}", ex);
         }
 
         result.ExitCode.ShouldBe(0,
@@ -317,16 +320,24 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Drains a stream concurrently into a captured string. Used to keep
-    /// the binary's stdout/stderr pipe buffers empty (a full pipe blocks
-    /// the writer) AND to surface the captured text in failure-path
-    /// diagnostic dumps.
+    /// Drains a stream concurrently into a shared StringBuilder protected
+    /// by <paramref name="appendLock"/>. Used to keep the binary's
+    /// stdout/stderr pipe buffers empty (a full pipe blocks the writer
+    /// AND stalls the polling loop) AND to surface the captured text in
+    /// failure-path diagnostic dumps.
+    ///
+    /// <para><b>Why a shared StringBuilder + lock instead of a returned
+    /// Task&lt;string&gt;</b>: the drain task only completes on stream EOF,
+    /// which only happens AFTER the binary process exits. If we awaited
+    /// <c>Task&lt;string&gt;</c> on a failure path mid-test (when the binary
+    /// is still running), we'd deadlock. xUnit1031 catches that. Snapshotting
+    /// via lock lets the test read what's been captured SO FAR without
+    /// waiting for stream EOF.</para>
     /// </summary>
-    private static Task<string> DrainStreamAsync(StreamReader reader, CancellationToken ct)
+    private static Task DrainStreamAsync(StreamReader reader, StringBuilder target, object appendLock, CancellationToken ct)
     {
         return Task.Run(async () =>
         {
-            var sb = new StringBuilder();
             try
             {
                 var buffer = new char[1024];
@@ -334,14 +345,14 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
                 {
                     var read = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
                     if (read == 0) break;
-                    sb.Append(buffer, 0, read);
+                    lock (appendLock)
+                        target.Append(buffer, 0, read);
                 }
             }
             catch
             {
-                // Stream closed / disposed — return what we have.
+                // Stream closed / disposed mid-read — preserve what we have.
             }
-            return sb.ToString();
         }, ct);
     }
 
@@ -361,8 +372,25 @@ public sealed class TentacleWindowsRealBinaryIntegrationE2ETests
 
         public Process RunProcess { get; set; }
         public CancellationTokenSource RunCts { get; } = new();
-        public Task<string> StdoutCapture { get; set; }
-        public Task<string> StderrCapture { get; set; }
+
+        // Drain target — see DrainStreamAsync's doc-comment for why we
+        // snapshot via lock instead of awaiting a Task<string>.
+        public StringBuilder StdoutBuilder { get; } = new();
+        public StringBuilder StderrBuilder { get; } = new();
+        public object StdoutLock { get; } = new();
+        public object StderrLock { get; } = new();
+        public Task StdoutCapture { get; set; }
+        public Task StderrCapture { get; set; }
+
+        public string SnapshotStdout()
+        {
+            lock (StdoutLock) return StdoutBuilder.ToString();
+        }
+
+        public string SnapshotStderr()
+        {
+            lock (StderrLock) return StderrBuilder.ToString();
+        }
 
         public RealBinaryPollingContext()
         {
