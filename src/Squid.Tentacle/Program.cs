@@ -3,10 +3,36 @@ using Squid.Tentacle.Commands;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Instance;
 using Serilog;
+using Serilog.Events;
 
+// Direct ALL Serilog output to stderr (Unix convention: diagnostic
+// log lines on stderr, command output on stdout). This keeps stdout
+// clean for shell pipelines like:
+//
+//   THUMBPRINT=$(squid-tentacle show-thumbprint)
+//   squid-tentacle list-instances | grep MyInstance
+//   squid-tentacle show-config | awk '/Roles:/ {print $2}'
+//
+// Without this, Serilog's INF lines from TentacleCertificateManager.
+// LoadOrCreateCertificate (and other config-load paths) bleed into
+// stdout, polluting the captured value. Caught by Linux D1h E2E first
+// runner — the test had to defensively regex-extract a 40-char hex
+// from stdout to work around the leak. With this fix, stdout for
+// read-only diagnostic commands is exactly the value (clean for
+// `$()` capture); operators who want the diagnostic context can
+// still see it via `2>&1` redirect.
+//
+// Affects: every command. Stdout-only commands (`version`,
+// `show-thumbprint`, `show-config`, `list-instances`,
+// `new-certificate`) gain clean pipeline UX. State-mutating commands
+// (`register`, `service install`) still emit their summary output
+// (MachineId, etc.) to stdout via Console.WriteLine — log noise just
+// moves to stderr where it belongs.
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.Console(
+        standardErrorFromLevel: LogEventLevel.Verbose,
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
 var commands = new ITentacleCommand[]
