@@ -476,7 +476,12 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-files-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            $"cat '{fileName}'",
+            // sleep 1 before cat for timing-resilience: bash spawn can occasionally
+            // be slower than the cat's complete-and-exit, leaving the agent's
+            // stdout reader unattached when the file content emits. Same pattern
+            // used by service-message tests (LD7, LD12). Caught by refactor PR
+            // #268 first runner where LD11 randomly emitted empty AllText.
+            $"sleep 1; cat '{fileName}'",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,
@@ -594,7 +599,8 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-multifiles-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            $"cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
+            // sleep 1 before cats for timing-resilience (same as LD11h).
+            $"sleep 1; cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,
