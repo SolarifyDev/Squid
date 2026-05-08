@@ -22,7 +22,7 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
 
         Log.Information("LinuxTentacle starting in {Mode} mode", communicationMode);
 
-        var registrar = ResolveRegistrar(communicationMode, tentacleSettings);
+        var registrar = ResolveRegistrar(communicationMode, tentacleSettings, context.ForceRegistration);
 
         var backend = new LocalScriptService();
 
@@ -67,17 +67,27 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
     /// that field as the "already registered" marker would silently skip
     /// registration, leaving the Server unaware of the Tentacle and all
     /// poll connections rejected.
+    ///
+    /// <para><paramref name="forceRegistration"/> bypasses the skip path —
+    /// set by <c>RegisterCommand</c> when the operator passes
+    /// <c>--force</c>. Catches the operator-impact gap where re-registering
+    /// to update roles / environment / api-key was silently no-op'd
+    /// (caught by Linux C3h E2E first runner; documented in the spawned
+    /// production-fix task).</para>
     /// </summary>
     private static ITentacleRegistrar ResolveRegistrar(
-        TentacleCommunicationMode mode, TentacleSettings settings)
+        TentacleCommunicationMode mode, TentacleSettings settings, bool forceRegistration)
     {
         var alreadyRegistered = settings.Registered.Equals("true", StringComparison.OrdinalIgnoreCase);
 
-        if (alreadyRegistered)
+        if (alreadyRegistered && !forceRegistration)
         {
-            Log.Information("Tentacle already registered (Registered=true), skipping re-registration");
+            Log.Information("Tentacle already registered (Registered=true), skipping re-registration. Pass --force to re-register against the server (e.g. to update roles/environment/api-key).");
             return new NoOpRegistrar(settings);
         }
+
+        if (alreadyRegistered && forceRegistration)
+            Log.Information("--force passed: bypassing 'already registered' skip and re-registering");
 
         // Listening mode without credentials → can't self-register; this tentacle must
         // either be pre-registered via the UI or the operator needs to run `register`
