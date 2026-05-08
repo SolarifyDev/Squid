@@ -46,6 +46,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Squid.Core\Squid.Core.csproj" />
+    <!--
+      Phase 12.M.L.D — Squid.Tentacle reference needed for the Halibut-based
+      stub agent (SquidHalibutStubAgent) which wraps the production
+      LocalScriptService. Mirrors Squid.WindowsUpgradeE2ETests' reference.
+      Used by deploy E2E tests (PR-2+); Section A/B/C/D/G tests don't depend
+      on it but the reference is harmless when unused.
+    -->
+    <ProjectReference Include="..\..\src\Squid.Tentacle\Squid.Tentacle.csproj" />
   </ItemGroup>
 
 </Project>
