@@ -78,7 +78,16 @@ namespace Squid.WindowsTentacleE2ETests.Infrastructure;
 public sealed class StubSquidServer : IAsyncDisposable
 {
     private readonly X509Certificate2 _serverCert;
-    private readonly HalibutRuntime _runtime;
+    // Mutable to support RestartHalibutAsync — server-restart simulation
+    // disposes the current runtime and rebuilds on the same port + cert.
+    // Single-assignment-per-call (lock-protected) so the field is safe to
+    // observe from concurrent dispatch threads as long as the test
+    // synchronises restart with dispatches.
+    private HalibutRuntime _runtime;
+    private readonly object _runtimeSwapLock = new();
+    // Trusted agent thumbprints — replayed onto the new runtime after
+    // RestartHalibutAsync so reconnecting agents re-pass the TLS handshake.
+    private readonly ConcurrentBag<string> _trustedAgentThumbprints = new();
     private readonly HttpListener _httpListener;
     private readonly CancellationTokenSource _httpLoopCts;
     // Not readonly: assigned by StartAsync after construction so the loop
@@ -209,7 +218,53 @@ public sealed class StubSquidServer : IAsyncDisposable
     public void TrustAgent(string agentThumbprint)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+        // Track in the persistent set so RestartHalibutAsync can replay
+        // the trust list onto the new runtime. Without this, agents
+        // reconnecting after a server-restart simulation would fail TLS
+        // handshake on the new (empty-trust-list) runtime.
+        _trustedAgentThumbprints.Add(agentThumbprint);
         _runtime.Trust(agentThumbprint);
+    }
+
+    /// <summary>
+    /// Simulates a Squid server pod restart from the agent's perspective:
+    /// disposes the current Halibut runtime (closes listener; existing
+    /// polling-agent TCP connections receive RST), then rebuilds a NEW
+    /// runtime on the SAME port + SAME cert with trust list replayed.
+    ///
+    /// <para><b>Same as Linux StubSquidServer's RestartHalibutAsync</b> —
+    /// see that copy's doc-comment for the production-equivalence rationale.
+    /// Mirrored here for cross-platform parity since both projects keep
+    /// near-identical StubSquidServer copies.</para>
+    /// </summary>
+    public async Task RestartHalibutAsync()
+    {
+        var trustSnapshot = _trustedAgentThumbprints.ToArray();
+        var port = PollingPort;
+
+        HalibutRuntime oldRuntime;
+        lock (_runtimeSwapLock)
+        {
+            oldRuntime = _runtime;
+        }
+
+        try { await oldRuntime.DisposeAsync().ConfigureAwait(false); } catch { /* best-effort */ }
+        await Task.Delay(50).ConfigureAwait(false);
+
+        var newRuntime = BuildRuntime(_serverCert);
+        var assignedPort = newRuntime.Listen(port);
+
+        if (assignedPort != port)
+            throw new InvalidOperationException(
+                $"RestartHalibutAsync: expected to re-bind port {port} but got {assignedPort}.");
+
+        foreach (var thumbprint in trustSnapshot)
+            newRuntime.Trust(thumbprint);
+
+        lock (_runtimeSwapLock)
+        {
+            _runtime = newRuntime;
+        }
     }
 
     /// <summary>

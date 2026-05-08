@@ -78,7 +78,17 @@ namespace Squid.LinuxTentacleE2ETests.Infrastructure;
 public sealed class StubSquidServer : IAsyncDisposable
 {
     private readonly X509Certificate2 _serverCert;
-    private readonly HalibutRuntime _runtime;
+    // Mutable to support RestartHalibutAsync — server-restart simulation
+    // disposes the current runtime and rebuilds on the same port + cert.
+    // Single-assignment-per-call (lock-protected) so the field is safe to
+    // observe from concurrent dispatch threads as long as the test
+    // synchronises restart with dispatches.
+    private HalibutRuntime _runtime;
+    private readonly object _runtimeSwapLock = new();
+    // Trusted agent thumbprints — replayed onto the new runtime after
+    // RestartHalibutAsync so reconnecting agents re-pass the TLS handshake.
+    // ConcurrentBag for lock-free Add; replay loop iterates a snapshot.
+    private readonly ConcurrentBag<string> _trustedAgentThumbprints = new();
     private readonly HttpListener _httpListener;
     private readonly CancellationTokenSource _httpLoopCts;
     // Not readonly: assigned by StartAsync after construction so the loop
@@ -209,7 +219,86 @@ public sealed class StubSquidServer : IAsyncDisposable
     public void TrustAgent(string agentThumbprint)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentThumbprint);
+        // Track in the persistent set so RestartHalibutAsync can replay
+        // the trust list onto the new runtime. Without this, agents
+        // reconnecting after a server-restart simulation would fail TLS
+        // handshake on the new (empty-trust-list) runtime.
+        _trustedAgentThumbprints.Add(agentThumbprint);
         _runtime.Trust(agentThumbprint);
+    }
+
+    /// <summary>
+    /// Simulates a Squid server pod restart from the agent's perspective:
+    /// disposes the current Halibut runtime (closes the listener; all
+    /// existing polling-agent TCP connections receive RST), then rebuilds
+    /// a NEW runtime on the SAME port + SAME cert with the trust list
+    /// replayed.
+    ///
+    /// <para><b>What this exercises in production code</b>: when a Squid
+    /// server pod restarts (rolling deploy, OOM-kill, k8s reschedule),
+    /// every polling agent's TCP connection drops. The agent's
+    /// <c>HalibutRuntime.Poll</c> background loop should retry with
+    /// backoff (jitter via <c>SQUID_TENTACLE_POLLING_STARTUP_JITTER_MS</c>);
+    /// once the new server pod's Halibut listener is up on the same
+    /// host:port, the agent reconnects, the trust list re-validates the
+    /// agent's cert, and dispatches resume.</para>
+    ///
+    /// <para><b>Same port + same cert</b>: production after pod restart
+    /// presents the same TLS cert (mounted from the same secret) AND
+    /// the same Service VIP (LoadBalancer). The simulation MUST preserve
+    /// both:
+    /// <list type="bullet">
+    ///   <item>Same cert thumbprint → agent's thumbprint pin still matches</item>
+    ///   <item>Same port → agent's <c>ServerCommsUrl</c> still resolves</item>
+    /// </list></para>
+    ///
+    /// <para><b>Brief downtime window</b>: between dispose and re-listen,
+    /// there's a brief moment where the port is unbound. Halibut polling
+    /// client's retry logic + jitter handles this. The test should give
+    /// the agent ~30s to reconnect after restart before dispatching.</para>
+    /// </summary>
+    public async Task RestartHalibutAsync()
+    {
+        // Capture the trust list snapshot BEFORE we dispose the old runtime,
+        // so a concurrent TrustAgent during disposal doesn't race.
+        var trustSnapshot = _trustedAgentThumbprints.ToArray();
+        var port = PollingPort;
+
+        HalibutRuntime oldRuntime;
+        lock (_runtimeSwapLock)
+        {
+            oldRuntime = _runtime;
+        }
+
+        // Dispose old runtime — closes the listener, all polling client
+        // connections receive RST.
+        try { await oldRuntime.DisposeAsync().ConfigureAwait(false); } catch { /* best-effort */ }
+
+        // Brief delay to let the OS release the port (typical TCP TIME_WAIT
+        // would block re-bind, but Halibut uses SO_REUSEADDR; this Task.Delay
+        // is just defensive — usually 0ms is enough).
+        await Task.Delay(50).ConfigureAwait(false);
+
+        // Build new runtime with the SAME cert (preserves thumbprint pin
+        // from agent's perspective).
+        var newRuntime = BuildRuntime(_serverCert);
+        var assignedPort = newRuntime.Listen(port);
+
+        if (assignedPort != port)
+            throw new InvalidOperationException(
+                $"RestartHalibutAsync: expected to re-bind port {port} but Halibut.Listen returned {assignedPort}. " +
+                "OS may have given the port to another process during the dispose/re-bind window. " +
+                "If this happens consistently, increase the inter-restart delay.");
+
+        // Replay trust list — without this, reconnecting agents fail TLS
+        // handshake on the new runtime.
+        foreach (var thumbprint in trustSnapshot)
+            newRuntime.Trust(thumbprint);
+
+        lock (_runtimeSwapLock)
+        {
+            _runtime = newRuntime;
+        }
     }
 
     /// <summary>
