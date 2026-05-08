@@ -150,6 +150,22 @@ public sealed class LocalReleaseMirror : IDisposable
     {
         _stagedBinaryFileName = binaryFileName;
         _stagedBinary = content;
+
+        // Invalidate the per-archive byte cache so subsequent .zip / .tar.gz
+        // requests rebuild from the new staged content. Without this,
+        // tests that re-stage between two install invocations (e.g.
+        // InstallScript_ReRun_OverExistingInstall_Succeeds, which stages
+        // v1 → install → re-stages v2 → install) would see the SECOND
+        // install receive cached v1 bytes and produce v1 content on disk
+        // — the test would fail with "expected v2, got # v1" even
+        // though the production install script worked correctly.
+        // Caught by 4+ consecutive Windows CI failures of that test on
+        // main: the per-URL cache (added for SHA256 companion consistency)
+        // had no invalidation hook for re-staged content.
+        lock (_archiveCacheLock)
+        {
+            _archiveBytesCache.Clear();
+        }
     }
 
     /// <summary>
