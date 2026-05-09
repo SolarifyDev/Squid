@@ -5,6 +5,8 @@ namespace Squid.UnitTests.Services.Deployments.ExternalFeeds;
 
 public class HelmPackageVersionStrategyTests
 {
+    private const int LargeEnumerationCap = 10_000;
+
     [Theory]
     [InlineData("Helm", true)]
     [InlineData("Helm Feed", true)]
@@ -36,7 +38,7 @@ public class HelmPackageVersionStrategyTests
             generated: "2026-01-01T00:00:00Z"
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", 100);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", LargeEnumerationCap);
 
         result.Count.ShouldBe(3);
         result[0].ShouldBe("1.2.0");
@@ -55,7 +57,7 @@ public class HelmPackageVersionStrategyTests
                 - version: "2.0.0"
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", 100);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", LargeEnumerationCap);
 
         result.Count.ShouldBe(1);
         result[0].ShouldBe("1.0.0");
@@ -70,11 +72,18 @@ public class HelmPackageVersionStrategyTests
                 - version: "2.0.0"
             """;
 
-        HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", 100).ShouldBeEmpty();
+        HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", LargeEnumerationCap).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Inverted version of the old "ShouldRespectTakeLimit" test. The cap is now
+    /// a SANITY ceiling (default 5000), not a per-call take. Helm index.yaml is
+    /// served as a single file with no pagination, so all chart versions in the
+    /// file are returned (up to the cap). Filter+sort+take happen downstream in
+    /// <see cref="PackageVersionFilter.Apply"/>.
+    /// </summary>
     [Fact]
-    public void ParseChartVersions_ShouldRespectTakeLimit()
+    public void ParseChartVersions_ShouldReturnAllVersions_BelowCap()
     {
         var yaml = """
             entries:
@@ -84,7 +93,30 @@ public class HelmPackageVersionStrategyTests
                 - version: "1.0.0"
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", 2);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", LargeEnumerationCap);
+
+        result.Count.ShouldBe(3,
+            customMessage: "Parser MUST return all chart versions — order + take belong to " +
+                          "PackageVersionFilter.Apply. The cap parameter is a sanity ceiling " +
+                          "(default 5000) for OOM protection, not a per-call take.");
+    }
+
+    [Fact]
+    public void ParseChartVersions_RespectsEnumerationCap_ForSafetyOnPathologicalIndex()
+    {
+        // Defense-in-depth: a malicious / corrupt index with millions of versions
+        // must not OOM the parser. Cap at 2 here to make the limit observable.
+        var yaml = """
+            entries:
+              nginx:
+                - version: "5.0.0"
+                - version: "4.0.0"
+                - version: "3.0.0"
+                - version: "2.0.0"
+                - version: "1.0.0"
+            """;
+
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "nginx", enumerationCap: 2);
 
         result.Count.ShouldBe(2);
     }
@@ -98,7 +130,7 @@ public class HelmPackageVersionStrategyTests
                 - version: 0.1.0
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "mychart", 100);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "mychart", LargeEnumerationCap);
 
         result.Count.ShouldBe(1);
         result[0].ShouldBe("0.1.0");
@@ -113,7 +145,7 @@ public class HelmPackageVersionStrategyTests
                 - version: "1.0.0"
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "mychart", 100);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "mychart", LargeEnumerationCap);
 
         result.Count.ShouldBe(1);
     }
@@ -151,7 +183,7 @@ public class HelmPackageVersionStrategyTests
             generated: "2026-03-26T07:20:46Z"
             """;
 
-        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "openclaw", 100);
+        var result = HelmPackageVersionStrategy.ParseChartVersions(yaml, "openclaw", LargeEnumerationCap);
 
         result.Count.ShouldBe(3);
         result[0].ShouldBe("1.5.7");
@@ -176,8 +208,8 @@ public class HelmPackageVersionStrategyTests
             generated: "2026-01-01T00:00:00Z"
             """;
 
-        var resultA = HelmPackageVersionStrategy.ParseChartVersions(yaml, "chartA", 100);
-        var resultB = HelmPackageVersionStrategy.ParseChartVersions(yaml, "chartB", 100);
+        var resultA = HelmPackageVersionStrategy.ParseChartVersions(yaml, "chartA", LargeEnumerationCap);
+        var resultB = HelmPackageVersionStrategy.ParseChartVersions(yaml, "chartB", LargeEnumerationCap);
 
         resultA.Count.ShouldBe(2);
         resultA[0].ShouldBe("1.0.0");

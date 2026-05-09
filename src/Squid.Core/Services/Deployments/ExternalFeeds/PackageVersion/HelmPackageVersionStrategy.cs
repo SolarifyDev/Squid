@@ -10,7 +10,7 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
     public bool CanHandle(string feedType) =>
         !string.IsNullOrWhiteSpace(feedType) && feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase);
 
-    public async Task<List<string>> ListVersionsAsync(ExternalFeed feed, string packageId, int take, CancellationToken ct)
+    public async Task<List<string>> ListVersionsAsync(ExternalFeed feed, string packageId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(packageId)) return [];
 
@@ -26,7 +26,7 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
 
         var yaml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-        return ParseChartVersions(yaml, packageId, take);
+        return ParseChartVersions(yaml, packageId, PackageVersionEnumerationCap.Resolve());
     }
 
     private static Dictionary<string, string> BuildAuthHeaders(ExternalFeed feed)
@@ -40,12 +40,16 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
     }
 
     /// <summary>
-    /// Parses Helm index.yaml to extract chart versions.
-    /// Handles both compact format ("- version: X") and standard format
-    /// where version is a standalone property at the entry indent level.
-    /// Ignores nested version fields (e.g. inside dependencies).
+    /// Parses Helm <c>index.yaml</c> to extract chart versions for the named
+    /// chart. Helm repos serve a single index file (no pagination), so the
+    /// <paramref name="enumerationCap"/> only protects against pathologically
+    /// long indexes — under any reasonable repo it's never reached.
+    ///
+    /// <para>Handles both compact format (<c>- version: X</c>) and standard
+    /// format where <c>version</c> is a standalone property at the entry indent
+    /// level. Ignores nested version fields (e.g. inside <c>dependencies</c>).</para>
     /// </summary>
-    internal static List<string> ParseChartVersions(string yaml, string chartName, int take)
+    internal static List<string> ParseChartVersions(string yaml, string chartName, int enumerationCap)
     {
         var versions = new List<string>();
         var inEntries = false;
@@ -98,7 +102,7 @@ public class HelmPackageVersionStrategy(ISquidHttpClientFactory httpClientFactor
             if (!string.IsNullOrWhiteSpace(versionValue))
                 versions.Add(versionValue);
 
-            if (versions.Count >= take) break;
+            if (versions.Count >= enumerationCap) break;
         }
 
         return versions;

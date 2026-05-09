@@ -24,7 +24,13 @@ public class ExternalFeedPackageVersionService(
         if (strategy == null)
             return new SearchFeedPackageVersionsResponseData { Versions = [] };
 
-        var versions = await strategy.ListVersionsAsync(feed, packageId, take, ct).ConfigureAwait(false);
+        // Strategy returns ALL upstream versions (paginated, capped at the
+        // enumeration sanity limit). PackageVersionFilter is the SINGLE point of
+        // filter + semver sort + take, so a newly-pushed version that's lex-late
+        // upstream (e.g. 1.1.0 when 1.0.3-8 lex-sorts before it) still surfaces
+        // in the dropdown. See IPackageVersionStrategy doc for why take was
+        // removed from the strategy contract.
+        var versions = await strategy.ListVersionsAsync(feed, packageId, ct).ConfigureAwait(false);
 
         versions = PackageVersionFilter.Apply(versions, includePreRelease, filter, take);
 
