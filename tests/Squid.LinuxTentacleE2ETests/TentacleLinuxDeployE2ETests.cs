@@ -271,15 +271,14 @@ public sealed class TentacleLinuxDeployE2ETests
 
         const string varName = "MyOutputVar";
         const string varValue = "value-from-deploy-no-base64";
-        // Plain service-message format — no base64 encoding. Sleep 1s
-        // before emit (timing-resilience) — same pattern Windows
-        // EmitServiceMessage adopted: bash spawn time can occasionally
-        // overlap with the emit, leaving the agent's stdout reader
-        // unattached when the line surfaces. Caught by PR #266 first
-        // runner where LD7h failed in an unrelated PR (new-certificate
-        // change shouldn't affect LD7h, surfacing the underlying flake).
+        // Plain service-message format — no base64 encoding. The bare
+        // `echo` (no `sleep 1; ` prefix) works thanks to PR #275's
+        // LocalScriptService.CompleteScript fix that drains async stream
+        // readers via WaitForExit() before reading logs. Pre-#275 this
+        // line lost output when bash exited before the agent's stdout
+        // reader attached.
         var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
-            $"sleep 1; echo \"##squid[setVariable name='{varName}' value='{varValue}']\"",
+            $"echo \"##squid[setVariable name='{varName}' value='{varValue}']\"",
             ScriptType.Bash);
 
         result.ExitCode.ShouldBe(0,
@@ -331,10 +330,11 @@ public sealed class TentacleLinuxDeployE2ETests
         server.TrustAgent(agent.Thumbprint);
 
         const string marker = "hello-from-linux-polling-deploy";
-        // sleep 1 + echo: gives bash spawn + stdout reader attach time
-        // before the marker is emitted (timing-resilience pattern).
+        // Bare echo works post-#275 (CompleteScript drains async readers
+        // before ReadLogs). Pre-#275 needed `sleep 1; ` for the stdout
+        // reader to attach before the marker emit.
         var result = await DispatchAndObservePollingAsync(server, agent.SubscriptionId, agent.Thumbprint,
-            $"sleep 1; echo '{marker}'", ScriptType.Bash,
+            $"echo '{marker}'", ScriptType.Bash,
             observeTimeout: TimeSpan.FromSeconds(15));
 
         result.ExitCode.ShouldBe(0,
@@ -476,12 +476,11 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-files-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            // sleep 1 before cat for timing-resilience: bash spawn can occasionally
-            // be slower than the cat's complete-and-exit, leaving the agent's
-            // stdout reader unattached when the file content emits. Same pattern
-            // used by service-message tests (LD7, LD12). Caught by refactor PR
-            // #268 first runner where LD11 randomly emitted empty AllText.
-            $"sleep 1; cat '{fileName}'",
+            // Bare cat works post-#275: CompleteScript drains async stream
+            // readers before reading logs. Pre-#275 needed `sleep 1; ` for
+            // bash spawn + stdout reader attach to complete before the
+            // cat's complete-and-exit.
+            $"cat '{fileName}'",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,
@@ -538,9 +537,9 @@ public sealed class TentacleLinuxDeployE2ETests
         const string varName = "MyApiKey";
         const string varValue = "secret-value-that-must-not-leak";
 
-        // sleep 1 before emit for timing resilience — same as LD7h.
+        // Bare echo works post-#275 (same rationale as LD7h).
         var result = await DispatchAndObserveListeningAsync(server, agent.ListeningUri, agent.Thumbprint,
-            $"sleep 1; echo \"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']\"",
+            $"echo \"##squid[setVariable name='{varName}' value='{varValue}' sensitive='True']\"",
             ScriptType.Bash);
 
         result.ExitCode.ShouldBe(0,
@@ -599,8 +598,8 @@ public sealed class TentacleLinuxDeployE2ETests
         var ticket = new ScriptTicket($"e2e-linux-multifiles-{Guid.NewGuid():N}");
         var command = new StartScriptCommand(
             ticket,
-            // sleep 1 before cats for timing-resilience (same as LD11h).
-            $"sleep 1; cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
+            // Bare cats work post-#275 (same rationale as LD11h).
+            $"cat '{fileA}'; echo; cat '{fileB}'; echo; cat '{fileC}'; echo",
             ScriptIsolationLevel.NoIsolation,
             TimeSpan.FromMinutes(1),
             null,

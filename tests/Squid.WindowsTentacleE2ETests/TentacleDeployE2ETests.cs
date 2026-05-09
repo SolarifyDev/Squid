@@ -64,16 +64,11 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        // SleepThenEcho-2s timing resilience: bare Echo finishes in
-        // <100ms on Windows; if pwsh.exe spawn + StubAgent's stdout
-        // reader attach is slow enough, the script completes BEFORE the
-        // reader attaches → output lost (resultText="" with exit=0).
-        // Bumped from 1s to 2s after PR #273 Round 2 saw the same race
-        // hit Listening_PlainOutputVariable with the EmitServiceMessage
-        // 1s sleep — production's process.Start() → BeginOutputReadLine()
-        // window can be 100-300ms beyond the spawn time on heavily-loaded
-        // runners.
-        var (scriptBody, scriptType) = OsScript.SleepThenEcho(2, "hello-from-deploy-e2e");
+        // Bare Echo works post-#275 (LocalScriptService.CompleteScript
+        // now drains async stream readers via WaitForExit() before
+        // reading logs). Pre-#275 needed `Start-Sleep -Seconds N` for
+        // pwsh's stdout reader to attach before the marker emit.
+        var (scriptBody, scriptType) = OsScript.Echo("hello-from-deploy-e2e");
 
         var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
 
@@ -172,12 +167,9 @@ public sealed class TentacleDeployE2ETests
         await using var agent = await StubAgent.StartPollingAsync(server.PollingUri, server.ServerThumbprint);
         server.TrustAgent(agent.Thumbprint);
 
-        // Round 9 fix: SleepThenEcho instead of bare Echo. Bare echo
-        // finishes in <100ms; on stressed Windows runners pwsh.exe spawn
-        // can take longer than that, leaving the stdout reader unattached
-        // when the script's emit fires → output lost. Same root cause +
-        // mitigation as Round 8 for the concurrent test.
-        var (scriptBody, scriptType) = OsScript.SleepThenEcho(1, "hello-from-polling-deploy");
+        // Bare Echo works post-#275 (CompleteScript drains async stream
+        // readers via WaitForExit() before reading logs).
+        var (scriptBody, scriptType) = OsScript.Echo("hello-from-polling-deploy");
 
         var result = await DispatchAndObserveAsync(server, agent: null, agentThumbprint: agent.Thumbprint, agentSubscriptionId: agent.SubscriptionId, scriptBody, scriptType, observeTimeout: TimeSpan.FromSeconds(15));
 
@@ -296,12 +288,9 @@ public sealed class TentacleDeployE2ETests
         //   - emoji — common in modern logs / PR descriptions
         const string Marker = "hello-世界-—-🚀-end";  // hello-世界-—-🚀-end
 
-        // SleepThenEcho-2s timing resilience for the same reason as
-        // Listening_EchoScript_OutputCapturedAndExitZero (line 67).
-        // Bare Echo finishes too fast for stdout reader attach on
-        // Windows; 2s gives the reader guaranteed attached time even
-        // on stressed CI runners.
-        var (scriptBody, scriptType) = OsScript.SleepThenEcho(2, Marker);
+        // Bare Echo works post-#275 (same rationale as Listening_EchoScript
+        // at line 67 — CompleteScript drains async readers).
+        var (scriptBody, scriptType) = OsScript.Echo(Marker);
 
         var result = await DispatchAndObserveAsync(server, agent.ListeningUri, agent.Thumbprint, scriptBody, scriptType);
 
@@ -656,38 +645,34 @@ public sealed class TentacleDeployE2ETests
         /// </summary>
         public static (string body, ScriptType type) EmitServiceMessage(string magicLine)
         {
-            // Sleep BEFORE emit — timing-resilience pattern matching
-            // SleepThenEcho. Originally caught by run 25529180587
-            // (Listening_OutputVariableWithBase64Encoding) where 1s gave
-            // the stdout reader time to attach.
+            // No `Sleep` prefix needed post-#275 — LocalScriptService.
+            // CompleteScript drains async stream readers via WaitForExit()
+            // before reading logs. Pre-#275 this needed up to 2s sleep
+            // (rounds 1 + 2 chased the race; #275 fixed it at the root).
             //
-            // Round-2 escalation (run 25547368562 — Listening_PlainOutput
-            // VariableRoundTripsToProductionParser): 1s STILL flaked under
-            // stressed runner conditions. Production LocalScriptService
-            // calls process.Start() at line 190 then BeginOutputReadLine()
-            // at line 198 — there's a 100-300ms window where output can
-            // be in the OS pipe buffer but the .NET reader hasn't subscribed.
-            // For very small emits (like a single service-message line)
-            // followed by immediate exit, the pipe-flush + process-exit
-            // can race the reader-attach.
-            //
-            // Bumped to 2s so the reader has guaranteed attached time
-            // even when pwsh.exe spawn is 1.5-2s on a heavily-loaded CI
-            // runner. Same value the Round-9 concurrent test arrived at
-            // before being superseded by Round-10 staggered emits.
+            // Historical context preserved here for ops investigating
+            // future timing flakes:
+            //   - Production LocalScriptService.StartScript line 190
+            //     calls process.Start(); line 198 calls BeginOutputReadLine.
+            //     Pre-#275 there was a 100-300ms window where output could
+            //     be in the pipe but .NET's reader hadn't subscribed.
+            //   - PR #275 fix: CompleteScript now calls WaitForExit() (no-arg)
+            //     after the timed wait. WaitForExit-no-arg flushes async
+            //     event handlers before returning, so all output is in the
+            //     LogWriter before ReadLogs is called.
             if (OperatingSystem.IsWindows())
             {
                 // PowerShell here-string (single-quote = literal, no
                 // expansion). Body terminator '@ MUST be at start of a
                 // physical line.
-                var ps = "Start-Sleep -Seconds 2\nWrite-Output @'\n" + magicLine + "\n'@";
+                var ps = "Write-Output @'\n" + magicLine + "\n'@";
                 return (ps, ScriptType.PowerShell);
             }
             else
             {
                 // Bash heredoc with single-quoted delimiter — same "no
                 // expansion" semantics as the PowerShell variant.
-                var bash = "sleep 2\ncat <<'SQUIDMSGEOF'\n" + magicLine + "\nSQUIDMSGEOF";
+                var bash = "cat <<'SQUIDMSGEOF'\n" + magicLine + "\nSQUIDMSGEOF";
                 return (bash, ScriptType.Bash);
             }
         }
