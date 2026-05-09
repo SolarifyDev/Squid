@@ -53,4 +53,14 @@ public class GitHubPackageVersionStrategyTests
     {
         GitHubPackageVersionStrategy.ParseReleases("bad json").ShouldBeEmpty();
     }
+
+    [Fact]
+    public void MaxReleasesPerPage_IsAt100()
+    {
+        // Pinned: GitHub's REST API caps per_page at 100. Lowering this would
+        // multiply round-trips for every GitHub feed; raising it past 100 would
+        // be silently capped server-side. The pagination loop relies on this
+        // being the GitHub-supported maximum.
+        GitHubPackageVersionStrategy.MaxReleasesPerPage.ShouldBe(100);
+    }
 }
