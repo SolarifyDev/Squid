@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Shouldly;
 using Squid.Tentacle.Platform;
 using Squid.Tentacle.Tests.Support;
@@ -94,6 +96,101 @@ public sealed class FilePermissionManagerTests : IDisposable
         var mgr = FilePermissionManagerFactory.Resolve();
 
         Should.NotThrow(() => mgr.RestrictToOwner(Path.Combine(_tempRoot, "ghost.txt")));
+    }
+
+    // ── Windows ACL contract: LocalSystem grant + Users denied ───────────
+    //
+    // Pre-#283-round-2 the Windows ACL granted ONLY the current user.
+    // Diagnostic harvest from the SCM E2E test
+    // (TentacleWindowsScmLaunchedRealBinaryE2ETests) showed the binary
+    // launched by SCM as LocalSystem hit `UnauthorizedAccessException:
+    // Access to '<config>.json' is denied` because LocalSystem was NOT
+    // on the ACL. Documented operator workflow `register` →
+    // `service install` → `sc start` was BROKEN on Windows.
+    //
+    // Fix: ApplyOwnerOnlyAcl_File now grants 3 principals:
+    //   - Current user (preserved)
+    //   - NT AUTHORITY\SYSTEM (LocalSystem — SCM's default service identity)
+    //   - BUILTIN\Administrators (operators debugging without privesc rituals)
+    //
+    // Crucially, BUILTIN\Users is STILL denied — the original security
+    // goal (no privesc for sibling users) is preserved.
+    //
+    // These tests pin BOTH directions (positive = LocalSystem present,
+    // negative = Users absent) to catch any future regression that
+    // accidentally over-narrows OR over-widens the ACL.
+
+    [Fact]
+    public void RestrictToOwner_File_GrantsLocalSystem()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var path = Path.Combine(_tempRoot, "secret.config.json");
+        File.WriteAllText(path, "{ \"apiKey\": \"sensitive\" }");
+
+        new WindowsFilePermissionManager().RestrictToOwner(path, isDirectory: false);
+
+        var fileInfo = new FileInfo(path);
+        var security = fileInfo.GetAccessControl();
+        var rules = security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier));
+
+        var localSystemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, domainSid: null);
+        var hasLocalSystem = rules
+            .OfType<FileSystemAccessRule>()
+            .Any(r => ((SecurityIdentifier)r.IdentityReference).Equals(localSystemSid)
+                   && r.AccessControlType == AccessControlType.Allow
+                   && (r.FileSystemRights & FileSystemRights.Read) != 0);
+
+        hasLocalSystem.ShouldBeTrue(
+            customMessage: "RestrictToOwner MUST grant NT AUTHORITY\\SYSTEM read access — without it, " +
+                          "SCM-launched services can't read their own config files. " +
+                          "Operator workflow `register` → `service install` → `sc start` would " +
+                          "fail with UnauthorizedAccessException.");
+    }
+
+    [Fact]
+    public void RestrictToOwner_File_DeniesBuiltInUsers()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var path = Path.Combine(_tempRoot, "secret.config.json");
+        File.WriteAllText(path, "{ \"apiKey\": \"sensitive\" }");
+
+        new WindowsFilePermissionManager().RestrictToOwner(path, isDirectory: false);
+
+        var fileInfo = new FileInfo(path);
+        var security = fileInfo.GetAccessControl();
+        var rules = security.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier));
+
+        var usersSid = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, domainSid: null);
+        var allowsUsers = rules
+            .OfType<FileSystemAccessRule>()
+            .Any(r => ((SecurityIdentifier)r.IdentityReference).Equals(usersSid)
+                   && r.AccessControlType == AccessControlType.Allow);
+
+        allowsUsers.ShouldBeFalse(
+            customMessage: "RestrictToOwner MUST NOT grant BUILTIN\\Users any access — that's the original " +
+                          "security goal (no privesc for sibling local users). If this fails: someone added " +
+                          "Users to the ACL, defeating the security hardening that motivated this manager.");
+    }
+
+    [Fact]
+    public void RestrictToOwner_BreaksInheritance()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var path = Path.Combine(_tempRoot, "secret.config.json");
+        File.WriteAllText(path, "{ \"apiKey\": \"sensitive\" }");
+
+        new WindowsFilePermissionManager().RestrictToOwner(path, isDirectory: false);
+
+        var fileInfo = new FileInfo(path);
+        var security = fileInfo.GetAccessControl();
+
+        security.AreAccessRulesProtected.ShouldBeTrue(
+            customMessage: "RestrictToOwner MUST break inheritance from the parent directory's ACL. " +
+                          "Without this, %ProgramData% inheritance brings BUILTIN\\Users:Read back via " +
+                          "the parent ACL, defeating the file-level hardening.");
     }
 
     // ── TrySetUnixMode — legacy pass-through ──────────────────────────────

@@ -67,6 +67,23 @@ public sealed class WindowsFilePermissionManager : IFilePermissionManager
         _ = mode;
     }
 
+    /// <summary>
+    /// Well-known LocalSystem SID. <c>S-1-5-18</c> is
+    /// <c>SECURITY_LOCAL_SYSTEM_RID</c> — the identity SCM uses to launch
+    /// services without an explicit account.
+    /// </summary>
+    private static readonly SecurityIdentifier LocalSystemSid =
+        new(WellKnownSidType.LocalSystemSid, domainSid: null);
+
+    /// <summary>
+    /// Well-known BUILTIN\Administrators SID. <c>S-1-5-32-544</c>.
+    /// Administrators can already read these files via SeBackupPrivilege;
+    /// explicit grant makes recovery / debugging work without elevation
+    /// rituals.
+    /// </summary>
+    private static readonly SecurityIdentifier AdministratorsSid =
+        new(WellKnownSidType.BuiltinAdministratorsSid, domainSid: null);
+
     private static void ApplyOwnerOnlyAcl_File(string path)
     {
         var fileInfo = new FileInfo(path);
@@ -83,15 +100,34 @@ public sealed class WindowsFilePermissionManager : IFilePermissionManager
             security.RemoveAccessRule(rule);
         }
 
-        // 3. Grant FullControl to the current user (the agent's process
-        //    identity). Anyone else gets nothing.
+        // 3. Grant FullControl to:
+        //    a) the current user (the user who ran `register` — typically
+        //       an Administrator running `Squid.Tentacle.exe register ...`)
+        //    b) NT AUTHORITY\SYSTEM (LocalSystem — SCM's default service
+        //       identity; without this grant, `sc start squid-tentacle`
+        //       launches the binary which can't read its own config →
+        //       UnauthorizedAccessException → service fails to start)
+        //    c) BUILTIN\Administrators — operators debugging / recovering
+        //       can elevate cmd and read the file without juggling
+        //       SeBackupPrivilege ACL escapes
+        //
+        // Anyone NOT in (a)/(b)/(c) — including BUILTIN\Users — gets
+        // nothing. This preserves the original security goal (no privesc
+        // for sibling local users) while functionally enabling the
+        // documented operator workflow `register` → `service install` →
+        // `sc start`. Caught by PR #283 round-2 CI: pre-fix the
+        // SCM-launched binary hit `UnauthorizedAccessException: Access
+        // to the path '<config>.json' is denied` because LocalSystem
+        // wasn't on the ACL.
         var owner = WindowsIdentity.GetCurrent().User
             ?? throw new InvalidOperationException("WindowsIdentity.GetCurrent().User is null — cannot determine owner SID");
 
         security.AddAccessRule(new FileSystemAccessRule(
-            owner,
-            FileSystemRights.FullControl,
-            AccessControlType.Allow));
+            owner, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            LocalSystemSid, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            AdministratorsSid, FileSystemRights.FullControl, AccessControlType.Allow));
 
         fileInfo.SetAccessControl(security);
     }
@@ -112,14 +148,19 @@ public sealed class WindowsFilePermissionManager : IFilePermissionManager
         var owner = WindowsIdentity.GetCurrent().User
             ?? throw new InvalidOperationException("WindowsIdentity.GetCurrent().User is null — cannot determine owner SID");
 
+        // Same three principals as ApplyOwnerOnlyAcl_File — see that
+        // method's doc-comment for the SCM-launched-binary rationale.
+        // Inheritance flags propagate the rules onto contained files +
+        // subdirs so anything written later inherits the same secure-
+        // but-SCM-functional ACL.
+        const InheritanceFlags inheritFlags = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
         security.AddAccessRule(new FileSystemAccessRule(
-            owner,
-            FileSystemRights.FullControl,
-            // Inherit the rule onto contained files + subdirs so anything
-            // dropped into the workspace later is also owner-only.
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-            PropagationFlags.None,
-            AccessControlType.Allow));
+            owner, FileSystemRights.FullControl, inheritFlags, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            LocalSystemSid, FileSystemRights.FullControl, inheritFlags, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            AdministratorsSid, FileSystemRights.FullControl, inheritFlags, PropagationFlags.None, AccessControlType.Allow));
 
         dirInfo.SetAccessControl(security);
     }
