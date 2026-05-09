@@ -111,8 +111,35 @@ public static class TentacleEntry
         catch (Exception ex)
         {
             Log.Fatal(ex, "Squid Tentacle terminated unexpectedly");
+            // Also write to the SCM diagnostic file — when SCM-launched
+            // (no console), Serilog's Console sink writes go to NUL and
+            // operators / CI lose all signal about WHY the run command
+            // failed. The diagnostic file path is the same one Program.
+            // ScmDiagnosticLog uses; duplicated here as a small static
+            // helper because we can't reference internal types from
+            // top-level Program.cs.
+            TryWriteScmDiagnostic($"TentacleEntry.RunAsync caught {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Best-effort append to the SCM diagnostic log file used by
+    /// <c>Program.ScmDiagnosticLog</c>. Mirrors that helper so this
+    /// class can write to it from its catch block. Never throws.
+    /// </summary>
+    private static void TryWriteScmDiagnostic(string line)
+    {
+        try
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (string.IsNullOrEmpty(programData)) programData = Path.GetTempPath();
+            var dir = Path.Combine(programData, "Squid", "Tentacle");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "scm-diagnostic.log");
+            File.AppendAllText(path, $"[{DateTimeOffset.UtcNow:HH:mm:ss.fff}] {line}{Environment.NewLine}");
+        }
+        catch { /* best-effort */ }
     }
 
     /// <summary>
