@@ -64,15 +64,22 @@ public sealed class TentacleScmHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Diagnostic file logging — see Program.ScmDiagnosticLog. Critical
+        // for debugging SCM start failures since SCM-launched binaries
+        // have no console for Serilog Console sink to write to.
+        try { System.IO.File.AppendAllText(ResolveDiagPath(), $"[{DateTimeOffset.UtcNow:HH:mm:ss.fff}] TentacleScmHostedService.ExecuteAsync entered.{Environment.NewLine}"); } catch { }
+
         Log.Information("Squid Tentacle launched under SCM lifetime — args: [{Args}]",
             string.Join(", ", _args));
 
         try
         {
             LastExitCode = await TentacleEntry.RunAsync(_args, stoppingToken).ConfigureAwait(false);
+            try { System.IO.File.AppendAllText(ResolveDiagPath(), $"[{DateTimeOffset.UtcNow:HH:mm:ss.fff}] TentacleEntry.RunAsync returned exitCode={LastExitCode}.{Environment.NewLine}"); } catch { }
         }
         catch (Exception ex)
         {
+            try { System.IO.File.AppendAllText(ResolveDiagPath(), $"[{DateTimeOffset.UtcNow:HH:mm:ss.fff}] TentacleEntry.RunAsync threw {ex.GetType().Name}: {ex.Message}{Environment.NewLine}"); } catch { }
             Log.Fatal(ex, "Squid Tentacle SCM-hosted service crashed");
             LastExitCode = 1;
         }
@@ -84,6 +91,23 @@ public sealed class TentacleScmHostedService : BackgroundService
             // long-running run command but possible for malformed
             // configs that fail-fast).
             _lifetime.StopApplication();
+        }
+    }
+
+    private static string ResolveDiagPath()
+    {
+        try
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (string.IsNullOrEmpty(programData))
+                programData = System.IO.Path.GetTempPath();
+            var dir = System.IO.Path.Combine(programData, "Squid", "Tentacle");
+            System.IO.Directory.CreateDirectory(dir);
+            return System.IO.Path.Combine(dir, "scm-diagnostic.log");
+        }
+        catch
+        {
+            return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "squid-tentacle-scm-diagnostic.log");
         }
     }
 }
