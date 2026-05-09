@@ -114,6 +114,14 @@ static async Task<int> RunUnderScmLifetimeAsync(string[] args)
         // initialization paths run too — likely the source of the
         // hang on a no-console SCM-launched binary.
         ScmDiagnosticLog.WriteLine("Building host via Host.CreateDefaultBuilder().UseWindowsService() ...");
+
+        // Capture the BackgroundService instance via factory closure —
+        // can't read it from host.Services AFTER host.RunAsync because
+        // the host's IServiceProvider is disposed by then (round-1
+        // diagnostic harvest caught this — Program.cs:144 threw
+        // ObjectDisposedException reading host.Services post-RunAsync).
+        TentacleScmHostedService? capturedService = null;
+
         using var host = Host.CreateDefaultBuilder(args)
             .UseWindowsService(options =>
             {
@@ -127,11 +135,13 @@ static async Task<int> RunUnderScmLifetimeAsync(string[] args)
                 // BackgroundService that runs TentacleEntry.RunAsync
                 // under the SCM lifetime's CT. Factory captures the
                 // resolved IHostApplicationLifetime + the original
-                // args from Main.
+                // args from Main, AND assigns to capturedService so
+                // we can read LastExitCode AFTER host disposal.
                 services.AddHostedService(sp =>
                 {
                     var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
-                    return new TentacleScmHostedService(args, lifetime);
+                    capturedService = new TentacleScmHostedService(args, lifetime);
+                    return capturedService;
                 });
             })
             .Build();
@@ -140,11 +150,11 @@ static async Task<int> RunUnderScmLifetimeAsync(string[] args)
         await host.RunAsync().ConfigureAwait(false);
         ScmDiagnosticLog.WriteLine("host.RunAsync returned (SCM Stop received + drained).");
 
-        // Resolve the hosted service to read its captured exit code.
-        var registeredService = host.Services.GetServices<IHostedService>()
-            .OfType<TentacleScmHostedService>()
-            .FirstOrDefault();
-        var exitCode = registeredService?.LastExitCode ?? 0;
+        // Read captured exit code from the closure-captured instance —
+        // safe to read even after host disposal because the field outlives
+        // the host (only the host's IServiceProvider is disposed; the
+        // BackgroundService instance itself is still in memory).
+        var exitCode = capturedService?.LastExitCode ?? 0;
         ScmDiagnosticLog.WriteLine($"Captured exit code: {exitCode}");
         return exitCode;
     }
