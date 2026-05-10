@@ -67,7 +67,7 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
             _transportRegistryMock.Object,
             _feedProviderMock.Object,
             _acquisitionMock.Object,
-            new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+            new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         _ctx = new DeploymentTaskContext
         {

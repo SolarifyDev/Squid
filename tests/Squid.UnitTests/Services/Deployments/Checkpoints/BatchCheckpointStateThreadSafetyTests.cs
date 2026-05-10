@@ -169,6 +169,7 @@ public sealed class BatchCheckpointStateThreadSafetyTests
             externalFeedDataProvider: null!,
             packageAcquisitionService: null!,
             serviceMessageParser: null!,
-            intentRendererRegistry: null!);
+            intentRendererRegistry: null!,
+            variableEncryptionService: null!);
     }
 }

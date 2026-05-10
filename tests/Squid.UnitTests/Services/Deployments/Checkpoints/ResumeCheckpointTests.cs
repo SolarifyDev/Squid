@@ -35,7 +35,7 @@ public class ResumeCheckpointTests
         var checkpointService = new Mock<IDeploymentCheckpointService>();
         checkpointService.Setup(s => s.LoadAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync((DeploymentExecutionCheckpoint)null);
 
-        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var phase = new ResumeCheckpointPhase(checkpointService.Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
         var ctx = CreateBaseContext();
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -59,7 +59,7 @@ public class ResumeCheckpointTests
             })
         });
 
-        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var phase = new ResumeCheckpointPhase(checkpointService.Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
         var ctx = CreateBaseContext();
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -81,7 +81,7 @@ public class ResumeCheckpointTests
             OutputVariablesJson = null
         });
 
-        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var phase = new ResumeCheckpointPhase(checkpointService.Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
         var ctx = CreateBaseContext();
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -93,7 +93,7 @@ public class ResumeCheckpointTests
     [Fact]
     public void ResumePhase_Order_Is50()
     {
-        var phase = new ResumeCheckpointPhase(new Mock<IDeploymentCheckpointService>().Object);
+        var phase = new ResumeCheckpointPhase(new Mock<IDeploymentCheckpointService>().Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         phase.Order.ShouldBe(50);
     }
@@ -121,7 +121,7 @@ public class ResumeCheckpointTests
             InFlightScriptsJson = "{}"
         });
 
-        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var phase = new ResumeCheckpointPhase(checkpointService.Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
         var ctx = CreateBaseContext();
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -142,7 +142,7 @@ public class ResumeCheckpointTests
             BatchStatesJson = "{ not valid json"
         });
 
-        var phase = new ResumeCheckpointPhase(checkpointService.Object);
+        var phase = new ResumeCheckpointPhase(checkpointService.Object, new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
         var ctx = CreateBaseContext();
 
         await phase.ExecuteAsync(ctx, CancellationToken.None);
@@ -158,7 +158,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         var completedMachine = new Machine { Id = 100, Name = "target-already-done", Roles = JsonSerializer.Serialize(new[] { "web" }) };
         var pendingMachine = new Machine { Id = 200, Name = "target-still-pending", Roles = JsonSerializer.Serialize(new[] { "web" }) };
@@ -203,7 +203,7 @@ public class ResumeCheckpointTests
             .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(Clone(cp)))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         var m1 = new Machine { Id = 300, Name = "m-one", Roles = JsonSerializer.Serialize(new[] { "web" }) };
         var m2 = new Machine { Id = 301, Name = "m-two", Roles = JsonSerializer.Serialize(new[] { "web" }) };
@@ -261,7 +261,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.ResumeFromBatchIndex = 0;
@@ -288,7 +288,7 @@ public class ResumeCheckpointTests
         var registry = CreateRegistry();
         var transport = new TestTransport(strategy);
         var checkpointService = new Mock<IDeploymentCheckpointService>();
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
@@ -319,7 +319,7 @@ public class ResumeCheckpointTests
             .Callback<DeploymentExecutionCheckpoint, CancellationToken>((cp, _) => savedCheckpoints.Add(cp))
             .Returns(Task.CompletedTask);
 
-        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+        var phase = new ExecuteStepsPhase(registry, lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, checkpointService.Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         var ctx = CreateBaseContext();
         ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
