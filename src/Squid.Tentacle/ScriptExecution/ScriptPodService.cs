@@ -313,7 +313,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
             }
 
-            ctx.LogStreamCts?.Cancel();
+            StopLogStream(ctx);
             _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
 
             var logs = DrainFinalLogs(ctx);
@@ -360,7 +360,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
             }
 
-            ctx.LogStreamCts?.Cancel();
+            StopLogStream(ctx);
             PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, ScriptExitCodes.Canceled, ctx.LogSequence);
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
             CleanupWorkspace(ctx.WorkDir);

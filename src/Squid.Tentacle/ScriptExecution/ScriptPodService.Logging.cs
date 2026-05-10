@@ -49,12 +49,90 @@ public partial class ScriptPodService
         return logs;
     }
 
+    /// <summary>
+    /// Bound for <see cref="StopLogStream"/> — how long the teardown path
+    /// will wait for the background log-stream task to acknowledge
+    /// cancellation before logging a warning and moving on. 5 s is well
+    /// above the kernel-level cancellation propagation cost (sub-ms) and
+    /// any plausible Serilog flush latency, while staying short enough
+    /// that a stuck stream task can't hold up <c>CompleteScript</c>.
+    /// </summary>
+    private static readonly TimeSpan LogStreamShutdownTimeout = TimeSpan.FromSeconds(5);
+
     internal void StartLogStream(ScriptPodContext ctx)
     {
         if (_podOps == null) return;
 
         ctx.LogStreamCts = new CancellationTokenSource();
         ctx.LogStreamTask = Task.Run(() => StreamLogsAsync(ctx, ctx.LogStreamCts.Token));
+    }
+
+    /// <summary>
+    /// P0-4: cancel the log-stream CTS AND wait for the background task
+    /// to actually finish before the caller proceeds with workspace
+    /// cleanup. Replaces a bare <c>ctx.LogStreamCts?.Cancel()</c> that
+    /// returned immediately and left the task running concurrently with
+    /// the cleanup path.
+    ///
+    /// <para><b>Why this matters</b>: post-cancel the task is in the
+    /// middle of <c>reader.ReadLineAsync(ct)</c> on a stream returned by
+    /// <c>_podOps.ReadPodLogFollow</c>. Without a wait:</para>
+    /// <list type="bullet">
+    ///   <item>The task may still <c>StreamedLogLines.Enqueue</c> AFTER
+    ///         <c>DrainFinalLogs</c> has already drained the queue — log
+    ///         lines silently lost in the response.</item>
+    ///   <item>The task may still read from a stream pointing at a pod
+    ///         that <c>_podManager.DeletePod</c> has just removed —
+    ///         throws inside the (now-stale) catch block, where the
+    ///         exception goes to <c>TaskScheduler.UnobservedTaskException</c>
+    ///         (NOT Serilog, since we don't subscribe to it).</item>
+    ///   <item>Any pre-await synchronous throw (rare but possible) would
+    ///         fault the task without the inner try/catch ever running.</item>
+    /// </list>
+    ///
+    /// <para><b>Synchronous wait is intentional</b>: the only callers
+    /// (<c>CompleteScript</c>, <c>CancelScript</c>) implement the
+    /// synchronous <c>IScriptService</c> RPC contract — making them
+    /// async would propagate up the Halibut surface and break
+    /// compatibility with deployed servers. <c>task.Wait(timeout)</c>
+    /// is acceptable here because we're already on a teardown path,
+    /// not a hot loop, and we cap the wait at
+    /// <see cref="LogStreamShutdownTimeout"/>.</para>
+    /// </summary>
+    internal static void StopLogStream(ScriptPodContext ctx)
+    {
+        var cts = ctx.LogStreamCts;
+        var task = ctx.LogStreamTask;
+
+        cts?.Cancel();
+
+        if (task == null) return;
+
+        try
+        {
+            if (!task.Wait(LogStreamShutdownTimeout))
+            {
+                Log.Warning(
+                    "Log stream task did not finish within {Timeout}s after cancellation for ticket {TicketId}. " +
+                    "Workspace cleanup will proceed; any subsequent log writes from the orphaned task will land on " +
+                    "an already-disposed context and be observed by the inner try/catch.",
+                    LogStreamShutdownTimeout.TotalSeconds, ctx.TicketId);
+            }
+        }
+        catch (AggregateException ae) when (ae.InnerExceptions.All(e => e is OperationCanceledException))
+        {
+            // Expected: task.Wait wraps a single OCE in AggregateException
+            // when the wait succeeded but the awaited task itself cancelled.
+            // Same outcome as a clean exit — no warning needed.
+        }
+        catch (Exception ex)
+        {
+            // Any other escape — observe at Debug, matching the inner catch.
+            // The most likely path is a Serilog flush failure inside the inner
+            // catch propagating up, but we don't want to crash the script
+            // teardown over a logging issue.
+            Log.Debug(ex, "Log stream task raised after cancellation for ticket {TicketId}", ctx.TicketId);
+        }
     }
 
     private async Task StreamLogsAsync(ScriptPodContext ctx, CancellationToken ct)
