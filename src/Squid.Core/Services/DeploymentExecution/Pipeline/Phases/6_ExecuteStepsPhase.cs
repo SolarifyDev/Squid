@@ -103,15 +103,29 @@ public sealed partial class ExecuteStepsPhase(
     /// <summary>
     /// Maximum attempts for <see cref="PersistCheckpointAsync"/> before
     /// escalating to <c>Log.Error</c> and proceeding without checkpoint
-    /// persistence. 3 attempts with exponential backoff (200ms / 600ms
-    /// / 1800ms) covers transient DB hiccups (connection blip, brief
-    /// lock contention) without delaying steady-state deploys noticeably.
+    /// persistence. With 3 attempts there are 2 inter-attempt backoffs
+    /// (the final attempt's failure is the terminal log, not a wait).
+    /// See <see cref="CheckpointPersistInitialDelay"/> for the actual
+    /// sleep durations. Covers transient DB hiccups (connection blip,
+    /// brief lock contention) without delaying steady-state deploys
+    /// noticeably.
     /// </summary>
     internal const int CheckpointPersistMaxAttempts = 3;
 
     /// <summary>
-    /// Initial delay for the checkpoint-persist retry. Doubles on each
-    /// subsequent attempt; cumulative wait under the cap is ~2.6 s.
+    /// Initial backoff after the first failed persist. Subsequent
+    /// backoffs are computed as <c>previous × 3</c> (cubic-style
+    /// exponential — the test harness pins this multiplier).
+    ///
+    /// <para>With <see cref="CheckpointPersistMaxAttempts"/>=3 the
+    /// actual sequence the loop applies is:</para>
+    /// <list type="bullet">
+    ///   <item>after attempt 1 fails → wait 200ms</item>
+    ///   <item>after attempt 2 fails → wait 600ms</item>
+    ///   <item>after attempt 3 fails → terminal Log.Error (no wait)</item>
+    /// </list>
+    ///
+    /// <para>Total backoff in the all-fail case: ~800 ms.</para>
     /// </summary>
     internal static readonly TimeSpan CheckpointPersistInitialDelay = TimeSpan.FromMilliseconds(200);
 
@@ -286,25 +300,12 @@ public sealed partial class ExecuteStepsPhase(
         // Already encrypted (e.g. resumed-and-rewritten path) — don't re-wrap.
         if (variableEncryptionService.IsValidEncryptedValue(v.Value)) return v;
 
-        // Clone instead of mutating the source — _ctx.Variables is read by
-        // downstream batches and downstream readers expect plaintext.
-        return new VariableDto
-        {
-            Id = v.Id,
-            VariableSetId = v.VariableSetId,
-            Name = v.Name,
-            Value = variableEncryptionService.EncryptAsync(v.Value, _ctx.ServerTaskId),
-            Description = v.Description,
-            Type = v.Type,
-            IsSensitive = v.IsSensitive,
-            SortOrder = v.SortOrder,
-            LastModifiedDate = v.LastModifiedDate,
-            LastModifiedBy = v.LastModifiedBy,
-            PromptLabel = v.PromptLabel,
-            PromptDescription = v.PromptDescription,
-            PromptRequired = v.PromptRequired,
-            Scopes = v.Scopes
-        };
+        // Clone via the copy-constructor — pre-existing manual field-by-field
+        // copy was fragile against future VariableDto field additions (silent
+        // loss with no compiler warning). The copy-ctor is pinned by
+        // VariableDtoCopyConstructorTests so a missing field assignment fails
+        // unit tests at PR review, not in production checkpoint round-trips.
+        return new VariableDto(v) { Value = variableEncryptionService.EncryptAsync(v.Value, _ctx.ServerTaskId) };
     }
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)

@@ -184,6 +184,10 @@ public sealed class CheckpointPersistRetryTests
         var transportRegistry = new Mock<ITransportRegistry>();
         transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(transport);
 
+        var encryption = new Mock<Squid.Core.Services.Security.IVariableEncryptionService>();
+        encryption.Setup(e => e.IsValidEncryptedValue(It.IsAny<string>())).Returns(false);
+        encryption.Setup(e => e.EncryptAsync(It.IsAny<string>(), It.IsAny<int>())).Returns<string, int>((v, _) => v);
+
         var phase = new ExecuteStepsPhase(
             actionHandlerRegistry: registry,
             lifecycle: lifecycle,
@@ -194,7 +198,8 @@ public sealed class CheckpointPersistRetryTests
             externalFeedDataProvider: new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object,
             packageAcquisitionService: new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object,
             serviceMessageParser: new ServiceMessageParser(),
-            intentRendererRegistry: Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create());
+            intentRendererRegistry: Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(),
+            variableEncryptionService: encryption.Object);
 
         var ctx = new DeploymentTaskContext
         {

@@ -6,6 +6,50 @@ namespace Squid.Message.Models.Deployments.Variable;
 
 public class VariableDto
 {
+    /// <summary>Default constructor — required for JSON deserialization.</summary>
+    public VariableDto() { }
+
+    /// <summary>
+    /// Copy-constructor — preserves every field of <paramref name="other"/>.
+    /// Used by paths that need to mutate exactly one field on a clone without
+    /// aliasing the source instance (e.g. <c>ExecuteStepsPhase.EncryptIfSensitive</c>
+    /// produces an encrypted-Value clone for the checkpoint JSON without
+    /// rewriting the live <c>_ctx.Variables</c> entry).
+    ///
+    /// <para><b>Future-proof by design</b>: future fields added to this DTO
+    /// flow through this ctor automatically <i>only if a contributor adds
+    /// the assignment here</i>. The reflection-based drift detector
+    /// <c>VariableDtoCopyConstructorTests.CopyConstructor_PreservesAllPublicProperties</c>
+    /// fails on the first missing assignment so the omission is caught at
+    /// PR review, not silently in production.</para>
+    ///
+    /// <para><b>Scopes is a shallow copy</b>: the cloned instance shares
+    /// the same <see cref="VariableScopeDto"/> list reference as
+    /// <paramref name="other"/>. Callers that need an independent list must
+    /// reassign <c>Scopes = new List&lt;VariableScopeDto&gt;(other.Scopes)</c>
+    /// post-clone. The encrypt-for-checkpoint use case doesn't mutate Scopes
+    /// so the shared reference is safe.</para>
+    /// </summary>
+    public VariableDto(VariableDto other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        Id = other.Id;
+        VariableSetId = other.VariableSetId;
+        Name = other.Name;
+        Value = other.Value;
+        Description = other.Description;
+        Type = other.Type;
+        IsSensitive = other.IsSensitive;
+        SortOrder = other.SortOrder;
+        LastModifiedDate = other.LastModifiedDate;
+        LastModifiedBy = other.LastModifiedBy;
+        PromptLabel = other.PromptLabel;
+        PromptDescription = other.PromptDescription;
+        PromptRequired = other.PromptRequired;
+        Scopes = other.Scopes;
+    }
+
     public int Id { get; set; }
 
     public int VariableSetId { get; set; }
