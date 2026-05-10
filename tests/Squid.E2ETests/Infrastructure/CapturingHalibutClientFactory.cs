@@ -14,10 +14,35 @@ public class CapturingHalibutClientFactory : IHalibutClientFactory
 
     public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint) => new NoOpCapabilitiesService();
 
+    /// <summary>
+    /// Test-only file-transfer client. The capturing factory is used by
+    /// pipeline tests that intercept agent RPC for inspection (no real
+    /// agent involvement) — file transfer is unused in those scenarios,
+    /// so we throw if any test reaches this code path. A test that
+    /// genuinely needs file transfer should use a fixture that wires a
+    /// real <see cref="HalibutRuntime"/>, not the capturing factory.
+    /// </summary>
+    public IAsyncClientFileTransferService CreateFileTransferClient(ServiceEndPoint endpoint)
+        => new ThrowingFileTransferService();
+
     private sealed class NoOpCapabilitiesService : IAsyncCapabilitiesService
     {
         public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request)
             => Task.FromResult(new CapabilitiesResponse());
+    }
+
+    private sealed class ThrowingFileTransferService : IAsyncClientFileTransferService
+    {
+        private const string Message =
+            "CapturingHalibutClientFactory does not support file-transfer RPC. " +
+            "If a pipeline test needs to exercise file transfer, switch to a fixture " +
+            "that uses a real HalibutRuntime (e.g. KubernetesAgentE2EFixture).";
+
+        public Task<UploadResult> UploadFileAsync(string remotePath, DataStream upload)
+            => throw new NotSupportedException(Message);
+
+        public Task<DataStream> DownloadFileAsync(string remotePath)
+            => throw new NotSupportedException(Message);
     }
 
     private sealed class CapturingScriptService : IAsyncScriptService
