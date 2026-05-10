@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
@@ -97,8 +98,24 @@ public class RunScriptActionHandlerDescribeIntentTests
         intent.ScriptBody.ShouldBe("kubectl apply -f deployment.yaml");
     }
 
+    // ── P0-1 — empty / whitespace ScriptBody must NOT silently pass ──────────
+    //
+    // Pre-fix: the handler emitted an empty intent and the renderer wrote a
+    // shell script with no commands; the agent ran `set -e` and exited 0;
+    // step marked "success"; downstream steps proceeded despite the
+    // configuration error. Operators reported "deploy says green but
+    // nothing actually happened" — silent no-op was a real production bug.
+    //
+    // Post-fix: any empty / whitespace-only / missing ScriptBody throws
+    // DeploymentValidationException with an actionable message that names
+    // both the action and the step.
+    //
+    // The planner's `BuildStubIntent` (DeploymentPlanner.cs:367) intentionally
+    // builds a RunScriptIntent with empty body for capability validation —
+    // that path doesn't go through DescribeIntentAsync, so it is unaffected.
+
     [Fact]
-    public async Task DescribeIntentAsync_MissingScriptBody_EmitsEmptyString()
+    public async Task DescribeIntentAsync_MissingScriptBodyProperty_Throws()
     {
         var action = new DeploymentActionDto
         {
@@ -108,13 +125,41 @@ public class RunScriptActionHandlerDescribeIntentTests
         };
         var ctx = new ActionExecutionContext
         {
-            Step = new DeploymentStepDto { Name = "Empty" },
+            Step = new DeploymentStepDto { Name = "Empty Step" },
             Action = action
         };
 
+        var ex = await Should.ThrowAsync<DeploymentValidationException>(
+            () => ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None));
+
+        ex.Message.ShouldContain("no-script", customMessage: "exception MUST name the offending action so operators can find it in the UI");
+        ex.Message.ShouldContain("Empty Step", customMessage: "exception MUST name the offending step");
+        ex.Message.ShouldContain("ScriptBody", customMessage: "exception MUST name the property that needs filling so the message is actionable");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\n")]
+    [InlineData("   \t \n  ")]
+    public async Task DescribeIntentAsync_BlankScriptBody_Throws(string blank)
+    {
+        var ctx = CreateContext(scriptBody: blank);
+
+        await Should.ThrowAsync<DeploymentValidationException>(
+            () => ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_NonBlankWithLeadingWhitespace_DoesNotThrow()
+    {
+        // "   echo hi" is valid — only fully-blank bodies fail.
+        var ctx = CreateContext(scriptBody: "   echo hi");
+
         var intent = (RunScriptIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
 
-        intent.ScriptBody.ShouldBe(string.Empty);
+        intent.ScriptBody.ShouldBe("   echo hi");
     }
 
     [Theory]
