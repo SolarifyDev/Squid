@@ -13,6 +13,7 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Security;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -26,7 +27,8 @@ public sealed partial class ExecuteStepsPhase(
     IExternalFeedDataProvider externalFeedDataProvider,
     IPackageAcquisitionService packageAcquisitionService,
     IServiceMessageParser serviceMessageParser,
-    IIntentRendererRegistry intentRendererRegistry) : IDeploymentPipelinePhase
+    IIntentRendererRegistry intentRendererRegistry,
+    IVariableEncryptionService variableEncryptionService) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 
@@ -146,7 +148,40 @@ public sealed partial class ExecuteStepsPhase(
         else state.AddCompleted(machineId);
     }
 
-    private static string SerializeOutputVariables(List<VariableDto> variables)
+    /// <summary>
+    /// P0-3: serialize output variables for the checkpoint, encrypting the
+    /// <see cref="VariableDto.Value"/> of any <c>IsSensitive=true</c> entry
+    /// before it lands in the JSON column.
+    ///
+    /// <para><b>Why</b>: pre-fix, sensitive output variables (API keys,
+    /// passwords emitted by user scripts via
+    /// <c>##squid[setVariable name='X' value='secret' sensitive='True']</c>)
+    /// were stored as plaintext in <c>OutputVariablesJson</c>. Anyone with
+    /// read access to <c>DeploymentExecutionCheckpoint</c> rows could see
+    /// secret values directly — a violation of the "encrypt secrets at rest"
+    /// principle the deploy pipeline already follows for other secret
+    /// channels (variable sets, account credentials, agent configs).</para>
+    ///
+    /// <para><b>Scope ID</b>: the <see cref="IVariableEncryptionService"/>
+    /// API takes an integer scope ("variableSetId" historically). We pass
+    /// <c>ServerTaskId</c> for checkpoint encryption. Note that the V2
+    /// envelope (the format always emitted post-P1-B.10) embeds a random
+    /// per-payload salt, so the scope ID is advisory on decrypt — security
+    /// rests on master-key custody, not on ID isolation. The argument is
+    /// preserved for legacy V1 ciphertext compatibility.</para>
+    ///
+    /// <para><b>Backward compat</b>: <see cref="VariableEncryptionService"/>
+    /// detects un-prefixed plaintext on the decrypt path and returns it as-is
+    /// (<c>IsValidEncryptedValue</c> guard at line 249). Existing checkpoints
+    /// from a pre-fix server still resume cleanly after upgrade — only NEW
+    /// writes are encrypted.</para>
+    ///
+    /// <para>Non-sensitive values stay plaintext intentionally. Operators
+    /// inspecting checkpoints to debug stuck deployments need to read
+    /// non-secret variables; encrypting them all would block that workflow.
+    /// </para>
+    /// </summary>
+    private string SerializeOutputVariables(List<VariableDto> variables)
     {
         if (variables == null || variables.Count == 0) return null;
 
@@ -154,7 +189,37 @@ public sealed partial class ExecuteStepsPhase(
 
         if (outputVars.Count == 0) return null;
 
-        return System.Text.Json.JsonSerializer.Serialize(outputVars);
+        var encrypted = outputVars.Select(EncryptIfSensitive).ToList();
+
+        return System.Text.Json.JsonSerializer.Serialize(encrypted);
+    }
+
+    private VariableDto EncryptIfSensitive(VariableDto v)
+    {
+        if (!v.IsSensitive || string.IsNullOrEmpty(v.Value)) return v;
+
+        // Already encrypted (e.g. resumed-and-rewritten path) — don't re-wrap.
+        if (variableEncryptionService.IsValidEncryptedValue(v.Value)) return v;
+
+        // Clone instead of mutating the source — _ctx.Variables is read by
+        // downstream batches and downstream readers expect plaintext.
+        return new VariableDto
+        {
+            Id = v.Id,
+            VariableSetId = v.VariableSetId,
+            Name = v.Name,
+            Value = variableEncryptionService.EncryptAsync(v.Value, _ctx.ServerTaskId),
+            Description = v.Description,
+            Type = v.Type,
+            IsSensitive = v.IsSensitive,
+            SortOrder = v.SortOrder,
+            LastModifiedDate = v.LastModifiedDate,
+            LastModifiedBy = v.LastModifiedBy,
+            PromptLabel = v.PromptLabel,
+            PromptDescription = v.PromptDescription,
+            PromptRequired = v.PromptRequired,
+            Scopes = v.Scopes
+        };
     }
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)

@@ -89,7 +89,8 @@ public class ExecuteStepsPhaseCapabilityFilterTests : IDisposable
             _feedProviderMock.Object,
             _acquisitionMock.Object,
             new ServiceMessageParser(),
-            rendererRegistry);
+            rendererRegistry,
+            new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
 
         _ctx = new DeploymentTaskContext
         {
