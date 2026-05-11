@@ -126,6 +126,10 @@ public class ManualInterventionE2ETests
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
+        // Phase 1 — first ProcessAsync. The pipeline runs up to the manual step,
+        // creates a pending interruption, transitions task to Paused, and throws
+        // DeploymentSuspendedException (caught inside DeploymentPipelineRunner).
+        // The pipelineTask returns successfully — no exception escapes.
         var pipelineTask = Task.Run(async () =>
         {
             try
@@ -147,6 +151,25 @@ public class ManualInterventionE2ETests
         }, cts.Token);
 
         await Task.WhenAll(pipelineTask, submitTask).ConfigureAwait(false);
+
+        // Phase 2 — production auto-resume. SubmitInterruptionCommandHandler calls
+        // IServerTaskControlService.TryAutoResumeAsync which enqueues a Hangfire job
+        // for ProcessAsync. Hangfire isn't wired in the E2E fixture, so we model
+        // the resume in-process: call ProcessAsync again. Second invocation finds
+        // the resolved interruption and either proceeds (decision=Proceed) or
+        // aborts (decision=Abort, throws DeploymentAbortedException which the
+        // pipeline catches and turns into TaskState.Failed).
+        try
+        {
+            await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+            {
+                await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+        catch (DeploymentAbortedException)
+        {
+            // Expected when decision is "Abort" — the resumed pipeline re-throws.
+        }
     }
 
     private async Task PollAndSubmitInterruptionAsync(int serverTaskId, string decision, Action<DeploymentInterruption> onInterruptionFound, Func<Task> onBeforeSubmit, CancellationToken ct)

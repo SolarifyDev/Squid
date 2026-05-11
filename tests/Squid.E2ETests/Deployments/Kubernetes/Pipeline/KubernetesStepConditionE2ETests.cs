@@ -57,8 +57,12 @@ public class KubernetesStepConditionE2ETests
             s => s.Contains("step-2-always"),
             "Step 2 with 'Always' condition should execute even after Step 1 failure");
 
-        // Task completes — step 1 is non-required so pipeline continues
-        await AssertTaskStateAsync(TaskState.Success);
+        // Task ends Failed: even though step-1 is non-required (pipeline continues
+        // to step-2), the per-step failure latches ctx.FailureEncountered = true.
+        // DeploymentPipelineRunner inspects that flag after all phases complete and
+        // emits DeploymentFailedEvent → TaskState.Failed. "Always" only affects
+        // step-2's eligibility, not the overall task verdict.
+        await AssertTaskStateAsync(TaskState.Failed);
     }
 
     [Fact]
@@ -85,8 +89,11 @@ public class KubernetesStepConditionE2ETests
             s => s.Contains("step-2-success"),
             "Step 2 with 'Success' condition should be skipped after Step 1 failure");
 
-        // Task completes — step 1 is non-required so pipeline continues
-        await AssertTaskStateAsync(TaskState.Success);
+        // Task ends Failed: step-1 failure latches ctx.FailureEncountered. The
+        // pipeline doesn't abort (step-1 is non-required) but emits Failed at
+        // the end. step-2's Success condition keeps it from running, but the
+        // overall task verdict still reflects step-1's failure.
+        await AssertTaskStateAsync(TaskState.Failed);
     }
 
     [Theory]

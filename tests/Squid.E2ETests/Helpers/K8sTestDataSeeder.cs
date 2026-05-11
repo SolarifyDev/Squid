@@ -19,6 +19,8 @@ public class K8sTestDataSeeder
     private readonly TestDataBuilder _builder;
 
     public int ServerTaskId { get; private set; }
+    public int AccountId { get; private set; }
+    public int MachineId { get; private set; }
 
     public K8sTestDataSeeder(IRepository repository, IUnitOfWork unitOfWork)
     {
@@ -93,15 +95,23 @@ public class K8sTestDataSeeder
 
         var environment = await _builder.CreateEnvironmentAsync($"E2E Test Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
+        // Account MUST be created before the Machine: the Machine's endpoint JSON
+        // references the account by ID via ResourceReferences. In a class-shared DB
+        // where multiple tests run sequentially, account IDs auto-increment past 1,
+        // so the Machine cannot be hardcoded to ResourceId=1 — we pass the real
+        // account.Id into CreateApiMachine. (KubernetesAgent has no Account.)
+        AccountId = communicationStyle == "KubernetesAgent"
+            ? 0
+            : await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
+
         var machine = communicationStyle == "KubernetesAgent"
             ? CreateAgentMachine(environment, agentSubscriptionId, agentThumbprint)
-            : CreateApiMachine(environment);
+            : CreateApiMachine(environment, AccountId);
 
         await _repository.InsertAsync(machine, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
-        if (communicationStyle != "KubernetesAgent")
-            await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
+        MachineId = machine.Id;
 
         var feedSuffix = Guid.NewGuid().ToString("N")[..6];
         var feed = new ExternalFeed
@@ -179,7 +189,7 @@ public class K8sTestDataSeeder
         ServerTaskId = serverTask.Id;
     }
 
-    private static Machine CreateApiMachine(Environment environment)
+    private static Machine CreateApiMachine(Environment environment, int accountId)
     {
         var endpointJson = JsonSerializer.Serialize(new
         {
@@ -189,7 +199,7 @@ public class K8sTestDataSeeder
             Namespace = "default",
             ResourceReferences = new[]
             {
-                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = accountId }
             }
         });
 
@@ -233,7 +243,7 @@ public class K8sTestDataSeeder
         };
     }
 
-    private async Task CreateAccountAsync(AccountType accountType, object credentials, CancellationToken ct)
+    private async Task<int> CreateAccountAsync(AccountType accountType, object credentials, CancellationToken ct)
     {
         var creds = credentials ?? DefaultCredentials(accountType);
 
@@ -248,6 +258,8 @@ public class K8sTestDataSeeder
 
         await _repository.InsertAsync(account, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return account.Id;
     }
 
     private static object DefaultCredentials(AccountType accountType) => accountType switch

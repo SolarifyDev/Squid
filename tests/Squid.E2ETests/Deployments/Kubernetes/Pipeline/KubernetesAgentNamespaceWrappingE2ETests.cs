@@ -172,9 +172,16 @@ data:
         {
             var builder = new TestDataBuilder(repository, unitOfWork);
 
+            // The renderer reads `Squid.Action.Kubernetes.Namespace` (singular) for
+            // the kubectl config wrapper. The endpoint contributor sets it from the
+            // Machine's Namespace field — so to test variable override, seed a project
+            // variable with that exact name. Project variables sit FIRST in the
+            // effective list, so FirstOrDefault picks the project value over the
+            // endpoint contribution.
             var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
             await builder.CreateVariablesAsync(variableSet.Id,
-                ("TargetNamespace", nsVariableValue, Squid.Message.Enums.VariableType.String, false)).ConfigureAwait(false);
+                ("TargetNamespace", nsVariableValue, Squid.Message.Enums.VariableType.String, false),
+                ("Squid.Action.Kubernetes.Namespace", nsTemplate, Squid.Message.Enums.VariableType.String, false)).ConfigureAwait(false);
 
             var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
             await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
@@ -192,8 +199,7 @@ data:
             await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,
                 ("Squid.Action.Script.ScriptBody", scriptBody),
-                ("Squid.Action.Script.Syntax", "Bash"),
-                ("Squid.Action.KubernetesContainers.Namespace", nsTemplate)).ConfigureAwait(false);
+                ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
             var environment = await builder.CreateEnvironmentAsync("Var Namespace Test Env").ConfigureAwait(false);

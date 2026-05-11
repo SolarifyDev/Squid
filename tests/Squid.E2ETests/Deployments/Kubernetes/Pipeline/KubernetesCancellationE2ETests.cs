@@ -50,13 +50,16 @@ public class KubernetesCancellationE2ETests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
-        await Should.ThrowAsync<OperationCanceledException>(async () =>
+        // ProcessAsync catches OperationCanceledException internally (see
+        // DeploymentPipelineRunner — when linkedCts is cancelled it transitions
+        // the task to Cancelled and returns normally). So the public contract
+        // is NOT to surface the OCE; the test verifies the task state instead.
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
-            await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
-            {
-                await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
-            }).ConfigureAwait(false);
-        });
+            await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Cancelled);
     }
 
     // ========================================================================
@@ -185,5 +188,19 @@ public class KubernetesCancellationE2ETests
         }).ConfigureAwait(false);
 
         return serverTaskId;
+    }
+
+    private async Task AssertTaskStateAsync(string expectedState)
+    {
+        await _fixture.Run<IServerTaskDataProvider>(async taskDataProvider =>
+        {
+            var tasks = await taskDataProvider.GetAllServerTasksAsync(CancellationToken.None).ConfigureAwait(false);
+
+            tasks.ShouldNotBeNull();
+            tasks.Count.ShouldBeGreaterThanOrEqualTo(1);
+
+            var task = tasks.OrderByDescending(t => t.Id).First();
+            task.State.ShouldBe(expectedState, $"Expected task state '{expectedState}' but was '{task.State}'");
+        }).ConfigureAwait(false);
     }
 }

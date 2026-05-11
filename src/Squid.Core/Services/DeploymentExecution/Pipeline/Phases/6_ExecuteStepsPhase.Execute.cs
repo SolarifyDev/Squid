@@ -446,7 +446,15 @@ public sealed partial class ExecuteStepsPhase
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
 
-        return await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
+        var request = await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
+
+        // Attach the sensitive-value masker. Built from the action's effective variables
+        // (the renderer doesn't know about variables — it only knows about the rendered
+        // intent), so wiring lives here. Returns null when no sensitive values exist,
+        // which is the contract that downstream execution strategies expect.
+        request.Masker = BuildSensitiveMasker(effectiveVariables);
+
+        return request;
     }
 
     private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)

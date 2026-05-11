@@ -107,16 +107,18 @@ public class KubernetesContainersDeployE2ETests
                         $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.imagePullSecrets[0].name}}'");
                     // Feed slug is GUID-suffixed in seeders for test isolation
                     // (e.g. dockerhub-65df93-registry-secret). The exact name depends
-                    // on the seeder's random suffix; match the prefix/suffix shape.
-                    pullSecrets.Trim('\'').ShouldEndWith("-registry-secret");
-                    pullSecrets.Trim('\'').ShouldStartWith("dockerhub");
+                    // on the seeder's random suffix; match the prefix/suffix shape,
+                    // then reuse the actual name for the kubectl get secret call.
+                    var secretName = pullSecrets.Trim('\'');
+                    secretName.ShouldEndWith("-registry-secret");
+                    secretName.ShouldStartWith("dockerhub");
 
                     var secretType = await _cluster.KubectlAsync(
-                        $"-n {testNs} get secret dockerhub-registry-secret -o jsonpath='{{.type}}'");
+                        $"-n {testNs} get secret {secretName} -o jsonpath='{{.type}}'");
                     secretType.Trim('\'').ShouldBe("kubernetes.io/dockerconfigjson");
 
                     var secretData = await _cluster.KubectlAsync(
-                        $"-n {testNs} get secret dockerhub-registry-secret -o jsonpath='{{.data.\\.dockerconfigjson}}'");
+                        $"-n {testNs} get secret {secretName} -o jsonpath='{{.data.\\.dockerconfigjson}}'");
                     var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(secretData.Trim('\'')));
                     decoded.ShouldContain("docker.io");
                     decoded.ShouldContain("testuser");

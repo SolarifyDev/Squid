@@ -37,11 +37,11 @@ public class KubernetesMultiTargetE2ETests
     {
         ExecutionCapture.Clear();
 
-        var serverTaskId = await SeedWithTwoMatchingTargetsAsync("k8s");
+        var seed = await SeedWithTwoMatchingTargetsAsync("k8s");
 
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
-            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            await executor.ProcessAsync(seed.ServerTaskId, CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
         await AssertTaskStateAsync(TaskState.Success);
@@ -55,8 +55,8 @@ public class KubernetesMultiTargetE2ETests
             .Distinct()
             .ToList();
 
-        machineNames.ShouldContain("E2E Target Alpha");
-        machineNames.ShouldContain("E2E Target Beta");
+        machineNames.ShouldContain(seed.AlphaName);
+        machineNames.ShouldContain(seed.BetaName);
     }
 
     [Fact]
@@ -65,11 +65,11 @@ public class KubernetesMultiTargetE2ETests
         ExecutionCapture.Clear();
 
         // Step requires role "web", but second machine has role "db"
-        var serverTaskId = await SeedWithMismatchedRolesAsync();
+        var seed = await SeedWithMismatchedRolesAsync();
 
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
-            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            await executor.ProcessAsync(seed.ServerTaskId, CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
         await AssertTaskStateAsync(TaskState.Success);
@@ -80,8 +80,8 @@ public class KubernetesMultiTargetE2ETests
             .Distinct()
             .ToList();
 
-        executedMachines.ShouldContain("E2E Web Target");
-        executedMachines.ShouldNotContain("E2E DB Target",
+        executedMachines.ShouldContain(seed.WebName);
+        executedMachines.ShouldNotContain(seed.DbName,
             "Target with non-matching role should be skipped");
     }
 
@@ -90,12 +90,12 @@ public class KubernetesMultiTargetE2ETests
     {
         ExecutionCapture.Clear();
 
-        var serverTaskId = await SeedWithTwoMatchingTargetsAsync("k8s");
+        var seed = await SeedWithTwoMatchingTargetsAsync("k8s");
 
         // Configure second target to fail
         ExecutionCapture.ResultFactory = request =>
         {
-            if (request.Machine.Name == "E2E Target Beta")
+            if (request.Machine.Name == seed.BetaName)
             {
                 return new ScriptExecutionResult
                 {
@@ -112,7 +112,7 @@ public class KubernetesMultiTargetE2ETests
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
             await Should.ThrowAsync<Exception>(
-                () => executor.ProcessAsync(serverTaskId, CancellationToken.None)).ConfigureAwait(false);
+                () => executor.ProcessAsync(seed.ServerTaskId, CancellationToken.None)).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
         await AssertTaskStateAsync(TaskState.Failed);
@@ -123,15 +123,23 @@ public class KubernetesMultiTargetE2ETests
             .Distinct()
             .ToList();
 
-        executedMachines.ShouldContain("E2E Target Alpha", "First target should have been executed");
+        executedMachines.ShouldContain(seed.AlphaName, "First target should have been executed");
     }
 
     // ========================================================================
     // Seeders
     // ========================================================================
 
-    private async Task<int> SeedWithTwoMatchingTargetsAsync(string role)
+    private sealed record TwoTargetSeed(int ServerTaskId, string AlphaName, string BetaName);
+
+    private async Task<TwoTargetSeed> SeedWithTwoMatchingTargetsAsync(string role)
     {
+        // Per-invocation suffix keeps machine names unique within the class-shared DB.
+        // Without it, the 2nd test in the class hits ix_machine_name_space_id collision.
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var alphaName = $"E2E Target Alpha {suffix}";
+        var betaName = $"E2E Target Beta {suffix}";
+
         var serverTaskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
@@ -162,15 +170,15 @@ public class KubernetesMultiTargetE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync($"E2E Multi Target Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Multi Target Env {suffix}").ConfigureAwait(false);
 
             // Machine Alpha
             await InsertMachineAsync(repository, unitOfWork,
-                "E2E Target Alpha", role, environment, "KubernetesApi", "e2e-alpha").ConfigureAwait(false);
+                alphaName, role, environment, "KubernetesApi", $"e2e-alpha-{suffix}").ConfigureAwait(false);
 
             // Machine Beta
             await InsertMachineAsync(repository, unitOfWork,
-                "E2E Target Beta", role, environment, "KubernetesApi", "e2e-beta").ConfigureAwait(false);
+                betaName, role, environment, "KubernetesApi", $"e2e-beta-{suffix}").ConfigureAwait(false);
 
             // Account
             var account = new DeploymentAccount
@@ -215,11 +223,17 @@ public class KubernetesMultiTargetE2ETests
             serverTaskId = serverTask.Id;
         }).ConfigureAwait(false);
 
-        return serverTaskId;
+        return new TwoTargetSeed(serverTaskId, alphaName, betaName);
     }
 
-    private async Task<int> SeedWithMismatchedRolesAsync()
+    private sealed record MismatchedRolesSeed(int ServerTaskId, string WebName, string DbName);
+
+    private async Task<MismatchedRolesSeed> SeedWithMismatchedRolesAsync()
     {
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var webName = $"E2E Web Target {suffix}";
+        var dbName = $"E2E DB Target {suffix}";
+
         var serverTaskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
@@ -251,15 +265,15 @@ public class KubernetesMultiTargetE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync($"E2E Role Mismatch Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Role Mismatch Env {suffix}").ConfigureAwait(false);
 
             // Machine with matching role "web"
             await InsertMachineAsync(repository, unitOfWork,
-                "E2E Web Target", "web", environment, "KubernetesApi", "e2e-web").ConfigureAwait(false);
+                webName, "web", environment, "KubernetesApi", $"e2e-web-{suffix}").ConfigureAwait(false);
 
             // Machine with non-matching role "db"
             await InsertMachineAsync(repository, unitOfWork,
-                "E2E DB Target", "db", environment, "KubernetesApi", "e2e-db").ConfigureAwait(false);
+                dbName, "db", environment, "KubernetesApi", $"e2e-db-{suffix}").ConfigureAwait(false);
 
             var account = new DeploymentAccount
             {
@@ -303,7 +317,7 @@ public class KubernetesMultiTargetE2ETests
             serverTaskId = serverTask.Id;
         }).ConfigureAwait(false);
 
-        return serverTaskId;
+        return new MismatchedRolesSeed(serverTaskId, webName, dbName);
     }
 
     // ========================================================================
