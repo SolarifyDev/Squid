@@ -504,21 +504,67 @@ public class HelmChartUpgradeRealClusterE2ETests
     {
         ExecutionCapture.Clear();
 
+        // Read the real Kind cluster's API URL + a usable service-account token so
+        // the captured helm script can actually reach the cluster. Hardcoding
+        // localhost:6443 + a fake token (the prior version) produced
+        // "Kubernetes cluster unreachable: dial tcp [::1]:6443: connect: connection refused"
+        // because the captured script bakes in `kubectl config set-cluster
+        // squid-cluster --server=<ClusterUrl>` then `use-context squid-context`,
+        // overriding the KUBECONFIG-provided real Kind context.
+        var realClusterUrl = await GetRealClusterUrlAsync();
+        var realToken = await GetRealClusterTokenAsync();
+
         var taskId = 0;
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
-            taskId = await SeedHelmTestDataAsync(repository, unitOfWork, communicationStyle, properties);
+            taskId = await SeedHelmTestDataAsync(
+                repository, unitOfWork, communicationStyle, properties, realClusterUrl, realToken);
         }).ConfigureAwait(false);
 
         _lastSeededTaskId = taskId;
         return taskId;
     }
 
+    private async Task<string> GetRealClusterUrlAsync()
+    {
+        var output = await _cluster
+            .KubectlAsync("config view --minify -o jsonpath='{.clusters[0].cluster.server}'")
+            .ConfigureAwait(false);
+
+        return output.Trim('\'').Trim();
+    }
+
+    private async Task<string> GetRealClusterTokenAsync()
+    {
+        // Per-test class-cached: create the SA + binding once, mint a fresh
+        // 1-hour token. Best-effort; existing SA / binding raises which we swallow.
+        const string sa = "squid-helm-e2e-admin";
+        const string ns = "kube-system";
+
+        try { await _cluster.KubectlAsync($"create serviceaccount {sa} -n {ns}").ConfigureAwait(false); }
+        catch { /* already exists */ }
+
+        try { await _cluster.KubectlAsync($"create clusterrolebinding {sa}-binding --clusterrole=cluster-admin --serviceaccount={ns}:{sa}").ConfigureAwait(false); }
+        catch { /* already exists */ }
+
+        var token = await _cluster
+            .KubectlAsync($"create token {sa} -n {ns} --duration=3600s")
+            .ConfigureAwait(false);
+
+        return token.Trim();
+    }
+
     private static async Task<int> SeedHelmTestDataAsync(
         IRepository repository, IUnitOfWork unitOfWork,
-        string communicationStyle, Dictionary<string, string> properties)
+        string communicationStyle, Dictionary<string, string> properties,
+        string realClusterUrl, string realToken)
     {
+        // Per-invocation suffix: each test in this class shares the same DB
+        // (class-scoped fixture), so hardcoded names collide on the 2nd
+        // invocation via ix_machine_name_space_id. Same fix pattern as the
+        // K8sTestDataSeeder GUID-suffix rework in PR #293 Round 11.
+        var suffix = Guid.NewGuid().ToString("N")[..6];
         var builder = new TestDataBuilder(repository, unitOfWork);
 
         var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
@@ -542,7 +588,26 @@ public class HelmChartUpgradeRealClusterE2ETests
             properties.Select(kvp => (kvp.Key, kvp.Value)).ToArray()).ConfigureAwait(false);
 
         var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-        var environment = await builder.CreateEnvironmentAsync("E2E Real-Cluster Env").ConfigureAwait(false);
+        var environment = await builder.CreateEnvironmentAsync($"E2E Real-Cluster Env {suffix}").ConfigureAwait(false);
+
+        // Account MUST be created BEFORE the machine: the endpoint JSON references
+        // it by ID via ResourceReferences. Same pattern as K8sTestDataSeeder.
+        var accountId = 0;
+        if (communicationStyle != "KubernetesAgent")
+        {
+            var account = new DeploymentAccount
+            {
+                SpaceId = 1,
+                Name = $"E2E Real Account {suffix}",
+                Slug = $"e2e-real-account-{suffix}",
+                AccountType = AccountType.Token,
+                Credentials = DeploymentAccountCredentialsConverter.Serialize(
+                    new TokenCredentials { Token = realToken })
+            };
+            await repository.InsertAsync(account, CancellationToken.None).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            accountId = account.Id;
+        }
 
         var endpointJson = communicationStyle == "KubernetesAgent"
             ? JsonSerializer.Serialize(new
@@ -555,47 +620,32 @@ public class HelmChartUpgradeRealClusterE2ETests
             : JsonSerializer.Serialize(new
             {
                 CommunicationStyle = "KubernetesApi",
-                ClusterUrl = "https://localhost:6443",
+                ClusterUrl = realClusterUrl,
                 SkipTlsVerification = "True",
                 Namespace = "default",
                 ResourceReferences = new[]
                 {
-                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = accountId }
                 }
             });
 
         var machine = new Machine
         {
-            Name = $"E2E Real {communicationStyle}",
+            Name = $"E2E Real {communicationStyle} {suffix}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
             SpaceId = 1,
-            Slug = $"e2e-real-{Guid.NewGuid().ToString("N")[..6]}"
+            Slug = $"e2e-real-{communicationStyle.ToLowerInvariant()}-{suffix}"
         };
         await repository.InsertAsync(machine, CancellationToken.None).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
 
-        if (communicationStyle != "KubernetesAgent")
-        {
-            var account = new DeploymentAccount
-            {
-                SpaceId = 1,
-                Name = "E2E Real Account",
-                Slug = "e2e-real-account",
-                AccountType = AccountType.Token,
-                Credentials = DeploymentAccountCredentialsConverter.Serialize(
-                    new TokenCredentials { Token = "e2e-real-token" })
-            };
-            await repository.InsertAsync(account, CancellationToken.None).ConfigureAwait(false);
-            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-
         var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
         var deployment = new Deployment
         {
-            Name = "E2E Real Helm Deployment",
+            Name = $"E2E Real Helm Deployment {suffix}",
             SpaceId = 1, ChannelId = channel.Id, ProjectId = project.Id,
             ReleaseId = release.Id, EnvironmentId = environment.Id,
             DeployedBy = 1, CreatedDate = DateTimeOffset.UtcNow, Json = string.Empty
@@ -605,7 +655,7 @@ public class HelmChartUpgradeRealClusterE2ETests
 
         var serverTask = new ServerTask
         {
-            Name = "E2E Real Helm Task", Description = "E2E real-cluster helm",
+            Name = $"E2E Real Helm Task {suffix}", Description = "E2E real-cluster helm",
             QueueTime = DateTimeOffset.UtcNow, State = TaskState.Pending,
             ServerTaskType = "Deploy", ProjectId = project.Id, EnvironmentId = environment.Id,
             SpaceId = 1, LastModifiedDate = DateTimeOffset.UtcNow,
