@@ -27,10 +27,17 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
             .AddJsonFile("appsettings.json")
             .Build();
 
+        // Always include the MultiplexCapturingSink so concurrently-running fixtures
+        // can each register their own CapturingLogSink without racing on Log.Logger
+        // assignment. The multiplex sink fans out every event to all currently
+        // registered fixture sinks; per-fixture LogSink.ContainsMessage checks remain
+        // correct because each sink sees a copy of every event (over-reading is fine
+        // — substring match against the right text still holds).
         var logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .Enrich.WithProperty("ApplicationContext", "Squid.E2E")
             .WriteTo.Console()
+            .WriteTo.Sink(MultiplexCapturingSink.Instance)
             .CreateLogger();
 
         Log.Logger = logger;

@@ -41,11 +41,11 @@ public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override async Task OnInitializedAsync()
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Sink(LogSink)
-            .CreateLogger();
+        // Register this fixture's CapturingLogSink with the process-wide multiplex
+        // sink. E2EFixtureBase has already pointed Log.Logger at MultiplexCapturingSink
+        // .Instance; re-assigning Log.Logger here would race against other fixtures
+        // running in parallel and lose log events.
+        MultiplexCapturingSink.Instance.Register(LogSink);
 
         await CreateEnvironmentAsync().ConfigureAwait(false);
         // Start the stub FIRST so we have its real thumbprint+subscriptionId, then
@@ -62,6 +62,8 @@ public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override async Task OnDisposingAsync()
     {
+        MultiplexCapturingSink.Instance.Unregister(LogSink);
+
         if (_stub != null)
             await _stub.DisposeAsync().ConfigureAwait(false);
     }
