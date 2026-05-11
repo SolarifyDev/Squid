@@ -432,6 +432,17 @@ public sealed partial class ExecuteStepsPhase
 
         var packageReferences = BuildPackageReferences(actionName);
 
+        // Resolve the target namespace with project-overrides-endpoint precedence AND
+        // template expansion. effectiveVariables lists project vars FIRST, then endpoint
+        // vars, so FirstOrDefault picks the project version when both exist. The raw
+        // value may contain `#{X}` templates (a real use-case: Namespace=#{Environment}-
+        // app expanding to "prod-app"), so we feed it through VariableExpander.
+        var rawTargetNamespace = effectiveVariables
+            .FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value;
+        var resolvedTargetNamespace = string.IsNullOrEmpty(rawTargetNamespace)
+            ? rawTargetNamespace
+            : VariableExpander.ExpandString(rawTargetNamespace, prepared.VariableDictionary);
+
         var renderContext = new IntentRenderContext
         {
             Target = tc,
@@ -441,11 +452,7 @@ public sealed partial class ExecuteStepsPhase
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
             PackageReferences = packageReferences,
-            // Use VariableDictionary.Get for template-aware lookup. A project variable
-            // like Namespace=#{Environment}-app must expand to "prod-app" before the
-            // renderer puts it in `kubectl config set-context --namespace=…`. Direct
-            // effectiveVariables.FirstOrDefault().Value returns the raw template string.
-            TargetNamespace = prepared.VariableDictionary.Get(SpecialVariables.Kubernetes.Namespace)
+            TargetNamespace = resolvedTargetNamespace
         };
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
