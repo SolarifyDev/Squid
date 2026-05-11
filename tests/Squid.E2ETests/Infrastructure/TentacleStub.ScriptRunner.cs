@@ -69,6 +69,16 @@ public partial class TentacleStub
             if (!running.Process.HasExited)
                 running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
+            // After WaitForExit(TimeSpan) returns, the process is exited but
+            // pending OutputDataReceived / ErrorDataReceived events may not have
+            // dispatched yet. WaitForExit() with no arguments blocks until BOTH
+            // the process has exited AND all output-redirect events have fired,
+            // so the next DrainLogs sees every echo. Without this, fast scripts
+            // (e.g. `echo 'hello' >&2; exit 0`) report Complete to the polling
+            // observer before any stdout/stderr events reach OutputQueue → logs
+            // are silently dropped → LogSink.ContainsMessage(...) fails.
+            running.Process.WaitForExit();
+
             var logs = DrainLogs(running, command.LastLogSequence);
             var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
