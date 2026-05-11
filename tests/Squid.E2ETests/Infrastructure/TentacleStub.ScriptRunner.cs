@@ -33,10 +33,19 @@ public partial class TentacleStub
             WriteScriptFile(workDir, command.ScriptBody);
             WriteAdditionalFiles(workDir, command.Files);
 
-            var process = StartBashProcess(workDir);
+            // Build process and a RunningScript shell BEFORE Start, so output handlers
+            // can be wired onto the not-yet-started process. Calling BeginOutputReadLine
+            // AFTER process.Start can race with the bash exiting before any read is
+            // posted on the redirected pipes — on fast scripts (echo + exit) the data
+            // can be missed entirely. Handlers attached pre-Start fire reliably.
+            var process = BuildBashProcess(workDir);
             var running = new RunningScript(process, workDir);
+            AttachOutputHandlers(process, running);
 
-            BeginReadOutput(process, running);
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
             _scripts[ticketId] = running;
 
             return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
@@ -149,7 +158,7 @@ public partial class TentacleStub
             }
         }
 
-        private Process StartBashProcess(string workDir)
+        private Process BuildBashProcess(string workDir)
         {
             var homeBin = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin");
@@ -188,12 +197,10 @@ public partial class TentacleStub
             process.StartInfo.Environment["HOME"] =
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-            process.Start();
-
             return process;
         }
 
-        private static void BeginReadOutput(Process process, RunningScript running)
+        private static void AttachOutputHandlers(Process process, RunningScript running)
         {
             process.OutputDataReceived += (_, e) =>
             {
@@ -208,9 +215,6 @@ public partial class TentacleStub
                     running.OutputQueue.Enqueue(
                         new ProcessOutput(ProcessOutputSource.StdErr, e.Data));
             };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
         }
 
         private static List<ProcessOutput> DrainLogs(RunningScript running, long lastLogSequence)
