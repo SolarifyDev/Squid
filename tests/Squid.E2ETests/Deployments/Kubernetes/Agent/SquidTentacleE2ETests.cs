@@ -286,9 +286,14 @@ public class SquidTentacleE2ETests
     {
         _fixture.LogSink.Clear();
 
+        // KubernetesYamlActionHandler reads the target namespace from the action
+        // property (Squid.Action.KubernetesContainers.Namespace), not from the
+        // machine endpoint. Without setting it the action lands in "default" and
+        // the test's kubectl probe against testNs returns NotFound.
         return await SeedDeploymentWithCustomMachineAsync(
             "Squid.KubernetesDeployRawYaml", ns,
             ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
+            ("Squid.Action.KubernetesContainers.Namespace", ns),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }
 

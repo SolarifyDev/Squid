@@ -268,9 +268,16 @@ public class KubernetesAgentE2ETests
     {
         _fixture.LogSink.Clear();
 
+        // KubernetesYamlActionHandler.GetNamespaceFromAction reads the namespace
+        // from the action property (KubernetesProperties.Namespace =
+        // "Squid.Action.KubernetesContainers.Namespace"), NOT from the machine
+        // endpoint's Namespace field. Without this property the handler defaults
+        // to "default" — the apply lands there, and the test's kubectl probe
+        // against testNs returns NotFound.
         return await SeedDeploymentAsync(
             "Squid.KubernetesDeployRawYaml", ns,
             ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
+            ("Squid.Action.KubernetesContainers.Namespace", ns),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }
 
