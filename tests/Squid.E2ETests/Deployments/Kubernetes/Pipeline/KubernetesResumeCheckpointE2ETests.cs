@@ -528,7 +528,7 @@ public class KubernetesResumeCheckpointE2ETests
 
                 var machine = new Machine
                 {
-                    Name = $"E2E Resume Target {i}",
+                    Name = $"E2E Resume Target {i} {Guid.NewGuid().ToString("N")[..6]}",
                     IsDisabled = false,
                     Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
                     EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),

@@ -718,7 +718,7 @@ public class HelmChartUpgradeE2ETests
 
         return new Machine
         {
-            Name = $"E2E Helm API {nameSuffix}",
+            Name = $"E2E Helm API {nameSuffix} {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
@@ -741,7 +741,7 @@ public class HelmChartUpgradeE2ETests
 
         return new Machine
         {
-            Name = $"E2E Helm Agent {nameSuffix}",
+            Name = $"E2E Helm Agent {nameSuffix} {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),

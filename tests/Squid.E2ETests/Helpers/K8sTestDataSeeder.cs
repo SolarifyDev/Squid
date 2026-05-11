@@ -103,10 +103,11 @@ public class K8sTestDataSeeder
         if (communicationStyle != "KubernetesAgent")
             await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
 
+        var feedSuffix = Guid.NewGuid().ToString("N")[..6];
         var feed = new ExternalFeed
         {
-            Name = "DockerHub",
-            Slug = "dockerhub",
+            Name = $"DockerHub {feedSuffix}",
+            Slug = $"dockerhub-{feedSuffix}",
             FeedType = "Docker",
             FeedUri = "https://index.docker.io/v2",
             Properties = Squid.Core.Services.Deployments.ExternalFeeds.ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }),
