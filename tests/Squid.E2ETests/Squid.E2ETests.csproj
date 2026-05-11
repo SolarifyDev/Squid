@@ -39,6 +39,15 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!--
+      Hybrid Helm E2E tests reference the local test chart by relative path
+      to the assembly's output directory. CopyToOutputDirectory ensures the
+      chart files are next to the test DLL at runtime so `helm upgrade ./...`
+      can find them without depending on the working directory.
+    -->
+    <None Update="Resources\test-charts\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

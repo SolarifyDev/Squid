@@ -59,6 +59,7 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// </summary>
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]
+[Trait("Tier", "Contract")]
 public class HelmChartUpgradeE2ETests
     : IClassFixture<DeploymentPipelineFixture<HelmChartUpgradeE2ETests>>
 {

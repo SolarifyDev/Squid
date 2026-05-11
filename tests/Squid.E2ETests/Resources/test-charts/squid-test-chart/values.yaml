@@ -1,0 +1,25 @@
+# Defaults that produce a runnable Deployment with NO image pull or readiness
+# probe. Tests override via --set / --values to exercise variable substitution
+# and templating paths.
+
+# Replica count — overridden to exercise --set / values.yaml flag in tests.
+replicas: 1
+
+# Resource name suffix — combined with release name to form the Deployment name.
+# Overridden in tests to verify variable substitution end-to-end.
+nameSuffix: app
+
+# Image — busybox is pre-loaded into the Kind cluster by KindClusterFixture.
+# Tests should NOT override to a public image unless they explicitly preload it.
+image:
+  repository: busybox
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Sleep duration for the container. 1 hour is enough for any test's verify-then-cleanup
+# cycle; the test's finally block uninstalls + deletes namespace regardless.
+sleepSeconds: 3600
+
+# Optional environment variable — used by tests that exercise --set string values
+# and dotted-key inline values (e.g. `env.MY_KEY=value`).
+env: {}
