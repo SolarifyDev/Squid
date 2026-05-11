@@ -272,10 +272,23 @@ public class HelmChartUpgradeRealClusterE2ETests
 
             // Cross-check: the Deployment's pod spec carries the secret env var.
             // (The chart template renders .Values.env into the container's env list.)
-            var envValue = await _cluster.KubectlAsync(
-                $"-n {ns} get deployment {release}-app -o jsonpath='{{.spec.template.spec.containers[0].env[?(@.name==\"SECRET_VAR\")].value}}'");
+            //
+            // Don't use kubectl's jsonpath filter `env[?(@.name=="SECRET_VAR")]` —
+            // .NET's ProcessStartInfo.Arguments parser on Linux strips BOTH outer
+            // single quotes and inner double quotes during argv splitting, so
+            // kubectl receives `==SECRET_VAR` and treats SECRET_VAR as an
+            // unrecognised identifier. Fetch the full Deployment JSON and pick
+            // the env entry in-process via System.Text.Json — no quoting traps.
+            var deployJsonStr = await _cluster.KubectlAsync($"-n {ns} get deployment {release}-app -o json");
+            using var deployDoc = JsonDocument.Parse(deployJsonStr);
+            var envValue = deployDoc.RootElement
+                .GetProperty("spec").GetProperty("template").GetProperty("spec")
+                .GetProperty("containers")[0].GetProperty("env")
+                .EnumerateArray()
+                .Single(e => e.GetProperty("name").GetString() == "SECRET_VAR")
+                .GetProperty("value").GetString();
 
-            envValue.Trim('\'').ShouldBe(sensitiveValue,
+            envValue.ShouldBe(sensitiveValue,
                 customMessage: "End-to-end value flow check: the sensitive value should reach the Deployment's " +
                               "env var. If empty: chart values weren't propagated. If different: variable " +
                               "substitution mangled the value. If matches: P0-Phase10.2 hardening is intact " +
