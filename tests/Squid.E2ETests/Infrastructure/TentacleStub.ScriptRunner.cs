@@ -168,7 +168,12 @@ public partial class TentacleStub
                 EnableRaisingEvents = true
             };
 
-            process.StartInfo.Environment["KUBECONFIG"] = _kubeconfigPath;
+            // Only set KUBECONFIG when a kubeconfig was supplied — Listening / Polling
+            // E2E for non-K8s scripts (echo, exit) doesn't have one. Setting null here
+            // throws ArgumentNullException, which prevents the script from running and
+            // leaves the LogSink empty — surfacing as "ContainsMessage was false".
+            if (!string.IsNullOrEmpty(_kubeconfigPath))
+                process.StartInfo.Environment["KUBECONFIG"] = _kubeconfigPath;
             process.StartInfo.Environment["PATH"] = pathValue;
             process.StartInfo.Environment["HOME"] =
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

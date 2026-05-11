@@ -10,8 +10,6 @@ using Squid.Core.Settings.Halibut;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Machine;
-using Squid.Tentacle.Certificate;
-
 namespace Squid.E2ETests.Deployments.Tentacle;
 
 /// <summary>
@@ -50,8 +48,16 @@ public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
             .CreateLogger();
 
         await CreateEnvironmentAsync().ConfigureAwait(false);
-        await RegisterTentacleAsync().ConfigureAwait(false);
+        // Start the stub FIRST so we have its real thumbprint+subscriptionId, then
+        // register that exact pair. The previous flow pre-registered a placeholder
+        // machine with a TentacleCertificateManager-generated cert (whose
+        // SubscriptionId nobody polled at), then re-registered with the stub's
+        // identity — leaving the FIRST machine (TentacleMachineId) orphaned and
+        // pointing to a poll://<unused>/ that no agent serves. Tests that seeded
+        // against TentacleMachineId sent dispatch to the orphaned subscription and
+        // timed out after 2 min.
         StartPollingStub();
+        await RegisterTentacleAsync().ConfigureAwait(false);
     }
 
     protected override async Task OnDisposingAsync()
@@ -74,14 +80,9 @@ public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     private async Task RegisterTentacleAsync()
     {
-        var certsPath = Path.Combine(Path.GetTempPath(), $"squid-tentacle-polling-certs-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(certsPath);
-
-        var certManager = new TentacleCertificateManager(certsPath);
-        var tentacleCert = certManager.LoadOrCreateCertificate();
-        TentacleSubscriptionId = certManager.LoadOrCreateSubscriptionId();
-        TentacleThumbprint = tentacleCert.Thumbprint;
-
+        // Register the stub's identity (thumbprint + subscriptionId). Server's
+        // PollingTrustDistributor.ReconfigureAsync will TrustOnly the resulting
+        // DB thumbprints, so the stub gets trusted via this registration path.
         var registration = await Run<IMachineRegistrationService, RegisterMachineResponseData>(async svc =>
         {
             return await svc.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
@@ -106,27 +107,6 @@ public class TentaclePollingE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
         var serverThumbprint = GetServerThumbprint();
 
         _stub = TentacleStub.CreatePolling(serverThumbprint, _pollingPort);
-
-        // The stub generates its own cert. We need to re-register with the stub's thumbprint
-        // so Halibut trust matches. But since we already registered above with the certManager's
-        // thumbprint, we trust the certManager's thumbprint on the server side.
-        // Instead, trust the stub's cert separately:
-        var halibutRuntime = LifetimeScope.Resolve<HalibutRuntime>();
-        halibutRuntime.Trust(_stub.Thumbprint);
-
-        // Re-register with stub's actual thumbprint + subscriptionId
-        Run<IMachineRegistrationService>(async svc =>
-        {
-            await svc.RegisterTentaclePollingAsync(new RegisterTentaclePollingCommand
-            {
-                MachineName = $"tentacle-polling-{_stub.SubscriptionId[..8]}",
-                Thumbprint = _stub.Thumbprint,
-                SubscriptionId = _stub.SubscriptionId,
-                Roles = "linux-server",
-                Environments = EnvironmentName,
-                AgentVersion = "1.0.0-test"
-            }).ConfigureAwait(false);
-        }).GetAwaiter().GetResult();
 
         TentacleSubscriptionId = _stub.SubscriptionId;
         TentacleThumbprint = _stub.Thumbprint;
