@@ -66,8 +66,10 @@ public class KubernetesIngressDeployE2ETests
             var ingressYaml = Encoding.UTF8.GetString(ingressFile.Content);
             ingressYaml.ShouldContain("apiVersion: networking.k8s.io/v1");
             ingressYaml.ShouldContain("kind: Ingress");
-            ingressYaml.ShouldContain("name: web-ingress");
-            ingressYaml.ShouldContain($"namespace: {testNs}");
+            // YAML renderer emits quoted string values (e.g. `name: "web-ingress"`).
+            // Use regex to match both quoted + unquoted forms.
+            ingressYaml.ShouldMatch(@"name:\s*""?web-ingress""?");
+            ingressYaml.ShouldMatch($"namespace:\\s*\"?{System.Text.RegularExpressions.Regex.Escape(testNs)}\"?");
             ingressYaml.ShouldContain("app.example.com");
             ingressYaml.ShouldContain("ingressClassName: nginx");
 

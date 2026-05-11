@@ -149,7 +149,8 @@ public class KubernetesContainersDeployE2ETests
 
             // Verify YAML contains resolved values, not templates
             var deploymentYaml = Encoding.UTF8.GetString(yamlFiles["deployment.yaml"]);
-            deploymentYaml.ShouldContain($"namespace: {testNs}");
+            // YAML renderer emits quoted namespace string. Match both styles.
+            deploymentYaml.ShouldMatch($"namespace:\\s*\"?{System.Text.RegularExpressions.Regex.Escape(testNs)}\"?");
             deploymentYaml.ShouldContain("replicas: 3");
             deploymentYaml.ShouldNotContain("#{");
 
