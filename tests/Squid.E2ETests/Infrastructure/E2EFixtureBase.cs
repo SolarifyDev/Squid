@@ -27,10 +27,17 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
             .AddJsonFile("appsettings.json")
             .Build();
 
+        // Always include the MultiplexCapturingSink so concurrently-running fixtures
+        // can each register their own CapturingLogSink without racing on Log.Logger
+        // assignment. The multiplex sink fans out every event to all currently
+        // registered fixture sinks; per-fixture LogSink.ContainsMessage checks remain
+        // correct because each sink sees a copy of every event (over-reading is fine
+        // — substring match against the right text still holds).
         var logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .Enrich.WithProperty("ApplicationContext", "Squid.E2E")
             .WriteTo.Console()
+            .WriteTo.Sink(MultiplexCapturingSink.Instance)
             .CreateLogger();
 
         Log.Logger = logger;
@@ -49,6 +56,17 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         containerBuilder.RegisterType<NoOpBackgroundJobClient>()
             .As<ISquidBackgroundJobClient>()
             .InstancePerLifetimeScope();
+
+        // IMemoryCache is wired by AspNetCore's services.AddMemoryCache() in production
+        // (via Startup.cs). The E2E container doesn't go through ASP.NET's
+        // ConfigureServices pipeline, so we register the type directly here.
+        // Without this, any service that depends on MemoryCacheService (via the
+        // CacheManager chain → AccountService → AuthenticationFixture etc.)
+        // fails to activate with "Cannot resolve parameter IMemoryCache".
+        containerBuilder.Register(_ => new Microsoft.Extensions.Caching.Memory.MemoryCache(
+                new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()))
+            .As<Microsoft.Extensions.Caching.Memory.IMemoryCache>()
+            .SingleInstance();
 
         RegisterOverrides(containerBuilder, configuration);
 

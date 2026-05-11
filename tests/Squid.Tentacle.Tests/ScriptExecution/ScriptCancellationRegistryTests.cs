@@ -134,11 +134,14 @@ public sealed class ScriptCancellationRegistryTests
         var registry = new ScriptCancellationRegistry();
         var ticket = new ScriptTicket("hot-ticket");
 
-        Parallel.For(0, 50, _ =>
+        Parallel.For(0, 50, i =>
         {
             var t = registry.GetOrCreate(ticket);
-            // half the parallel ops cancel, half observe
-            if (System.Threading.Thread.CurrentThread.ManagedThreadId % 2 == 0)
+            // Half the iterations cancel, half observe. Parity is keyed on the loop
+            // index (deterministic) — NOT on ManagedThreadId, which is non-deterministic
+            // under low parallelism: CI runners may schedule all 50 iterations onto
+            // threads whose IDs share parity, so Cancel never fires and the test flakes.
+            if (i % 2 == 0)
                 registry.Cancel(ticket);
         });
 

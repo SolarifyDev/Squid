@@ -29,11 +29,10 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override Task OnInitializedAsync()
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Sink(LogSink)
-            .CreateLogger();
+        // Register this fixture's sink with the process-wide multiplex sink (see
+        // MultiplexCapturingSink). Don't re-assign Log.Logger — concurrent fixtures
+        // would race on the static and lose log events.
+        MultiplexCapturingSink.Instance.Register(LogSink);
 
         var serverThumbprint = GetServerThumbprint();
 
@@ -47,6 +46,8 @@ public class KubernetesAgentE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override async Task OnDisposingAsync()
     {
+        MultiplexCapturingSink.Instance.Unregister(LogSink);
+
         if (Stub != null)
             await Stub.DisposeAsync().ConfigureAwait(false);
     }

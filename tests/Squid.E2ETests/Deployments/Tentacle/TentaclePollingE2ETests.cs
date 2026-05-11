@@ -125,7 +125,7 @@ public class TentaclePollingE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Tentacle Polling Deployment",
+                Name = $"Tentacle Polling Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -141,7 +141,7 @@ public class TentaclePollingE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Tentacle Polling Task",
+                Name = $"Tentacle Polling Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Tentacle Polling E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

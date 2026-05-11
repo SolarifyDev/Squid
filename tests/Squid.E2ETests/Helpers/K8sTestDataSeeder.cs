@@ -19,6 +19,8 @@ public class K8sTestDataSeeder
     private readonly TestDataBuilder _builder;
 
     public int ServerTaskId { get; private set; }
+    public int AccountId { get; private set; }
+    public int MachineId { get; private set; }
 
     public K8sTestDataSeeder(IRepository repository, IUnitOfWork unitOfWork)
     {
@@ -91,22 +93,31 @@ public class K8sTestDataSeeder
 
         var channel = await _builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
-        var environment = await _builder.CreateEnvironmentAsync("E2E Test Environment").ConfigureAwait(false);
+        var environment = await _builder.CreateEnvironmentAsync($"E2E Test Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
+
+        // Account MUST be created before the Machine: the Machine's endpoint JSON
+        // references the account by ID via ResourceReferences. In a class-shared DB
+        // where multiple tests run sequentially, account IDs auto-increment past 1,
+        // so the Machine cannot be hardcoded to ResourceId=1 — we pass the real
+        // account.Id into CreateApiMachine. (KubernetesAgent has no Account.)
+        AccountId = communicationStyle == "KubernetesAgent"
+            ? 0
+            : await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
 
         var machine = communicationStyle == "KubernetesAgent"
             ? CreateAgentMachine(environment, agentSubscriptionId, agentThumbprint)
-            : CreateApiMachine(environment);
+            : CreateApiMachine(environment, AccountId);
 
         await _repository.InsertAsync(machine, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
-        if (communicationStyle != "KubernetesAgent")
-            await CreateAccountAsync(accountType, credentials, ct).ConfigureAwait(false);
+        MachineId = machine.Id;
 
+        var feedSuffix = Guid.NewGuid().ToString("N")[..6];
         var feed = new ExternalFeed
         {
-            Name = "DockerHub",
-            Slug = "dockerhub",
+            Name = $"DockerHub {feedSuffix}",
+            Slug = $"dockerhub-{feedSuffix}",
             FeedType = "Docker",
             FeedUri = "https://index.docker.io/v2",
             Properties = Squid.Core.Services.Deployments.ExternalFeeds.ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }),
@@ -132,7 +143,7 @@ public class K8sTestDataSeeder
 
         var deployment = new Deployment
         {
-            Name = "E2E Test Deployment",
+            Name = $"E2E Test Deployment {Guid.NewGuid().ToString("N")[..6]}",
             SpaceId = 1,
             ChannelId = channel.Id,
             ProjectId = project.Id,
@@ -148,7 +159,7 @@ public class K8sTestDataSeeder
 
         var serverTask = new ServerTask
         {
-            Name = "E2E Deployment Task",
+            Name = $"E2E Deployment Task {Guid.NewGuid().ToString("N")[..6]}",
             Description = "E2E test deployment task",
             QueueTime = DateTimeOffset.UtcNow,
             State = TaskState.Pending,
@@ -178,7 +189,7 @@ public class K8sTestDataSeeder
         ServerTaskId = serverTask.Id;
     }
 
-    private static Machine CreateApiMachine(Environment environment)
+    private static Machine CreateApiMachine(Environment environment, int accountId)
     {
         var endpointJson = JsonSerializer.Serialize(new
         {
@@ -188,19 +199,19 @@ public class K8sTestDataSeeder
             Namespace = "default",
             ResourceReferences = new[]
             {
-                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 }
+                new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = accountId }
             }
         });
 
         return new Machine
         {
-            Name = "E2E K8s Target",
+            Name = $"E2E K8s Target {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
             SpaceId = 1,
-            Slug = "e2e-k8s-target"
+            Slug = $"e2e-k8s-target-{Guid.NewGuid().ToString("N")[..6]}"
         };
     }
 
@@ -222,7 +233,7 @@ public class K8sTestDataSeeder
 
         return new Machine
         {
-            Name = "E2E K8s Agent",
+            Name = $"E2E K8s Agent {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
@@ -232,21 +243,23 @@ public class K8sTestDataSeeder
         };
     }
 
-    private async Task CreateAccountAsync(AccountType accountType, object credentials, CancellationToken ct)
+    private async Task<int> CreateAccountAsync(AccountType accountType, object credentials, CancellationToken ct)
     {
         var creds = credentials ?? DefaultCredentials(accountType);
 
         var account = new DeploymentAccount
         {
             SpaceId = 1,
-            Name = "E2E K8s Account",
-            Slug = "e2e-k8s-account",
+            Name = $"E2E K8s Account {Guid.NewGuid().ToString("N")[..6]}",
+            Slug = $"e2e-k8s-account-{Guid.NewGuid().ToString("N")[..6]}",
             AccountType = accountType,
             Credentials = DeploymentAccountCredentialsConverter.Serialize(creds)
         };
 
         await _repository.InsertAsync(account, ct).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return account.Id;
     }
 
     private static object DefaultCredentials(AccountType accountType) => accountType switch

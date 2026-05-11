@@ -57,8 +57,12 @@ public class KubernetesStepConditionE2ETests
             s => s.Contains("step-2-always"),
             "Step 2 with 'Always' condition should execute even after Step 1 failure");
 
-        // Task completes — step 1 is non-required so pipeline continues
-        await AssertTaskStateAsync(TaskState.Success);
+        // Task ends Failed: even though step-1 is non-required (pipeline continues
+        // to step-2), the per-step failure latches ctx.FailureEncountered = true.
+        // DeploymentPipelineRunner inspects that flag after all phases complete and
+        // emits DeploymentFailedEvent → TaskState.Failed. "Always" only affects
+        // step-2's eligibility, not the overall task verdict.
+        await AssertTaskStateAsync(TaskState.Failed);
     }
 
     [Fact]
@@ -85,8 +89,11 @@ public class KubernetesStepConditionE2ETests
             s => s.Contains("step-2-success"),
             "Step 2 with 'Success' condition should be skipped after Step 1 failure");
 
-        // Task completes — step 1 is non-required so pipeline continues
-        await AssertTaskStateAsync(TaskState.Success);
+        // Task ends Failed: step-1 failure latches ctx.FailureEncountered. The
+        // pipeline doesn't abort (step-1 is non-required) but emits Failed at
+        // the end. step-2's Success condition keeps it from running, but the
+        // overall task verdict still reflects step-1's failure.
+        await AssertTaskStateAsync(TaskState.Failed);
     }
 
     [Theory]
@@ -217,7 +224,7 @@ public class KubernetesStepConditionE2ETests
 
             // Infrastructure
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Variable Condition Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Variable Condition Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -233,13 +240,13 @@ public class KubernetesStepConditionE2ETests
 
             var machine = new Machine
             {
-                Name = "E2E Variable Condition Target",
+                Name = $"E2E Variable Condition Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = "e2e-variable-condition-target"
+                Slug = $"e2e-variable-condition-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -248,8 +255,8 @@ public class KubernetesStepConditionE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Variable Condition Account",
-                Slug = "e2e-variable-condition-account",
+                Name = $"E2E Variable Condition Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-variable-condition-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -262,7 +269,7 @@ public class KubernetesStepConditionE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Variable Condition Deployment",
+                Name = $"E2E Variable Condition Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -278,7 +285,7 @@ public class KubernetesStepConditionE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E Variable Condition Task",
+                Name = $"E2E Variable Condition Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E variable condition test",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -379,7 +386,7 @@ public class KubernetesStepConditionE2ETests
 
             // Infrastructure
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Step Condition Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Step Condition Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -395,13 +402,13 @@ public class KubernetesStepConditionE2ETests
 
             var machine = new Machine
             {
-                Name = "E2E Condition Target",
+                Name = $"E2E Condition Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = "e2e-condition-target"
+                Slug = $"e2e-condition-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -410,8 +417,8 @@ public class KubernetesStepConditionE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Condition Account",
-                Slug = "e2e-condition-account",
+                Name = $"E2E Condition Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-condition-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -424,7 +431,7 @@ public class KubernetesStepConditionE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Step Condition Deployment",
+                Name = $"E2E Step Condition Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -440,7 +447,7 @@ public class KubernetesStepConditionE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E Step Condition Task",
+                Name = $"E2E Step Condition Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E step condition test",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

@@ -73,7 +73,7 @@ public class TentacleMixedModeE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Mixed Mode Deployment",
+                Name = $"Mixed Mode Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -89,7 +89,7 @@ public class TentacleMixedModeE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Mixed Mode Task",
+                Name = $"Mixed Mode Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Mixed Polling+Listening E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

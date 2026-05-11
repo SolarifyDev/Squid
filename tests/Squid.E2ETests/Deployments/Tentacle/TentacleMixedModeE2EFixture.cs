@@ -52,11 +52,9 @@ public class TentacleMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass
 
     protected override async Task OnInitializedAsync()
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Sink(LogSink)
-            .CreateLogger();
+        // Register this fixture's sink with the process-wide multiplex sink so
+        // it receives every log event without racing on Log.Logger assignment.
+        MultiplexCapturingSink.Instance.Register(LogSink);
 
         await CreateEnvironmentAsync().ConfigureAwait(false);
         StartPollingStub();
@@ -67,6 +65,8 @@ public class TentacleMixedModeE2EFixture<TTestClass> : E2EFixtureBase<TTestClass
 
     protected override async Task OnDisposingAsync()
     {
+        MultiplexCapturingSink.Instance.Unregister(LogSink);
+
         if (_pollingStub != null) await _pollingStub.DisposeAsync().ConfigureAwait(false);
         if (_listeningStub != null) await _listeningStub.DisposeAsync().ConfigureAwait(false);
     }

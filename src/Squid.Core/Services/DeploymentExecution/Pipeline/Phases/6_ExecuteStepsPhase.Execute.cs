@@ -432,6 +432,17 @@ public sealed partial class ExecuteStepsPhase
 
         var packageReferences = BuildPackageReferences(actionName);
 
+        // Resolve the target namespace with project-overrides-endpoint precedence AND
+        // template expansion. effectiveVariables lists project vars FIRST, then endpoint
+        // vars, so FirstOrDefault picks the project version when both exist. The raw
+        // value may contain `#{X}` templates (a real use-case: Namespace=#{Environment}-
+        // app expanding to "prod-app"), so we feed it through VariableExpander.
+        var rawTargetNamespace = effectiveVariables
+            .FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value;
+        var resolvedTargetNamespace = string.IsNullOrEmpty(rawTargetNamespace)
+            ? rawTargetNamespace
+            : VariableExpander.ExpandString(rawTargetNamespace, prepared.VariableDictionary);
+
         var renderContext = new IntentRenderContext
         {
             Target = tc,
@@ -441,12 +452,20 @@ public sealed partial class ExecuteStepsPhase
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
             PackageReferences = packageReferences,
-            TargetNamespace = effectiveVariables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value
+            TargetNamespace = resolvedTargetNamespace
         };
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
 
-        return await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
+        var request = await renderer.RenderAsync(expandedIntent, renderContext, ct).ConfigureAwait(false);
+
+        // Attach the sensitive-value masker. Built from the action's effective variables
+        // (the renderer doesn't know about variables — it only knows about the rendered
+        // intent), so wiring lives here. Returns null when no sensitive values exist,
+        // which is the contract that downstream execution strategies expect.
+        request.Masker = BuildSensitiveMasker(effectiveVariables);
+
+        return request;
     }
 
     private async Task<bool> ExecuteStepLevelActionsAsync(DeploymentStepDto step, List<DeploymentActionDto> eligibleActions, int stepDisplayOrder, CancellationToken ct)

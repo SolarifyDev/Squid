@@ -642,7 +642,7 @@ public class HelmChartUpgradeE2ETests
         CancellationToken ct = default)
     {
         var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-        var environment = await builder.CreateEnvironmentAsync("E2E Helm Environment").ConfigureAwait(false);
+        var environment = await builder.CreateEnvironmentAsync($"E2E Helm Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
         for (var i = 0; i < targetCount; i++)
         {
@@ -661,8 +661,8 @@ public class HelmChartUpgradeE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Helm Account",
-                Slug = "e2e-helm-account",
+                Name = $"E2E Helm Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-helm-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-helm-token" })
@@ -674,7 +674,7 @@ public class HelmChartUpgradeE2ETests
         var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
         var deployment = new Deployment
         {
-            Name = "E2E Helm Deployment",
+            Name = $"E2E Helm Deployment {Guid.NewGuid().ToString("N")[..6]}",
             SpaceId = 1, ChannelId = channel.Id, ProjectId = project.Id,
             ReleaseId = release.Id, EnvironmentId = environment.Id,
             DeployedBy = 1, CreatedDate = DateTimeOffset.UtcNow, Json = string.Empty
@@ -684,7 +684,7 @@ public class HelmChartUpgradeE2ETests
 
         var serverTask = new ServerTask
         {
-            Name = "E2E Helm Task", Description = "E2E Helm test task",
+            Name = $"E2E Helm Task {Guid.NewGuid().ToString("N")[..6]}", Description = "E2E Helm test task",
             QueueTime = DateTimeOffset.UtcNow, State = TaskState.Pending,
             ServerTaskType = "Deploy", ProjectId = project.Id, EnvironmentId = environment.Id,
             SpaceId = 1, LastModifiedDate = DateTimeOffset.UtcNow,
@@ -718,7 +718,7 @@ public class HelmChartUpgradeE2ETests
 
         return new Machine
         {
-            Name = $"E2E Helm API {nameSuffix}",
+            Name = $"E2E Helm API {nameSuffix} {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
@@ -741,7 +741,7 @@ public class HelmChartUpgradeE2ETests
 
         return new Machine
         {
-            Name = $"E2E Helm Agent {nameSuffix}",
+            Name = $"E2E Helm Agent {nameSuffix} {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),

@@ -172,9 +172,16 @@ data:
         {
             var builder = new TestDataBuilder(repository, unitOfWork);
 
+            // The renderer reads `Squid.Action.Kubernetes.Namespace` (singular) for
+            // the kubectl config wrapper. The endpoint contributor sets it from the
+            // Machine's Namespace field — so to test variable override, seed a project
+            // variable with that exact name. Project variables sit FIRST in the
+            // effective list, so FirstOrDefault picks the project value over the
+            // endpoint contribution.
             var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
             await builder.CreateVariablesAsync(variableSet.Id,
-                ("TargetNamespace", nsVariableValue, Squid.Message.Enums.VariableType.String, false)).ConfigureAwait(false);
+                ("TargetNamespace", nsVariableValue, Squid.Message.Enums.VariableType.String, false),
+                ("Squid.Action.Kubernetes.Namespace", nsTemplate, Squid.Message.Enums.VariableType.String, false)).ConfigureAwait(false);
 
             var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
             await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
@@ -192,8 +199,7 @@ data:
             await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(action.Id,
                 ("Squid.Action.Script.ScriptBody", scriptBody),
-                ("Squid.Action.Script.Syntax", "Bash"),
-                ("Squid.Action.KubernetesContainers.Namespace", nsTemplate)).ConfigureAwait(false);
+                ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
             var environment = await builder.CreateEnvironmentAsync("Var Namespace Test Env").ConfigureAwait(false);
@@ -206,7 +212,7 @@ data:
 
             var deployment = new Deployment
             {
-                Name = "Var Namespace Test",
+                Name = $"Var Namespace Test {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -222,7 +228,7 @@ data:
 
             var serverTask = new ServerTask
             {
-                Name = "Var Namespace Test Task",
+                Name = $"Var Namespace Test Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Test variable namespace expansion",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -296,7 +302,7 @@ data:
                 var account = new DeploymentAccount
                 {
                     SpaceId = 1,
-                    Name = "Test Account",
+                    Name = $"Test Account {Guid.NewGuid().ToString("N")[..6]}",
                     Slug = $"test-account-{Guid.NewGuid():N}",
                     AccountType = AccountType.Token,
                     Credentials = DeploymentAccountCredentialsConverter.Serialize(
@@ -311,7 +317,7 @@ data:
 
             var deployment = new Deployment
             {
-                Name = "Namespace Wrap Test",
+                Name = $"Namespace Wrap Test {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -327,7 +333,7 @@ data:
 
             var serverTask = new ServerTask
             {
-                Name = "Namespace Wrap Test Task",
+                Name = $"Namespace Wrap Test Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Test namespace wrapping",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -386,7 +392,7 @@ data:
 
         return new Machine
         {
-            Name = "Namespace Wrap Test Target",
+            Name = $"Namespace Wrap Test Target {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),

@@ -42,11 +42,10 @@ public class TentacleListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass
 
     protected override async Task OnInitializedAsync()
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Sink(LogSink)
-            .CreateLogger();
+        // Register this fixture's sink with the process-wide multiplex sink.
+        // See MultiplexCapturingSink for the parallel-fixture race that this
+        // pattern solves.
+        MultiplexCapturingSink.Instance.Register(LogSink);
 
         await CreateEnvironmentAsync().ConfigureAwait(false);
         StartListeningStub();
@@ -55,6 +54,8 @@ public class TentacleListeningE2EFixture<TTestClass> : E2EFixtureBase<TTestClass
 
     protected override async Task OnDisposingAsync()
     {
+        MultiplexCapturingSink.Instance.Unregister(LogSink);
+
         if (_stub != null)
             await _stub.DisposeAsync().ConfigureAwait(false);
     }
