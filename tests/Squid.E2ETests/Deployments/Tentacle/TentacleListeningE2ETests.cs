@@ -109,7 +109,7 @@ public class TentacleListeningE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Tentacle Listening Deployment",
+                Name = $"Tentacle Listening Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -125,7 +125,7 @@ public class TentacleListeningE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Tentacle Listening Task",
+                Name = $"Tentacle Listening Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Tentacle Listening E2E",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

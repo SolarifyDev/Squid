@@ -206,7 +206,7 @@ data:
 
             var deployment = new Deployment
             {
-                Name = "Var Namespace Test",
+                Name = $"Var Namespace Test {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -222,7 +222,7 @@ data:
 
             var serverTask = new ServerTask
             {
-                Name = "Var Namespace Test Task",
+                Name = $"Var Namespace Test Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Test variable namespace expansion",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -296,7 +296,7 @@ data:
                 var account = new DeploymentAccount
                 {
                     SpaceId = 1,
-                    Name = "Test Account",
+                    Name = $"Test Account {Guid.NewGuid().ToString("N")[..6]}",
                     Slug = $"test-account-{Guid.NewGuid():N}",
                     AccountType = AccountType.Token,
                     Credentials = DeploymentAccountCredentialsConverter.Serialize(
@@ -311,7 +311,7 @@ data:
 
             var deployment = new Deployment
             {
-                Name = "Namespace Wrap Test",
+                Name = $"Namespace Wrap Test {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -327,7 +327,7 @@ data:
 
             var serverTask = new ServerTask
             {
-                Name = "Namespace Wrap Test Task",
+                Name = $"Namespace Wrap Test Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Test namespace wrapping",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -386,7 +386,7 @@ data:
 
         return new Machine
         {
-            Name = "Namespace Wrap Test Target",
+            Name = $"Namespace Wrap Test Target {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),

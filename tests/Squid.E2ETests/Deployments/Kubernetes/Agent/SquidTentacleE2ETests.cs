@@ -345,7 +345,7 @@ public class SquidTentacleE2ETests
 
             var deployment = new Deployment
             {
-                Name = "Real Tentacle Deployment",
+                Name = $"Real Tentacle Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -361,7 +361,7 @@ public class SquidTentacleE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "Real Tentacle Task",
+                Name = $"Real Tentacle Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "Real tentacle E2E test task",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

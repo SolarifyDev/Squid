@@ -141,7 +141,7 @@ public class KubernetesHealthCheckE2ETests
 
             var machine = new Machine
             {
-                Name = "No Account Target",
+                Name = $"No Account Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
@@ -255,7 +255,7 @@ public class KubernetesHealthCheckE2ETests
             // Healthy target
             var healthyMachine = new Machine
             {
-                Name = "Healthy Target",
+                Name = $"Healthy Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
