@@ -86,9 +86,18 @@ public class KubernetesContainersDeployE2ETests
                     $"-n {testNs} get service demo-service -o jsonpath='{{.spec.type}}'");
                 svcType.Trim('\'').ShouldBe("ClusterIP");
 
-                // 8. Verify ConfigMap
+                // 8. Verify ConfigMap — Squid's KubernetesContainers renderer
+                // auto-suffixes ConfigMap names with `-deployments-{deploymentId}`
+                // (versioned-configmap pattern). Read the actual name from
+                // the Deployment's envFrom reference, then query by that.
+                var configMapRef = await _cluster.KubectlAsync(
+                    $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.containers[0].envFrom[0].configMapRef.name}}'");
+                var configMapName = configMapRef.Trim('\'');
+                configMapName.ShouldStartWith("demo-config",
+                    customMessage: $"ConfigMap name should start with 'demo-config'; got '{configMapName}'");
+
                 var cmData = await _cluster.KubectlAsync(
-                    $"-n {testNs} get configmap demo-config -o jsonpath='{{.data.APP_ENV}}'");
+                    $"-n {testNs} get configmap {configMapName} -o jsonpath='{{.data.APP_ENV}}'");
                 cmData.Trim('\'').ShouldBe("e2e-test");
 
                 // 9. Verify Feed Secret (conditional)
@@ -235,7 +244,8 @@ public class KubernetesContainersDeployE2ETests
                 // Verify envFrom configMapRef
                 var envFromCm = await _cluster.KubectlAsync(
                     $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.containers[0].envFrom[0].configMapRef.name}}'");
-                envFromCm.Trim('\'').ShouldBe("demo-config");
+                // Squid suffixes with `-deployments-{id}` per the versioned-configmap pattern.
+                envFromCm.Trim('\'').ShouldStartWith("demo-config");
             }
             finally
             {

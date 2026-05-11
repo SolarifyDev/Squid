@@ -71,7 +71,8 @@ public class KubernetesIngressDeployE2ETests
             ingressYaml.ShouldMatch(@"name:\s*""?web-ingress""?");
             ingressYaml.ShouldMatch($"namespace:\\s*\"?{System.Text.RegularExpressions.Regex.Escape(testNs)}\"?");
             ingressYaml.ShouldContain("app.example.com");
-            ingressYaml.ShouldContain("ingressClassName: nginx");
+            // Quoted style: `ingressClassName: "nginx"` — same renderer behaviour as name/namespace.
+            ingressYaml.ShouldMatch(@"ingressClassName:\s*""?nginx""?");
 
             // Apply to Kind cluster
             var yamlFiles = capturedRequest.DeploymentFiles
