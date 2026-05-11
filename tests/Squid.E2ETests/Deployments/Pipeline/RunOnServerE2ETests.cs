@@ -74,7 +74,8 @@ public class RunOnServerE2ETests
         serverRequest.Machine.Name.ShouldBe("Squid Server");
 
         var targetRequest = ExecutionCapture.CapturedRequests.First(r => r.ScriptBody.Contains("target-step-script"));
-        targetRequest.Machine.Name.ShouldBe("E2E RunOnServer Target");
+        // Machine name is GUID-suffixed by the seeder for class-shared-DB isolation.
+        targetRequest.Machine.Name.ShouldStartWith("E2E RunOnServer Target");
 
         await AssertTaskStateAsync(TaskState.Success);
     }

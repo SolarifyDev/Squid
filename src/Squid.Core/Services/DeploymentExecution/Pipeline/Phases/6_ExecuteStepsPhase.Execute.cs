@@ -441,7 +441,11 @@ public sealed partial class ExecuteStepsPhase
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
             PackageReferences = packageReferences,
-            TargetNamespace = effectiveVariables.FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value
+            // Use VariableDictionary.Get for template-aware lookup. A project variable
+            // like Namespace=#{Environment}-app must expand to "prod-app" before the
+            // renderer puts it in `kubectl config set-context --namespace=…`. Direct
+            // effectiveVariables.FirstOrDefault().Value returns the raw template string.
+            TargetNamespace = prepared.VariableDictionary.Get(SpecialVariables.Kubernetes.Namespace)
         };
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);
