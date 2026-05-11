@@ -48,16 +48,30 @@ public class KubernetesCancellationE2ETests
 
         var serverTaskId = await SeedSingleStepPipelineAsync();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-
-        // ProcessAsync catches OperationCanceledException internally (see
-        // DeploymentPipelineRunner — when linkedCts is cancelled it transitions
-        // the task to Cancelled and returns normally). So the public contract
-        // is NOT to surface the OCE; the test verifies the task state instead.
-        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        // Model the production cancel flow: an external operator invokes
+        // CancelAsync, which (1) transitions the task Executing → Cancelling
+        // and (2) fires the registered cancellation token. The pipeline then
+        // catches the OCE and OnCancelledAsync transitions Cancelling → Cancelled.
+        // Triggering only the local CT (without the state transition step) leaves
+        // the task in "Executing" because OnCancelledAsync's transition from
+        // Cancelling fails silently when the source state is Executing instead.
+        var pipelineTask = Task.Run(async () =>
         {
-            await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
+            await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+            {
+                await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        });
+
+        // Wait briefly so the pipeline reaches "Executing" state, then cancel.
+        await Task.Delay(300).ConfigureAwait(false);
+
+        await _fixture.Run<IServerTaskControlService>(async control =>
+        {
+            await control.CancelTaskAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
+
+        await pipelineTask.ConfigureAwait(false);
 
         await AssertTaskStateAsync(TaskState.Cancelled);
     }
