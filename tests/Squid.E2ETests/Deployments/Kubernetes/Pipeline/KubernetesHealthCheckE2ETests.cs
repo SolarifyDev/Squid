@@ -53,7 +53,9 @@ public class KubernetesHealthCheckE2ETests
             .Distinct()
             .ToList();
 
-        executedMachines.ShouldContain("Healthy Target", "Healthy target should execute");
+        // Machine.Name is GUID-suffixed in seeders ("Healthy Target {guid}"); match by prefix
+        executedMachines.ShouldContain(name => name != null && name.StartsWith("Healthy Target"),
+            "Healthy target should execute");
 
         await AssertTaskStateAsync(TaskState.Success);
     }

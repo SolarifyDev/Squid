@@ -105,7 +105,11 @@ public class KubernetesContainersDeployE2ETests
                 {
                     var pullSecrets = await _cluster.KubectlAsync(
                         $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.imagePullSecrets[0].name}}'");
-                    pullSecrets.Trim('\'').ShouldBe("dockerhub-registry-secret");
+                    // Feed slug is GUID-suffixed in seeders for test isolation
+                    // (e.g. dockerhub-65df93-registry-secret). The exact name depends
+                    // on the seeder's random suffix; match the prefix/suffix shape.
+                    pullSecrets.Trim('\'').ShouldEndWith("-registry-secret");
+                    pullSecrets.Trim('\'').ShouldStartWith("dockerhub");
 
                     var secretType = await _cluster.KubectlAsync(
                         $"-n {testNs} get secret dockerhub-registry-secret -o jsonpath='{{.type}}'");
