@@ -50,6 +50,17 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
             .As<ISquidBackgroundJobClient>()
             .InstancePerLifetimeScope();
 
+        // IMemoryCache is wired by AspNetCore's services.AddMemoryCache() in production
+        // (via Startup.cs). The E2E container doesn't go through ASP.NET's
+        // ConfigureServices pipeline, so we register the type directly here.
+        // Without this, any service that depends on MemoryCacheService (via the
+        // CacheManager chain → AccountService → AuthenticationFixture etc.)
+        // fails to activate with "Cannot resolve parameter IMemoryCache".
+        containerBuilder.Register(_ => new Microsoft.Extensions.Caching.Memory.MemoryCache(
+                new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()))
+            .As<Microsoft.Extensions.Caching.Memory.IMemoryCache>()
+            .SingleInstance();
+
         RegisterOverrides(containerBuilder, configuration);
 
         LifetimeScope = containerBuilder.Build();
