@@ -310,7 +310,7 @@ public class KubernetesAgentE2ETests
             await builder.CreateActionPropertiesAsync(action.Id, actionProperties).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Agent Environment").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Agent Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var machine = CreateAgentMachine(environment,
                 _fixture.Stub.SubscriptionId, _fixture.Stub.Thumbprint, ns);
@@ -388,7 +388,7 @@ public class KubernetesAgentE2ETests
 
         return new Machine
         {
-            Name = "E2E K8s Agent",
+            Name = $"E2E K8s Agent {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),

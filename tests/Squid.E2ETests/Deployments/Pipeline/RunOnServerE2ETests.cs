@@ -112,14 +112,14 @@ public class RunOnServerE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E RunOnServer Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E RunOnServer Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             // NO machines — pure server-only deployment
             var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
 
             var deployment = new Deployment
             {
-                Name = "E2E RunOnServer Deployment",
+                Name = $"E2E RunOnServer Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -192,7 +192,7 @@ public class RunOnServerE2ETests
 
             // Infrastructure
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Mixed RunOnServer Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Mixed RunOnServer Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -208,13 +208,13 @@ public class RunOnServerE2ETests
 
             var machine = new Machine
             {
-                Name = "E2E RunOnServer Target",
+                Name = $"E2E RunOnServer Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = "e2e-runonserver-target"
+                Slug = $"e2e-runonserver-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -223,8 +223,8 @@ public class RunOnServerE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E RunOnServer Account",
-                Slug = "e2e-runonserver-account",
+                Name = $"E2E RunOnServer Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-runonserver-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -237,7 +237,7 @@ public class RunOnServerE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Mixed RunOnServer Deployment",
+                Name = $"E2E Mixed RunOnServer Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -274,7 +274,7 @@ public class RunOnServerE2ETests
     {
         return new ServerTask
         {
-            Name = "E2E RunOnServer Task",
+            Name = $"E2E RunOnServer Task {Guid.NewGuid().ToString("N")[..6]}",
             Description = "E2E RunOnServer test",
             QueueTime = DateTimeOffset.UtcNow,
             State = TaskState.Pending,

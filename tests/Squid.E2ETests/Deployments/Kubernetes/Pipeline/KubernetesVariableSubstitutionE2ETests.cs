@@ -339,7 +339,7 @@ stringData:
         CancellationToken ct = default)
     {
         var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-        var environment = await builder.CreateEnvironmentAsync("E2E VarSub Environment").ConfigureAwait(false);
+        var environment = await builder.CreateEnvironmentAsync($"E2E VarSub Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
         var endpointJson = JsonSerializer.Serialize(new
         {
@@ -355,13 +355,13 @@ stringData:
 
         var machine = new Machine
         {
-            Name = "E2E VarSub Target",
+            Name = $"E2E VarSub Target {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),
             Endpoint = endpointJson,
             SpaceId = 1,
-            Slug = "e2e-varsub-target"
+            Slug = $"e2e-varsub-target-{Guid.NewGuid().ToString("N")[..6]}"
         };
 
         await repository.InsertAsync(machine, ct).ConfigureAwait(false);
@@ -370,8 +370,8 @@ stringData:
         var account = new DeploymentAccount
         {
             SpaceId = 1,
-            Name = "E2E VarSub Account",
-            Slug = "e2e-varsub-account",
+            Name = $"E2E VarSub Account {Guid.NewGuid().ToString("N")[..6]}",
+            Slug = $"e2e-varsub-account-{Guid.NewGuid().ToString("N")[..6]}",
             AccountType = AccountType.Token,
             Credentials = DeploymentAccountCredentialsConverter.Serialize(
                 new TokenCredentials { Token = "e2e-test-token" })
@@ -384,7 +384,7 @@ stringData:
 
         var deployment = new Deployment
         {
-            Name = "E2E VarSub Deployment",
+            Name = $"E2E VarSub Deployment {Guid.NewGuid().ToString("N")[..6]}",
             SpaceId = 1,
             ChannelId = channel.Id,
             ProjectId = project.Id,
@@ -400,7 +400,7 @@ stringData:
 
         var serverTask = new ServerTask
         {
-            Name = "E2E VarSub Task",
+            Name = $"E2E VarSub Task {Guid.NewGuid().ToString("N")[..6]}",
             Description = "E2E variable substitution test",
             QueueTime = DateTimeOffset.UtcNow,
             State = TaskState.Pending,

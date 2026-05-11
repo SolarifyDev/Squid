@@ -127,7 +127,7 @@ public class KubernetesHealthCheckE2ETests
             await builder.CreateActionPropertiesAsync(action.Id, ("Squid.Action.Script.ScriptBody", "echo 'deploying'"), ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E NoAccount Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E NoAccount Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             // Machine with NO account reference in endpoint
             var endpointJson = JsonSerializer.Serialize(new
@@ -148,7 +148,7 @@ public class KubernetesHealthCheckE2ETests
                 Endpoint = endpointJson,
                 HealthStatus = MachineHealthStatus.Healthy,
                 SpaceId = 1,
-                Slug = "e2e-noaccount-target"
+                Slug = $"e2e-noaccount-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -158,7 +158,7 @@ public class KubernetesHealthCheckE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E NoAccount Deployment",
+                Name = $"E2E NoAccount Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -174,7 +174,7 @@ public class KubernetesHealthCheckE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E NoAccount Task",
+                Name = $"E2E NoAccount Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E test pipeline without account",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -238,7 +238,7 @@ public class KubernetesHealthCheckE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E HealthCheck Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E HealthCheck Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -262,7 +262,7 @@ public class KubernetesHealthCheckE2ETests
                 Endpoint = endpointJson,
                 HealthStatus = MachineHealthStatus.Healthy,
                 SpaceId = 1,
-                Slug = "e2e-healthy-target"
+                Slug = $"e2e-healthy-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(healthyMachine).ConfigureAwait(false);
@@ -271,8 +271,8 @@ public class KubernetesHealthCheckE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E HealthCheck Account",
-                Slug = "e2e-healthcheck-account",
+                Name = $"E2E HealthCheck Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-healthcheck-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -285,7 +285,7 @@ public class KubernetesHealthCheckE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E HealthCheck Deployment",
+                Name = $"E2E HealthCheck Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -301,7 +301,7 @@ public class KubernetesHealthCheckE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E HealthCheck Task",
+                Name = $"E2E HealthCheck Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E health check pipeline test",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

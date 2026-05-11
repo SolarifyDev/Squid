@@ -135,7 +135,7 @@ public class KubernetesCredentialTypeE2ETests
             const string pemText = "-----BEGIN CERTIFICATE-----\nE2ECLUSTERCA\n-----END CERTIFICATE-----";
             var cert = new Certificate
             {
-                Name = "E2E Cluster CA",
+                Name = $"E2E Cluster CA {Guid.NewGuid().ToString("N")[..6]}",
                 CertificateData = Convert.ToBase64String(Encoding.UTF8.GetBytes(pemText)),
                 CertificateDataFormat = CertificateDataFormat.Pem,
                 HasPrivateKey = false,

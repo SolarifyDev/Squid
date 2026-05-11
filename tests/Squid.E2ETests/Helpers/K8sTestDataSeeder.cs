@@ -91,7 +91,7 @@ public class K8sTestDataSeeder
 
         var channel = await _builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
-        var environment = await _builder.CreateEnvironmentAsync("E2E Test Environment").ConfigureAwait(false);
+        var environment = await _builder.CreateEnvironmentAsync($"E2E Test Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
         var machine = communicationStyle == "KubernetesAgent"
             ? CreateAgentMachine(environment, agentSubscriptionId, agentThumbprint)
@@ -132,7 +132,7 @@ public class K8sTestDataSeeder
 
         var deployment = new Deployment
         {
-            Name = "E2E Test Deployment",
+            Name = $"E2E Test Deployment {Guid.NewGuid().ToString("N")[..6]}",
             SpaceId = 1,
             ChannelId = channel.Id,
             ProjectId = project.Id,
@@ -148,7 +148,7 @@ public class K8sTestDataSeeder
 
         var serverTask = new ServerTask
         {
-            Name = "E2E Deployment Task",
+            Name = $"E2E Deployment Task {Guid.NewGuid().ToString("N")[..6]}",
             Description = "E2E test deployment task",
             QueueTime = DateTimeOffset.UtcNow,
             State = TaskState.Pending,
@@ -194,13 +194,13 @@ public class K8sTestDataSeeder
 
         return new Machine
         {
-            Name = "E2E K8s Target",
+            Name = $"E2E K8s Target {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
             Endpoint = endpointJson,
             SpaceId = 1,
-            Slug = "e2e-k8s-target"
+            Slug = $"e2e-k8s-target-{Guid.NewGuid().ToString("N")[..6]}"
         };
     }
 
@@ -222,7 +222,7 @@ public class K8sTestDataSeeder
 
         return new Machine
         {
-            Name = "E2E K8s Agent",
+            Name = $"E2E K8s Agent {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = DeploymentTargetFinder.SerializeRoles(new[] { "k8s" }),
             EnvironmentIds = DeploymentTargetFinder.SerializeIds(new[] { environment.Id }),
@@ -239,8 +239,8 @@ public class K8sTestDataSeeder
         var account = new DeploymentAccount
         {
             SpaceId = 1,
-            Name = "E2E K8s Account",
-            Slug = "e2e-k8s-account",
+            Name = $"E2E K8s Account {Guid.NewGuid().ToString("N")[..6]}",
+            Slug = $"e2e-k8s-account-{Guid.NewGuid().ToString("N")[..6]}",
             AccountType = accountType,
             Credentials = DeploymentAccountCredentialsConverter.Serialize(creds)
         };

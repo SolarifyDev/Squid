@@ -162,7 +162,7 @@ public class KubernetesMultiTargetE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Multi Target Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Multi Target Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             // Machine Alpha
             await InsertMachineAsync(repository, unitOfWork,
@@ -176,8 +176,8 @@ public class KubernetesMultiTargetE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Multi Account",
-                Slug = "e2e-multi-account",
+                Name = $"E2E Multi Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-multi-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -190,7 +190,7 @@ public class KubernetesMultiTargetE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Multi Target Deployment",
+                Name = $"E2E Multi Target Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -251,7 +251,7 @@ public class KubernetesMultiTargetE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Role Mismatch Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Role Mismatch Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             // Machine with matching role "web"
             await InsertMachineAsync(repository, unitOfWork,
@@ -264,8 +264,8 @@ public class KubernetesMultiTargetE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Mismatch Account",
-                Slug = "e2e-mismatch-account",
+                Name = $"E2E Mismatch Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-mismatch-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -278,7 +278,7 @@ public class KubernetesMultiTargetE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Role Mismatch Deployment",
+                Name = $"E2E Role Mismatch Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -346,7 +346,7 @@ public class KubernetesMultiTargetE2ETests
     {
         return new ServerTask
         {
-            Name = "E2E Multi Target Task",
+            Name = $"E2E Multi Target Task {Guid.NewGuid().ToString("N")[..6]}",
             Description = "E2E multi-target test",
             QueueTime = DateTimeOffset.UtcNow,
             State = TaskState.Pending,
