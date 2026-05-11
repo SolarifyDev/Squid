@@ -86,9 +86,18 @@ public class KubernetesContainersDeployE2ETests
                     $"-n {testNs} get service demo-service -o jsonpath='{{.spec.type}}'");
                 svcType.Trim('\'').ShouldBe("ClusterIP");
 
-                // 8. Verify ConfigMap
+                // 8. Verify ConfigMap — Squid's KubernetesContainers renderer
+                // auto-suffixes ConfigMap names with `-deployments-{deploymentId}`
+                // (versioned-configmap pattern). Read the actual name from
+                // the Deployment's envFrom reference, then query by that.
+                var configMapRef = await _cluster.KubectlAsync(
+                    $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.containers[0].envFrom[0].configMapRef.name}}'");
+                var configMapName = configMapRef.Trim('\'');
+                configMapName.ShouldStartWith("demo-config",
+                    customMessage: $"ConfigMap name should start with 'demo-config'; got '{configMapName}'");
+
                 var cmData = await _cluster.KubectlAsync(
-                    $"-n {testNs} get configmap demo-config -o jsonpath='{{.data.APP_ENV}}'");
+                    $"-n {testNs} get configmap {configMapName} -o jsonpath='{{.data.APP_ENV}}'");
                 cmData.Trim('\'').ShouldBe("e2e-test");
 
                 // 9. Verify Feed Secret (conditional)
@@ -96,14 +105,20 @@ public class KubernetesContainersDeployE2ETests
                 {
                     var pullSecrets = await _cluster.KubectlAsync(
                         $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.imagePullSecrets[0].name}}'");
-                    pullSecrets.Trim('\'').ShouldBe("dockerhub-registry-secret");
+                    // Feed slug is GUID-suffixed in seeders for test isolation
+                    // (e.g. dockerhub-65df93-registry-secret). The exact name depends
+                    // on the seeder's random suffix; match the prefix/suffix shape,
+                    // then reuse the actual name for the kubectl get secret call.
+                    var secretName = pullSecrets.Trim('\'');
+                    secretName.ShouldEndWith("-registry-secret");
+                    secretName.ShouldStartWith("dockerhub");
 
                     var secretType = await _cluster.KubectlAsync(
-                        $"-n {testNs} get secret dockerhub-registry-secret -o jsonpath='{{.type}}'");
+                        $"-n {testNs} get secret {secretName} -o jsonpath='{{.type}}'");
                     secretType.Trim('\'').ShouldBe("kubernetes.io/dockerconfigjson");
 
                     var secretData = await _cluster.KubectlAsync(
-                        $"-n {testNs} get secret dockerhub-registry-secret -o jsonpath='{{.data.\\.dockerconfigjson}}'");
+                        $"-n {testNs} get secret {secretName} -o jsonpath='{{.data.\\.dockerconfigjson}}'");
                     var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(secretData.Trim('\'')));
                     decoded.ShouldContain("docker.io");
                     decoded.ShouldContain("testuser");
@@ -149,7 +164,8 @@ public class KubernetesContainersDeployE2ETests
 
             // Verify YAML contains resolved values, not templates
             var deploymentYaml = Encoding.UTF8.GetString(yamlFiles["deployment.yaml"]);
-            deploymentYaml.ShouldContain($"namespace: {testNs}");
+            // YAML renderer emits quoted namespace string. Match both styles.
+            deploymentYaml.ShouldMatch($"namespace:\\s*\"?{System.Text.RegularExpressions.Regex.Escape(testNs)}\"?");
             deploymentYaml.ShouldContain("replicas: 3");
             deploymentYaml.ShouldNotContain("#{");
 
@@ -234,7 +250,8 @@ public class KubernetesContainersDeployE2ETests
                 // Verify envFrom configMapRef
                 var envFromCm = await _cluster.KubectlAsync(
                     $"-n {testNs} get deployment demo-nginx -o jsonpath='{{.spec.template.spec.containers[0].envFrom[0].configMapRef.name}}'");
-                envFromCm.Trim('\'').ShouldBe("demo-config");
+                // Squid suffixes with `-deployments-{id}` per the versioned-configmap pattern.
+                envFromCm.Trim('\'').ShouldStartWith("demo-config");
             }
             finally
             {

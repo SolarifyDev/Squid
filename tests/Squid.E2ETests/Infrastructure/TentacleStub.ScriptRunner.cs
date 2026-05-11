@@ -33,10 +33,19 @@ public partial class TentacleStub
             WriteScriptFile(workDir, command.ScriptBody);
             WriteAdditionalFiles(workDir, command.Files);
 
-            var process = StartBashProcess(workDir);
+            // Build process and a RunningScript shell BEFORE Start, so output handlers
+            // can be wired onto the not-yet-started process. Calling BeginOutputReadLine
+            // AFTER process.Start can race with the bash exiting before any read is
+            // posted on the redirected pipes — on fast scripts (echo + exit) the data
+            // can be missed entirely. Handlers attached pre-Start fire reliably.
+            var process = BuildBashProcess(workDir);
             var running = new RunningScript(process, workDir);
+            AttachOutputHandlers(process, running);
 
-            BeginReadOutput(process, running);
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
             _scripts[ticketId] = running;
 
             return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
@@ -68,6 +77,16 @@ public partial class TentacleStub
 
             if (!running.Process.HasExited)
                 running.Process.WaitForExit(TimeSpan.FromSeconds(30));
+
+            // After WaitForExit(TimeSpan) returns, the process is exited but
+            // pending OutputDataReceived / ErrorDataReceived events may not have
+            // dispatched yet. WaitForExit() with no arguments blocks until BOTH
+            // the process has exited AND all output-redirect events have fired,
+            // so the next DrainLogs sees every echo. Without this, fast scripts
+            // (e.g. `echo 'hello' >&2; exit 0`) report Complete to the polling
+            // observer before any stdout/stderr events reach OutputQueue → logs
+            // are silently dropped → LogSink.ContainsMessage(...) fails.
+            running.Process.WaitForExit();
 
             var logs = DrainLogs(running, command.LastLogSequence);
             var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
@@ -139,7 +158,7 @@ public partial class TentacleStub
             }
         }
 
-        private Process StartBashProcess(string workDir)
+        private Process BuildBashProcess(string workDir)
         {
             var homeBin = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin");
@@ -168,17 +187,20 @@ public partial class TentacleStub
                 EnableRaisingEvents = true
             };
 
-            process.StartInfo.Environment["KUBECONFIG"] = _kubeconfigPath;
+            // Only set KUBECONFIG when a kubeconfig was supplied — Listening / Polling
+            // E2E for non-K8s scripts (echo, exit) doesn't have one. Setting null here
+            // throws ArgumentNullException, which prevents the script from running and
+            // leaves the LogSink empty — surfacing as "ContainsMessage was false".
+            if (!string.IsNullOrEmpty(_kubeconfigPath))
+                process.StartInfo.Environment["KUBECONFIG"] = _kubeconfigPath;
             process.StartInfo.Environment["PATH"] = pathValue;
             process.StartInfo.Environment["HOME"] =
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-            process.Start();
-
             return process;
         }
 
-        private static void BeginReadOutput(Process process, RunningScript running)
+        private static void AttachOutputHandlers(Process process, RunningScript running)
         {
             process.OutputDataReceived += (_, e) =>
             {
@@ -193,9 +215,6 @@ public partial class TentacleStub
                     running.OutputQueue.Enqueue(
                         new ProcessOutput(ProcessOutputSource.StdErr, e.Data));
             };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
         }
 
         private static List<ProcessOutput> DrainLogs(RunningScript running, long lastLogSequence)

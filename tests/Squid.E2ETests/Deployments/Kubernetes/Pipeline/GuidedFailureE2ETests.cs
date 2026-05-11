@@ -145,7 +145,7 @@ public class GuidedFailureE2ETests
 
             // Infrastructure
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Guided Failure Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Guided Failure Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -161,13 +161,13 @@ public class GuidedFailureE2ETests
 
             var machine = new Machine
             {
-                Name = "E2E Guided Failure Target",
+                Name = $"E2E Guided Failure Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = "e2e-guided-failure-target"
+                Slug = $"e2e-guided-failure-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -176,8 +176,8 @@ public class GuidedFailureE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Guided Failure Account",
-                Slug = "e2e-guided-failure-account",
+                Name = $"E2E Guided Failure Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-guided-failure-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -193,7 +193,7 @@ public class GuidedFailureE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Guided Failure Deployment",
+                Name = $"E2E Guided Failure Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -209,7 +209,7 @@ public class GuidedFailureE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E Guided Failure Task",
+                Name = $"E2E Guided Failure Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E guided failure test",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,

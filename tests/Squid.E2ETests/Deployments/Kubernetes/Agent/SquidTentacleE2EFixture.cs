@@ -46,11 +46,9 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override async Task OnInitializedAsync()
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console()
-            .WriteTo.Sink(LogSink)
-            .CreateLogger();
+        // Register this fixture's sink with the process-wide multiplex sink so
+        // it receives every log event without racing on Log.Logger assignment.
+        MultiplexCapturingSink.Instance.Register(LogSink);
 
         SetKubeconfigEnvironment();
         AddCalamariToPath();
@@ -61,6 +59,8 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
 
     protected override async Task OnDisposingAsync()
     {
+        MultiplexCapturingSink.Instance.Unregister(LogSink);
+
         if (_tentacleHost != null)
             await _tentacleHost.DisposeAsync().ConfigureAwait(false);
 

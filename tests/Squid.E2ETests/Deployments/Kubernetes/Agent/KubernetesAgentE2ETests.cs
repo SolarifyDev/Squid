@@ -268,9 +268,16 @@ public class KubernetesAgentE2ETests
     {
         _fixture.LogSink.Clear();
 
+        // KubernetesYamlActionHandler.GetNamespaceFromAction reads the namespace
+        // from the action property (KubernetesProperties.Namespace =
+        // "Squid.Action.KubernetesContainers.Namespace"), NOT from the machine
+        // endpoint's Namespace field. Without this property the handler defaults
+        // to "default" — the apply lands there, and the test's kubectl probe
+        // against testNs returns NotFound.
         return await SeedDeploymentAsync(
             "Squid.KubernetesDeployRawYaml", ns,
             ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
+            ("Squid.Action.KubernetesContainers.Namespace", ns),
             ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
     }
 
@@ -310,7 +317,7 @@ public class KubernetesAgentE2ETests
             await builder.CreateActionPropertiesAsync(action.Id, actionProperties).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Agent Environment").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Agent Environment {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var machine = CreateAgentMachine(environment,
                 _fixture.Stub.SubscriptionId, _fixture.Stub.Thumbprint, ns);
@@ -388,7 +395,7 @@ public class KubernetesAgentE2ETests
 
         return new Machine
         {
-            Name = "E2E K8s Agent",
+            Name = $"E2E K8s Agent {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),

@@ -118,6 +118,9 @@ public class KubernetesCredentialTypeE2ETests
     private async Task<int> SeedDatabaseWithCertificateAsync()
     {
         var serverTaskId = 0;
+        var machineId = 0;
+        var accountId = 0;
+        var certName = $"E2E Cluster CA {Guid.NewGuid().ToString("N")[..6]}";
 
         await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
@@ -130,15 +133,20 @@ public class KubernetesCredentialTypeE2ETests
                 communicationStyle: "KubernetesApi").ConfigureAwait(false);
 
             serverTaskId = seeder.ServerTaskId;
+            machineId = seeder.MachineId;
+            accountId = seeder.AccountId;
 
-            // Add a cluster certificate (base64 of PEM text, matching real upload flow)
+            // Add a cluster certificate (base64 of PEM text, matching real upload flow).
+            // Thumbprint is NOT NULL in the DB; a unique GUID-derived value avoids
+            // ix_certificate_thumbprint_space_id collisions across test invocations.
             const string pemText = "-----BEGIN CERTIFICATE-----\nE2ECLUSTERCA\n-----END CERTIFICATE-----";
             var cert = new Certificate
             {
-                Name = "E2E Cluster CA",
+                Name = certName,
                 CertificateData = Convert.ToBase64String(Encoding.UTF8.GetBytes(pemText)),
                 CertificateDataFormat = CertificateDataFormat.Pem,
                 HasPrivateKey = false,
+                Thumbprint = Guid.NewGuid().ToString("N").ToUpperInvariant(),
                 SpaceId = 1
             };
 
@@ -146,14 +154,15 @@ public class KubernetesCredentialTypeE2ETests
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
         }).ConfigureAwait(false);
 
-        // Update machine endpoint to include cluster cert reference via providers
+        // Update machine endpoint to include cluster cert reference via providers.
+        // Use the specific machineId/accountId from the seeder — NOT machines.First() —
+        // because in a class-shared DB a prior test may have left other Machine rows.
         await _fixture.Run<IMachineDataProvider, ICertificateDataProvider>(async (machineProvider, certProvider) =>
         {
-            var (_, machines) = await machineProvider.GetMachinePagingAsync().ConfigureAwait(false);
-            var machine = machines.First();
+            var machine = await machineProvider.GetMachinesByIdAsync(machineId, CancellationToken.None).ConfigureAwait(false);
 
             var (_, certs) = await certProvider.GetCertificatePagingAsync().ConfigureAwait(false);
-            var cert = certs.First(c => c.Name == "E2E Cluster CA");
+            var cert = certs.First(c => c.Name == certName);
 
             machine.Endpoint = JsonSerializer.Serialize(new
             {
@@ -163,7 +172,7 @@ public class KubernetesCredentialTypeE2ETests
                 Namespace = "default",
                 ResourceReferences = new object[]
                 {
-                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = 1 },
+                    new { Type = (int)EndpointResourceType.AuthenticationAccount, ResourceId = accountId },
                     new { Type = (int)EndpointResourceType.ClusterCertificate, ResourceId = cert.Id }
                 }
             });

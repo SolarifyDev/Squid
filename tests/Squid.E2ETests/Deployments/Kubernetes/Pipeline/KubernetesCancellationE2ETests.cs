@@ -48,15 +48,32 @@ public class KubernetesCancellationE2ETests
 
         var serverTaskId = await SeedSingleStepPipelineAsync();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-
-        await Should.ThrowAsync<OperationCanceledException>(async () =>
+        // Model the production cancel flow: an external operator invokes
+        // CancelAsync, which (1) transitions the task Executing → Cancelling
+        // and (2) fires the registered cancellation token. The pipeline then
+        // catches the OCE and OnCancelledAsync transitions Cancelling → Cancelled.
+        // Triggering only the local CT (without the state transition step) leaves
+        // the task in "Executing" because OnCancelledAsync's transition from
+        // Cancelling fails silently when the source state is Executing instead.
+        var pipelineTask = Task.Run(async () =>
         {
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
             {
-                await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
+                await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
             }).ConfigureAwait(false);
         });
+
+        // Wait briefly so the pipeline reaches "Executing" state, then cancel.
+        await Task.Delay(300).ConfigureAwait(false);
+
+        await _fixture.Run<IServerTaskControlService>(async control =>
+        {
+            await control.CancelTaskAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await pipelineTask.ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Cancelled);
     }
 
     // ========================================================================
@@ -93,7 +110,7 @@ public class KubernetesCancellationE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Cancellation Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Cancellation Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var endpointJson = JsonSerializer.Serialize(new
             {
@@ -109,13 +126,13 @@ public class KubernetesCancellationE2ETests
 
             var machine = new Machine
             {
-                Name = "E2E Cancellation Target",
+                Name = $"E2E Cancellation Target {Guid.NewGuid().ToString("N")[..6]}",
                 IsDisabled = false,
                 Roles = "k8s",
                 EnvironmentIds = environment.Id.ToString(),
                 Endpoint = endpointJson,
                 SpaceId = 1,
-                Slug = "e2e-cancellation-target"
+                Slug = $"e2e-cancellation-target-{Guid.NewGuid().ToString("N")[..6]}"
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
@@ -124,8 +141,8 @@ public class KubernetesCancellationE2ETests
             var account = new DeploymentAccount
             {
                 SpaceId = 1,
-                Name = "E2E Cancellation Account",
-                Slug = "e2e-cancellation-account",
+                Name = $"E2E Cancellation Account {Guid.NewGuid().ToString("N")[..6]}",
+                Slug = $"e2e-cancellation-account-{Guid.NewGuid().ToString("N")[..6]}",
                 AccountType = AccountType.Token,
                 Credentials = DeploymentAccountCredentialsConverter.Serialize(
                     new TokenCredentials { Token = "e2e-test-token" })
@@ -138,7 +155,7 @@ public class KubernetesCancellationE2ETests
 
             var deployment = new Deployment
             {
-                Name = "E2E Cancellation Deployment",
+                Name = $"E2E Cancellation Deployment {Guid.NewGuid().ToString("N")[..6]}",
                 SpaceId = 1,
                 ChannelId = channel.Id,
                 ProjectId = project.Id,
@@ -154,7 +171,7 @@ public class KubernetesCancellationE2ETests
 
             var serverTask = new ServerTask
             {
-                Name = "E2E Cancellation Task",
+                Name = $"E2E Cancellation Task {Guid.NewGuid().ToString("N")[..6]}",
                 Description = "E2E cancellation test",
                 QueueTime = DateTimeOffset.UtcNow,
                 State = TaskState.Pending,
@@ -185,5 +202,19 @@ public class KubernetesCancellationE2ETests
         }).ConfigureAwait(false);
 
         return serverTaskId;
+    }
+
+    private async Task AssertTaskStateAsync(string expectedState)
+    {
+        await _fixture.Run<IServerTaskDataProvider>(async taskDataProvider =>
+        {
+            var tasks = await taskDataProvider.GetAllServerTasksAsync(CancellationToken.None).ConfigureAwait(false);
+
+            tasks.ShouldNotBeNull();
+            tasks.Count.ShouldBeGreaterThanOrEqualTo(1);
+
+            var task = tasks.OrderByDescending(t => t.Id).First();
+            task.State.ShouldBe(expectedState, $"Expected task state '{expectedState}' but was '{task.State}'");
+        }).ConfigureAwait(false);
     }
 }

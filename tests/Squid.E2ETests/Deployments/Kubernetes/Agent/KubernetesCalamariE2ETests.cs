@@ -90,7 +90,7 @@ public class KubernetesCalamariE2ETests
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var environment = await builder.CreateEnvironmentAsync("E2E Calamari Env").ConfigureAwait(false);
+            var environment = await builder.CreateEnvironmentAsync($"E2E Calamari Env {Guid.NewGuid().ToString("N")[..6]}").ConfigureAwait(false);
 
             var machine = CreateAgentMachine(environment,
                 _fixture.Stub.SubscriptionId, _fixture.Stub.Thumbprint);
@@ -168,7 +168,7 @@ public class KubernetesCalamariE2ETests
 
         return new Machine
         {
-            Name = "E2E Calamari Agent",
+            Name = $"E2E Calamari Agent {Guid.NewGuid().ToString("N")[..6]}",
             IsDisabled = false,
             Roles = "k8s",
             EnvironmentIds = environment.Id.ToString(),
