@@ -21,6 +21,24 @@ public class KindClusterFixture : IAsyncLifetime
 
     private bool _isExternalCluster;
 
+    /// <summary>
+    /// Container images preloaded into the Kind cluster during fixture
+    /// initialisation. Once loaded, pods can use <c>imagePullPolicy: IfNotPresent</c>
+    /// and the kubelet will find the image locally without hitting Docker Hub
+    /// (which has aggressive rate limits for unauthenticated CI IPs — 100 pulls
+    /// per 6 hours per IP).
+    ///
+    /// <para>If you add a new image here, also document why in the test that
+    /// depends on it. Goal: zero public-network dependencies for hybrid tests.</para>
+    ///
+    /// <para>Pre-loaded set is intentionally tiny (busybox = 5 MB) to keep
+    /// fixture init under 10 seconds even on slow CI runners.</para>
+    /// </summary>
+    private static readonly string[] PreloadedImages =
+    {
+        "busybox:latest"   // Used by Squid Helm test chart + future hybrid tests
+    };
+
     // Dedicated kubeconfig path for kind — avoids merging into (potentially corrupted) ~/.kube/config
     private static readonly string KindKubeconfigPath =
         Path.Combine(Path.GetTempPath(), "squid-e2e-kind.yaml");
@@ -61,6 +79,46 @@ public class KindClusterFixture : IAsyncLifetime
 
         // Wait for cluster to be ready
         await WaitForClusterReadyAsync();
+
+        // Preload images so hybrid tests don't hit Docker Hub rate limits
+        // (and don't time out behind slow public registries on CI runners).
+        // Tolerant of failures — local docker may not have the image yet, in
+        // which case the per-test kubelet pull falls back to the public registry.
+        await TryPreloadImagesAsync();
+    }
+
+    /// <summary>
+    /// Best-effort preload of <see cref="PreloadedImages"/> into the Kind
+    /// cluster's node container so hybrid tests can run pods with
+    /// <c>imagePullPolicy: IfNotPresent</c> without needing public-network egress.
+    ///
+    /// <para>Logic:</para>
+    /// <list type="number">
+    ///   <item><c>docker pull &lt;image&gt;</c> — pulls to the host's docker daemon if not already cached</item>
+    ///   <item><c>kind load docker-image &lt;image&gt; --name &lt;cluster&gt;</c> — loads into the Kind node</item>
+    /// </list>
+    ///
+    /// <para>If either step fails (e.g. docker daemon not running, kind CLI
+    /// version mismatch), we log a warning and continue. Tests that NEED
+    /// the preload will fail with a clearer error than "fixture init failed".</para>
+    /// </summary>
+    private async Task TryPreloadImagesAsync()
+    {
+        if (_isExternalCluster) return;   // external cluster: caller manages image preload
+
+        foreach (var image in PreloadedImages)
+        {
+            var pull = await RunProcessAsync("docker", $"pull {image}");
+            if (pull.ExitCode != 0)
+            {
+                Console.WriteLine($"[KindClusterFixture] Warning: docker pull {image} failed (exit {pull.ExitCode}): {pull.Error}");
+                continue;
+            }
+
+            var load = await RunProcessAsync("kind", $"load docker-image {image} --name {ClusterName}");
+            if (load.ExitCode != 0)
+                Console.WriteLine($"[KindClusterFixture] Warning: kind load {image} failed (exit {load.ExitCode}): {load.Error}");
+        }
     }
 
     public async Task DisposeAsync()

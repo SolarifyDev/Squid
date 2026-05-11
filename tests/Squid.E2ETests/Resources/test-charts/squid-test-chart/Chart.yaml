@@ -1,0 +1,18 @@
+apiVersion: v2
+name: squid-test-chart
+description: |
+  Minimal Helm chart used by Squid E2E tests for real-cluster hybrid testing.
+  Has ZERO public network dependencies — chart lives in the test repo, and the
+  only container image (busybox) is pre-loaded into the Kind cluster by
+  KindClusterFixture before any test runs. This means:
+
+    • No bitnami/Helm public-repo dependency (avoids `helm repo add` flakiness)
+    • No Docker Hub image pull (avoids rate limits + DNS / TLS flakiness)
+    • Deterministic 3-5 second deploy time (busybox sleep 3600 has no readiness probe)
+
+  If a test author adds new resources / images / hooks here, please verify the
+  Kind preload list in KindClusterFixture is updated to match — otherwise the
+  resulting tests will be unstable in CI runners without network egress.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
