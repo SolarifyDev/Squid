@@ -136,7 +136,9 @@ public class KubernetesCredentialTypeE2ETests
             machineId = seeder.MachineId;
             accountId = seeder.AccountId;
 
-            // Add a cluster certificate (base64 of PEM text, matching real upload flow)
+            // Add a cluster certificate (base64 of PEM text, matching real upload flow).
+            // Thumbprint is NOT NULL in the DB; a unique GUID-derived value avoids
+            // ix_certificate_thumbprint_space_id collisions across test invocations.
             const string pemText = "-----BEGIN CERTIFICATE-----\nE2ECLUSTERCA\n-----END CERTIFICATE-----";
             var cert = new Certificate
             {
@@ -144,6 +146,7 @@ public class KubernetesCredentialTypeE2ETests
                 CertificateData = Convert.ToBase64String(Encoding.UTF8.GetBytes(pemText)),
                 CertificateDataFormat = CertificateDataFormat.Pem,
                 HasPrivateKey = false,
+                Thumbprint = Guid.NewGuid().ToString("N").ToUpperInvariant(),
                 SpaceId = 1
             };
 
