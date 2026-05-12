@@ -23,7 +23,8 @@ public sealed class TentacleListeningTransport : DeploymentTransport
         RequiresContextPreparationForPackagedPayload = false,
         SupportedActionTypes = TransportCapabilities.ActionTypes(
             SpecialVariables.ActionTypes.Script,
-            SpecialVariables.ActionTypes.HealthCheck),
+            SpecialVariables.ActionTypes.HealthCheck,
+            SpecialVariables.ActionTypes.DeployToIISWebSite),
         OptionalFeatures = TransportCapabilities.Features("halibut", "bash", "tentacle")
     };
 

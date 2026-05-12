@@ -27,6 +27,14 @@ public static class SpecialVariables
         public const string OpenClawFetchResult = "Squid.OpenClaw.FetchResult";
         public const string OpenClawChatCompletion = "Squid.OpenClaw.ChatCompletion";
 
+        /// <summary>
+        /// Mirrors Octopus's <c>Octopus.IIS</c> action type for Windows-Tentacle IIS
+        /// deployments. The "WebSite" suffix is intentional and reserved — future
+        /// IIS-adjacent action types (e.g. WebDeploy, AzureFunction) get their own
+        /// names so customers can switch sub-feature without changing the action type.
+        /// </summary>
+        public const string DeployToIISWebSite = "Squid.DeployToIISWebSite";
+
         public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             Script,
@@ -50,7 +58,8 @@ public static class SpecialVariables
             OpenClawWaitSession,
             OpenClawAssert,
             OpenClawFetchResult,
-            OpenClawChatCompletion
+            OpenClawChatCompletion,
+            DeployToIISWebSite
         };
     }
 
